@@ -122,6 +122,7 @@ private:
 	bool visible = true;
 	bool focused = false;
 	WindowInitialPosition initial_position = WINDOW_INITIAL_POSITION_ABSOLUTE;
+	bool force_native = false;
 
 	bool use_font_oversampling = false;
 	bool transient = false;
@@ -213,6 +214,8 @@ private:
 		int resize_margin = 0;
 	} theme_cache;
 
+	void _settings_changed();
+
 	Viewport *embedder = nullptr;
 
 	Transform2D window_transform;
@@ -272,6 +275,9 @@ public:
 
 	void set_initial_position(WindowInitialPosition p_initial_position);
 	WindowInitialPosition get_initial_position() const;
+
+	void set_force_native(bool p_force_native);
+	bool get_force_native() const;
 
 	void set_current_screen(int p_screen);
 	int get_current_screen() const;

@@ -63,6 +63,9 @@
 #import <simd/simd.h>
 #import <initializer_list>
 #import <optional>
+#import <mutex>
+#import <condition_variable>
+
 
 // These types can be used in Vector and other containers that use
 // pointer operations not supported by ARC.
@@ -88,9 +91,9 @@ enum ShaderStageUsage : uint32_t {
 	Compute = RDD::SHADER_STAGE_COMPUTE_BIT,
 };
 
-_FORCE_INLINE_ ShaderStageUsage &operator|=(ShaderStageUsage &a, int b) {
-	a = ShaderStageUsage(uint32_t(a) | uint32_t(b));
-	return a;
+_FORCE_INLINE_ ShaderStageUsage &operator|=(ShaderStageUsage &p_a, int p_b) {
+	p_a = ShaderStageUsage(uint32_t(p_a) | uint32_t(p_b));
+	return p_a;
 }
 
 enum class MDCommandBufferStateType {
@@ -168,8 +171,9 @@ public:
 
 class API_AVAILABLE(macos(11.0), ios(14.0)) MDResourceCache {
 private:
+	typedef HashMap<ClearAttKey, id<MTLRenderPipelineState>, HashableHasher<ClearAttKey>> HashMap;
 	std::unique_ptr<MDResourceFactory> resource_factory;
-	HashMap<ClearAttKey, id<MTLRenderPipelineState>, HashableHasher<ClearAttKey>> clear_states;
+	HashMap clear_states;
 
 	struct {
 		id<MTLDepthStencilState> all;
@@ -192,6 +196,7 @@ private:
 	RenderingDeviceDriverMetal *device_driver = nullptr;
 	id<MTLCommandQueue> queue = nil;
 	id<MTLCommandBuffer> commandBuffer = nil;
+	MDQueryPool *query_pool = nil; // if not nil, indicates timer queries are active for the current command buffer
 
 	void _end_compute_dispatch();
 	void _end_blit();
@@ -274,27 +279,31 @@ public:
 		}
 
 		_FORCE_INLINE_ void mark_viewport_dirty() {
-			if (viewports.is_empty())
+			if (viewports.is_empty()) {
 				return;
+			}
 			dirty.set_flag(DirtyFlag::DIRTY_VIEWPORT);
 		}
 
 		_FORCE_INLINE_ void mark_scissors_dirty() {
-			if (scissors.is_empty())
+			if (scissors.is_empty()) {
 				return;
+			}
 			dirty.set_flag(DirtyFlag::DIRTY_SCISSOR);
 		}
 
 		_FORCE_INLINE_ void mark_vertex_dirty() {
-			if (vertex_buffers.is_empty())
+			if (vertex_buffers.is_empty()) {
 				return;
+			}
 			dirty.set_flag(DirtyFlag::DIRTY_VERTEX);
 		}
 
-		_FORCE_INLINE_ void mark_uniforms_dirty(std::initializer_list<int> l) {
-			if (uniform_sets.is_empty())
+		_FORCE_INLINE_ void mark_uniforms_dirty(std::initializer_list<uint32_t> l) {
+			if (uniform_sets.is_empty()) {
 				return;
-			for (int i : l) {
+			}
+			for (uint32_t i : l) {
 				if (i < uniform_sets.size() && uniform_sets[i] != nullptr) {
 					uniform_set_mask |= 1 << i;
 				}
@@ -303,9 +312,10 @@ public:
 		}
 
 		_FORCE_INLINE_ void mark_uniforms_dirty(void) {
-			if (uniform_sets.is_empty())
+			if (uniform_sets.is_empty()) {
 				return;
-			for (int i = 0; i < uniform_sets.size(); i++) {
+			}
+			for (uint32_t i = 0; i < uniform_sets.size(); i++) {
 				if (uniform_sets[i] != nullptr) {
 					uniform_set_mask |= 1 << i;
 				}
@@ -365,6 +375,10 @@ public:
 		return commandBuffer;
 	}
 
+	_FORCE_INLINE_ MDQueryPool * get_query_pool() const {
+		return query_pool;
+	}
+
 	void begin();
 	void commit();
 	void end();
@@ -376,7 +390,9 @@ public:
 
 #pragma mark - Counters
 
-	void mark_timestamp(id<MTLCounterSampleBuffer> p_buffer, uint32_t p_query_index);
+	void timestamp_query_pool_reset(RDD::QueryPoolID p_pool_id, uint32_t p_query_count);
+	void timestamp_write(RDD::QueryPoolID p_pool_id, uint32_t p_index);
+	void timestamp_commit();
 
 #pragma mark - Render Commands
 
@@ -442,7 +458,7 @@ struct API_AVAILABLE(macos(11.0), ios(14.0)) BindingInfo {
 	uint32_t arrayLength = 0;
 	bool isMultisampled = false;
 
-	inline auto new_argument_descriptor() const -> MTLArgumentDescriptor * {
+	inline MTLArgumentDescriptor *new_argument_descriptor() const {
 		MTLArgumentDescriptor *desc = MTLArgumentDescriptor.argumentDescriptor;
 		desc.dataType = dataType;
 		desc.index = index;
@@ -483,11 +499,13 @@ struct API_AVAILABLE(macos(11.0), ios(14.0)) BindingInfo {
 
 using RDC = RenderingDeviceCommons;
 
+typedef API_AVAILABLE(macos(11.0), ios(14.0)) HashMap<RDC::ShaderStage, BindingInfo> BindingInfoMap;
+
 struct API_AVAILABLE(macos(11.0), ios(14.0)) UniformInfo {
 	uint32_t binding;
 	ShaderStageUsage active_stages = None;
-	HashMap<RDC::ShaderStage, BindingInfo> bindings;
-	HashMap<RDC::ShaderStage, BindingInfo> bindings_secondary;
+	BindingInfoMap bindings;
+	BindingInfoMap bindings_secondary;
 };
 
 struct API_AVAILABLE(macos(11.0), ios(14.0)) UniformSet {
@@ -688,7 +706,7 @@ public:
 
 	uint32_t get_sample_count() const {
 		return attachments.is_empty() ? 1 : attachments[0].samples;
-	};
+	}
 
 	MDRenderPass(Vector<MDAttachment> &p_attachments, Vector<MDSubpass> &p_subpasses);
 };
@@ -727,10 +745,11 @@ public:
 			float slope_scale = 0.0;
 			float clamp = 0.0;
 			_FORCE_INLINE_ void apply(id<MTLRenderCommandEncoder> __unsafe_unretained p_enc) const {
-				if (!enabled)
+				if (!enabled) {
 					return;
+				}
 				[p_enc setDepthBias:depth_bias slopeScale:slope_scale clamp:clamp];
-			};
+			}
 		} depth_bias;
 
 		struct {
@@ -766,7 +785,7 @@ public:
 			depth_bias.apply(p_enc);
 			stencil.apply(p_enc);
 			blend.apply(p_enc);
-		};
+		}
 
 	} raster_state;
 
@@ -829,17 +848,32 @@ public:
 
 class API_AVAILABLE(macos(11.0), ios(14.0)) MDQueryPool {
 	// GPU counters
-	NSUInteger sampleCount = 0;
+	NSUInteger sampleCount = 0; // max sample count
+	uint32_t query_count = 0; // current query count
 	id<MTLCounterSet> counterSet = nil;
 	id<MTLCounterSampleBuffer> _counterSampleBuffer = nil;
 	id<MTLBuffer> _buffer = nil;
 	MTLTimestamp cpuStart = 0.0;
 	MTLTimestamp gpuStart = 0.0;
+	
+	std::mutex _results_lock;
+	std::condition_variable _results_cond;
+	bool _results_ready = false;
 
 public:
-	void reset_with_command_buffer(RDD::CommandBufferID p_cmd_buffer, uint32_t p_query_count);
+	void reset(uint32_t p_query_count) {
+		{
+			std::lock_guard lock(_results_lock);
+			_results_ready = false;
+		}
+		query_count = p_query_count;
+	};
+	void commit(MDCommandBuffer *p_cmd_buffer);
 	void get_results(uint64_t *p_results, NSUInteger p_count);
-	void write_command_buffer(RDD::CommandBufferID p_cmd_buffer, NSUInteger p_index);
+
+	id<MTLCounterSampleBuffer> get_sample_buffer() const {
+		return _counterSampleBuffer;
+	}
 
 	static MDQueryPool *new_query_pool(id<MTLDevice> p_device, uint32_t p_query_count, NSError **p_error);
 

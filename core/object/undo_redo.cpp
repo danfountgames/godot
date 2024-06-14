@@ -71,7 +71,14 @@ bool UndoRedo::_redo(bool p_execute) {
 	}
 
 	current_action++;
-	_process_operation_list(actions.write[current_action].do_ops.front(), p_execute);
+
+	List<Operation>::Element *start_doops_element = actions.write[current_action].do_ops.front();
+	while (merge_total > 0 && start_doops_element) {
+		start_doops_element = start_doops_element->next();
+		merge_total--;
+	}
+
+	_process_operation_list(start_doops_element, p_execute);
 	version++;
 	emit_signal(SNAME("version_changed"));
 
@@ -104,6 +111,12 @@ void UndoRedo::create_action(const String &p_name, MergeMode p_mode, bool p_back
 				}
 			}
 
+			if (p_mode == MERGE_ALL) {
+				merge_total = actions.write[current_action + 1].do_ops.size();
+			} else {
+				merge_total = 0;
+			}
+
 			actions.write[actions.size() - 1].last_tick = ticks;
 
 			// Revert reverse from previous commit.
@@ -121,6 +134,7 @@ void UndoRedo::create_action(const String &p_name, MergeMode p_mode, bool p_back
 			actions.push_back(new_action);
 
 			merge_mode = MERGE_DISABLE;
+			merge_total = 0;
 		}
 	}
 
@@ -130,7 +144,7 @@ void UndoRedo::create_action(const String &p_name, MergeMode p_mode, bool p_back
 }
 
 void UndoRedo::add_do_method(const Callable &p_callable) {
-	ERR_FAIL_COND(p_callable.is_null());
+	ERR_FAIL_COND(!p_callable.is_valid());
 	ERR_FAIL_COND(action_level <= 0);
 	ERR_FAIL_COND((current_action + 1) >= actions.size());
 
@@ -145,17 +159,18 @@ void UndoRedo::add_do_method(const Callable &p_callable) {
 		do_op.ref = Ref<RefCounted>(Object::cast_to<RefCounted>(object));
 	}
 	do_op.type = Operation::TYPE_METHOD;
-	do_op.name = p_callable.get_method();
-	if (do_op.name == StringName()) {
-		// There's no `get_method()` for custom callables, so use `operator String()` instead.
+	// There's no `get_method()` for custom callables, so use `operator String()` instead.
+	if (p_callable.is_custom()) {
 		do_op.name = static_cast<String>(p_callable);
+	} else {
+		do_op.name = p_callable.get_method();
 	}
 
 	actions.write[current_action + 1].do_ops.push_back(do_op);
 }
 
 void UndoRedo::add_undo_method(const Callable &p_callable) {
-	ERR_FAIL_COND(p_callable.is_null());
+	ERR_FAIL_COND(!p_callable.is_valid());
 	ERR_FAIL_COND(action_level <= 0);
 	ERR_FAIL_COND((current_action + 1) >= actions.size());
 
@@ -176,10 +191,11 @@ void UndoRedo::add_undo_method(const Callable &p_callable) {
 	}
 	undo_op.type = Operation::TYPE_METHOD;
 	undo_op.force_keep_in_merge_ends = force_keep_in_merge_ends;
-	undo_op.name = p_callable.get_method();
-	if (undo_op.name == StringName()) {
-		// There's no `get_method()` for custom callables, so use `operator String()` instead.
+	// There's no `get_method()` for custom callables, so use `operator String()` instead.
+	if (p_callable.is_custom()) {
 		undo_op.name = static_cast<String>(p_callable);
+	} else {
+		undo_op.name = p_callable.get_method();
 	}
 
 	actions.write[current_action + 1].undo_ops.push_back(undo_op);

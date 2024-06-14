@@ -57,6 +57,7 @@ protected:
 	int minor_version = 0;
 	String copyright;
 	Vector<uint8_t> glb_data;
+	double bake_fps = 30.0;
 
 	bool use_named_skin_binds = false;
 	bool use_khr_texture_transform = false;
@@ -64,6 +65,7 @@ protected:
 	bool force_generate_tangents = false;
 	bool create_animations = true;
 	bool force_disable_compression = false;
+	bool import_as_skeleton_bones = false;
 
 	int handle_binary_image = HANDLE_BINARY_EXTRACT_TEXTURES;
 
@@ -107,6 +109,14 @@ protected:
 	static void _bind_methods();
 
 public:
+	double get_bake_fps() const {
+		return bake_fps;
+	}
+
+	void set_bake_fps(double value) {
+		bake_fps = value;
+	}
+
 	void add_used_extension(const String &p_extension, bool p_required = false);
 	GLTFBufferViewIndex append_data_to_buffers(const Vector<uint8_t> &p_data, const bool p_deduplication);
 
@@ -212,6 +222,9 @@ public:
 
 	bool get_create_animations();
 	void set_create_animations(bool p_create_animations);
+
+	bool get_import_as_skeleton_bones();
+	void set_import_as_skeleton_bones(bool p_import_as_skeleton_bones);
 
 	TypedArray<GLTFAnimation> get_animations();
 	void set_animations(TypedArray<GLTFAnimation> p_animations);

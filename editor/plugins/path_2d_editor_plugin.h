@@ -31,7 +31,7 @@
 #ifndef PATH_2D_EDITOR_PLUGIN_H
 #define PATH_2D_EDITOR_PLUGIN_H
 
-#include "editor/editor_plugin.h"
+#include "editor/plugins/editor_plugin.h"
 #include "scene/2d/path_2d.h"
 #include "scene/gui/box_container.h"
 
@@ -92,6 +92,7 @@ class Path2DEditor : public HBoxContainer {
 	float orig_in_length = 0.0f;
 	float orig_out_length = 0.0f;
 	Vector2 edge_point;
+	Vector2 original_mouse_pos;
 
 	void _mode_selected(int p_mode);
 	void _handle_option_pressed(int p_option);

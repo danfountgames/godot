@@ -26,7 +26,7 @@
 /************************************************************************/
 /* Internal Class Implementation                                        */
 /************************************************************************/
-constexpr auto PATH_KAPPA = 0.552284f;
+
 
 /************************************************************************/
 /* External Class Implementation                                        */
@@ -130,11 +130,11 @@ Result Shape::appendCircle(float cx, float cy, float rx, float ry) noexcept
     auto ryKappa = ry * PATH_KAPPA;
 
     pImpl->grow(6, 13);
-    pImpl->moveTo(cx, cy - ry);
-    pImpl->cubicTo(cx + rxKappa, cy - ry, cx + rx, cy - ryKappa, cx + rx, cy);
+    pImpl->moveTo(cx + rx, cy);
     pImpl->cubicTo(cx + rx, cy + ryKappa, cx + rxKappa, cy + ry, cx, cy + ry);
     pImpl->cubicTo(cx - rxKappa, cy + ry, cx - rx, cy + ryKappa, cx - rx, cy);
     pImpl->cubicTo(cx - rx, cy - ryKappa, cx - rxKappa, cy - ry, cx, cy - ry);
+    pImpl->cubicTo(cx + rxKappa, cy - ry, cx + rx, cy - ryKappa, cx + rx, cy);
     pImpl->close();
 
     return Result::Success;
@@ -145,13 +145,15 @@ Result Shape::appendArc(float cx, float cy, float radius, float startAngle, floa
     //just circle
     if (sweep >= 360.0f || sweep <= -360.0f) return appendCircle(cx, cy, radius, radius);
 
-    startAngle = (startAngle * MATH_PI) / 180.0f;
-    sweep = sweep * MATH_PI / 180.0f;
+    const float arcPrecision = 1e-5f;
+    startAngle = mathDeg2Rad(startAngle);
+    sweep = mathDeg2Rad(sweep);
 
-    auto nCurves = ceil(fabsf(sweep / MATH_PI2));
+    auto nCurves = static_cast<int>(fabsf(sweep / MATH_PI2));
+    if (fabsf(sweep / MATH_PI2) - nCurves > arcPrecision) ++nCurves;
     auto sweepSign = (sweep < 0 ? -1 : 1);
     auto fract = fmodf(sweep, MATH_PI2);
-    fract = (mathZero(fract)) ? MATH_PI2 * sweepSign : fract;
+    fract = (fabsf(fract) < arcPrecision) ? MATH_PI2 * sweepSign : fract;
 
     //Start from here
     Point start = {radius * cosf(startAngle), radius * sinf(startAngle)};
@@ -164,7 +166,7 @@ Result Shape::appendArc(float cx, float cy, float radius, float startAngle, floa
     }
 
     for (int i = 0; i < nCurves; ++i) {
-        auto endAngle = startAngle + ((i != nCurves - 1) ? float(M_PI_2) * sweepSign : fract);
+        auto endAngle = startAngle + ((i != nCurves - 1) ? MATH_PI2 * sweepSign : fract);
         Point end = {radius * cosf(endAngle), radius * sinf(endAngle)};
 
         //variables needed to calculate bezier control points
@@ -215,20 +217,20 @@ Result Shape::appendRect(float x, float y, float w, float h, float rx, float ry)
         pImpl->lineTo(x + w, y + h);
         pImpl->lineTo(x, y + h);
         pImpl->close();
-    //circle
+    //rounded rectangle or circle
     } else {
         auto hrx = rx * PATH_KAPPA;
         auto hry = ry * PATH_KAPPA;
         pImpl->grow(10, 17);
-        pImpl->moveTo(x + w, y + ry);
+        pImpl->moveTo(x + rx, y);
+        pImpl->lineTo(x + w - rx, y);
+        pImpl->cubicTo(x + w - rx + hrx, y, x + w, y + ry - hry, x + w, y + ry);
         pImpl->lineTo(x + w, y + h - ry);
         pImpl->cubicTo(x + w, y + h - ry + hry, x + w - rx + hrx, y + h, x + w - rx, y + h);
         pImpl->lineTo(x + rx, y + h);
         pImpl->cubicTo(x + rx - hrx, y + h, x, y + h - ry + hry, x, y + h - ry);
         pImpl->lineTo(x, y + ry);
         pImpl->cubicTo(x, y + ry - hry, x + rx - hrx, y, x + rx, y);
-        pImpl->lineTo(x + w - rx, y);
-        pImpl->cubicTo(x + w - rx + hrx, y, x + w, y + ry - hry, x + w, y + ry);
         pImpl->close();
     }
 

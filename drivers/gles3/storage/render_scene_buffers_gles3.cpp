@@ -121,7 +121,7 @@ GLuint RenderSceneBuffersGLES3::_rt_get_cached_fbo(GLuint p_color, GLuint p_dept
 		msaa3d.cached_fbos.push_back(new_fbo);
 	}
 
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 #endif
 
 	return new_fbo.fbo;
@@ -265,7 +265,7 @@ void RenderSceneBuffersGLES3::_check_render_buffers() {
 		}
 
 		glBindTexture(texture_target, 0);
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 	}
 
 	if (msaa3d.mode != RS::VIEWPORT_MSAA_DISABLED) {
@@ -316,7 +316,7 @@ void RenderSceneBuffersGLES3::_check_render_buffers() {
 			}
 
 			glBindRenderbuffer(GL_RENDERBUFFER, 0);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 #if !defined(IOS_ENABLED) && !defined(WEB_ENABLED)
 		} else if (use_multiview && !config->rt_msaa_multiview_supported) {
 			// Render to texture extensions not supported? fall back to MSAA textures through GL_EXT_multiview_texture_multisample.
@@ -362,7 +362,7 @@ void RenderSceneBuffersGLES3::_check_render_buffers() {
 			}
 
 			glBindTexture(GL_TEXTURE_2D_MULTISAMPLE_ARRAY, 0);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 #endif
 #if defined(ANDROID_ENABLED) || defined(WEB_ENABLED) // Only supported on OpenGLES!
 		} else if (!use_internal_buffer) {
@@ -390,7 +390,7 @@ void RenderSceneBuffersGLES3::_check_render_buffers() {
 				WARN_PRINT("Could not create 3D MSAA framebuffer, status: " + texture_storage->get_framebuffer_error(status));
 			}
 
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 #endif
 		} else {
 			// HUH? how did we get here?
@@ -403,6 +403,13 @@ void RenderSceneBuffersGLES3::_check_render_buffers() {
 		msaa3d.samples = 1;
 		msaa3d.check_fbo_cache = false;
 	}
+}
+
+void RenderSceneBuffersGLES3::configure_for_probe(Size2i p_size) {
+	internal_size = p_size;
+	target_size = p_size;
+	scaling_3d_mode = RS::VIEWPORT_SCALING_3D_MODE_OFF;
+	view_count = 1;
 }
 
 void RenderSceneBuffersGLES3::_clear_msaa3d_buffers() {
@@ -531,7 +538,7 @@ void RenderSceneBuffersGLES3::check_backbuffer(bool p_need_color, bool p_need_de
 	}
 
 	glBindTexture(texture_target, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 }
 
 void RenderSceneBuffersGLES3::_clear_back_buffers() {
@@ -570,8 +577,7 @@ void RenderSceneBuffersGLES3::check_glow_buffers() {
 	GLES3::TextureStorage *texture_storage = GLES3::TextureStorage::get_singleton();
 	Size2i level_size = internal_size;
 	for (int i = 0; i < 4; i++) {
-		level_size.x = MAX(level_size.x >> 1, 4);
-		level_size.y = MAX(level_size.y >> 1, 4);
+		level_size = Size2i(level_size.x >> 1, level_size.y >> 1).maxi(4);
 
 		glow.levels[i].size = level_size;
 
@@ -607,7 +613,7 @@ void RenderSceneBuffersGLES3::check_glow_buffers() {
 	}
 
 	glBindTexture(GL_TEXTURE_2D, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
 }
 
 void RenderSceneBuffersGLES3::_clear_glow_buffers() {

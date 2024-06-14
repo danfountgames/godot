@@ -73,7 +73,14 @@ Node *EditorSceneFormatImporterUFBX::import_scene(const String &p_path, uint32_t
 		int32_t enum_option = p_options["fbx/embedded_image_handling"];
 		state->set_handle_binary_image(enum_option);
 	}
+	if (p_options.has(SNAME("nodes/import_as_skeleton_bones")) ? (bool)p_options[SNAME("nodes/import_as_skeleton_bones")] : false) {
+		state->set_import_as_skeleton_bones(true);
+	}
+	if (p_options.has(SNAME("nodes/import_as_skeleton_bones")) ? (bool)p_options[SNAME("nodes/import_as_skeleton_bones")] : false) {
+		state->set_import_as_skeleton_bones(true);
+	}
 	p_flags |= EditorSceneFormatImporter::IMPORT_USE_NAMED_SKIN_BINDS;
+	state->set_bake_fps(p_options["animation/fps"]);
 	Error err = fbx->append_from_file(path, state, p_flags, p_path.get_base_dir());
 	if (err != OK) {
 		if (r_err) {
@@ -81,7 +88,7 @@ Node *EditorSceneFormatImporterUFBX::import_scene(const String &p_path, uint32_t
 		}
 		return nullptr;
 	}
-	return fbx->generate_scene(state, (float)p_options["animation/fps"], (bool)p_options["animation/trimming"], (bool)p_options["animation/remove_immutable_tracks"]);
+	return fbx->generate_scene(state, state->get_bake_fps(), (bool)p_options["animation/trimming"], false);
 }
 
 Variant EditorSceneFormatImporterUFBX::get_option_visibility(const String &p_path, bool p_for_animation,
@@ -105,7 +112,7 @@ void EditorSceneFormatImporterUFBX::get_import_options(const String &p_path,
 
 void EditorSceneFormatImporterUFBX::handle_compatibility_options(HashMap<StringName, Variant> &p_import_params) const {
 	if (!p_import_params.has("fbx/importer")) {
-		p_import_params["fbx/importer"] = EditorSceneFormatImporterUFBX::FBX_IMPORTER_UFBX;
+		p_import_params["fbx/importer"] = EditorSceneFormatImporterUFBX::FBX_IMPORTER_FBX2GLTF;
 	}
 }
 

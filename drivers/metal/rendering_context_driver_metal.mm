@@ -37,6 +37,12 @@
 #include "core/version.h"
 #include "servers/rendering/rendering_device.h"
 
+@protocol MTLDeviceEx <MTLDevice>
+#if TARGET_OS_OSX && __MAC_OS_X_VERSION_MAX_ALLOWED < 130300
+- (void)setShouldMaximizeConcurrentCompilation:(BOOL)v;
+#endif
+@end
+
 RenderingContextDriverMetal::RenderingContextDriverMetal() {
 }
 
@@ -45,8 +51,14 @@ RenderingContextDriverMetal::~RenderingContextDriverMetal() {
 
 Error RenderingContextDriverMetal::initialize() {
 	id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+#if TARGET_OS_OSX
+	if (@available(macOS 13.3, *)) {
+		[id<MTLDeviceEx>(dev) setShouldMaximizeConcurrentCompilation:YES];
+	}
+#endif
 	device.type = DEVICE_TYPE_INTEGRATED_GPU;
 	device.vendor = VENDOR_APPLE;
+	device.workarounds = Workarounds();
 
 	MetalDeviceProperties props(dev);
 	int version = (int)props.features.highestFamily - (int)MTLGPUFamilyApple1 + 1;
@@ -80,11 +92,7 @@ RenderingContextDriver::SurfaceID RenderingContextDriverMetal::surface_create(co
 	metal_layer.allowsNextDrawableTimeout = YES;
 	metal_layer.framebufferOnly = YES;
 	metal_layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
-	metal_layer.pixelFormat = MTLPixelFormatRGBA16Float;
-	metal_layer.wantsExtendedDynamicRangeContent = true;
-	CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
-	metal_layer.colorspace = colorSpace;
-	CFRelease(colorSpace);
+	metal_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
 
 	return SurfaceID(surface);
 }

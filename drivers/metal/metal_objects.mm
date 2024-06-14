@@ -49,8 +49,12 @@
 /**************************************************************************/
 
 #import "metal_objects.h"
+
 #import "pixel_formats.h"
 #import "rendering_device_driver_metal.h"
+
+using std::unique_lock;
+using std::lock_guard;
 
 void MDCommandBuffer::begin() {
 	DEV_ASSERT(commandBuffer == nil);
@@ -74,6 +78,7 @@ void MDCommandBuffer::commit() {
 	end();
 	[commandBuffer commit];
 	commandBuffer = nil;
+	query_pool = nil;
 }
 
 void MDCommandBuffer::bind_pipeline(RDD::PipelineID p_pipeline) {
@@ -145,16 +150,31 @@ void MDCommandBuffer::bind_pipeline(RDD::PipelineID p_pipeline) {
 		type = MDCommandBufferStateType::Compute;
 
 		compute.pipeline = (MDComputePipeline *)p;
+		// TODO(sgc): add sample buffer support
+		// MTLComputePassDescriptor *desc = MTLComputePassDescriptor.computePassDescriptor;
 		compute.encoder = commandBuffer.computeCommandEncoder;
 		[compute.encoder setComputePipelineState:compute.pipeline->state];
 	}
 }
 
-void MDCommandBuffer::mark_timestamp(id<MTLCounterSampleBuffer> p_buffer, uint32_t p_query_index) {
-	DEV_ASSERT(sample_buffer == nil);
+void MDCommandBuffer::timestamp_query_pool_reset(RDD::QueryPoolID p_pool_id, uint32_t p_query_count) {
+	DEV_ASSERT(query_pool == nil);
+	query_pool = (MDQueryPool *)(p_pool_id.id);
+	query_pool->reset(p_query_count);
+}
 
-	sample_buffer = p_buffer;
-	sample_buffer_query_index = p_query_index;
+void MDCommandBuffer::timestamp_write(RDD::QueryPoolID p_pool_id, uint32_t p_index) {
+	MDQueryPool *pool = (MDQueryPool *)(p_pool_id.id);
+	query_pool = pool; // keep track of the pool
+	sample_buffer = pool->get_sample_buffer();
+	sample_buffer_query_index = p_index;
+}
+
+void MDCommandBuffer::timestamp_commit() {
+	if (query_pool) {
+		query_pool->commit(this);
+		query_pool = nil;
+	}
 }
 
 id<MTLBlitCommandEncoder> MDCommandBuffer::blit_command_encoder() {
@@ -230,7 +250,7 @@ void MDCommandBuffer::render_clear_attachments(VectorView<RDD::AttachmentClear> 
 
 	Size2i size = render.frameBuffer->size;
 	Rect2i render_area = render.clip_to_render_area({ { 0, 0 }, size });
-	size = { render_area.position.x + render_area.size.width, render_area.position.y + render_area.size.height };
+	size = Size2i(render_area.position.x + render_area.size.width, render_area.position.y + render_area.size.height);
 	_populate_vertices(vertices, size, p_rects);
 
 	ClearAttKey key;
@@ -409,13 +429,14 @@ void MDCommandBuffer::_render_bind_uniform_sets() {
 		// clear the set bit
 		set_uniforms &= ~(1ULL << index);
 		MDUniformSet *set = render.uniform_sets[index];
-		if (set == nullptr || set->index >= (uint32_t)shader->sets.size())
+		if (set == nullptr || set->index >= (uint32_t)shader->sets.size()) {
 			continue;
+		}
 		UniformSet const &set_info = shader->sets[set->index];
 
 		BoundUniformSet &bus = set->boundUniformSetForShader(shader, device);
 
-		for (auto &keyval : bus.bound_resources) {
+		for (KeyValue<id<MTLResource>, StageResourceUsage> const &keyval : bus.bound_resources) {
 			MTLResourceUsage usage = resource_usage_for_stage(keyval.value, RDD::ShaderStage::SHADER_STAGE_VERTEX);
 			if (usage != 0) {
 				[enc useResource:keyval.key usage:usage stages:MTLRenderStageVertex];
@@ -577,8 +598,9 @@ void MDCommandBuffer::_render_clear_render_area() {
 		clears.push_back({ .aspect = bits, .color_attachment = ds_index, .value = render.clear_values[ds_index] });
 	}
 
-	if (clears.is_empty())
+	if (clears.is_empty()) {
 		return;
+	}
 
 	render_clear_attachments(clears, { render.render_area });
 }
@@ -661,10 +683,10 @@ void MDCommandBuffer::render_next_subpass() {
 		// TODO(sgc): should set this on the _last_ pass when the subpass count > 1
 		MTLRenderPassSampleBufferAttachmentDescriptor *sba = desc.sampleBufferAttachments[0];
 		sba.sampleBuffer = sample_buffer;
-		sba.startOfVertexSampleIndex = MTLCounterDontSample;
+		sba.startOfVertexSampleIndex = (sample_buffer_query_index * 2);
 		sba.endOfVertexSampleIndex = MTLCounterDontSample;
 		sba.startOfFragmentSampleIndex = MTLCounterDontSample;
-		sba.endOfFragmentSampleIndex = sample_buffer_query_index;
+		sba.endOfFragmentSampleIndex = (sample_buffer_query_index * 2) + 1;
 	}
 
 	if (attachmentCount == 0) {
@@ -819,7 +841,7 @@ void MDCommandBuffer::compute_bind_uniform_set(RDD::UniformSetID p_uniform_set, 
 	MDUniformSet *set = (MDUniformSet *)(p_uniform_set.id);
 	BoundUniformSet &bus = set->boundUniformSetForShader(shader, device);
 
-	for (auto &keyval : bus.bound_resources) {
+	for (KeyValue<id<MTLResource>, StageResourceUsage> &keyval : bus.bound_resources) {
 		MTLResourceUsage usage = resource_usage_for_stage(keyval.value, RDD::ShaderStage::SHADER_STAGE_COMPUTE);
 		if (usage != 0) {
 			[enc useResource:keyval.key usage:usage];
@@ -872,8 +894,9 @@ MDComputeShader::MDComputeShader(CharString p_name, Vector<UniformSet> p_sets, i
 
 void MDComputeShader::encode_push_constant_data(VectorView<uint32_t> p_data, MDCommandBuffer *p_cb) {
 	DEV_ASSERT(p_cb->type == MDCommandBufferStateType::Compute);
-	if (push_constants.binding == (uint32_t)-1)
+	if (push_constants.binding == (uint32_t)-1) {
 		return;
+	}
 
 	id<MTLComputeCommandEncoder> enc = p_cb->compute.encoder;
 
@@ -924,7 +947,7 @@ BoundUniformSet &MDUniformSet::boundUniformSetForShader(MDShader *p_shader, id<M
 	if (set.buffer_size > 0) {
 		MTLResourceOptions options = MTLResourceStorageModeShared | MTLResourceHazardTrackingModeTracked;
 		enc_buffer = [p_device newBufferWithLength:set.buffer_size options:options];
-		for (auto &kv : set.encoders) {
+		for (KeyValue<RDC::ShaderStage, id<MTLArgumentEncoder>> const &kv : set.encoders) {
 			RDD::ShaderStage const stage = kv.key;
 			ShaderStageUsage const stage_usage = ShaderStageUsage(1 << stage);
 			id<MTLArgumentEncoder> const enc = kv.value;
@@ -936,9 +959,10 @@ BoundUniformSet &MDUniformSet::boundUniformSetForShader(MDShader *p_shader, id<M
 				UniformInfo ui = set.uniforms[i];
 
 				BindingInfo *bi = ui.bindings.getptr(stage);
-				if (bi == nullptr)
-					// no binding for this stage
+				if (bi == nullptr) {
+					// No binding for this stage.
 					continue;
+				}
 
 				if ((ui.active_stages & stage_usage) == 0) {
 					// not active for this state, so don't bind anything
@@ -1175,7 +1199,7 @@ MDQueryPool *MDQueryPool::new_query_pool(id<MTLDevice> p_device, uint32_t p_quer
 
 	[p_device sampleTimestamps:&pool->cpuStart gpuTimestamp:&pool->gpuStart];
 
-	pool->sampleCount = p_query_count;
+	pool->sampleCount = p_query_count * 2; // we store the start and end timestamps to calculate the spans
 
 	for (id<MTLCounterSet> cs in p_device.counterSets) {
 		if ([cs.name isEqualToString:MTLCommonCounterSetTimestamp]) {
@@ -1189,13 +1213,14 @@ MDQueryPool *MDQueryPool::new_query_pool(id<MTLDevice> p_device, uint32_t p_quer
 		}
 	}
 
-	if (pool->counterSet == nil)
+	if (pool->counterSet == nil) {
 		return nil;
+	}
 
 	@autoreleasepool {
 		MTLCounterSampleBufferDescriptor *desc = [MTLCounterSampleBufferDescriptor new];
 		desc.counterSet = pool->counterSet;
-		desc.storageMode = MTLStorageModePrivate;
+		desc.storageMode = MTLStorageModeShared;
 		desc.sampleCount = pool->sampleCount;
 
 		pool->_counterSampleBuffer = [p_device newCounterSampleBufferWithDescriptor:desc error:p_error];
@@ -1210,35 +1235,38 @@ MDQueryPool *MDQueryPool::new_query_pool(id<MTLDevice> p_device, uint32_t p_quer
 	return pool.release();
 }
 
-void MDQueryPool::reset_with_command_buffer(RDD::CommandBufferID p_cmd_buffer, uint32_t p_query_count) {
-	MDCommandBuffer *cb = (MDCommandBuffer *)(p_cmd_buffer.id);
-	id<MTLBlitCommandEncoder> enc = cb->blit_command_encoder();
+void MDQueryPool::commit(MDCommandBuffer *p_cmd_buffer) {
+	id<MTLBlitCommandEncoder> enc = p_cmd_buffer->blit_command_encoder();
 	[enc resolveCounters:_counterSampleBuffer
-					  inRange:NSMakeRange(0, p_query_count)
+					  inRange:NSMakeRange(0, query_count * 2)
 			destinationBuffer:_buffer
 			destinationOffset:0];
+
+	[p_cmd_buffer->get_command_buffer() addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull) {
+		lock_guard lock(_results_lock);
+		_results_ready = true;
+		_results_cond.notify_all();
+	}];
 }
 
 void MDQueryPool::get_results(uint64_t *_Nonnull p_results, NSUInteger p_count) {
-	DEV_ASSERT(p_count <= sampleCount);
+	DEV_ASSERT(p_count <= sampleCount / 2);
+
+	unique_lock lock(_results_lock);
+	_results_cond.wait(lock, [this]{ return _results_ready; });
+
 	MTLCounterResultTimestamp *timestamps = (MTLCounterResultTimestamp *)_buffer.contents;
 	for (uint32_t i = 0; i < p_count; i++) {
-		MTLTimestamp timestamp = timestamps[i].timestamp;
+		MTLTimestamp start = timestamps[(i * 2) + 0].timestamp;
+		MTLTimestamp end   = timestamps[(i * 2) + 1].timestamp;
 
-		if (timestamp == MTLCounterErrorValue) {
+		if (start == MTLCounterErrorValue || end == MTLCounterErrorValue) {
 			return;
 		}
 
-		if (timestamp == 0) {
-			continue;
-		}
-		p_results[i] = timestamp - gpuStart;
+		MTLTimestamp span = end - start;
+		p_results[i] = span;
 	}
-}
-
-void MDQueryPool::write_command_buffer(RDD::CommandBufferID p_cmd_buffer, NSUInteger p_index) {
-	MDCommandBuffer *cb = (MDCommandBuffer *)(p_cmd_buffer.id);
-	cb->mark_timestamp(_counterSampleBuffer, p_index);
 }
 
 #pragma mark - Resource Factory
@@ -1435,7 +1463,7 @@ id<MTLRenderPipelineState> MDResourceFactory::new_clear_pipeline_state(ClearAttK
 }
 
 id<MTLRenderPipelineState> MDResourceCache::get_clear_render_pipeline_state(ClearAttKey &p_key, NSError **p_error) {
-	auto it = clear_states.find(p_key);
+	HashMap::ConstIterator it = clear_states.find(p_key);
 	if (it != clear_states.end()) {
 		return it->value;
 	}

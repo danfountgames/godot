@@ -30,6 +30,9 @@
 
 #import "view_controller.h"
 
+#import <AVFoundation/AVFoundation.h>
+#import <GameController/GameController.h>
+
 #import "display_server_ios.h"
 #import "godot_view.h"
 #import "godot_view_renderer.h"
@@ -38,9 +41,6 @@
 #import "os_ios.h"
 
 #include "core/config/project_settings.h"
-
-#import <AVFoundation/AVFoundation.h>
-#import <GameController/GameController.h>
 
 @interface ViewController () <GodotViewDelegate>
 
@@ -258,7 +258,11 @@
 		case DisplayServer::SCREEN_PORTRAIT:
 			return UIInterfaceOrientationMaskPortrait;
 		case DisplayServer::SCREEN_REVERSE_LANDSCAPE:
-			return UIInterfaceOrientationMaskLandscapeRight;
+			if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+				return UIInterfaceOrientationMaskLandscapeLeft;
+			} else {
+				return UIInterfaceOrientationMaskLandscapeRight;
+			}
 		case DisplayServer::SCREEN_REVERSE_PORTRAIT:
 			return UIInterfaceOrientationMaskPortraitUpsideDown;
 		case DisplayServer::SCREEN_SENSOR_LANDSCAPE:
@@ -268,7 +272,11 @@
 		case DisplayServer::SCREEN_SENSOR:
 			return UIInterfaceOrientationMaskAll;
 		case DisplayServer::SCREEN_LANDSCAPE:
-			return UIInterfaceOrientationMaskLandscapeLeft;
+			if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+				return UIInterfaceOrientationMaskLandscapeRight;
+			} else {
+				return UIInterfaceOrientationMaskLandscapeLeft;
+			}
 	}
 }
 

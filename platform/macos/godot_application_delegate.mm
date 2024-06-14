@@ -31,6 +31,7 @@
 #include "godot_application_delegate.h"
 
 #include "display_server_macos.h"
+#include "native_menu_macos.h"
 #include "os_macos.h"
 
 @implementation GodotApplicationDelegate
@@ -123,12 +124,17 @@
 	}
 }
 
+extern bool is_debugger_attached(void);
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notice {
 	NSString *nsappname = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleName"];
 	const char *bundled_id = getenv("__CFBundleIdentifier");
 	NSString *nsbundleid_env = [NSString stringWithUTF8String:(bundled_id != nullptr) ? bundled_id : ""];
 	NSString *nsbundleid = [[NSBundle mainBundle] bundleIdentifier];
 	if (nsappname == nil || isatty(STDOUT_FILENO) || isatty(STDIN_FILENO) || isatty(STDERR_FILENO) || ![nsbundleid isEqualToString:nsbundleid_env]) {
+#if DEV_ENABLED
+		if (!is_debugger_attached())
+#endif
 		// If the executable is started from terminal or is not bundled, macOS WindowServer won't register and activate app window correctly (menu and title bar are grayed out and input ignored).
 		[self performSelector:@selector(forceUnbundledWindowActivationHackStep1) withObject:nil afterDelay:0.02];
 	}
@@ -211,9 +217,9 @@
 }
 
 - (NSMenu *)applicationDockMenu:(NSApplication *)sender {
-	DisplayServerMacOS *ds = (DisplayServerMacOS *)DisplayServer::get_singleton();
-	if (ds) {
-		return ds->get_dock_menu();
+	if (NativeMenu::get_singleton()) {
+		NativeMenuMacOS *nmenu = (NativeMenuMacOS *)NativeMenu::get_singleton();
+		return nmenu->_get_dock_menu();
 	} else {
 		return nullptr;
 	}

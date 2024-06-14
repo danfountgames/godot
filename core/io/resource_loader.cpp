@@ -188,6 +188,8 @@ void ResourceFormatLoader::_bind_methods() {
 	BIND_ENUM_CONSTANT(CACHE_MODE_IGNORE);
 	BIND_ENUM_CONSTANT(CACHE_MODE_REUSE);
 	BIND_ENUM_CONSTANT(CACHE_MODE_REPLACE);
+	BIND_ENUM_CONSTANT(CACHE_MODE_IGNORE_DEEP);
+	BIND_ENUM_CONSTANT(CACHE_MODE_REPLACE_DEEP);
 
 	GDVIRTUAL_BIND(_get_recognized_extensions);
 	GDVIRTUAL_BIND(_recognize_path, "path", "type");
@@ -240,16 +242,20 @@ ResourceLoader::LoadToken::~LoadToken() {
 }
 
 Ref<Resource> ResourceLoader::_load(const String &p_path, const String &p_original_path, const String &p_type_hint, ResourceFormatLoader::CacheMode p_cache_mode, Error *r_error, bool p_use_sub_threads, float *r_progress) {
+	const String &original_path = p_original_path.is_empty() ? p_path : p_original_path;
 	load_nesting++;
 	if (load_paths_stack->size()) {
 		thread_load_mutex.lock();
-		HashMap<String, ThreadLoadTask>::Iterator E = thread_load_tasks.find(load_paths_stack->get(load_paths_stack->size() - 1));
-		if (E) {
+		const String &parent_task_path = load_paths_stack->get(load_paths_stack->size() - 1);
+		HashMap<String, ThreadLoadTask>::Iterator E = thread_load_tasks.find(parent_task_path);
+		// Avoid double-tracking, for progress reporting, resources that boil down to a remapped path containing the real payload (e.g., imported resources).
+		bool is_remapped_load = original_path == parent_task_path;
+		if (E && !is_remapped_load) {
 			E->value.sub_tasks.insert(p_original_path);
 		}
 		thread_load_mutex.unlock();
 	}
-	load_paths_stack->push_back(p_original_path);
+	load_paths_stack->push_back(original_path);
 
 	// Try all loaders and pick the first match for the type hint
 	bool found = false;
@@ -259,7 +265,7 @@ Ref<Resource> ResourceLoader::_load(const String &p_path, const String &p_origin
 			continue;
 		}
 		found = true;
-		res = loader[i]->load(p_path, !p_original_path.is_empty() ? p_original_path : p_path, r_error, p_use_sub_threads, r_progress, p_cache_mode);
+		res = loader[i]->load(p_path, original_path, r_error, p_use_sub_threads, r_progress, p_cache_mode);
 		if (!res.is_null()) {
 			break;
 		}
@@ -339,9 +345,11 @@ void ResourceLoader::_thread_load_function(void *p_userdata) {
 		load_task.cond_var = nullptr;
 	}
 
+	bool ignoring = load_task.cache_mode == ResourceFormatLoader::CACHE_MODE_IGNORE || load_task.cache_mode == ResourceFormatLoader::CACHE_MODE_IGNORE_DEEP;
+	bool replacing = load_task.cache_mode == ResourceFormatLoader::CACHE_MODE_REPLACE || load_task.cache_mode == ResourceFormatLoader::CACHE_MODE_REPLACE_DEEP;
 	if (load_task.resource.is_valid()) {
-		if (load_task.cache_mode != ResourceFormatLoader::CACHE_MODE_IGNORE) {
-			if (load_task.cache_mode == ResourceFormatLoader::CACHE_MODE_REPLACE) {
+		if (!ignoring) {
+			if (replacing) {
 				Ref<Resource> old_res = ResourceCache::get_ref(load_task.local_path);
 				if (old_res.is_valid() && old_res != load_task.resource) {
 					// If resource is already loaded, only replace its data, to avoid existing invalidating instances.
@@ -349,8 +357,8 @@ void ResourceLoader::_thread_load_function(void *p_userdata) {
 					load_task.resource = old_res;
 				}
 			}
-			load_task.resource->set_path(load_task.local_path, load_task.cache_mode == ResourceFormatLoader::CACHE_MODE_REPLACE);
-		} else if (!load_task.local_path.is_resource_file()) {
+			load_task.resource->set_path(load_task.local_path, replacing);
+		} else {
 			load_task.resource->set_path_cache(load_task.local_path);
 		}
 
@@ -370,7 +378,7 @@ void ResourceLoader::_thread_load_function(void *p_userdata) {
 		if (_loaded_callback) {
 			_loaded_callback(load_task.resource, load_task.local_path);
 		}
-	} else if (load_task.cache_mode != ResourceFormatLoader::CACHE_MODE_IGNORE) {
+	} else if (!ignoring) {
 		Ref<Resource> existing = ResourceCache::get_ref(load_task.local_path);
 		if (existing.is_valid()) {
 			load_task.resource = existing;
@@ -398,7 +406,7 @@ static String _validate_local_path(const String &p_path) {
 	if (uid != ResourceUID::INVALID_ID) {
 		return ResourceUID::get_singleton()->get_id_path(uid);
 	} else if (p_path.is_relative_path()) {
-		return "res://" + p_path;
+		return ("res://" + p_path).simplify_path();
 	} else {
 		return ProjectSettings::get_singleton()->localize_path(p_path);
 	}
@@ -1031,8 +1039,9 @@ void ResourceLoader::load_translation_remaps() {
 		Array langs = remaps[E];
 		Vector<String> lang_remaps;
 		lang_remaps.resize(langs.size());
-		for (int i = 0; i < langs.size(); i++) {
-			lang_remaps.write[i] = langs[i];
+		String *lang_remaps_ptrw = lang_remaps.ptrw();
+		for (const Variant &lang : langs) {
+			*lang_remaps_ptrw++ = lang;
 		}
 
 		translation_remaps[String(E)] = lang_remaps;

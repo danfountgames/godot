@@ -85,7 +85,7 @@ public:
 
 	virtual void alert(const String &p_alert, const String &p_title = "ALERT!") override;
 
-	virtual Error open_dynamic_library(const String &p_path, void *&p_library_handle, bool p_also_set_library_path = false, String *r_resolved_path = nullptr) override;
+	virtual Error open_dynamic_library(const String &p_path, void *&p_library_handle, GDExtensionData *p_data = nullptr) override;
 
 	virtual MainLoop *get_main_loop() const override;
 
@@ -116,6 +116,10 @@ public:
 	virtual bool is_sandboxed() const override;
 	virtual Vector<String> get_granted_permissions() const override;
 	virtual void revoke_granted_permissions() override;
+
+#ifdef TOOLS_ENABLED
+	virtual void wait_for_debugger(uint32_t p_msec) override;
+#endif
 
 	virtual bool _check_internal_feature_support(const String &p_feature) override;
 

@@ -312,6 +312,9 @@ msgstr "Dispositivo per il Rendering"
 msgid "V-Sync"
 msgstr "Sincronizzazione Verticale"
 
+msgid "Enable"
+msgstr "Abilita"
+
 msgid "Vulkan"
 msgstr "Vulkan"
 
@@ -522,9 +525,6 @@ msgstr "Valore"
 msgid "Arg Count"
 msgstr "Quantità Argomenti"
 
-msgid "Args"
-msgstr "Argomenti"
-
 msgid "Type"
 msgstr "Tipo"
 
@@ -590,6 +590,12 @@ msgstr "Tasti"
 
 msgid "Distraction Free Mode"
 msgstr "Modalità senza distrazioni"
+
+msgid "Theme"
+msgstr "Tema"
+
+msgid "Line Spacing"
+msgstr "Spaziatura Linee"
 
 msgid "Base Type"
 msgstr "Tipo di Base"
@@ -672,9 +678,6 @@ msgstr "Modifica Tipi di Vettori Orizzontali"
 msgid "Default Color Picker Mode"
 msgstr "Modalità di Scelta Colore Predefinita"
 
-msgid "Theme"
-msgstr "Tema"
-
 msgid "Preset"
 msgstr "Preimpostazione"
 
@@ -705,9 +708,6 @@ msgstr "Schede di Scena"
 msgid "Show Script Button"
 msgstr "Mostra Pulsante di Script"
 
-msgid "Enable"
-msgstr "Abilita"
-
 msgid "Directories"
 msgstr "Cartelle"
 
@@ -737,9 +737,6 @@ msgstr "Dimensione della Miniatura"
 
 msgid "Import"
 msgstr "Importa"
-
-msgid "FBX"
-msgstr "FBX"
 
 msgid "Tools"
 msgstr "Strumenti"
@@ -818,9 +815,6 @@ msgstr "Disegna Tabs"
 
 msgid "Draw Spaces"
 msgstr "Disegna Spazi"
-
-msgid "Line Spacing"
-msgstr "Spaziatura Linee"
 
 msgid "Navigation"
 msgstr "Navigazione"
@@ -1449,9 +1443,6 @@ msgstr "Modalità Importazione"
 msgid "Trim Alpha Border From Region"
 msgstr "Accorcia Bordo Alfa Da Regione"
 
-msgid "Force"
-msgstr "Forza"
-
 msgid "8 Bit"
 msgstr "8 Bit"
 
@@ -1778,6 +1769,9 @@ msgstr "Percorsi Uniti"
 
 msgid "CSG"
 msgstr "CSG"
+
+msgid "FBX"
+msgstr "FBX"
 
 msgid "GDScript"
 msgstr "GDScript"
@@ -2532,9 +2526,6 @@ msgstr "Windows"
 msgid "Frame"
 msgstr "Fotogramma"
 
-msgid "Point"
-msgstr "Punto"
-
 msgid "Left"
 msgstr "Sinistra"
 
@@ -2552,9 +2543,6 @@ msgstr "Verticale Abilitato"
 
 msgid "Tweaks"
 msgstr "Ritocchi"
-
-msgid "Input"
-msgstr "Input"
 
 msgid "Time"
 msgstr "Tempo"
@@ -2592,17 +2580,29 @@ msgstr "Multimesh"
 msgid "Navigation Layers"
 msgstr "Livelli Navigazione"
 
+msgid "Repeat"
+msgstr "Ripeti"
+
+msgid "End"
+msgstr "Fine"
+
 msgid "Scroll"
 msgstr "Scorrere"
 
 msgid "Progress"
 msgstr "Avanzamento"
 
-msgid "Linear"
-msgstr "Lineare"
+msgid "Point"
+msgstr "Punto"
 
 msgid "Max Angle"
 msgstr "Angolo Max"
+
+msgid "Input"
+msgstr "Input"
+
+msgid "Linear"
+msgstr "Lineare"
 
 msgid "UV"
 msgstr "UV"
@@ -2634,9 +2634,6 @@ msgstr "Gradi"
 msgid "Modulate"
 msgstr "Modula"
 
-msgid "End"
-msgstr "Fine"
-
 msgid "Flags"
 msgstr "Flags"
 
@@ -2661,6 +2658,12 @@ msgstr "Qualità"
 msgid "Subdiv"
 msgstr "Subdiv"
 
+msgid "Wheel"
+msgstr "Rotellina"
+
+msgid "Travel"
+msgstr "Spostamento"
+
 msgid "Bones"
 msgstr "Ossa"
 
@@ -2669,12 +2672,6 @@ msgstr "Target"
 
 msgid "Simulation Precision"
 msgstr "Precisione Simulazione"
-
-msgid "Wheel"
-msgstr "Rotellina"
-
-msgid "Travel"
-msgstr "Spostamento"
 
 msgid "Pose"
 msgstr "Posa"
@@ -2826,9 +2823,6 @@ msgstr "Espandi"
 msgid "Z Index"
 msgstr "Indice Z"
 
-msgid "Repeat"
-msgstr "Ripeti"
-
 msgid "Timeout"
 msgstr "Timeout"
 
@@ -2859,14 +2853,35 @@ msgstr "Fisica 2D"
 msgid "3D Physics"
 msgstr "Fisica 3D"
 
+msgid "Parsed Geometry Type"
+msgstr "Tipo di Geometria Analizzata"
+
+msgid "B"
+msgstr "B"
+
+msgid "Transpose"
+msgstr "Trasponi"
+
+msgid "Item"
+msgstr "Elemento"
+
+msgid "Preview"
+msgstr "Anteprima"
+
+msgid "Sky"
+msgstr "Cielo"
+
+msgid "Ground Color"
+msgstr "Colore del terreno"
+
+msgid "Fallback Environment"
+msgstr "Ambiente di ripiego"
+
 msgid "Atlas"
 msgstr "Atlas"
 
 msgid "Format"
 msgstr "Formato"
-
-msgid "Sky"
-msgstr "Cielo"
 
 msgid "Ambient Light"
 msgstr "Luce Ambientale"
@@ -2919,26 +2934,11 @@ msgstr "Occlusione ambientale"
 msgid "Subsurface Scattering"
 msgstr "Subsurface Scattering"
 
-msgid "Item"
-msgstr "Elemento"
-
-msgid "Preview"
-msgstr "Anteprima"
-
 msgid "Image Size"
 msgstr "Dimensione Immagine"
 
 msgid "Transform Format"
 msgstr "Formato Trasformazione"
-
-msgid "Parsed Geometry Type"
-msgstr "Tipo di Geometria Analizzata"
-
-msgid "B"
-msgstr "B"
-
-msgid "Ground Color"
-msgstr "Colore del terreno"
 
 msgid "Blend"
 msgstr "Fondi"
@@ -2955,9 +2955,6 @@ msgstr "In Basso A Destra"
 msgid "Bottom Left"
 msgstr "In Basso A Sinistra"
 
-msgid "Transpose"
-msgstr "Trasponi"
-
 msgid "File"
 msgstr "File"
 
@@ -2972,9 +2969,6 @@ msgstr "Usa tutte le superfici"
 
 msgid "Surface Index"
 msgstr "Indice di superficie"
-
-msgid "Fallback Environment"
-msgstr "Ambiente di ripiego"
 
 msgid "Clear"
 msgstr "Rimuovi tutto"

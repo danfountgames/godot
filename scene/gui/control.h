@@ -47,6 +47,10 @@ class ThemeContext;
 class Control : public CanvasItem {
 	GDCLASS(Control, CanvasItem);
 
+#ifdef TOOLS_ENABLED
+	bool saving = false;
+#endif
+
 public:
 	enum Anchor {
 		ANCHOR_BEGIN = 0,
@@ -410,8 +414,10 @@ public:
 
 	static void set_root_layout_direction(int p_root_dir);
 
-	virtual void get_argument_options(const StringName &p_function, int p_idx, List<String> *r_options) const override;
 	PackedStringArray get_configuration_warnings() const override;
+#ifdef TOOLS_ENABLED
+	virtual void get_argument_options(const StringName &p_function, int p_idx, List<String> *r_options) const override;
+#endif
 
 	virtual bool is_text_field() const;
 
