@@ -430,18 +430,34 @@ vec3 screen_space_dither(vec2 frag_coord) {
 }
 
 void main() {
+
+
+
+    float fish_eye_intensity = 0.5;
+	vec2 uv_zeroed = (uv_interp - vec2(0.5,0.5));
+	vec2 uv_fish_eye;
+    uv_fish_eye.x = (1.0 - uv_zeroed.y*uv_zeroed.y) * fish_eye_intensity * uv_zeroed.x * 0.1;
+    uv_fish_eye.y = (1.0 - uv_zeroed.x*uv_zeroed.x) * fish_eye_intensity * uv_zeroed.y * 0.1;
+    
+	vec2 uv_warped = uv_interp - uv_fish_eye;
+
+
 #ifdef SUBPASS
 	// SUBPASS and USE_MULTIVIEW can be combined but in that case we're already reading from the correct layer
 	vec4 color = subpassLoad(input_color);
 #elif defined(USE_MULTIVIEW)
-	vec4 color = textureLod(source_color, vec3(uv_interp, ViewIndex), 0.0f);
+	vec4 color = textureLod(source_color, vec3(uv_warped, ViewIndex), 0.0f);
 #else
-	vec4 color = textureLod(source_color, uv_interp, 0.0f);
+    
+	float color_r = textureLod(source_color, uv_warped + uv_fish_eye * 0.1, 0.0f).r;
+	vec3 color_rgba = textureLod(source_color, uv_warped, 0.0f).gba;
+	vec4 color = vec4(color_r,color_rgba);
+
+	//vec4 color = textureLod(source_color, uv_warped, 0.0f);
 #endif
 	color.rgb *= params.luminance_multiplier;
 
 	// Exposure
-
 	float exposure = params.exposure;
 
 #ifndef SUBPASS
@@ -456,13 +472,13 @@ void main() {
 #ifndef SUBPASS
 	if (bool(params.flags & FLAG_USE_FXAA)) {
 		// FXAA must be performed before glow to preserve the "bleed" effect of glow.
-		color.rgb = do_fxaa(color.rgb, exposure, uv_interp);
+		color.rgb = do_fxaa(color.rgb, exposure, uv_warped);
 	}
 
 	if (bool(params.flags & FLAG_USE_GLOW) && params.glow_mode == GLOW_MODE_MIX) {
-		vec3 glow = gather_glow(source_glow, uv_interp) * params.luminance_multiplier;
+		vec3 glow = gather_glow(source_glow, uv_warped) * params.luminance_multiplier;
 		if (params.glow_map_strength > 0.001) {
-			glow = mix(glow, texture(glow_map, uv_interp).rgb * glow, params.glow_map_strength);
+			glow = mix(glow, texture(glow_map, uv_warped).rgb * glow, params.glow_map_strength);
 		}
 		color.rgb = mix(color.rgb, glow, params.glow_intensity);
 	}
@@ -476,9 +492,9 @@ void main() {
 #ifndef SUBPASS
 	// Glow
 	if (bool(params.flags & FLAG_USE_GLOW) && params.glow_mode != GLOW_MODE_MIX) {
-		vec3 glow = gather_glow(source_glow, uv_interp) * params.glow_intensity * params.luminance_multiplier;
+		vec3 glow = gather_glow(source_glow, uv_warped) * params.glow_intensity * params.luminance_multiplier;
 		if (params.glow_map_strength > 0.001) {
-			glow = mix(glow, texture(glow_map, uv_interp).rgb * glow, params.glow_map_strength);
+			glow = mix(glow, texture(glow_map, uv_warped).rgb * glow, params.glow_map_strength);
 		}
 
 		// high dynamic range -> SRGB
@@ -506,6 +522,13 @@ void main() {
 		// Otherwise, we're adding noise to an already-quantized image.
 		color.rgb += screen_space_dither(gl_FragCoord.xy);
 	}
+
+
+
+	// Vignetting
+    float uv_mag_squared = dot(uv_zeroed,uv_zeroed);
+    float vignette = 1.0 - uv_mag_squared * fish_eye_intensity * 4.;
+    color *= vignette;
 
 	frag_color = color;
 }
