@@ -59,6 +59,7 @@ using std::lock_guard;
 void MDCommandBuffer::begin() {
 	DEV_ASSERT(commandBuffer == nil);
 	commandBuffer = queue.commandBuffer;
+	query_pool = nil;
 }
 
 void MDCommandBuffer::end() {
@@ -158,6 +159,7 @@ void MDCommandBuffer::bind_pipeline(RDD::PipelineID p_pipeline) {
 }
 
 void MDCommandBuffer::timestamp_query_pool_reset(RDD::QueryPoolID p_pool_id, uint32_t p_query_count) {
+	timestamp_commit();
 	DEV_ASSERT(query_pool == nil);
 	query_pool = (MDQueryPool *)(p_pool_id.id);
 	query_pool->reset(p_query_count);

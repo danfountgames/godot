@@ -92,7 +92,11 @@ RenderingContextDriver::SurfaceID RenderingContextDriverMetal::surface_create(co
 	metal_layer.allowsNextDrawableTimeout = YES;
 	metal_layer.framebufferOnly = YES;
 	metal_layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
-	metal_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+	metal_layer.pixelFormat = MTLPixelFormatRGBA16Float;
+	metal_layer.wantsExtendedDynamicRangeContent = true;
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+	metal_layer.colorspace = colorSpace;
+	CFRelease(colorSpace);
 
 	return SurfaceID(surface);
 }

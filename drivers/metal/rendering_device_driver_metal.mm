@@ -610,6 +610,11 @@ BitField<RDD::TextureUsageBits> RenderingDeviceDriverMetal::texture_get_usages_s
 	return supported;
 }
 
+bool RenderingDeviceDriverMetal::texture_can_make_shared_with_format(TextureID p_texture, DataFormat p_format, bool &r_raw_reinterpretation) {
+	r_raw_reinterpretation = false;
+	return false;
+}
+
 #pragma mark - Sampler
 
 const MTLCompareFunction RenderingDeviceDriverMetal::compare_operators[RD::COMPARE_OP_MAX] = {
