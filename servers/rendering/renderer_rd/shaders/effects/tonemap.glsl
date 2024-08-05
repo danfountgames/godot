@@ -449,11 +449,7 @@ void main() {
 	vec4 color = textureLod(source_color, vec3(uv_warped, ViewIndex), 0.0f);
 #else
     
-	float color_r = textureLod(source_color, uv_warped + uv_fish_eye * 0.1, 0.0f).r;
-	vec3 color_rgba = textureLod(source_color, uv_warped, 0.0f).gba;
-	vec4 color = vec4(color_r,color_rgba);
-
-	//vec4 color = textureLod(source_color, uv_warped, 0.0f);
+	vec4 color = textureLod(source_color, uv_warped, 0.0f);
 #endif
 	color.rgb *= params.luminance_multiplier;
 
