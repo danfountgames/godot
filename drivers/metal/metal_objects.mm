@@ -56,7 +56,6 @@
 void MDCommandBuffer::begin() {
 	DEV_ASSERT(commandBuffer == nil);
 	commandBuffer = queue.commandBuffer;
-	query_pool = nil;
 }
 
 void MDCommandBuffer::end() {

@@ -508,7 +508,7 @@ class RendererCanvasRenderRD : public RendererCanvasRender {
 	void _render_batch(RD::DrawListID p_draw_list, PipelineVariants *p_pipeline_variants, RenderingDevice::FramebufferFormatID p_framebuffer_format, Light *p_lights, Batch const *p_batch, RenderingMethod::RenderInfo *r_render_info = nullptr);
 	void _prepare_batch_texture(Batch *p_current_batch, RID p_texture, bool p_use_linear_colors) const;
 	void _bind_canvas_texture(RD::DrawListID p_draw_list, RID p_uniform_set);
-	_NO_DISCARD_ Batch *_new_batch(bool &r_batch_broken);
+	Batch *_new_batch(bool &r_batch_broken);
 	void _add_to_batch(uint32_t &r_index, bool &r_batch_broken, Batch *&r_current_batch);
 	void _allocate_instance_buffer();
 
