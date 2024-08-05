@@ -1,11 +1,11 @@
 scons --clean
 scons platform=ios target=template_debug metal=True arch=arm64 vulkan=False debug_symbols=yes
-scons --clean
-scons platform=ios target=template_release metal=True arch=arm64 vulkan=False
-scons --clean
-scons platform=ios target=template_debug ios_simulator=yes arch=arm64 metal=True vulkan=False debug_symbols=yes
-scons --clean
-scons platform=ios target=template_release ios_simulator=yes arch=arm64 metal=True vulkan=False
+#scons --clean
+#scons platform=ios target=template_release metal=True arch=arm64 vulkan=False
+#scons --clean
+#scons platform=ios target=template_debug ios_simulator=yes arch=arm64 metal=True vulkan=False debug_symbols=yes
+#scons --clean
+#scons platform=ios target=template_release ios_simulator=yes arch=arm64 metal=True vulkan=False
 
 mkdir -p templates
 rm -rf templates/ios
