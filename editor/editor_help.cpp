@@ -3735,6 +3735,7 @@ EditorHelpBit::EditorHelpBit(const String &p_symbol) {
 
 	title = memnew(RichTextLabel);
 	title->set_theme_type_variation("EditorHelpBitTitle");
+	title->set_custom_minimum_size(Size2(512 * EDSCALE, 0)); // GH-93031. Set the minimum width even if `fit_content` is true.
 	title->set_fit_content(true);
 	title->set_selection_enabled(true);
 	//title->set_context_menu_enabled(true); // TODO: Fix opening context menu hides tooltip.
@@ -3760,11 +3761,24 @@ EditorHelpBit::EditorHelpBit(const String &p_symbol) {
 
 /// EditorHelpBitTooltip ///
 
+void EditorHelpBitTooltip::_start_timer() {
+	if (timer->is_inside_tree() && timer->is_stopped()) {
+		timer->start();
+	}
+}
+
 void EditorHelpBitTooltip::_safe_queue_free() {
 	if (_pushing_input > 0) {
 		_need_free = true;
 	} else {
 		queue_free();
+	}
+}
+
+void EditorHelpBitTooltip::_target_gui_input(const Ref<InputEvent> &p_event) {
+	const Ref<InputEventMouse> mouse_event = p_event;
+	if (mouse_event.is_valid()) {
+		_start_timer();
 	}
 }
 
@@ -3774,7 +3788,7 @@ void EditorHelpBitTooltip::_notification(int p_what) {
 			timer->stop();
 			break;
 		case NOTIFICATION_WM_MOUSE_EXIT:
-			timer->start();
+			_start_timer();
 			break;
 	}
 }
@@ -3782,7 +3796,7 @@ void EditorHelpBitTooltip::_notification(int p_what) {
 // Forwards non-mouse input to the parent viewport.
 void EditorHelpBitTooltip::_input_from_window(const Ref<InputEvent> &p_event) {
 	if (p_event->is_action_pressed(SNAME("ui_cancel"), false, true)) {
-		hide(); // Will be deleted on its timer.
+		_safe_queue_free();
 	} else {
 		const Ref<InputEventMouse> mouse_event = p_event;
 		if (mouse_event.is_null()) {
@@ -3800,7 +3814,7 @@ void EditorHelpBitTooltip::_input_from_window(const Ref<InputEvent> &p_event) {
 void EditorHelpBitTooltip::show_tooltip(EditorHelpBit *p_help_bit, Control *p_target) {
 	ERR_FAIL_NULL(p_help_bit);
 	EditorHelpBitTooltip *tooltip = memnew(EditorHelpBitTooltip(p_target));
-	p_help_bit->connect("request_hide", callable_mp(static_cast<Window *>(tooltip), &Window::hide)); // Will be deleted on its timer.
+	p_help_bit->connect("request_hide", callable_mp(tooltip, &EditorHelpBitTooltip::_safe_queue_free));
 	tooltip->add_child(p_help_bit);
 	p_target->get_viewport()->add_child(tooltip);
 	p_help_bit->update_content_height();
@@ -3857,8 +3871,8 @@ EditorHelpBitTooltip::EditorHelpBitTooltip(Control *p_target) {
 	add_child(timer);
 
 	ERR_FAIL_NULL(p_target);
-	p_target->connect(SceneStringName(mouse_entered), callable_mp(timer, &Timer::stop));
-	p_target->connect(SceneStringName(mouse_exited), callable_mp(timer, &Timer::start).bind(-1));
+	p_target->connect(SceneStringName(mouse_exited), callable_mp(this, &EditorHelpBitTooltip::_start_timer));
+	p_target->connect(SceneStringName(gui_input), callable_mp(this, &EditorHelpBitTooltip::_target_gui_input));
 }
 
 #if defined(MODULE_GDSCRIPT_ENABLED) || defined(MODULE_MONO_ENABLED)
@@ -3968,12 +3982,12 @@ void EditorHelpHighlighter::reset_cache() {
 
 #ifdef MODULE_GDSCRIPT_ENABLED
 	highlight_data_caches[LANGUAGE_GDSCRIPT].clear();
-	text_edits[LANGUAGE_GDSCRIPT]->add_theme_color_override("font_color", text_color);
+	text_edits[LANGUAGE_GDSCRIPT]->add_theme_color_override(SceneStringName(font_color), text_color);
 #endif
 
 #ifdef MODULE_MONO_ENABLED
 	highlight_data_caches[LANGUAGE_CSHARP].clear();
-	text_edits[LANGUAGE_CSHARP]->add_theme_color_override("font_color", text_color);
+	text_edits[LANGUAGE_CSHARP]->add_theme_color_override(SceneStringName(font_color), text_color);
 #endif
 }
 
@@ -3982,7 +3996,7 @@ EditorHelpHighlighter::EditorHelpHighlighter() {
 
 #ifdef MODULE_GDSCRIPT_ENABLED
 	TextEdit *gdscript_text_edit = memnew(TextEdit);
-	gdscript_text_edit->add_theme_color_override("font_color", text_color);
+	gdscript_text_edit->add_theme_color_override(SceneStringName(font_color), text_color);
 
 	Ref<GDScript> gdscript;
 	gdscript.instantiate();
@@ -3999,7 +4013,7 @@ EditorHelpHighlighter::EditorHelpHighlighter() {
 
 #ifdef MODULE_MONO_ENABLED
 	TextEdit *csharp_text_edit = memnew(TextEdit);
-	csharp_text_edit->add_theme_color_override("font_color", text_color);
+	csharp_text_edit->add_theme_color_override(SceneStringName(font_color), text_color);
 
 	// See GH-89610.
 	//Ref<CSharpScript> csharp;
@@ -4036,7 +4050,7 @@ FindBar::FindBar() {
 	add_child(search_text);
 	search_text->set_custom_minimum_size(Size2(100 * EDSCALE, 0));
 	search_text->set_h_size_flags(SIZE_EXPAND_FILL);
-	search_text->connect("text_changed", callable_mp(this, &FindBar::_search_text_changed));
+	search_text->connect(SceneStringName(text_changed), callable_mp(this, &FindBar::_search_text_changed));
 	search_text->connect("text_submitted", callable_mp(this, &FindBar::_search_text_submitted));
 
 	matches_label = memnew(Label);
@@ -4093,7 +4107,7 @@ void FindBar::_notification(int p_what) {
 			hide_button->set_texture_hover(get_editor_theme_icon(SNAME("Close")));
 			hide_button->set_texture_pressed(get_editor_theme_icon(SNAME("Close")));
 			hide_button->set_custom_minimum_size(hide_button->get_texture_normal()->get_size());
-			matches_label->add_theme_color_override("font_color", results_count > 0 ? get_theme_color(SNAME("font_color"), SNAME("Label")) : get_theme_color(SNAME("error_color"), EditorStringName(Editor)));
+			matches_label->add_theme_color_override(SceneStringName(font_color), results_count > 0 ? get_theme_color(SceneStringName(font_color), SNAME("Label")) : get_theme_color(SNAME("error_color"), EditorStringName(Editor)));
 		} break;
 
 		case NOTIFICATION_VISIBILITY_CHANGED: {
@@ -4161,7 +4175,7 @@ void FindBar::_update_matches_label() {
 	} else {
 		matches_label->show();
 
-		matches_label->add_theme_color_override("font_color", results_count > 0 ? get_theme_color(SNAME("font_color"), SNAME("Label")) : get_theme_color(SNAME("error_color"), EditorStringName(Editor)));
+		matches_label->add_theme_color_override(SceneStringName(font_color), results_count > 0 ? get_theme_color(SceneStringName(font_color), SNAME("Label")) : get_theme_color(SNAME("error_color"), EditorStringName(Editor)));
 		matches_label->set_text(vformat(results_count == 1 ? TTR("%d match.") : TTR("%d matches."), results_count));
 	}
 }

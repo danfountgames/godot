@@ -681,8 +681,8 @@ Collection of single-file libraries used in Godot components.
   * License: MIT
 - `qoa.h`
   * Upstream: https://github.com/phoboslab/qoa
-  * Version: git (e4c751d61af2c395ea828c5888e728c1953bf09f, 2024)
-  * Modifications: Inlined functions and patched compiler warnings.
+  * Version: git (5c2a86d615661f34636cf179abf4fa278d3257e0, 2024)
+  * Modifications: Inlined functions, patched uninitialized variables and untyped mallocs.
   * License: MIT
 - `r128.{c,h}`
   * Upstream: https://github.com/fahickman/r128
@@ -889,7 +889,7 @@ instead of `miniz.h` as an external dependency.
 ## thorvg
 
 - Upstream: https://github.com/thorvg/thorvg
-- Version: 0.13.3 (6235068cad8cad176ccd0cbcf82f25e985fbc258, 2024)
+- Version: 0.14.2 (f6c4d8a94e0b2194fe911d6e19a550683055dd50, 2024)
 - License: MIT
 
 Files extracted from upstream source:
@@ -1011,6 +1011,8 @@ Files extracted from upstream source:
 - `unstable/relative-pointer/relative-pointer-unstable-v1.xml`
 - `unstable/tablet/README`
 - `unstable/tablet/tablet-unstable-v2.xml`
+- `unstable/text-input/README`
+- `unstable/text-input/text-input-unstable-v3.xml`
 - `unstable/xdg-decoration/README`
 - `unstable/xdg-decoration/xdg-decoration-unstable-v1.xml`
 - `unstable/xdg-foreign/README`

@@ -51,14 +51,6 @@ class API_AVAILABLE(macos(11.0), ios(14.0)) RenderingDeviceDriverMetal : public 
 	template <typename T>
 	using Result = std::variant<T, Error>;
 
-	static const MTLTextureType texture_type[TEXTURE_TYPE_MAX];
-	static const MTLCompareFunction compare_operators[COMPARE_OP_MAX];
-	static const MTLStencilOperation stencil_operations[STENCIL_OP_MAX];
-	static const MTLBlendFactor blend_factors[BLEND_FACTOR_MAX];
-	static const MTLBlendOperation blend_operations[BLEND_OP_MAX];
-	static const MTLSamplerAddressMode address_modes[SAMPLER_REPEAT_MODE_MAX];
-	static const MTLSamplerBorderColor sampler_border_colors[SAMPLER_BORDER_COLOR_MAX];
-
 #pragma mark - Generic
 
 	RenderingContextDriverMetal *context_driver = nullptr;
@@ -197,10 +189,8 @@ public:
 
 private:
 	struct SwapChain {
-		CAMetalLayer *layer = nil;
 		RenderingContextDriver::SurfaceID surface = RenderingContextDriver::SurfaceID();
 		RenderPassID render_pass;
-		MDScreenFrameBuffer frame_buffer;
 		RDD::DataFormat data_format = DATA_FORMAT_MAX;
 		SwapChain() :
 				render_pass(nullptr) {}

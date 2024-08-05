@@ -63,9 +63,6 @@
 #import <simd/simd.h>
 #import <initializer_list>
 #import <optional>
-#import <mutex>
-#import <condition_variable>
-
 
 // These types can be used in Vector and other containers that use
 // pointer operations not supported by ARC.
@@ -114,7 +111,6 @@ class MDPipeline;
 class MDRenderPipeline;
 class MDComputePipeline;
 class MDFrameBuffer;
-class MDQueryPool;
 class RenderingDeviceDriverMetal;
 class MDUniformSet;
 class MDShader;
@@ -196,13 +192,9 @@ private:
 	RenderingDeviceDriverMetal *device_driver = nullptr;
 	id<MTLCommandQueue> queue = nil;
 	id<MTLCommandBuffer> commandBuffer = nil;
-	MDQueryPool *query_pool = nil; // if not nil, indicates timer queries are active for the current command buffer
 
 	void _end_compute_dispatch();
 	void _end_blit();
-
-	id<MTLCounterSampleBuffer> sample_buffer = nil;
-	uint32_t sample_buffer_query_index = 0;
 
 #pragma mark - Render
 
@@ -246,7 +238,7 @@ public:
 			DIRTY_SCISSOR  = 0b0010'0000, //! scissor rectangles
 			DIRTY_BLEND    = 0b0100'0000, //! blend state
 			DIRTY_RASTER   = 0b1000'0000, //! encoder state like cull mode
-			
+
 			DIRTY_ALL      = 0xff,
 		};
 		// clang-format on
@@ -375,10 +367,6 @@ public:
 		return commandBuffer;
 	}
 
-	_FORCE_INLINE_ MDQueryPool * get_query_pool() const {
-		return query_pool;
-	}
-
 	void begin();
 	void commit();
 	void end();
@@ -387,12 +375,6 @@ public:
 	void encodeRenderCommandEncoderWithDescriptor(MTLRenderPassDescriptor *p_desc, NSString *p_label);
 
 	void bind_pipeline(RDD::PipelineID p_pipeline);
-
-#pragma mark - Counters
-
-	void timestamp_query_pool_reset(RDD::QueryPoolID p_pool_id, uint32_t p_query_count);
-	void timestamp_write(RDD::QueryPoolID p_pool_id, uint32_t p_index);
-	void timestamp_commit();
 
 #pragma mark - Render Commands
 
@@ -516,10 +498,8 @@ struct API_AVAILABLE(macos(11.0), ios(14.0)) UniformSet {
 };
 
 class API_AVAILABLE(macos(11.0), ios(14.0)) MDShader {
-protected:
-	CharString name;
-
 public:
+	CharString name;
 	Vector<UniformSet> sets;
 
 	virtual void encode_push_constant_data(VectorView<uint32_t> p_data, MDCommandBuffer *p_cb) = 0;
@@ -819,68 +799,6 @@ public:
 	MDFrameBuffer() {}
 
 	virtual ~MDFrameBuffer() = default;
-};
-
-class API_AVAILABLE(macos(11.0), ios(14.0)) MDScreenFrameBuffer final : public MDFrameBuffer {
-public:
-	id<CAMetalDrawable> drawable;
-	MDScreenFrameBuffer() :
-			MDFrameBuffer() {
-		drawable = nil;
-		textures.resize(1);
-	}
-
-	void set_drawable_and_size(id<CAMetalDrawable> p_drawable, Size2i p_size) {
-		DEV_ASSERT(drawable == nil);
-		drawable = p_drawable;
-		size = p_size;
-		textures.write[0] = drawable.texture;
-	}
-
-	/*! reset removes the drawable and clears the textures */
-	void reset() {
-		drawable = nil;
-		textures.write[0] = nil;
-	}
-
-	~MDScreenFrameBuffer() final = default;
-};
-
-class API_AVAILABLE(macos(11.0), ios(14.0)) MDQueryPool {
-	// GPU counters
-	NSUInteger sampleCount = 0; // max sample count
-	uint32_t query_count = 0; // current query count
-	id<MTLCounterSet> counterSet = nil;
-	id<MTLCounterSampleBuffer> _counterSampleBuffer = nil;
-	id<MTLBuffer> _buffer = nil;
-	MTLTimestamp cpuStart = 0.0;
-	MTLTimestamp gpuStart = 0.0;
-	
-	std::mutex _results_lock;
-	std::condition_variable _results_cond;
-	bool _results_ready = false;
-
-public:
-	void reset(uint32_t p_query_count) {
-		{
-			std::lock_guard lock(_results_lock);
-			_results_ready = false;
-		}
-		query_count = p_query_count;
-	};
-	void commit(MDCommandBuffer *p_cmd_buffer);
-	void get_results(uint64_t *p_results, NSUInteger p_count);
-
-	id<MTLCounterSampleBuffer> get_sample_buffer() const {
-		return _counterSampleBuffer;
-	}
-
-	static MDQueryPool *new_query_pool(id<MTLDevice> p_device, uint32_t p_query_count, NSError **p_error);
-
-	~MDQueryPool() = default;
-
-private:
-	MDQueryPool() = default;
 };
 
 /// These functions are used to convert between Objective-C objects and

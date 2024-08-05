@@ -631,7 +631,7 @@ void Window::_make_window() {
 		window_rect = Rect2i(DisplayServer::get_singleton()->screen_get_position(DisplayServer::SCREEN_WITH_KEYBOARD_FOCUS) + (DisplayServer::get_singleton()->screen_get_size(DisplayServer::SCREEN_WITH_KEYBOARD_FOCUS) - size) / 2, size);
 	}
 
-	window_id = DisplayServer::get_singleton()->create_sub_window(DisplayServer::WindowMode(mode), vsync_mode, f, window_rect);
+	window_id = DisplayServer::get_singleton()->create_sub_window(DisplayServer::WindowMode(mode), vsync_mode, f, window_rect, is_in_edited_scene_root() ? false : exclusive, transient_parent ? transient_parent->window_id : DisplayServer::INVALID_WINDOW_ID);
 	ERR_FAIL_COND(window_id == DisplayServer::INVALID_WINDOW_ID);
 	DisplayServer::get_singleton()->window_set_max_size(Size2i(), window_id);
 	DisplayServer::get_singleton()->window_set_min_size(Size2i(), window_id);
@@ -639,17 +639,7 @@ void Window::_make_window() {
 	DisplayServer::get_singleton()->window_set_title(tr_title, window_id);
 	DisplayServer::get_singleton()->window_attach_instance_id(get_instance_id(), window_id);
 
-	if (is_in_edited_scene_root()) {
-		DisplayServer::get_singleton()->window_set_exclusive(window_id, false);
-	} else {
-		DisplayServer::get_singleton()->window_set_exclusive(window_id, exclusive);
-	}
-
 	_update_window_size();
-
-	if (transient_parent && transient_parent->window_id != DisplayServer::INVALID_WINDOW_ID) {
-		DisplayServer::get_singleton()->window_set_transient(window_id, transient_parent->window_id);
-	}
 
 	if (transient_parent) {
 		for (const Window *E : transient_children) {
@@ -738,6 +728,9 @@ void Window::_event_callback(DisplayServer::WindowEvent p_event) {
 				return;
 			}
 			Window *root = get_tree()->get_root();
+			if (mouse_in_window && root->gui.windowmanager_window_over == this) {
+				return;
+			}
 			if (root->gui.windowmanager_window_over) {
 #ifdef DEV_ENABLED
 				WARN_PRINT_ONCE("Entering a window while a window is hovered should never happen in DisplayServer.");
@@ -1354,6 +1347,10 @@ void Window::_notification(int p_what) {
 					_update_window_size(); // Inform DisplayServer of minimum and maximum size.
 					_update_viewport_size(); // Then feed back to the viewport.
 					_update_window_callbacks();
+					// Simulate mouse-enter event when mouse is over the window, since OS event might arrive before setting callbacks.
+					if (!mouse_in_window && Rect2(position, size).has_point(DisplayServer::get_singleton()->mouse_get_position())) {
+						_event_callback(DisplayServer::WINDOW_EVENT_MOUSE_ENTER);
+					}
 					RS::get_singleton()->viewport_set_update_mode(get_viewport_rid(), RS::VIEWPORT_UPDATE_WHEN_VISIBLE);
 					if (DisplayServer::get_singleton()->window_get_flag(DisplayServer::WindowFlags(FLAG_TRANSPARENT), window_id)) {
 						set_transparent_background(true);

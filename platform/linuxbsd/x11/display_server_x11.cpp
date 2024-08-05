@@ -139,8 +139,9 @@ bool DisplayServerX11::has_feature(Feature p_feature) const {
 #endif
 		case FEATURE_CLIPBOARD_PRIMARY:
 		case FEATURE_TEXT_TO_SPEECH:
-		case FEATURE_SCREEN_CAPTURE:
 			return true;
+		case FEATURE_SCREEN_CAPTURE:
+			return !xwayland;
 		default: {
 		}
 	}
@@ -1494,9 +1495,20 @@ int DisplayServerX11::screen_get_dpi(int p_screen) const {
 	return 96;
 }
 
+int get_image_errorhandler(Display *dpy, XErrorEvent *ev) {
+	return 0;
+}
+
 Color DisplayServerX11::screen_get_pixel(const Point2i &p_position) const {
 	Point2i pos = p_position;
 
+	if (xwayland) {
+		return Color();
+	}
+
+	int (*old_handler)(Display *, XErrorEvent *) = XSetErrorHandler(&get_image_errorhandler);
+
+	Color color;
 	int number_of_screens = XScreenCount(x11_display);
 	for (int i = 0; i < number_of_screens; i++) {
 		Window root = XRootWindow(x11_display, i);
@@ -1507,14 +1519,17 @@ Color DisplayServerX11::screen_get_pixel(const Point2i &p_position) const {
 			if (image) {
 				XColor c;
 				c.pixel = XGetPixel(image, 0, 0);
-				XFree(image);
+				XDestroyImage(image);
 				XQueryColor(x11_display, XDefaultColormap(x11_display, i), &c);
-				return Color(float(c.red) / 65535.0, float(c.green) / 65535.0, float(c.blue) / 65535.0, 1.0);
+				color = Color(float(c.red) / 65535.0, float(c.green) / 65535.0, float(c.blue) / 65535.0, 1.0);
+				break;
 			}
 		}
 	}
 
-	return Color();
+	XSetErrorHandler(old_handler);
+
+	return color;
 }
 
 Ref<Image> DisplayServerX11::screen_get_image(int p_screen) const {
@@ -1532,6 +1547,12 @@ Ref<Image> DisplayServerX11::screen_get_image(int p_screen) const {
 	}
 
 	ERR_FAIL_COND_V(p_screen < 0, Ref<Image>());
+
+	if (xwayland) {
+		return Ref<Image>();
+	}
+
+	int (*old_handler)(Display *, XErrorEvent *) = XSetErrorHandler(&get_image_errorhandler);
 
 	XImage *image = nullptr;
 
@@ -1575,6 +1596,8 @@ Ref<Image> DisplayServerX11::screen_get_image(int p_screen) const {
 		}
 	}
 
+	XSetErrorHandler(old_handler);
+
 	Ref<Image> img;
 	if (image) {
 		int width = image->width;
@@ -1614,11 +1637,12 @@ Ref<Image> DisplayServerX11::screen_get_image(int p_screen) const {
 				}
 			}
 		} else {
-			XFree(image);
-			ERR_FAIL_V_MSG(Ref<Image>(), vformat("XImage with RGB mask %x %x %x and depth %d is not supported.", (uint64_t)image->red_mask, (uint64_t)image->green_mask, (uint64_t)image->blue_mask, (int64_t)image->bits_per_pixel));
+			String msg = vformat("XImage with RGB mask %x %x %x and depth %d is not supported.", (uint64_t)image->red_mask, (uint64_t)image->green_mask, (uint64_t)image->blue_mask, (int64_t)image->bits_per_pixel);
+			XDestroyImage(image);
+			ERR_FAIL_V_MSG(Ref<Image>(), msg);
 		}
 		img = Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, img_data);
-		XFree(image);
+		XDestroyImage(image);
 	}
 
 	return img;
@@ -1711,7 +1735,7 @@ Vector<DisplayServer::WindowID> DisplayServerX11::get_window_list() const {
 	return ret;
 }
 
-DisplayServer::WindowID DisplayServerX11::create_sub_window(WindowMode p_mode, VSyncMode p_vsync_mode, uint32_t p_flags, const Rect2i &p_rect) {
+DisplayServer::WindowID DisplayServerX11::create_sub_window(WindowMode p_mode, VSyncMode p_vsync_mode, uint32_t p_flags, const Rect2i &p_rect, bool p_exclusive, WindowID p_transient_parent) {
 	_THREAD_SAFE_METHOD_
 
 	WindowID id = _create_window(p_mode, p_vsync_mode, p_flags, p_rect);
@@ -1725,6 +1749,11 @@ DisplayServer::WindowID DisplayServerX11::create_sub_window(WindowMode p_mode, V
 		rendering_device->screen_create(id);
 	}
 #endif
+
+	if (p_transient_parent != INVALID_WINDOW_ID) {
+		window_set_transient(id, p_transient_parent);
+	}
+
 	return id;
 }
 
@@ -3017,7 +3046,7 @@ void DisplayServerX11::window_set_ime_active(const bool p_active, WindowID p_win
 		XWindowAttributes xwa;
 		XSync(x11_display, False);
 		XGetWindowAttributes(x11_display, wd.x11_xim_window, &xwa);
-		if (xwa.map_state == IsViewable && _window_focus_check()) {
+		if (xwa.map_state == IsViewable) {
 			_set_input_focus(wd.x11_xim_window, RevertToParent);
 		}
 		XSetICFocus(wd.xic);
@@ -3108,8 +3137,7 @@ void DisplayServerX11::cursor_set_custom_image(const Ref<Resource> &p_cursor, Cu
 			cursors_cache.erase(p_shape);
 		}
 
-		Rect2 atlas_rect;
-		Ref<Image> image = _get_cursor_image_from_resource(p_cursor, p_hotspot, atlas_rect);
+		Ref<Image> image = _get_cursor_image_from_resource(p_cursor, p_hotspot);
 		ERR_FAIL_COND(image.is_null());
 		Vector2i texture_size = image->get_size();
 
@@ -3127,13 +3155,8 @@ void DisplayServerX11::cursor_set_custom_image(const Ref<Resource> &p_cursor, Cu
 		cursor_image->pixels = (XcursorPixel *)memalloc(size);
 
 		for (XcursorPixel index = 0; index < image_size; index++) {
-			int row_index = floor(index / texture_size.width) + atlas_rect.position.y;
-			int column_index = (index % int(texture_size.width)) + atlas_rect.position.x;
-
-			if (atlas_rect.has_area()) {
-				column_index = MIN(column_index, atlas_rect.size.width - 1);
-				row_index = MIN(row_index, atlas_rect.size.height - 1);
-			}
+			int row_index = floor(index / texture_size.width);
+			int column_index = index % int(texture_size.width);
 
 			*(cursor_image->pixels + index) = image->get_pixel(column_index, row_index).to_argb32();
 		}
@@ -4190,8 +4213,11 @@ void DisplayServerX11::popup_open(WindowID p_window) {
 		}
 	}
 
+	// Detect tooltips and other similar popups that shouldn't block input to their parent.
+	bool ignores_input = window_get_flag(WINDOW_FLAG_NO_FOCUS, p_window) && window_get_flag(WINDOW_FLAG_MOUSE_PASSTHROUGH, p_window);
+
 	WindowData &wd = windows[p_window];
-	if (wd.is_popup || has_popup_ancestor) {
+	if (wd.is_popup || (has_popup_ancestor && !ignores_input)) {
 		// Find current popup parent, or root popup if new window is not transient.
 		List<WindowID>::Element *C = nullptr;
 		List<WindowID>::Element *E = popup_list.back();
@@ -5818,6 +5844,8 @@ static ::XIMStyle _get_best_xim_style(const ::XIMStyle &p_style_a, const ::XIMSt
 DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, WindowMode p_mode, VSyncMode p_vsync_mode, uint32_t p_flags, const Vector2i *p_position, const Vector2i &p_resolution, int p_screen, Context p_context, Error &r_error) {
 	KeyMappingX11::initialize();
 
+	xwayland = OS::get_singleton()->get_environment("XDG_SESSION_TYPE").to_lower() == "wayland";
+
 	native_menu = memnew(NativeMenu);
 	context = p_context;
 
@@ -6240,7 +6268,14 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, WindowMode 
 #if defined(RD_ENABLED)
 	if (rendering_context) {
 		rendering_device = memnew(RenderingDevice);
-		rendering_device->initialize(rendering_context, MAIN_WINDOW_ID);
+		if (rendering_device->initialize(rendering_context, MAIN_WINDOW_ID) != OK) {
+			memdelete(rendering_device);
+			rendering_device = nullptr;
+			memdelete(rendering_context);
+			rendering_context = nullptr;
+			r_error = ERR_UNAVAILABLE;
+			return;
+		}
 		rendering_device->screen_create(MAIN_WINDOW_ID);
 
 		RendererCompositorRD::make_current();
