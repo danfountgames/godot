@@ -1333,13 +1333,15 @@ DisplayServer::WindowID DisplayServerWindows::create_sub_window(WindowMode p_mod
 		wd.is_popup = true;
 	}
 	if (p_flags & WINDOW_FLAG_TRANSPARENT_BIT) {
-		DWM_BLURBEHIND bb;
-		ZeroMemory(&bb, sizeof(bb));
-		HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
-		bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-		bb.hRgnBlur = hRgn;
-		bb.fEnable = TRUE;
-		DwmEnableBlurBehindWindow(wd.hWnd, &bb);
+		if (OS::get_singleton()->is_layered_allowed()) {
+			DWM_BLURBEHIND bb;
+			ZeroMemory(&bb, sizeof(bb));
+			HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
+			bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+			bb.hRgnBlur = hRgn;
+			bb.fEnable = TRUE;
+			DwmEnableBlurBehindWindow(wd.hWnd, &bb);
+		}
 
 		wd.layered_window = true;
 	}
@@ -2119,28 +2121,29 @@ void DisplayServerWindows::window_set_flag(WindowFlags p_flag, bool p_enabled, W
 		} break;
 		case WINDOW_FLAG_TRANSPARENT: {
 			if (p_enabled) {
-				//enable per-pixel alpha
-
-				DWM_BLURBEHIND bb;
-				ZeroMemory(&bb, sizeof(bb));
-				HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
-				bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-				bb.hRgnBlur = hRgn;
-				bb.fEnable = TRUE;
-				DwmEnableBlurBehindWindow(wd.hWnd, &bb);
-
+				// Enable per-pixel alpha.
+				if (OS::get_singleton()->is_layered_allowed()) {
+					DWM_BLURBEHIND bb;
+					ZeroMemory(&bb, sizeof(bb));
+					HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
+					bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+					bb.hRgnBlur = hRgn;
+					bb.fEnable = TRUE;
+					DwmEnableBlurBehindWindow(wd.hWnd, &bb);
+				}
 				wd.layered_window = true;
 			} else {
-				//disable per-pixel alpha
+				// Disable per-pixel alpha.
 				wd.layered_window = false;
-
-				DWM_BLURBEHIND bb;
-				ZeroMemory(&bb, sizeof(bb));
-				HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
-				bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-				bb.hRgnBlur = hRgn;
-				bb.fEnable = FALSE;
-				DwmEnableBlurBehindWindow(wd.hWnd, &bb);
+				if (OS::get_singleton()->is_layered_allowed()) {
+					DWM_BLURBEHIND bb;
+					ZeroMemory(&bb, sizeof(bb));
+					HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
+					bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+					bb.hRgnBlur = hRgn;
+					bb.fEnable = FALSE;
+					DwmEnableBlurBehindWindow(wd.hWnd, &bb);
+				}
 			}
 		} break;
 		case WINDOW_FLAG_NO_FOCUS: {
@@ -4250,6 +4253,16 @@ LRESULT DisplayServerWindows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 				break;
 			}
 
+			uint32_t pointer_id = LOWORD(wParam);
+			POINTER_INPUT_TYPE pointer_type = PT_POINTER;
+			if (!win8p_GetPointerType(pointer_id, &pointer_type)) {
+				break;
+			}
+
+			if (pointer_type != PT_PEN) {
+				break;
+			}
+
 			Ref<InputEventMouseButton> mb;
 			mb.instantiate();
 			mb->set_window_id(window_id);
@@ -4852,16 +4865,16 @@ LRESULT DisplayServerWindows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 					rect_changed = true;
 				}
 #if defined(RD_ENABLED)
-				if (rendering_context && window.context_created) {
+				if (window.create_completed && rendering_context && window.context_created) {
 					// Note: Trigger resize event to update swapchains when window is minimized/restored, even if size is not changed.
 					rendering_context->window_set_size(window_id, window.width, window.height);
 				}
 #endif
 #if defined(GLES3_ENABLED)
-				if (gl_manager_native) {
+				if (window.create_completed && gl_manager_native) {
 					gl_manager_native->window_resize(window_id, window.width, window.height);
 				}
-				if (gl_manager_angle) {
+				if (window.create_completed && gl_manager_angle) {
 					gl_manager_angle->window_resize(window_id, window.width, window.height);
 				}
 #endif
@@ -5378,13 +5391,15 @@ DisplayServer::WindowID DisplayServerWindows::_create_window(WindowMode p_mode, 
 	{
 		WindowData *wd_transient_parent = nullptr;
 		HWND owner_hwnd = nullptr;
-		if (p_transient_parent != INVALID_WINDOW_ID && !windows.has(p_transient_parent)) {
-			ERR_PRINT("Condition \"!windows.has(p_transient_parent)\" is true.");
-			p_transient_parent = INVALID_WINDOW_ID;
-		} else {
-			wd_transient_parent = &windows[p_transient_parent];
-			if (p_exclusive) {
-				owner_hwnd = wd_transient_parent->hWnd;
+		if (p_transient_parent != INVALID_WINDOW_ID) {
+			if (!windows.has(p_transient_parent)) {
+				ERR_PRINT("Condition \"!windows.has(p_transient_parent)\" is true.");
+				p_transient_parent = INVALID_WINDOW_ID;
+			} else {
+				wd_transient_parent = &windows[p_transient_parent];
+				if (p_exclusive) {
+					owner_hwnd = wd_transient_parent->hWnd;
+				}
 			}
 		}
 
@@ -5543,7 +5558,7 @@ DisplayServer::WindowID DisplayServerWindows::_create_window(WindowMode p_mode, 
 			PROPVARIANT val;
 			String appname;
 			if (Engine::get_singleton()->is_editor_hint()) {
-				appname = "Godot.GodotEditor." + String(VERSION_BRANCH);
+				appname = "Godot.GodotEditor." + String(VERSION_FULL_CONFIG);
 			} else {
 				String name = GLOBAL_GET("application/config/name");
 				String version = GLOBAL_GET("application/config/version");
@@ -5590,6 +5605,7 @@ DisplayServer::WindowID DisplayServerWindows::_create_window(WindowMode p_mode, 
 			SetWindowPos(wd.hWnd, HWND_TOP, srect.position.x, srect.position.y, srect.size.width, srect.size.height, SWP_NOZORDER | SWP_NOACTIVATE);
 		}
 
+		wd.create_completed = true;
 		window_id_counter++;
 	}
 
@@ -5984,13 +6000,32 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 // Init context and rendering device
 #if defined(GLES3_ENABLED)
 
-#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
-	// There's no native OpenGL drivers on Windows for ARM, switch to ANGLE over DX.
-	if (rendering_driver == "opengl3") {
-		rendering_driver = "opengl3_angle";
-	}
-#elif defined(EGL_STATIC)
 	bool fallback = GLOBAL_GET("rendering/gl_compatibility/fallback_to_angle");
+	bool show_warning = true;
+
+	if (rendering_driver == "opengl3") {
+		// There's no native OpenGL drivers on Windows for ARM, always enable fallback.
+#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
+		fallback = true;
+		show_warning = false;
+#else
+		typedef BOOL(WINAPI * IsWow64Process2Ptr)(HANDLE, USHORT *, USHORT *);
+
+		IsWow64Process2Ptr IsWow64Process2 = (IsWow64Process2Ptr)GetProcAddress(GetModuleHandle(TEXT("kernel32")), "IsWow64Process2");
+		if (IsWow64Process2) {
+			USHORT process_arch = 0;
+			USHORT machine_arch = 0;
+			if (!IsWow64Process2(GetCurrentProcess(), &process_arch, &machine_arch)) {
+				machine_arch = 0;
+			}
+			if (machine_arch == 0xAA64) {
+				fallback = true;
+				show_warning = false;
+			}
+		}
+#endif
+	}
+
 	if (fallback && (rendering_driver == "opengl3")) {
 		Dictionary gl_info = detect_wgl();
 
@@ -6016,11 +6051,12 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 		}
 
 		if (force_angle || (gl_info["version"].operator int() < 30003)) {
-			WARN_PRINT("Your video card drivers seem not to support the required OpenGL 3.3 version, switching to ANGLE.");
+			if (show_warning) {
+				WARN_PRINT("Your video card drivers seem not to support the required OpenGL 3.3 version, switching to ANGLE.");
+			}
 			rendering_driver = "opengl3_angle";
 		}
 	}
-#endif
 
 	if (rendering_driver == "opengl3") {
 		gl_manager_native = memnew(GLManagerNative_Windows);
@@ -6050,7 +6086,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 
 	String appname;
 	if (Engine::get_singleton()->is_editor_hint()) {
-		appname = "Godot.GodotEditor." + String(VERSION_BRANCH);
+		appname = "Godot.GodotEditor." + String(VERSION_FULL_CONFIG);
 	} else {
 		String name = GLOBAL_GET("application/config/name");
 		String version = GLOBAL_GET("application/config/version");
@@ -6065,6 +6101,17 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 		}
 		clean_app_name = clean_app_name.substr(0, 120 - version.length()).trim_suffix(".");
 		appname = "Godot." + clean_app_name + "." + version;
+
+#ifndef TOOLS_ENABLED
+		// Set for exported projects only.
+		HKEY key;
+		if (RegOpenKeyW(HKEY_CURRENT_USER_LOCAL_SETTINGS, L"Software\\Microsoft\\Windows\\Shell\\MuiCache", &key) == ERROR_SUCCESS) {
+			Char16String cs_name = name.utf16();
+			String value_name = OS::get_singleton()->get_executable_path().replace("/", "\\") + ".FriendlyAppName";
+			RegSetValueExW(key, (LPCWSTR)value_name.utf16().get_data(), 0, REG_SZ, (const BYTE *)cs_name.get_data(), cs_name.size() * sizeof(WCHAR));
+			RegCloseKey(key);
+		}
+#endif
 	}
 	SetCurrentProcessExplicitAppUserModelID((PCWSTR)appname.utf16().get_data());
 
