@@ -456,8 +456,10 @@ void main() {
 	vec2 uv_warped = uv_interp - uv_fish_eye;
 
 	// EdgeBlur
-	float edge_blur_intensity = 2.8;
-    float edge_blur = uv_mag_squared * uv_mag_squared * uv_mag_squared * edge_blur_intensity;
+	uv_zeroed *= 2.0;
+    float uv_edge_blur_squared = dot(uv_zeroed,uv_zeroed);
+	float edge_blur_intensity = 0.3;
+    float edge_blur = uv_edge_blur_squared * edge_blur_intensity;
 
 
 
@@ -472,10 +474,10 @@ void main() {
 	vec4 color_accum = color;
 	float accum = 1.0;
 
-	float radius_resolution = 0.02;
+	float radius_resolution = 0.05;
 	float radius = radius_resolution;
 	for (float ang = 0.0; radius < 1.0; ang += 2.39996323) {
-		vec2 uv_adj = uv_warped + vec2(cos(ang), sin(ang)) * edge_blur * radius * 0.1;
+		vec2 uv_adj = uv_warped + vec2(cos(ang), sin(ang)) * edge_blur * radius * 0.01;
 
 		vec4 sample_color = textureLod(source_color, uv_adj, 0);
 
@@ -487,8 +489,8 @@ void main() {
 	}
 
 	color_accum = color_accum / accum;
-	//color = mix(color, color_accum, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
-	color = color_accum;
+	color = mix(color, color_accum, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
+	//color = color_accum;
 
 #endif
 	color.rgb *= params.luminance_multiplier;
