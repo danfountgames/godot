@@ -9,7 +9,6 @@
 #extension GL_EXT_multiview : enable
 #endif
 #endif
-
 layout(location = 0) out vec2 uv_interp;
 
 void main() {
@@ -446,23 +445,51 @@ void main() {
 
 
 
-    float fish_eye_intensity = 0.5;
+    float fish_eye_intensity = 0.8;
 	vec2 uv_zeroed = (uv_interp - vec2(0.5,0.5));
+    float uv_mag_squared = dot(uv_zeroed,uv_zeroed);
+
 	vec2 uv_fish_eye;
     uv_fish_eye.x = (1.0 - uv_zeroed.y*uv_zeroed.y) * fish_eye_intensity * uv_zeroed.x * 0.1;
     uv_fish_eye.y = (1.0 - uv_zeroed.x*uv_zeroed.x) * fish_eye_intensity * uv_zeroed.y * 0.1;
     
 	vec2 uv_warped = uv_interp - uv_fish_eye;
 
+	// EdgeBlur
+	float edge_blur_intensity = 2.8;
+    float edge_blur = uv_mag_squared * uv_mag_squared * uv_mag_squared * edge_blur_intensity;
+
+
 
 #ifdef SUBPASS
 	// SUBPASS and USE_MULTIVIEW can be combined but in that case we're already reading from the correct layer
 	vec4 color = subpassLoad(input_color);
 #elif defined(USE_MULTIVIEW)
-	vec4 color = textureLod(source_color, vec3(uv_warped, ViewIndex), 0.0f);
+	vec4 color = textureLod(source_color, vec3(uv_warped, ViewIndex), 0);
 #else
-    
-	vec4 color = textureLod(source_color, uv_warped, 0.0f);
+    vec4 color = textureLod(source_color, uv_warped, 0);
+
+	vec4 color_accum = color;
+	float accum = 1.0;
+
+	float radius_resolution = 0.02;
+	float radius = radius_resolution;
+	for (float ang = 0.0; radius < 1.0; ang += 2.39996323) {
+		vec2 uv_adj = uv_warped + vec2(cos(ang), sin(ang)) * edge_blur * radius * 0.1;
+
+		vec4 sample_color = textureLod(source_color, uv_adj, 0);
+
+		float m = radius;
+		color_accum += mix(color_accum / accum, sample_color, m);
+		accum += 1.0;
+
+		radius += radius_resolution;
+	}
+
+	color_accum = color_accum / accum;
+	//color = mix(color, color_accum, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
+	color = color_accum;
+
 #endif
 	color.rgb *= params.luminance_multiplier;
 
@@ -535,8 +562,8 @@ void main() {
 
 
 	// Vignetting
-    float uv_mag_squared = dot(uv_zeroed,uv_zeroed);
-    float vignette = 1.0 - uv_mag_squared * fish_eye_intensity * 4.;
+	float vignette_intensity = 0.5;
+    float vignette = 1.0 - uv_mag_squared * vignette_intensity * 4.;
     color *= vignette;
 
 	frag_color = color;
