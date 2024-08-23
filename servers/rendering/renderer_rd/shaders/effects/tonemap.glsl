@@ -458,8 +458,8 @@ void main() {
 	// EdgeBlur
 	uv_zeroed *= 2.0;
     float uv_edge_blur_squared = dot(uv_zeroed,uv_zeroed);
-	float edge_blur_intensity = 0.3;
-    float edge_blur = uv_edge_blur_squared * edge_blur_intensity;
+	float edge_blur_intensity = 0.4;
+    float edge_blur = uv_edge_blur_squared * uv_edge_blur_squared * edge_blur_intensity;
 
 
 
@@ -481,16 +481,16 @@ void main() {
 
 		vec4 sample_color = textureLod(source_color, uv_adj, 0);
 
-		float m = radius;
-		color_accum += mix(color_accum / accum, sample_color, m);
-		accum += 1.0;
+		float m = 1.0-radius;
+		color_accum += sample_color * m;
+		accum += m;
 
 		radius += radius_resolution;
 	}
 
 	color_accum = color_accum / accum;
-	color = mix(color, color_accum, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
-	//color = color_accum;
+	//color = mix(color, color_accum, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
+	color = color_accum;
 
 #endif
 	color.rgb *= params.luminance_multiplier;
