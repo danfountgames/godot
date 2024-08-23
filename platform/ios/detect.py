@@ -51,7 +51,8 @@ def get_flags():
         "arch": "arm64",
         "target": "template_debug",
         "use_volk": False,
-        "supported": ["mono"],
+        "metal": True,
+        "supported": ["metal", "mono"],
         "builtin_pcre2_with_jit": False,
     }
 
@@ -153,6 +154,10 @@ def configure(env: "SConsEnvironment"):
 
     env.Prepend(CPPPATH=["#platform/ios"])
     env.Append(CPPDEFINES=["IOS_ENABLED", "UNIX_ENABLED", "COREAUDIO_ENABLED"])
+
+    if env["metal"] and env["arch"] != "arm64":
+        # Only supported on arm64, so skip it for x86_64 builds.
+        env["metal"] = False
 
     if env["metal"]:
         env.AppendUnique(CPPDEFINES=["METAL_ENABLED", "RD_ENABLED"])

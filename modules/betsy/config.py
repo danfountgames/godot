@@ -1,5 +1,5 @@
 def can_build(env, platform):
-    return env["metal"]
+    return env.editor_build
 
 
 def configure(env):

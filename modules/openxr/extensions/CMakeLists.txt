@@ -40,10 +40,14 @@ target_sources(godot-module-openxr-extensions PRIVATE
         openxr_meta_controller_extension.h
         openxr_ml2_controller_extension.cpp
         openxr_ml2_controller_extension.h
+        openxr_mxink_extension.cpp
+        openxr_mxink_extension.h
         openxr_palm_pose_extension.cpp
         openxr_palm_pose_extension.h
         openxr_pico_controller_extension.cpp
         openxr_pico_controller_extension.h
+        openxr_visibility_mask_extension.cpp
+        openxr_visibility_mask_extension.h
         openxr_wmr_controller_extension.cpp
         openxr_wmr_controller_extension.h
 )

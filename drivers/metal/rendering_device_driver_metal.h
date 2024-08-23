@@ -31,13 +31,13 @@
 #ifndef RENDERING_DEVICE_DRIVER_METAL_H
 #define RENDERING_DEVICE_DRIVER_METAL_H
 
-#include "core/templates/hash_map.h"
-#include "metal_objects.h"
-#include "servers/rendering/rendering_device_driver.h"
+#import "metal_objects.h"
 
-#include <Metal/Metal.h>
-#include <spirv.hpp>
-#include <variant>
+#import "servers/rendering/rendering_device_driver.h"
+
+#import <Metal/Metal.h>
+#import <spirv.hpp>
+#import <variant>
 
 #ifdef DEBUG_ENABLED
 #ifndef _DEBUG
@@ -95,7 +95,7 @@ public:
 #pragma mark - Texture
 
 private:
-	/// Returns true if the texture is a valid linear format.
+	// Returns true if the texture is a valid linear format.
 	Result<bool> is_valid_linear(TextureFormat const &p_format) const;
 	void _get_sub_resource(TextureID p_texture, const TextureSubresource &p_subresource, TextureCopyableLayout *r_layout) const;
 
@@ -175,7 +175,7 @@ public:
 	// ----- BUFFER -----
 
 private:
-	// used to maintain references
+	// Used to maintain references.
 	Vector<MDCommandBuffer *> command_buffers;
 
 public:
@@ -215,7 +215,7 @@ public:
 #pragma mark - Shader
 
 private:
-	// Serialization types need access to private state
+	// Serialization types need access to private state.
 
 	friend struct ShaderStageData;
 	friend struct SpecializationConstantData;
@@ -231,6 +231,7 @@ public:
 	virtual Vector<uint8_t> shader_compile_binary_from_spirv(VectorView<ShaderStageSPIRVData> p_spirv, const String &p_shader_name) override final;
 	virtual ShaderID shader_create_from_bytecode(const Vector<uint8_t> &p_shader_binary, ShaderDescription &r_shader_desc, String &r_name) override final;
 	virtual void shader_free(ShaderID p_shader) override final;
+	virtual void shader_destroy_modules(ShaderID p_shader) override final;
 
 #pragma mark - Uniform Set
 
@@ -376,6 +377,10 @@ public:
 	virtual void command_begin_label(CommandBufferID p_cmd_buffer, const char *p_label_name, const Color &p_color) override final;
 	virtual void command_end_label(CommandBufferID p_cmd_buffer) override final;
 
+#pragma mark - Debug
+
+	virtual void command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) override final;
+
 #pragma mark - Submission
 
 	virtual void begin_segment(uint32_t p_frame_index, uint32_t p_frames_drawn) override final;
@@ -396,7 +401,7 @@ public:
 	virtual const Capabilities &get_capabilities() const override final;
 	virtual bool is_composite_alpha_supported(CommandQueueID p_queue) const override final;
 
-	// Metal-specific
+	// Metal-specific.
 	id<MTLDevice> get_device() const { return device; }
 	PixelFormats &get_pixel_formats() const { return *pixel_formats; }
 	MDResourceCache &get_resource_cache() const { return *resource_cache; }
