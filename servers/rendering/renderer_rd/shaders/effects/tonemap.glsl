@@ -443,22 +443,21 @@ vec3 screen_space_dither(vec2 frag_coord) {
 
 void main() {
 
+	vec2 effect_offset = vec2(0.5,0.4);
 
-
-    float fish_eye_intensity = 0.8;
-	vec2 uv_zeroed = (uv_interp - vec2(0.5,0.5));
+    float fish_eye_intensity = 0.4;
+	vec2 uv_zeroed = (uv_interp - effect_offset) * 2.0;
     float uv_mag_squared = dot(uv_zeroed,uv_zeroed);
 
-	vec2 uv_fish_eye;
-    uv_fish_eye.x = (1.0 - uv_zeroed.y*uv_zeroed.y) * fish_eye_intensity * uv_zeroed.x * 0.1;
-    uv_fish_eye.y = (1.0 - uv_zeroed.x*uv_zeroed.x) * fish_eye_intensity * uv_zeroed.y * 0.1;
-    
-	vec2 uv_warped = uv_interp - uv_fish_eye;
+	float factor = 1.0 / (1.0 + fish_eye_intensity * uv_mag_squared * 0.03);
+
+	vec2 uv_warped = uv_zeroed * 0.5 * factor + effect_offset;
+	//uv_warped = mix(uv_interp, uv_warped, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
+	
 
 	// EdgeBlur
-	uv_zeroed *= 2.0;
-    float uv_edge_blur_squared = dot(uv_zeroed,uv_zeroed);
-	float edge_blur_intensity = 0.4;
+    float uv_edge_blur_squared = min(1.0, dot(uv_zeroed,uv_zeroed));
+	float edge_blur_intensity = 0.6;
     float edge_blur = uv_edge_blur_squared * uv_edge_blur_squared * edge_blur_intensity;
 
 
@@ -474,7 +473,7 @@ void main() {
 	vec4 color_accum = color;
 	float accum = 1.0;
 
-	float radius_resolution = 0.05;
+	float radius_resolution = 0.04;
 	float radius = radius_resolution;
 	for (float ang = 0.0; radius < 1.0; ang += 2.39996323) {
 		vec2 uv_adj = uv_warped + vec2(cos(ang), sin(ang)) * edge_blur * radius * 0.01;
@@ -564,8 +563,8 @@ void main() {
 
 
 	// Vignetting
-	float vignette_intensity = 0.5;
-    float vignette = 1.0 - uv_mag_squared * vignette_intensity * 4.;
+	float vignette_intensity = 0.4;
+    float vignette = 1.0 - dot(uv_zeroed*0.66,uv_zeroed*0.66) * vignette_intensity * 4.0;
     color *= vignette;
 
 	frag_color = color;
