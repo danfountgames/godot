@@ -90,7 +90,12 @@ public:
 				device(p_device) {}
 		virtual ~Surface() = default;
 
-		MTLPixelFormat get_pixel_format() const { return MTLPixelFormatRGBA16Float; }
+		MTLPixelFormat get_pixel_format() const { 
+			if (@available(iOS 16.0, macOS 10.0, *)) {
+				return MTLPixelFormatRGBA16Float; 
+			}
+			return MTLPixelFormatBGRA8Unorm;
+			}
 		virtual Error resize(uint32_t p_desired_framebuffer_count) = 0;
 		virtual RDD::FramebufferID acquire_next_frame_buffer() = 0;
 		virtual void present(MDCommandBuffer *p_cmd_buffer) = 0;
@@ -111,10 +116,12 @@ public:
 			layer.framebufferOnly = YES;
 			layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
 			layer.pixelFormat = get_pixel_format();
-			layer.wantsExtendedDynamicRangeContent = true;
-			CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
-			layer.colorspace = colorSpace;
-			CFRelease(colorSpace);
+			if (@available(iOS 16.0, macOS 10.0, *)) {
+				layer.wantsExtendedDynamicRangeContent = true;
+				CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+				layer.colorspace = colorSpace;
+				CFRelease(colorSpace);
+			}
 			layer.device = p_device;
 		}
 
@@ -215,10 +222,12 @@ public:
 			layer.framebufferOnly = YES;
 			layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
 			layer.pixelFormat = get_pixel_format();
-			layer.wantsExtendedDynamicRangeContent = true;
-			CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
-			layer.colorspace = colorSpace;
-			CFRelease(colorSpace);
+			if (@available(iOS 16.0, macOS 10.0, *)) {
+				layer.wantsExtendedDynamicRangeContent = true;
+				CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+				layer.colorspace = colorSpace;
+				CFRelease(colorSpace);
+			}
 			layer.device = p_device;
 #if TARGET_OS_OSX
 			layer.displaySyncEnabled = NO;
