@@ -563,7 +563,7 @@ void main() {
 
 
 	// Vignetting
-	float vignette_intensity = 0.16;
+	float vignette_intensity = 0.142;
     float vignette = 1.0 - max(uv_mag_squared- 0.12, 0.0) * vignette_intensity * 4.0;
 	vignette = max(vignette,0.02);
     color *= vignette;
