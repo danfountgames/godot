@@ -443,7 +443,7 @@ vec3 screen_space_dither(vec2 frag_coord) {
 
 void main() {
 
-	vec2 effect_offset = vec2(0.5,0.42);
+	vec2 effect_offset = vec2(0.5,0.46);
 
     float fish_eye_intensity = 0.4;
 	vec2 uv_zeroed = (uv_interp - effect_offset) * 2.0;
@@ -565,7 +565,7 @@ void main() {
 	// Vignetting
 	float vignette_intensity = 0.142;
     float vignette = 1.0 - max(uv_mag_squared- 0.12, 0.0) * vignette_intensity * 4.0;
-	vignette = max(vignette,0.02);
+	vignette = max(vignette,0.2);
     color *= vignette;
 
 	frag_color = color;
