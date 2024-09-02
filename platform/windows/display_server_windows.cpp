@@ -133,9 +133,17 @@ String DisplayServerWindows::get_name() const {
 }
 
 void DisplayServerWindows::_set_mouse_mode_impl(MouseMode p_mode) {
+	if (p_mode == MOUSE_MODE_HIDDEN || p_mode == MOUSE_MODE_CAPTURED || p_mode == MOUSE_MODE_CONFINED_HIDDEN) {
+		// Hide cursor before moving.
+		if (hCursor == nullptr) {
+			hCursor = SetCursor(nullptr);
+		} else {
+			SetCursor(nullptr);
+		}
+	}
+
 	if (windows.has(MAIN_WINDOW_ID) && (p_mode == MOUSE_MODE_CAPTURED || p_mode == MOUSE_MODE_CONFINED || p_mode == MOUSE_MODE_CONFINED_HIDDEN)) {
 		// Mouse is grabbed (captured or confined).
-
 		WindowID window_id = _get_focused_window_or_popup();
 		if (!windows.has(window_id)) {
 			window_id = MAIN_WINDOW_ID;
@@ -165,13 +173,8 @@ void DisplayServerWindows::_set_mouse_mode_impl(MouseMode p_mode) {
 		_register_raw_input_devices(INVALID_WINDOW_ID);
 	}
 
-	if (p_mode == MOUSE_MODE_HIDDEN || p_mode == MOUSE_MODE_CAPTURED || p_mode == MOUSE_MODE_CONFINED_HIDDEN) {
-		if (hCursor == nullptr) {
-			hCursor = SetCursor(nullptr);
-		} else {
-			SetCursor(nullptr);
-		}
-	} else {
+	if (p_mode == MOUSE_MODE_VISIBLE || p_mode == MOUSE_MODE_CONFINED) {
+		// Show cursor.
 		CursorShape c = cursor_shape;
 		cursor_shape = CURSOR_MAX;
 		cursor_set_shape(c);
@@ -314,7 +317,7 @@ public:
 		if (!lpw_path) {
 			return S_FALSE;
 		}
-		String path = String::utf16((const char16_t *)lpw_path).simplify_path();
+		String path = String::utf16((const char16_t *)lpw_path).replace("\\", "/").trim_prefix(R"(\\?\)").simplify_path();
 		if (!path.begins_with(root.simplify_path())) {
 			return S_FALSE;
 		}
@@ -539,7 +542,26 @@ void DisplayServerWindows::_thread_fd_monitor(void *p_ud) {
 		pfd->SetOptions(flags | FOS_FORCEFILESYSTEM);
 		pfd->SetTitle((LPCWSTR)fd->title.utf16().ptr());
 
-		String dir = fd->current_directory.replace("/", "\\");
+		String dir = ProjectSettings::get_singleton()->globalize_path(fd->current_directory);
+		if (dir == ".") {
+			dir = OS::get_singleton()->get_executable_path().get_base_dir();
+		}
+		if (dir.is_relative_path() || dir == ".") {
+			Char16String current_dir_name;
+			size_t str_len = GetCurrentDirectoryW(0, nullptr);
+			current_dir_name.resize(str_len + 1);
+			GetCurrentDirectoryW(current_dir_name.size(), (LPWSTR)current_dir_name.ptrw());
+			if (dir == ".") {
+				dir = String::utf16((const char16_t *)current_dir_name.get_data()).trim_prefix(R"(\\?\)").replace("\\", "/");
+			} else {
+				dir = String::utf16((const char16_t *)current_dir_name.get_data()).trim_prefix(R"(\\?\)").replace("\\", "/").path_join(dir);
+			}
+		}
+		dir = dir.simplify_path();
+		dir = dir.replace("/", "\\");
+		if (!dir.is_network_share_path() && !dir.begins_with(R"(\\?\)")) {
+			dir = R"(\\?\)" + dir;
+		}
 
 		IShellItem *shellitem = nullptr;
 		hr = SHCreateItemFromParsingName((LPCWSTR)dir.utf16().ptr(), nullptr, IID_IShellItem, (void **)&shellitem);
@@ -582,7 +604,7 @@ void DisplayServerWindows::_thread_fd_monitor(void *p_ud) {
 						PWSTR file_path = nullptr;
 						hr = result->GetDisplayName(SIGDN_FILESYSPATH, &file_path);
 						if (SUCCEEDED(hr)) {
-							file_names.push_back(String::utf16((const char16_t *)file_path));
+							file_names.push_back(String::utf16((const char16_t *)file_path).replace("\\", "/").trim_prefix(R"(\\?\)"));
 							CoTaskMemFree(file_path);
 						}
 						result->Release();
@@ -596,7 +618,7 @@ void DisplayServerWindows::_thread_fd_monitor(void *p_ud) {
 					PWSTR file_path = nullptr;
 					hr = result->GetDisplayName(SIGDN_FILESYSPATH, &file_path);
 					if (SUCCEEDED(hr)) {
-						file_names.push_back(String::utf16((const char16_t *)file_path));
+						file_names.push_back(String::utf16((const char16_t *)file_path).replace("\\", "/").trim_prefix(R"(\\?\)"));
 						CoTaskMemFree(file_path);
 					}
 					result->Release();
@@ -6183,10 +6205,12 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 #endif
 	}
 
+	bool gl_supported = true;
 	if (fallback && (rendering_driver == "opengl3")) {
 		Dictionary gl_info = detect_wgl();
 
 		bool force_angle = false;
+		gl_supported = gl_info["version"].operator int() >= 30003;
 
 		Vector2i device_id = _get_device_ids(gl_info["name"]);
 		Array device_list = GLOBAL_GET("rendering/gl_compatibility/force_angle_on_devices");
@@ -6210,12 +6234,37 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 		if (force_angle || (gl_info["version"].operator int() < 30003)) {
 			tested_drivers.set_flag(DRIVER_ID_COMPAT_OPENGL3);
 			if (show_warning) {
-				WARN_PRINT("Your video card drivers seem not to support the required OpenGL 3.3 version, switching to ANGLE.");
+				if (gl_info["version"].operator int() < 30003) {
+					WARN_PRINT("Your video card drivers seem not to support the required OpenGL 3.3 version, switching to ANGLE.");
+				} else {
+					WARN_PRINT("Your video card drivers are known to have low quality OpenGL 3.3 support, switching to ANGLE.");
+				}
 			}
 			rendering_driver = "opengl3_angle";
 		}
 	}
 
+	if (rendering_driver == "opengl3_angle") {
+		gl_manager_angle = memnew(GLManagerANGLE_Windows);
+		tested_drivers.set_flag(DRIVER_ID_COMPAT_ANGLE_D3D11);
+
+		if (gl_manager_angle->initialize() != OK) {
+			memdelete(gl_manager_angle);
+			gl_manager_angle = nullptr;
+			bool fallback_to_native = GLOBAL_GET("rendering/gl_compatibility/fallback_to_native");
+			if (fallback_to_native && gl_supported) {
+#ifdef EGL_STATIC
+				WARN_PRINT("Your video card drivers seem not to support GLES3 / ANGLE, switching to native OpenGL.");
+#else
+				WARN_PRINT("Your video card drivers seem not to support GLES3 / ANGLE or ANGLE dynamic libraries (libEGL.dll and libGLESv2.dll) are missing, switching to native OpenGL.");
+#endif
+				rendering_driver = "opengl3";
+			} else {
+				r_error = ERR_UNAVAILABLE;
+				ERR_FAIL_MSG("Could not initialize ANGLE OpenGL.");
+			}
+		}
+	}
 	if (rendering_driver == "opengl3") {
 		gl_manager_native = memnew(GLManagerNative_Windows);
 		tested_drivers.set_flag(DRIVER_ID_COMPAT_OPENGL3);
@@ -6224,26 +6273,17 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 			memdelete(gl_manager_native);
 			gl_manager_native = nullptr;
 			r_error = ERR_UNAVAILABLE;
-			return;
+			ERR_FAIL_MSG("Could not initialize native OpenGL.");
 		}
+	}
 
+	if (rendering_driver == "opengl3") {
 		RasterizerGLES3::make_current(true);
 	}
 	if (rendering_driver == "opengl3_angle") {
-		gl_manager_angle = memnew(GLManagerANGLE_Windows);
-		tested_drivers.set_flag(DRIVER_ID_COMPAT_ANGLE_D3D11);
-
-		if (gl_manager_angle->initialize() != OK) {
-			memdelete(gl_manager_angle);
-			gl_manager_angle = nullptr;
-			r_error = ERR_UNAVAILABLE;
-			return;
-		}
-
 		RasterizerGLES3::make_current(false);
 	}
 #endif
-
 	String appname;
 	if (Engine::get_singleton()->is_editor_hint()) {
 		appname = "Godot.GodotEditor." + String(VERSION_FULL_CONFIG);

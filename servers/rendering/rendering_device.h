@@ -377,7 +377,9 @@ public:
 	// used for the render pipelines.
 
 	struct AttachmentFormat {
-		enum { UNUSED_ATTACHMENT = 0xFFFFFFFF };
+		enum : uint32_t {
+			UNUSED_ATTACHMENT = 0xFFFFFFFF
+		};
 		DataFormat format;
 		TextureSamples samples;
 		uint32_t usage_flags;
@@ -1416,6 +1418,8 @@ public:
 	bool is_composite_alpha_supported() const;
 
 	uint64_t get_driver_resource(DriverResource p_resource, RID p_rid = RID(), uint64_t p_index = 0);
+
+	String get_driver_and_device_memory_report() const;
 
 	String get_tracked_object_name(uint32_t p_type_index) const;
 	uint64_t get_tracked_object_type_count() const;

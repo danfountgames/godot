@@ -216,6 +216,7 @@ void SceneTreeEditor::_add_nodes(Node *p_node, TreeItem *p_parent) {
 	TreeItem *item = tree->create_item(p_parent);
 
 	item->set_text(0, p_node->get_name());
+	item->set_text_overrun_behavior(0, TextServer::OVERRUN_NO_TRIMMING);
 	if (can_rename && !part_of_subscene) {
 		item->set_editable(0, true);
 	}
@@ -1768,7 +1769,7 @@ SceneTreeDialog::SceneTreeDialog() {
 	// Add 'Show All' button to HBoxContainer next to the filter, visible only when valid_types is defined.
 	show_all_nodes = memnew(CheckButton);
 	show_all_nodes->set_text(TTR("Show All"));
-	show_all_nodes->connect("toggled", callable_mp(this, &SceneTreeDialog::_show_all_nodes_changed));
+	show_all_nodes->connect(SceneStringName(toggled), callable_mp(this, &SceneTreeDialog::_show_all_nodes_changed));
 	show_all_nodes->set_h_size_flags(Control::SIZE_SHRINK_BEGIN);
 	show_all_nodes->hide();
 	filter_hbc->add_child(show_all_nodes);

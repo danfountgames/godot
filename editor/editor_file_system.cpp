@@ -95,25 +95,35 @@ String EditorFileSystemDirectory::get_file(int p_idx) const {
 }
 
 String EditorFileSystemDirectory::get_path() const {
-	String p;
-	const EditorFileSystemDirectory *d = this;
-	while (d->parent) {
-		p = d->name.path_join(p);
-		d = d->parent;
+	int parents = 0;
+	const EditorFileSystemDirectory *efd = this;
+	// Determine the level of nesting.
+	while (efd->parent) {
+		parents++;
+		efd = efd->parent;
 	}
 
-	return "res://" + p;
+	if (parents == 0) {
+		return "res://";
+	}
+
+	// Using PackedStringArray, because the path is built in reverse order.
+	PackedStringArray path_bits;
+	// Allocate an array based on nesting. It will store path bits.
+	path_bits.resize(parents + 2); // Last String is empty, so paths end with /.
+	String *path_write = path_bits.ptrw();
+	path_write[0] = "res:/";
+
+	efd = this;
+	for (int i = parents; i > 0; i--) {
+		path_write[i] = efd->name;
+		efd = efd->parent;
+	}
+	return String("/").join(path_bits);
 }
 
 String EditorFileSystemDirectory::get_file_path(int p_idx) const {
-	String file = get_file(p_idx);
-	const EditorFileSystemDirectory *d = this;
-	while (d->parent) {
-		file = d->name.path_join(file);
-		d = d->parent;
-	}
-
-	return "res://" + file;
+	return get_path().path_join(get_file(p_idx));
 }
 
 Vector<String> EditorFileSystemDirectory::get_file_deps(int p_idx) const {
@@ -228,30 +238,47 @@ EditorFileSystem::ScannedDirectory::~ScannedDirectory() {
 }
 
 void EditorFileSystem::_first_scan_filesystem() {
+	EditorProgress ep = EditorProgress("first_scan_filesystem", TTR("Project initialization"), 5);
 	Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 	first_scan_root_dir = memnew(ScannedDirectory);
 	first_scan_root_dir->full_path = "res://";
 	HashSet<String> existing_class_names;
+	HashSet<String> extensions;
 
+	ep.step(TTR("Scanning file structure..."), 0, true);
 	nb_files_total = _scan_new_dir(first_scan_root_dir, d);
 
 	// This loads the global class names from the scripts and ensures that even if the
 	// global_script_class_cache.cfg was missing or invalid, the global class names are valid in ScriptServer.
-	_first_scan_process_scripts(first_scan_root_dir, existing_class_names);
+	// At the same time, to prevent looping multiple times in all files, it looks for extensions.
+	ep.step(TTR("Loading global class names..."), 1, true);
+	_first_scan_process_scripts(first_scan_root_dir, existing_class_names, extensions);
 
 	// Removing invalid global class to prevent having invalid paths in ScriptServer.
 	_remove_invalid_global_class_names(existing_class_names);
 
+	// Processing extensions to add new extensions or remove invalid ones.
+	// Important to do it in the first scan so custom types, new class names, custom importers, etc...
+	// from extensions are ready to go before plugins, autoloads and resources validation/importation.
+	// At this point, a restart of the editor should not be needed so we don't use the return value.
+	ep.step(TTR("Verifying GDExtensions..."), 2, true);
+	GDExtensionManager::get_singleton()->ensure_extensions_loaded(extensions);
+
 	// Now that all the global class names should be loaded, create autoloads and plugins.
 	// This is done after loading the global class names because autoloads and plugins can use
 	// global class names.
+	ep.step(TTR("Creating autoload scripts..."), 3, true);
 	ProjectSettingsEditor::get_singleton()->init_autoloads();
+
+	ep.step(TTR("Initializing plugins..."), 4, true);
 	EditorNode::get_singleton()->init_plugins();
+
+	ep.step(TTR("Starting file scan..."), 5, true);
 }
 
-void EditorFileSystem::_first_scan_process_scripts(const ScannedDirectory *p_scan_dir, HashSet<String> &p_existing_class_names) {
+void EditorFileSystem::_first_scan_process_scripts(const ScannedDirectory *p_scan_dir, HashSet<String> &p_existing_class_names, HashSet<String> &p_extensions) {
 	for (ScannedDirectory *scan_sub_dir : p_scan_dir->subdirs) {
-		_first_scan_process_scripts(scan_sub_dir, p_existing_class_names);
+		_first_scan_process_scripts(scan_sub_dir, p_existing_class_names, p_extensions);
 	}
 
 	for (const String &scan_file : p_scan_dir->files) {
@@ -267,6 +294,8 @@ void EditorFileSystem::_first_scan_process_scripts(const ScannedDirectory *p_sca
 			if (!script_class_name.is_empty()) {
 				p_existing_class_names.insert(script_class_name);
 			}
+		} else if (type == SNAME("GDExtension")) {
+			p_extensions.insert(path);
 		}
 	}
 }
@@ -650,6 +679,12 @@ bool EditorFileSystem::_update_scan_actions() {
 	Vector<String> reimports;
 	Vector<String> reloads;
 
+	EditorProgress *ep = nullptr;
+	if (scan_actions.size() > 1) {
+		ep = memnew(EditorProgress("_update_scan_actions", TTR("Scanning actions..."), scan_actions.size()));
+	}
+
+	int step_count = 0;
 	for (const ItemAction &ia : scan_actions) {
 		switch (ia.action) {
 			case ItemAction::ACTION_NONE: {
@@ -781,7 +816,13 @@ bool EditorFileSystem::_update_scan_actions() {
 
 			} break;
 		}
+
+		if (ep) {
+			ep->step(ia.file, step_count++, false);
+		}
 	}
+
+	memdelete_notnull(ep);
 
 	if (_scan_extensions()) {
 		//needs editor restart
@@ -872,8 +913,6 @@ void EditorFileSystem::scan() {
 		scan_total = 0;
 		s.priority = Thread::PRIORITY_LOW;
 		thread.start(_thread_func, this, s);
-		//tree->hide();
-		//progress->show();
 	}
 }
 
@@ -1022,9 +1061,8 @@ void EditorFileSystem::_process_file_system(const ScannedDirectory *p_scan_dir, 
 				}
 
 			} else {
-				fi->type = ResourceFormatImporter::get_singleton()->get_resource_type(path);
-				fi->uid = ResourceFormatImporter::get_singleton()->get_resource_uid(path);
-				fi->import_group_file = ResourceFormatImporter::get_singleton()->get_import_group_file(path);
+				// Using get_resource_import_info() to prevent calling 3 times ResourceFormatImporter::_get_path_and_type.
+				ResourceFormatImporter::get_singleton()->get_resource_import_info(path, fi->type, fi->uid, fi->import_group_file);
 				fi->script_class_name = _get_global_script_class(fi->type, path, &fi->script_class_extends, &fi->script_class_icon_path);
 				fi->modified_time = 0;
 				fi->import_modified_time = 0;
@@ -1828,14 +1866,26 @@ void EditorFileSystem::_update_script_classes() {
 		return;
 	}
 
-	update_script_mutex.lock();
+	{
+		MutexLock update_script_lock(update_script_mutex);
 
-	for (const KeyValue<String, ScriptInfo> &E : update_script_paths) {
-		_register_global_class_script(E.key, E.key, E.value.type, E.value.script_class_name, E.value.script_class_extends, E.value.script_class_icon_path);
+		EditorProgress *ep = nullptr;
+		if (update_script_paths.size() > 1) {
+			ep = memnew(EditorProgress("update_scripts_classes", TTR("Registering global classes..."), update_script_paths.size()));
+		}
+
+		int step_count = 0;
+		for (const KeyValue<String, ScriptInfo> &E : update_script_paths) {
+			_register_global_class_script(E.key, E.key, E.value.type, E.value.script_class_name, E.value.script_class_extends, E.value.script_class_icon_path);
+			if (ep) {
+				ep->step(E.value.script_class_name, step_count++, false);
+			}
+		}
+
+		memdelete_notnull(ep);
+
+		update_script_paths.clear();
 	}
-
-	update_script_paths.clear();
-	update_script_mutex.unlock();
 
 	ScriptServer::save_global_classes();
 	EditorNode::get_editor_data().script_class_save_icon_paths();
@@ -1856,8 +1906,14 @@ void EditorFileSystem::_update_script_documentation() {
 		return;
 	}
 
-	update_script_mutex.lock();
+	MutexLock update_script_lock(update_script_mutex);
 
+	EditorProgress *ep = nullptr;
+	if (update_script_paths_documentation.size() > 1) {
+		ep = memnew(EditorProgress("update_script_paths_documentation", TTR("Updating scripts documentation"), update_script_paths_documentation.size()));
+	}
+
+	int step_count = 0;
 	for (const String &path : update_script_paths_documentation) {
 		int index = -1;
 		EditorFileSystemDirectory *efd = find_file(path, &index);
@@ -1880,10 +1936,15 @@ void EditorFileSystem::_update_script_documentation() {
 				}
 			}
 		}
+
+		if (ep) {
+			ep->step(efd->files[index]->file, step_count++, false);
+		}
 	}
 
+	memdelete_notnull(ep);
+
 	update_script_paths_documentation.clear();
-	update_script_mutex.unlock();
 }
 
 void EditorFileSystem::_process_update_pending() {
@@ -1895,7 +1956,7 @@ void EditorFileSystem::_process_update_pending() {
 }
 
 void EditorFileSystem::_queue_update_script_class(const String &p_path, const String &p_type, const String &p_script_class_name, const String &p_script_class_extends, const String &p_script_class_icon_path) {
-	update_script_mutex.lock();
+	MutexLock update_script_lock(update_script_mutex);
 
 	ScriptInfo si;
 	si.type = p_type;
@@ -1905,8 +1966,6 @@ void EditorFileSystem::_queue_update_script_class(const String &p_path, const St
 	update_script_paths.insert(p_path, si);
 
 	update_script_paths_documentation.insert(p_path);
-
-	update_script_mutex.unlock();
 }
 
 void EditorFileSystem::_update_scene_groups() {
@@ -1916,35 +1975,36 @@ void EditorFileSystem::_update_scene_groups() {
 
 	EditorProgress *ep = nullptr;
 	if (update_scene_paths.size() > 20) {
-		ep = memnew(EditorProgress("update_scene_groups", TTR("Update Scene Groups"), update_scene_paths.size()));
+		ep = memnew(EditorProgress("update_scene_groups", TTR("Updating Scene Groups"), update_scene_paths.size()));
 	}
 	int step_count = 0;
 
-	update_scene_mutex.lock();
-	for (const String &path : update_scene_paths) {
-		ProjectSettings::get_singleton()->remove_scene_groups_cache(path);
+	{
+		MutexLock update_scene_lock(update_scene_mutex);
+		for (const String &path : update_scene_paths) {
+			ProjectSettings::get_singleton()->remove_scene_groups_cache(path);
 
-		int index = -1;
-		EditorFileSystemDirectory *efd = find_file(path, &index);
+			int index = -1;
+			EditorFileSystemDirectory *efd = find_file(path, &index);
 
-		if (!efd || index < 0) {
-			// The file was removed.
-			continue;
+			if (!efd || index < 0) {
+				// The file was removed.
+				continue;
+			}
+
+			const HashSet<StringName> scene_groups = PackedScene::get_scene_groups(path);
+			if (!scene_groups.is_empty()) {
+				ProjectSettings::get_singleton()->add_scene_groups_cache(path, scene_groups);
+			}
+
+			if (ep) {
+				ep->step(efd->files[index]->file, step_count++, false);
+			}
 		}
 
-		const HashSet<StringName> scene_groups = PackedScene::get_scene_groups(path);
-		if (!scene_groups.is_empty()) {
-			ProjectSettings::get_singleton()->add_scene_groups_cache(path, scene_groups);
-		}
-
-		if (ep) {
-			ep->step(TTR("Updating Scene Groups..."), step_count++);
-		}
+		memdelete_notnull(ep);
+		update_scene_paths.clear();
 	}
-
-	memdelete_notnull(ep);
-	update_scene_paths.clear();
-	update_scene_mutex.unlock();
 
 	ProjectSettings::get_singleton()->save_scene_groups_cache();
 }
@@ -1959,9 +2019,8 @@ void EditorFileSystem::_update_pending_scene_groups() {
 }
 
 void EditorFileSystem::_queue_update_scene_groups(const String &p_path) {
-	update_scene_mutex.lock();
+	MutexLock update_scene_lock(update_scene_mutex);
 	update_scene_paths.insert(p_path);
-	update_scene_mutex.unlock();
 }
 
 void EditorFileSystem::_get_all_scenes(EditorFileSystemDirectory *p_dir, HashSet<String> &r_list) {
@@ -2654,13 +2713,25 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 
 	Vector<String> reloads;
 
-	EditorProgress pr("reimport", TTR("(Re)Importing Assets"), p_files.size());
+	EditorProgress *ep = memnew(EditorProgress("reimport", TTR("(Re)Importing Assets"), p_files.size()));
+
+	// The method reimport_files runs on the main thread, and if VSync is enabled
+	// or Update Continuously is disabled, Main::Iteration takes longer each frame.
+	// Each EditorProgress::step can trigger a redraw, and when there are many files to import,
+	// this could lead to a slow import process, especially when the editor is unfocused.
+	// Temporarily disabling VSync and low_processor_usage_mode while reimporting fixes this.
+	const bool old_low_processor_usage_mode = OS::get_singleton()->is_in_low_processor_usage_mode();
+	const DisplayServer::VSyncMode old_vsync_mode = DisplayServer::get_singleton()->window_get_vsync_mode(DisplayServer::MAIN_WINDOW_ID);
+	OS::get_singleton()->set_low_processor_usage_mode(false);
+	DisplayServer::get_singleton()->window_set_vsync_mode(DisplayServer::VSyncMode::VSYNC_DISABLED);
 
 	Vector<ImportFile> reimport_files;
 
 	HashSet<String> groups_to_reimport;
 
 	for (int i = 0; i < p_files.size(); i++) {
+		ep->step(TTR("Preparing files to reimport..."), i, false);
+
 		String file = p_files[i];
 
 		ResourceUID::ID uid = ResourceUID::get_singleton()->text_to_id(file);
@@ -2700,6 +2771,8 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 
 	reimport_files.sort();
 
+	ep->step(TTR("Executing pre-reimport operations..."), 0, true);
+
 	// Emit the resource_reimporting signal for the single file before the actual importation.
 	emit_signal(SNAME("resources_reimporting"), reloads);
 
@@ -2720,7 +2793,7 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 			if (i + 1 == reimport_files.size() || reimport_files[i + 1].importer != reimport_files[from].importer || groups_to_reimport.has(reimport_files[i + 1].path)) {
 				if (from - i == 0) {
 					// Single file, do not use threads.
-					pr.step(reimport_files[i].path.get_file(), i);
+					ep->step(reimport_files[i].path.get_file(), i, false);
 					_reimport_file(reimport_files[i].path);
 				} else {
 					Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(reimport_files[from].importer);
@@ -2742,7 +2815,7 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 					do {
 						if (current_index < tdata.max_index.get()) {
 							current_index = tdata.max_index.get();
-							pr.step(reimport_files[current_index].path.get_file(), current_index);
+							ep->step(reimport_files[current_index].path.get_file(), current_index, false);
 						}
 						OS::get_singleton()->delay_usec(1);
 					} while (!WorkerThreadPool::get_singleton()->is_group_task_completed(group_task));
@@ -2756,7 +2829,7 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 			}
 
 		} else {
-			pr.step(reimport_files[i].path.get_file(), i);
+			ep->step(reimport_files[i].path.get_file(), i, false);
 			_reimport_file(reimport_files[i].path);
 
 			// We need to increment the counter, maybe the next file is multithreaded
@@ -2773,7 +2846,7 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 		HashMap<String, Vector<String>> group_files;
 		_find_group_files(filesystem, group_files, groups_to_reimport);
 		for (const KeyValue<String, Vector<String>> &E : group_files) {
-			pr.step(E.key.get_file(), from++);
+			ep->step(E.key.get_file(), from++, false);
 			Error err = _reimport_group(E.key, E.value);
 			reloads.push_back(E.key);
 			reloads.append_array(E.value);
@@ -2782,17 +2855,28 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 			}
 		}
 	}
+	ep->step(TTR("Finalizing Asset Import..."), p_files.size());
 
 	ResourceUID::get_singleton()->update_cache(); // After reimporting, update the cache.
-
 	_save_filesystem_cache();
+
+	memdelete_notnull(ep);
+
 	_process_update_pending();
+
+	// Revert to previous values to restore editor settings for VSync and Update Continuously.
+	OS::get_singleton()->set_low_processor_usage_mode(old_low_processor_usage_mode);
+	DisplayServer::get_singleton()->window_set_vsync_mode(old_vsync_mode);
+
 	importing = false;
+
+	ep = memnew(EditorProgress("reimport", TTR("(Re)Importing Assets"), p_files.size()));
+	ep->step(TTR("Executing post-reimport operations..."), 0, true);
 	if (!is_scanning()) {
 		emit_signal(SNAME("filesystem_changed"));
 	}
-
 	emit_signal(SNAME("resources_reimported"), reloads);
+	memdelete_notnull(ep);
 }
 
 Error EditorFileSystem::reimport_append(const String &p_file, const HashMap<StringName, Variant> &p_custom_options, const String &p_custom_importer, Variant p_generator_parameters) {
@@ -2941,54 +3025,7 @@ bool EditorFileSystem::_scan_extensions() {
 
 	_scan_extensions_dir(d, extensions);
 
-	//verify against loaded extensions
-
-	Vector<String> extensions_added;
-	Vector<String> extensions_removed;
-
-	for (const String &E : extensions) {
-		if (!GDExtensionManager::get_singleton()->is_extension_loaded(E)) {
-			extensions_added.push_back(E);
-		}
-	}
-
-	Vector<String> loaded_extensions = GDExtensionManager::get_singleton()->get_loaded_extensions();
-	for (int i = 0; i < loaded_extensions.size(); i++) {
-		if (!extensions.has(loaded_extensions[i])) {
-			extensions_removed.push_back(loaded_extensions[i]);
-		}
-	}
-
-	String extension_list_config_file = GDExtension::get_extension_list_config_file();
-	if (extensions.size()) {
-		if (extensions_added.size() || extensions_removed.size()) { //extensions were added or removed
-			Ref<FileAccess> f = FileAccess::open(extension_list_config_file, FileAccess::WRITE);
-			for (const String &E : extensions) {
-				f->store_line(E);
-			}
-		}
-	} else {
-		if (loaded_extensions.size() || FileAccess::exists(extension_list_config_file)) { //extensions were removed
-			Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
-			da->remove(extension_list_config_file);
-		}
-	}
-
-	bool needs_restart = false;
-	for (int i = 0; i < extensions_added.size(); i++) {
-		GDExtensionManager::LoadStatus st = GDExtensionManager::get_singleton()->load_extension(extensions_added[i]);
-		if (st == GDExtensionManager::LOAD_STATUS_NEEDS_RESTART) {
-			needs_restart = true;
-		}
-	}
-	for (int i = 0; i < extensions_removed.size(); i++) {
-		GDExtensionManager::LoadStatus st = GDExtensionManager::get_singleton()->unload_extension(extensions_removed[i]);
-		if (st == GDExtensionManager::LOAD_STATUS_NEEDS_RESTART) {
-			needs_restart = true;
-		}
-	}
-
-	return needs_restart;
+	return GDExtensionManager::get_singleton()->ensure_extensions_loaded(extensions);
 }
 
 void EditorFileSystem::_bind_methods() {

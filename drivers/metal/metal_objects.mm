@@ -50,8 +50,11 @@
 
 #import "metal_objects.h"
 
+#import "metal_utils.h"
 #import "pixel_formats.h"
 #import "rendering_device_driver_metal.h"
+
+#import <os/signpost.h>
 
 void MDCommandBuffer::begin() {
 	DEV_ASSERT(commandBuffer == nil);
@@ -714,6 +717,7 @@ void MDCommandBuffer::render_bind_index_buffer(RDD::BufferID p_buffer, RDD::Inde
 
 	render.index_buffer = rid::get(p_buffer);
 	render.index_type = p_format == RDD::IndexBufferFormat::INDEX_BUFFER_FORMAT_UINT16 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
+	render.index_offset = p_offset;
 }
 
 void MDCommandBuffer::render_draw_indexed(uint32_t p_index_count,
@@ -726,13 +730,16 @@ void MDCommandBuffer::render_draw_indexed(uint32_t p_index_count,
 
 	id<MTLRenderCommandEncoder> enc = render.encoder;
 
+	uint32_t index_offset = render.index_offset;
+	index_offset += p_first_index * (render.index_type == MTLIndexTypeUInt16 ? sizeof(uint16_t) : sizeof(uint32_t));
+
 	[enc drawIndexedPrimitives:render.pipeline->raster_state.render_primitive
 					indexCount:p_index_count
 					 indexType:render.index_type
 				   indexBuffer:render.index_buffer
-			 indexBufferOffset:p_vertex_offset
+			 indexBufferOffset:index_offset
 				 instanceCount:p_instance_count
-					baseVertex:p_first_index
+					baseVertex:p_vertex_offset
 				  baseInstance:p_first_instance];
 }
 
@@ -850,7 +857,7 @@ void MDCommandBuffer::_end_blit() {
 	type = MDCommandBufferStateType::None;
 }
 
-MDComputeShader::MDComputeShader(CharString p_name, Vector<UniformSet> p_sets, id<MTLLibrary> p_kernel) :
+MDComputeShader::MDComputeShader(CharString p_name, Vector<UniformSet> p_sets, MDLibrary *p_kernel) :
 		MDShader(p_name, p_sets), kernel(p_kernel) {
 }
 
@@ -868,7 +875,7 @@ void MDComputeShader::encode_push_constant_data(VectorView<uint32_t> p_data, MDC
 	[enc setBytes:ptr length:length atIndex:push_constants.binding];
 }
 
-MDRenderShader::MDRenderShader(CharString p_name, Vector<UniformSet> p_sets, id<MTLLibrary> _Nonnull p_vert, id<MTLLibrary> _Nonnull p_frag) :
+MDRenderShader::MDRenderShader(CharString p_name, Vector<UniformSet> p_sets, MDLibrary *_Nonnull p_vert, MDLibrary *_Nonnull p_frag) :
 		MDShader(p_name, p_sets), vert(p_vert), frag(p_frag) {
 }
 
@@ -1378,3 +1385,197 @@ id<MTLDepthStencilState> MDResourceCache::get_depth_stencil_state(bool p_use_dep
 	}
 	return *val;
 }
+
+static const char *SHADER_STAGE_NAMES[] = {
+	[RD::SHADER_STAGE_VERTEX] = "vert",
+	[RD::SHADER_STAGE_FRAGMENT] = "frag",
+	[RD::SHADER_STAGE_TESSELATION_CONTROL] = "tess_ctrl",
+	[RD::SHADER_STAGE_TESSELATION_EVALUATION] = "tess_eval",
+	[RD::SHADER_STAGE_COMPUTE] = "comp",
+};
+
+void ShaderCacheEntry::notify_free() const {
+	owner.shader_cache_free_entry(key);
+}
+
+@interface MDLibrary ()
+- (instancetype)initWithCacheEntry:(ShaderCacheEntry *)entry;
+@end
+
+/// Loads the MTLLibrary when the library is first accessed.
+@interface MDLazyLibrary : MDLibrary {
+	id<MTLLibrary> _library;
+	NSError *_error;
+	std::shared_mutex _mu;
+	bool _loaded;
+	id<MTLDevice> _device;
+	NSString *_source;
+	MTLCompileOptions *_options;
+}
+- (instancetype)initWithCacheEntry:(ShaderCacheEntry *)entry
+							device:(id<MTLDevice>)device
+							source:(NSString *)source
+						   options:(MTLCompileOptions *)options;
+@end
+
+/// Loads the MTLLibrary immediately on initialization, using an asynchronous API.
+@interface MDImmediateLibrary : MDLibrary {
+	id<MTLLibrary> _library;
+	NSError *_error;
+	std::mutex _cv_mutex;
+	std::condition_variable _cv;
+	std::atomic<bool> _complete;
+	bool _ready;
+}
+- (instancetype)initWithCacheEntry:(ShaderCacheEntry *)entry
+							device:(id<MTLDevice>)device
+							source:(NSString *)source
+						   options:(MTLCompileOptions *)options;
+@end
+
+@implementation MDLibrary
+
++ (instancetype)newLibraryWithCacheEntry:(ShaderCacheEntry *)entry
+								  device:(id<MTLDevice>)device
+								  source:(NSString *)source
+								 options:(MTLCompileOptions *)options
+								strategy:(ShaderLoadStrategy)strategy {
+	switch (strategy) {
+		case ShaderLoadStrategy::DEFAULT:
+			[[fallthrough]];
+		default:
+			return [[MDImmediateLibrary alloc] initWithCacheEntry:entry device:device source:source options:options];
+		case ShaderLoadStrategy::LAZY:
+			return [[MDLazyLibrary alloc] initWithCacheEntry:entry device:device source:source options:options];
+	}
+}
+
+- (id<MTLLibrary>)library {
+	CRASH_NOW_MSG("Not implemented");
+	return nil;
+}
+
+- (NSError *)error {
+	CRASH_NOW_MSG("Not implemented");
+	return nil;
+}
+
+- (void)setLabel:(NSString *)label {
+}
+
+- (instancetype)initWithCacheEntry:(ShaderCacheEntry *)entry {
+	self = [super init];
+	_entry = entry;
+	_entry->library = self;
+	return self;
+}
+
+- (void)dealloc {
+	_entry->notify_free();
+}
+
+@end
+
+@implementation MDImmediateLibrary
+
+- (instancetype)initWithCacheEntry:(ShaderCacheEntry *)entry
+							device:(id<MTLDevice>)device
+							source:(NSString *)source
+						   options:(MTLCompileOptions *)options {
+	self = [super initWithCacheEntry:entry];
+	_complete = false;
+	_ready = false;
+
+	__block os_signpost_id_t compile_id = (os_signpost_id_t)(uintptr_t)self;
+	os_signpost_interval_begin(LOG_INTERVALS, compile_id, "shader_compile",
+			"shader_name=%{public}s stage=%{public}s hash=%X",
+			entry->name.get_data(), SHADER_STAGE_NAMES[entry->stage], entry->key.short_sha());
+
+	[device newLibraryWithSource:source
+						 options:options
+			   completionHandler:^(id<MTLLibrary> library, NSError *error) {
+				   os_signpost_interval_end(LOG_INTERVALS, compile_id, "shader_compile");
+				   self->_library = library;
+				   self->_error = error;
+				   if (error) {
+					   ERR_PRINT(String(U"Error compiling shader %s: %s").format(entry->name.get_data(), error.localizedDescription.UTF8String));
+				   }
+
+				   {
+					   std::lock_guard<std::mutex> lock(self->_cv_mutex);
+					   _ready = true;
+				   }
+				   _cv.notify_all();
+				   _complete = true;
+			   }];
+	return self;
+}
+
+- (id<MTLLibrary>)library {
+	if (!_complete) {
+		std::unique_lock<std::mutex> lock(_cv_mutex);
+		_cv.wait(lock, [&] { return _ready; });
+	}
+	return _library;
+}
+
+- (NSError *)error {
+	if (!_complete) {
+		std::unique_lock<std::mutex> lock(_cv_mutex);
+		_cv.wait(lock, [&] { return _ready; });
+	}
+	return _error;
+}
+
+@end
+
+@implementation MDLazyLibrary
+- (instancetype)initWithCacheEntry:(ShaderCacheEntry *)entry
+							device:(id<MTLDevice>)device
+							source:(NSString *)source
+						   options:(MTLCompileOptions *)options {
+	self = [super initWithCacheEntry:entry];
+	_device = device;
+	_source = source;
+	_options = options;
+
+	return self;
+}
+
+- (void)load {
+	{
+		std::shared_lock<std::shared_mutex> lock(_mu);
+		if (_loaded) {
+			return;
+		}
+	}
+
+	std::unique_lock<std::shared_mutex> lock(_mu);
+	if (_loaded) {
+		return;
+	}
+
+	__block os_signpost_id_t compile_id = (os_signpost_id_t)(uintptr_t)self;
+	os_signpost_interval_begin(LOG_INTERVALS, compile_id, "shader_compile",
+			"shader_name=%{public}s stage=%{public}s hash=%X",
+			_entry->name.get_data(), SHADER_STAGE_NAMES[_entry->stage], _entry->key.short_sha());
+	NSError *error;
+	_library = [_device newLibraryWithSource:_source options:_options error:&error];
+	os_signpost_interval_end(LOG_INTERVALS, compile_id, "shader_compile");
+	_device = nil;
+	_source = nil;
+	_options = nil;
+	_loaded = true;
+}
+
+- (id<MTLLibrary>)library {
+	[self load];
+	return _library;
+}
+
+- (NSError *)error {
+	[self load];
+	return _error;
+}
+
+@end

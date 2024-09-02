@@ -497,13 +497,16 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_KHR_MAINTENANCE_2_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME, false);
 
 	if (Engine::get_singleton()->is_generate_spirv_debug_info_enabled()) {
 		_register_requested_device_extension(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME, true);
 	}
 
 #if defined(VK_TRACK_DEVICE_MEMORY)
-	_register_requested_device_extension(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME, false);
+	if (Engine::get_singleton()->is_extra_gpu_memory_tracking_enabled()) {
+		_register_requested_device_extension(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME, false);
+	}
 #endif
 	_register_requested_device_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME, false);
 
@@ -1701,6 +1704,16 @@ RDD::TextureID RenderingDeviceDriverVulkan::texture_create(const TextureFormat &
 		image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 	} else {
 		image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	}
+
+	VkImageViewASTCDecodeModeEXT decode_mode;
+	if (enabled_device_extension_names.has(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME)) {
+		if (image_view_create_info.format >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && image_view_create_info.format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) {
+			decode_mode.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_ASTC_DECODE_MODE_EXT;
+			decode_mode.pNext = nullptr;
+			decode_mode.decodeMode = VK_FORMAT_R8G8B8A8_UNORM;
+			image_view_create_info.pNext = &decode_mode;
+		}
 	}
 
 	VkImageView vk_image_view = VK_NULL_HANDLE;
@@ -5044,6 +5057,8 @@ void RenderingDeviceDriverVulkan::on_device_lost() const {
 	if (fault_info.pAddressInfos) {
 		memfree(fault_info.pAddressInfos);
 	}
+
+	_err_print_error(FUNCTION_STR, __FILE__, __LINE__, context_driver->get_driver_and_device_memory_report());
 }
 
 void RenderingDeviceDriverVulkan::print_lost_device_info() {

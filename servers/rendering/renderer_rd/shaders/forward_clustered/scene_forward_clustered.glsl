@@ -7,6 +7,7 @@
 #include "scene_forward_clustered_inc.glsl"
 
 #define SHADER_IS_SRGB false
+#define SHADER_SPACE_FAR 0.0
 
 /* INPUT ATTRIBS */
 
@@ -638,6 +639,7 @@ void main() {
 #VERSION_DEFINES
 
 #define SHADER_IS_SRGB false
+#define SHADER_SPACE_FAR 0.0
 
 /* Specialization Constants (Toggles) */
 
@@ -1532,16 +1534,10 @@ void fragment_shader(in SceneData scene_data) {
 			vec3 n = normalize(lightmaps.data[ofs].normal_xform * normal);
 			float en = lightmaps.data[ofs].exposure_normalization;
 
-			ambient_light += lm_light_l0 * 0.282095f * en;
-			ambient_light += lm_light_l1n1 * 0.32573 * n.y * en;
-			ambient_light += lm_light_l1_0 * 0.32573 * n.z * en;
-			ambient_light += lm_light_l1p1 * 0.32573 * n.x * en;
-			if (metallic > 0.01) { // since the more direct bounced light is lost, we can kind of fake it with this trick
-				vec3 r = reflect(normalize(-vertex), normal);
-				specular_light += lm_light_l1n1 * 0.32573 * r.y * en;
-				specular_light += lm_light_l1_0 * 0.32573 * r.z * en;
-				specular_light += lm_light_l1p1 * 0.32573 * r.x * en;
-			}
+			ambient_light += lm_light_l0 * en;
+			ambient_light += lm_light_l1n1 * n.y * en;
+			ambient_light += lm_light_l1_0 * n.z * en;
+			ambient_light += lm_light_l1p1 * n.x * en;
 
 		} else {
 			if (sc_use_lightmap_bicubic_filter) {
