@@ -477,6 +477,13 @@ env.editor_build = env["target"] == "editor"
 env.dev_build = env["dev_build"]
 env.debug_features = env["target"] in ["editor", "template_debug"]
 
+if env["target"] == "template_debug":
+    env.Append(CCFLAGS =['-O0', '-g'])
+    env.Append(CXXFLAGS =['-O0', '-g'])
+else:
+    env.Append(CCFLAGS =['-O2'])
+    env.Append(CXXFLAGS =['-O2'])
+
 if env["optimize"] == "auto":
     if env.dev_build:
         opt_level = "none"
