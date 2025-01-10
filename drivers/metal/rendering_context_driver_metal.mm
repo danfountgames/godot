@@ -94,12 +94,14 @@ public:
 		layer.framebufferOnly = YES;
 		layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
 		layer.pixelFormat = get_pixel_format();
-		if (@available(iOS 16.0, macOS 10.0, *)) {
-			layer.wantsExtendedDynamicRangeContent = true;
-			CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
-			layer.colorspace = colorSpace;
-			CFRelease(colorSpace);
-		}
+        #if __has_builtin(__builtin_available)
+			if (__builtin_available(iOS 16.0, macOS 10.0, *)) {
+				layer.wantsExtendedDynamicRangeContent = true;
+				CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+				layer.colorspace = colorSpace;
+				CFRelease(colorSpace);
+			}
+		#endif
 		layer.device = p_device;
 	}
 
@@ -184,15 +186,7 @@ public:
 
 RenderingContextDriver::SurfaceID RenderingContextDriverMetal::surface_create(const void *p_platform_data) {
 	const WindowPlatformData *wpd = (const WindowPlatformData *)(p_platform_data);
-
-	Surface *surface;
-	String off_screen = OS::get_singleton()->get_environment("GODOT_OFF_SCREEN");
-	if (off_screen == "1") {
-		surface = memnew(SurfaceOffscreen(wpd->layer, metal_device));
-	} else {
-		surface = memnew(SurfaceLayer(wpd->layer, metal_device));
-	}
-	
+	Surface *surface = memnew(SurfaceLayer(wpd->layer, metal_device));
 
 	return SurfaceID(surface);
 }

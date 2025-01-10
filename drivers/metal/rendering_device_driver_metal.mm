@@ -2890,7 +2890,6 @@ String RenderingDeviceDriverMetal::_pipeline_get_cache_path() const {
 }
 
 bool RenderingDeviceDriverMetal::pipeline_cache_create(const Vector<uint8_t> &p_data) {
-	return false;
 	CharString path = _pipeline_get_cache_path().utf8();
 	NSString *nPath = [[NSString alloc] initWithBytesNoCopy:path.ptrw()
 													 length:path.length()
