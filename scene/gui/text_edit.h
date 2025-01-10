@@ -139,7 +139,7 @@ private:
 			Variant metadata;
 			bool clickable = false;
 
-			Ref<Texture2D> icon = Ref<Texture2D>();
+			Ref<Texture2D> icon;
 			String text = "";
 			Color color = Color(1, 1, 1);
 		};
@@ -276,6 +276,7 @@ private:
 	bool setting_text = false;
 
 	bool alt_start = false;
+	bool alt_start_no_hold = false;
 	uint32_t alt_code = 0;
 
 	// Text properties.
@@ -289,7 +290,7 @@ private:
 	int placeholder_line_height = -1;
 	int placeholder_max_width = -1;
 
-	Vector<String> placeholder_wraped_rows;
+	Vector<String> placeholder_wrapped_rows;
 
 	void _update_placeholder();
 	bool _using_placeholder() const;
@@ -318,6 +319,7 @@ private:
 	bool shortcut_keys_enabled = true;
 	bool virtual_keyboard_enabled = true;
 	bool middle_mouse_paste_enabled = true;
+	bool empty_selection_clipboard_enabled = true;
 
 	// Overridable actions.
 	String cut_copy_line = "";
@@ -691,9 +693,9 @@ protected:
 	void _set_symbol_lookup_word(const String &p_symbol);
 
 	// Theme items.
-	virtual Color _get_brace_mismatch_color() const { return Color(); };
-	virtual Color _get_code_folding_color() const { return Color(); };
-	virtual Ref<Texture2D> _get_folded_eol_icon() const { return Ref<Texture2D>(); };
+	virtual Color _get_brace_mismatch_color() const { return Color(); }
+	virtual Color _get_code_folding_color() const { return Color(); }
+	virtual Ref<Texture2D> _get_folded_eol_icon() const { return Ref<Texture2D>(); }
 
 	/* Text manipulation */
 
@@ -768,6 +770,9 @@ public:
 
 	void set_middle_mouse_paste_enabled(bool p_enabled);
 	bool is_middle_mouse_paste_enabled() const;
+
+	void set_empty_selection_clipboard_enabled(bool p_enabled);
+	bool is_empty_selection_clipboard_enabled() const;
 
 	// Text manipulation
 	void clear();

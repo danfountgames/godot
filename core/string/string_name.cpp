@@ -162,6 +162,11 @@ void StringName::unref() {
 	_data = nullptr;
 }
 
+uint32_t StringName::get_empty_hash() {
+	static uint32_t empty_hash = String::hash("");
+	return empty_hash;
+}
+
 bool StringName::operator==(const String &p_name) const {
 	if (_data) {
 		return _data->operator==(p_name);
@@ -184,12 +189,6 @@ bool StringName::operator!=(const String &p_name) const {
 
 bool StringName::operator!=(const char *p_name) const {
 	return !(operator==(p_name));
-}
-
-bool StringName::operator!=(const StringName &p_name) const {
-	// the real magic of all this mess happens here.
-	// this is why path comparisons are very fast
-	return _data != p_name._data;
 }
 
 char32_t StringName::operator[](int p_index) const {

@@ -199,11 +199,14 @@ private:
 				weight_update_list(this), array_update_list(this) {}
 	};
 
+	RD::VertexFormatID _mesh_surface_generate_vertex_format(uint64_t p_surface_format, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors, uint32_t &r_position_stride);
 	void _mesh_surface_generate_version_for_input_mask(Mesh::Surface::Version &v, Mesh::Surface *s, uint64_t p_input_mask, bool p_input_motion_vectors, MeshInstance::Surface *mis = nullptr, uint32_t p_current_buffer = 0, uint32_t p_previous_buffer = 0);
+	void _mesh_surface_clear(Mesh *p_mesh, int p_surface);
 
 	void _mesh_instance_clear(MeshInstance *mi);
 	void _mesh_instance_add_surface(MeshInstance *mi, Mesh *mesh, uint32_t p_surface);
 	void _mesh_instance_add_surface_buffer(MeshInstance *mi, Mesh *mesh, MeshInstance::Surface *s, uint32_t p_surface, uint32_t p_buffer_index);
+	void _mesh_instance_remove_surface(MeshInstance *mi, int p_surface);
 
 	mutable RID_Owner<MeshInstance> mesh_instance_owner;
 
@@ -311,7 +314,7 @@ private:
 	struct Skeleton {
 		bool use_2d = false;
 		int size = 0;
-		Vector<float> data;
+		LocalVector<float> data;
 		RID buffer;
 
 		bool dirty = false;
@@ -350,7 +353,7 @@ public:
 
 	/* MESH API */
 
-	bool owns_mesh(RID p_rid) { return mesh_owner.owns(p_rid); };
+	bool owns_mesh(RID p_rid) { return mesh_owner.owns(p_rid); }
 
 	virtual RID mesh_allocate() override;
 	virtual void mesh_initialize(RID p_mesh) override;
@@ -387,6 +390,7 @@ public:
 	virtual String mesh_get_path(RID p_mesh) const override;
 
 	virtual void mesh_clear(RID p_mesh) override;
+	virtual void mesh_surface_remove(RID p_mesh, int p_surface) override;
 
 	virtual bool mesh_needs_instance(RID p_mesh, bool p_has_skeleton) override;
 
@@ -605,11 +609,17 @@ public:
 		return s->particles_render_index;
 	}
 
+	_FORCE_INLINE_ RD::VertexFormatID mesh_surface_get_vertex_format(void *p_surface, uint64_t p_input_mask, bool p_instanced_surface, bool p_input_motion_vectors) {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		uint32_t position_stride = 0;
+		return _mesh_surface_generate_vertex_format(s->format, p_input_mask, p_instanced_surface, p_input_motion_vectors, position_stride);
+	}
+
 	Dependency *mesh_get_dependency(RID p_mesh) const;
 
 	/* MESH INSTANCE API */
 
-	bool owns_mesh_instance(RID p_rid) const { return mesh_instance_owner.owns(p_rid); };
+	bool owns_mesh_instance(RID p_rid) const { return mesh_instance_owner.owns(p_rid); }
 
 	virtual RID mesh_instance_create(RID p_base) override;
 	virtual void mesh_instance_free(RID p_rid) override;
@@ -621,7 +631,7 @@ public:
 
 	/* MULTIMESH API */
 
-	bool owns_multimesh(RID p_rid) { return multimesh_owner.owns(p_rid); };
+	bool owns_multimesh(RID p_rid) { return multimesh_owner.owns(p_rid); }
 
 	virtual RID _multimesh_allocate() override;
 	virtual void _multimesh_initialize(RID p_multimesh) override;
@@ -644,6 +654,7 @@ public:
 	virtual Color _multimesh_instance_get_custom_data(RID p_multimesh, int p_index) const override;
 
 	virtual void _multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_buffer) override;
+	virtual RID _multimesh_get_buffer_rd_rid(RID p_multimesh) const override;
 	virtual Vector<float> _multimesh_get_buffer(RID p_multimesh) const override;
 
 	virtual void _multimesh_set_visible_instances(RID p_multimesh, int p_visible) override;
@@ -730,7 +741,7 @@ public:
 
 	/* SKELETON API */
 
-	bool owns_skeleton(RID p_rid) const { return skeleton_owner.owns(p_rid); };
+	bool owns_skeleton(RID p_rid) const { return skeleton_owner.owns(p_rid); }
 
 	virtual RID skeleton_allocate() override;
 	virtual void skeleton_initialize(RID p_skeleton) override;
