@@ -1,4 +1,4 @@
-scons platform=macos arch=arm64 dev_build=true metal=true
+scons platform=macos arch=arm64 dev_build=true metal=true vulkan=false 
 rm -rf ./Godot.app
 cp -r misc/dist/macos_tools.app ./Godot.app
 mkdir -p Godot.app/Contents/MacOS
