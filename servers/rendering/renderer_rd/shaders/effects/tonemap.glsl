@@ -446,19 +446,22 @@ void main() {
 	vec2 effect_offset = vec2(0.5,0.46);
 
     float fish_eye_intensity = 0.4;
+
+	vec2 uv_used = uv_interp;
+
 	vec2 uv_zeroed = (uv_interp - effect_offset) * 2.0;
     float uv_mag_squared = dot(uv_zeroed,uv_zeroed);
 
-	float factor = 1.0 / (1.0 + fish_eye_intensity * uv_mag_squared * 0.03);
 
-	vec2 uv_warped = uv_zeroed * 0.5 * factor + effect_offset;
-	//uv_warped = mix(uv_interp, uv_warped, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
+	if (params.tonemapper == TONEMAPPER_FILMIC) {
+		float factor = 1.0 / (1.0 + fish_eye_intensity * uv_mag_squared * 0.03);
+
+		vec2 uv_warped = uv_zeroed * 0.5 * factor + effect_offset;
+		//uv_warped = mix(uv_interp, uv_warped, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
+		uv_used = uv_warped;
+	}
 	
 
-	// EdgeBlur
-    float uv_edge_blur_squared = clamp(uv_mag_squared - 0.12, 0.0, 1.0);
-	float edge_blur_intensity = 1.0;
-    float edge_blur = uv_edge_blur_squared * uv_edge_blur_squared * edge_blur_intensity;
 
 
 
@@ -466,30 +469,38 @@ void main() {
 	// SUBPASS and USE_MULTIVIEW can be combined but in that case we're already reading from the correct layer
 	vec4 color = subpassLoad(input_color);
 #elif defined(USE_MULTIVIEW)
-	vec4 color = textureLod(source_color, vec3(uv_warped, ViewIndex), 0);
+	vec4 color = textureLod(source_color, vec3(uv_used, ViewIndex), 0);
 #else
-    vec4 color = textureLod(source_color, uv_warped, 0);
+    vec4 color = textureLod(source_color, uv_used, 0);
 
-	vec4 color_accum = color;
-	float accum = 1.0;
+	if (params.tonemapper == TONEMAPPER_FILMIC) {
 
-	float radius_resolution = 0.075;
-	float radius = radius_resolution;
-	for (float ang = 0.0; radius < 1.0; ang += 2.39996323) {
-		vec2 uv_adj = uv_warped + vec2(cos(ang), sin(ang)) * edge_blur * radius * 0.01;
+		// EdgeBlur
+		float uv_edge_blur_squared = clamp(uv_mag_squared - 0.12, 0.0, 1.0);
+		float edge_blur_intensity = 1.0;
+		float edge_blur = uv_edge_blur_squared * uv_edge_blur_squared * edge_blur_intensity;
 
-		vec4 sample_color = textureLod(source_color, uv_adj, 0);
+		vec4 color_accum = color;
+		float accum = 1.0;
 
-		float m = 1.0-radius;
-		color_accum += sample_color * m;
-		accum += m;
+		float radius_resolution = 0.075;
+		float radius = radius_resolution;
+		for (float ang = 0.0; radius < 1.0; ang += 2.39996323) {
+			vec2 uv_adj = uv_used + vec2(cos(ang), sin(ang)) * edge_blur * radius * 0.01;
 
-		radius += radius_resolution;
+			vec4 sample_color = textureLod(source_color, uv_adj, 0);
+
+			float m = 1.0-radius;
+			color_accum += sample_color * m;
+			accum += m;
+
+			radius += radius_resolution;
+		}
+
+		color_accum = color_accum / accum;
+		//color = mix(color, color_accum, clamp((uv_used.x - 0.5) * 1000.0, 0.0, 1.0));
+		color = color_accum;
 	}
-
-	color_accum = color_accum / accum;
-	//color = mix(color, color_accum, clamp((uv_warped.x - 0.5) * 1000.0, 0.0, 1.0));
-	color = color_accum;
 
 #endif
 	color.rgb *= params.luminance_multiplier;
@@ -509,13 +520,13 @@ void main() {
 #ifndef SUBPASS
 	if (bool(params.flags & FLAG_USE_FXAA)) {
 		// FXAA must be performed before glow to preserve the "bleed" effect of glow.
-		color.rgb = do_fxaa(color.rgb, exposure, uv_warped);
+		color.rgb = do_fxaa(color.rgb, exposure, uv_used);
 	}
 
 	if (bool(params.flags & FLAG_USE_GLOW) && params.glow_mode == GLOW_MODE_MIX) {
-		vec3 glow = gather_glow(source_glow, uv_warped) * params.luminance_multiplier;
+		vec3 glow = gather_glow(source_glow, uv_used) * params.luminance_multiplier;
 		if (params.glow_map_strength > 0.001) {
-			glow = mix(glow, texture(glow_map, uv_warped).rgb * glow, params.glow_map_strength);
+			glow = mix(glow, texture(glow_map, uv_used).rgb * glow, params.glow_map_strength);
 		}
 		color.rgb = mix(color.rgb, glow, params.glow_intensity);
 	}
@@ -529,9 +540,9 @@ void main() {
 #ifndef SUBPASS
 	// Glow
 	if (bool(params.flags & FLAG_USE_GLOW) && params.glow_mode != GLOW_MODE_MIX) {
-		vec3 glow = gather_glow(source_glow, uv_warped) * params.glow_intensity * params.luminance_multiplier;
+		vec3 glow = gather_glow(source_glow, uv_used) * params.glow_intensity * params.luminance_multiplier;
 		if (params.glow_map_strength > 0.001) {
-			glow = mix(glow, texture(glow_map, uv_warped).rgb * glow, params.glow_map_strength);
+			glow = mix(glow, texture(glow_map, uv_used).rgb * glow, params.glow_map_strength);
 		}
 
 		// high dynamic range -> SRGB
@@ -561,12 +572,13 @@ void main() {
 	}
 
 
-
-	// Vignetting
-	float vignette_intensity = 0.142;
-    float vignette = 1.0 - max(uv_mag_squared- 0.12, 0.0) * vignette_intensity * 4.0;
-	vignette = max(vignette,0.2);
-    color *= vignette;
+	if (params.tonemapper == TONEMAPPER_FILMIC) {
+		// Vignetting
+		float vignette_intensity = 0.142;
+		float vignette = 1.0 - max(uv_mag_squared- 0.12, 0.0) * vignette_intensity * 4.0;
+		vignette = max(vignette,0.2);
+		color *= vignette;
+	}
 
 	frag_color = color;
 }
