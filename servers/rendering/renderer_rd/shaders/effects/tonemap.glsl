@@ -555,7 +555,7 @@ void main() {
 
 		// EdgeBlur
 		float uv_edge_blur_squared = clamp(uv_mag_squared - 0.12, 0.0, 1.0);
-		float edge_blur_intensity = 1.0;
+		float edge_blur_intensity = 0.5;
 		float edge_blur = uv_edge_blur_squared * uv_edge_blur_squared * edge_blur_intensity;
 
 		vec4 color_accum = color;
