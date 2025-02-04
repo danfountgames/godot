@@ -3659,11 +3659,11 @@ RDD::PipelineID RenderingDeviceDriverMetal::render_pipeline_create(
 	ERR_FAIL_COND_V_MSG(error != nil, PipelineID(), ([NSString stringWithFormat:@"error creating pipeline: %@", error.localizedDescription].UTF8String));
 
 	if (archive) {
-		if ([archive addRenderPipelineFunctionsWithDescriptor:desc error:&error]) {
-			archive_count += 1;
-		} else {
-			print_error(error.localizedDescription.UTF8String);
-		}
+		//if ([archive addRenderPipelineFunctionsWithDescriptor:desc error:&error]) {
+		//	archive_count += 1;
+		//} else {
+		//	print_error(error.localizedDescription.UTF8String);
+		//}
 	}
 
 	return PipelineID(pipeline);
