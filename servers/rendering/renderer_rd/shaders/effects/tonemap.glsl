@@ -560,6 +560,10 @@ void main() {
 		float edge_blur_intensity = 0.5;
 		float edge_blur = uv_edge_blur_squared * uv_edge_blur_squared * edge_blur_intensity;
 
+		if (params.exposure > 1.2) {
+			edge_blur += clamp((params.exposure - 1.2)*2.0,0.0,0.3);
+		}
+
 		vec4 color_accum = color;
 		float accum = 1.0;
 
@@ -580,7 +584,10 @@ void main() {
 		color_accum = color_accum / accum;
 		//color = mix(color, color_accum, clamp((uv_used.x - 0.5) * 1000.0, 0.0, 1.0));
 		color = color_accum;
+
+
 	}
+
 
 #endif
 	color.rgb *= params.luminance_multiplier;
