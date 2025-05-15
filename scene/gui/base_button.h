@@ -47,11 +47,13 @@ public:
 
 private:
 	BitField<MouseButtonMask> button_mask = MouseButtonMask::LEFT;
+	int deadzone = 0;
 	bool toggle_mode = false;
 	bool shortcut_in_tooltip = true;
 	bool was_mouse_pressed = false;
 	bool keep_pressed_outside = false;
 	bool shortcut_feedback = true;
+	Vector2 drag_accum;
 	Ref<Shortcut> shortcut;
 	ObjectID shortcut_context;
 
@@ -133,6 +135,9 @@ public:
 
 	void set_shortcut(const Ref<Shortcut> &p_shortcut);
 	Ref<Shortcut> get_shortcut() const;
+
+	int get_deadzone() const;
+	void set_deadzone(int p_deadzone);
 
 	virtual Control *make_custom_tooltip(const String &p_text) const override;
 

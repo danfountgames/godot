@@ -79,6 +79,20 @@ void BaseButton::gui_input(const Ref<InputEvent> &p_event) {
 			if (last_press_inside != status.pressing_inside) {
 				queue_redraw();
 			}
+			Vector2 motion = mouse_motion->get_relative();
+			drag_accum -= motion;
+
+			if (drag_accum.length() > deadzone) {
+				status.press_attempt = false;
+				status.pressing_inside = false;
+				if (status.pressed_down_with_focus) {
+					status.pressed_down_with_focus = false;
+					emit_signal(SNAME("button_up"));
+				}
+				queue_redraw();
+			}else{
+				accept_event();
+			}
 		}
 	}
 }
@@ -153,6 +167,7 @@ void BaseButton::on_action_event(Ref<InputEvent> p_event) {
 
 	if (p_event->is_pressed() && (mouse_button.is_null() || status.hovering)) {
 		status.press_attempt = true;
+		drag_accum = Vector2();
 		status.pressing_inside = true;
 		if (!status.pressed_down_with_focus) {
 			status.pressed_down_with_focus = true;
@@ -509,6 +524,8 @@ void BaseButton::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "shortcut", PROPERTY_HINT_RESOURCE_TYPE, "Shortcut"), "set_shortcut", "get_shortcut");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shortcut_feedback"), "set_shortcut_feedback", "is_shortcut_feedback");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shortcut_in_tooltip"), "set_shortcut_in_tooltip", "is_shortcut_in_tooltip_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "scroll_deadzone"), "set_deadzone", "get_deadzone");
+
 
 	BIND_ENUM_CONSTANT(DRAW_NORMAL);
 	BIND_ENUM_CONSTANT(DRAW_PRESSED);
@@ -520,16 +537,27 @@ void BaseButton::_bind_methods() {
 	BIND_ENUM_CONSTANT(ACTION_MODE_BUTTON_RELEASE);
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "gui/timers/button_shortcut_feedback_highlight_time", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:s"), 0.2);
+	GLOBAL_DEF("gui/common/default_scroll_deadzone", 0);
 }
 
 BaseButton::BaseButton() {
 	set_focus_mode(FOCUS_ALL);
+
+	deadzone = GLOBAL_GET("gui/common/default_scroll_deadzone");
 }
 
 BaseButton::~BaseButton() {
 	if (button_group.is_valid()) {
 		button_group->buttons.erase(this);
 	}
+}
+
+int BaseButton::get_deadzone() const {
+	return deadzone;
+}
+
+void BaseButton::set_deadzone(int p_deadzone) {
+	deadzone = p_deadzone;
 }
 
 void ButtonGroup::get_buttons(List<BaseButton *> *r_buttons) {
