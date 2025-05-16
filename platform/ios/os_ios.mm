@@ -600,6 +600,14 @@ bool OS_IOS::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "mobile") {
 		return true;
 	}
+	if (p_feature == "hdr_screen") {
+		if (@available(iOS 15.0, *)) {
+			if ([UIScreen mainScreen].maximumExtendedDynamicRangeColorComponentValue > 1.0) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	return false;
 }
