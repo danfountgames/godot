@@ -601,14 +601,12 @@ bool OS_IOS::_check_internal_feature_support(const String &p_feature) {
 		return true;
 	}
 	if (p_feature == "hdr_screen") {
-		if (@available(iOS 15.0, *)) {
-			for (NSScreen *screen in [NSScreen screens]) {
-				if (screen.maximumExtendedDynamicRangeColorComponentValue > 1.0) {
-					return true;
-				}
-			}
+		if (@available(iOS 16.0, *)) {
+			UIScreen *screen = [UIScreen mainScreen];
+			CGFloat maxEDR = screen.potentialEDRHeadroom;
+			return maxEDR > 1.0f;
 		}
-		return false;
+		return NO;
 	}
 
 	return false;

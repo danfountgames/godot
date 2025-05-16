@@ -808,9 +808,9 @@ String OS_MacOS::get_unique_id() const {
 bool OS_MacOS::_check_internal_feature_support(const String &p_feature) {
 
 	if (p_feature == "hdr_screen") {
-		if (@available(macOS 11.0, *)) {
+		if (@available(macOS 13.0, *)) {
 			for (NSScreen *screen in [NSScreen screens]) {
-				if (screen.maximumExtendedDynamicRangeColorComponentValue > 1.0) {
+				if (screen.potentialEDRHeadroom > 1.0) {
 					return true;
 				}
 			}
