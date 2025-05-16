@@ -602,6 +602,9 @@ bool OS_IOS::_check_internal_feature_support(const String &p_feature) {
 	}
 	if (p_feature == "hdr_screen") {
 		if (@available(iOS 16.0, *)) {
+			if ([NSProcessInfo processInfo].lowPowerModeEnabled) {
+				return false;
+			}
 			UIScreen *screen = [UIScreen mainScreen];
 			CGFloat maxEDR = screen.potentialEDRHeadroom;
 			return maxEDR > 1.0f;
