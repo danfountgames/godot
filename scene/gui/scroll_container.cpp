@@ -221,7 +221,7 @@ void ScrollContainer::gui_input(const Ref<InputEvent> &p_gui_input) {
 				}
 				Vector2 diff = drag_from + drag_accum;
 				if (h_scroll_enabled) {
-					h_scroll->scroll_to(diff.x);
+					h_scroll->scroll_to(diff.x);		
 				} else {
 					drag_accum.x = 0;
 				}
@@ -244,6 +244,7 @@ void ScrollContainer::gui_input(const Ref<InputEvent> &p_gui_input) {
 		return;
 	}
 
+	/*
 	Ref<InputEventPanGesture> pan_gesture = p_gui_input;
 	if (pan_gesture.is_valid()) {
 		if (h_scroll_enabled) {
@@ -258,6 +259,7 @@ void ScrollContainer::gui_input(const Ref<InputEvent> &p_gui_input) {
 		}
 		return;
 	}
+	*/
 }
 
 void ScrollContainer::_update_scrollbar_position() {
@@ -354,6 +356,7 @@ void ScrollContainer::_reposition_children() {
 			r.position.x += v_scroll->get_minimum_size().x;
 		}
 		r.position = r.position.floor();
+		//print_line("r.position ", r.position);
 		fit_child_in_rect(c, r);
 	}
 
