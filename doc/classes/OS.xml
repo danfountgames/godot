@@ -837,6 +837,15 @@
 				[b]Note:[/b] Environment variable names are case-sensitive on all platforms except Windows.
 			</description>
 		</method>
+		<method name="hdr_headroom" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the HDR headroom value for the current display. This value represents the maximum brightness that can be displayed by the screen relative to SDR content.
+				- On iOS: Returns the current or potential EDR headroom value from the main screen.
+				- On macOS: Returns the maximum extended dynamic range color component value from the main screen.
+				- On other platforms: Returns 1.0 by default.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="delta_smoothing" type="bool" setter="set_delta_smoothing" getter="is_delta_smoothing_enabled" default="true">

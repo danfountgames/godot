@@ -274,6 +274,7 @@ public:
 	bool request_permissions();
 	Vector<String> get_granted_permissions() const;
 	void revoke_granted_permissions();
+	float hdr_headroom() const;
 
 	static OS *get_singleton() { return singleton; }
 

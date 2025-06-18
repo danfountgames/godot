@@ -318,6 +318,7 @@ public:
 	virtual int get_default_thread_pool_size() const { return get_processor_count(); }
 
 	virtual String get_unique_id() const;
+	virtual float hdr_headroom() const { return 1.0; }
 
 	bool has_feature(const String &p_feature);
 

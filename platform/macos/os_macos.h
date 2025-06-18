@@ -136,6 +136,8 @@ public:
 	virtual String get_system_ca_certificates() override;
 	virtual OS::PreferredTextureFormat get_preferred_texture_format() const override;
 
+	virtual float hdr_headroom() const override;
+
 	void run();
 
 	OS_MacOS();

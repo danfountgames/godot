@@ -624,6 +624,10 @@ void OS::revoke_granted_permissions() {
 	::OS::get_singleton()->revoke_granted_permissions();
 }
 
+float OS::hdr_headroom() const {
+	return ::OS::get_singleton()->hdr_headroom();
+}
+
 String OS::get_unique_id() const {
 	return ::OS::get_singleton()->get_unique_id();
 }
@@ -733,6 +737,7 @@ void OS::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("request_permissions"), &OS::request_permissions);
 	ClassDB::bind_method(D_METHOD("get_granted_permissions"), &OS::get_granted_permissions);
 	ClassDB::bind_method(D_METHOD("revoke_granted_permissions"), &OS::revoke_granted_permissions);
+	ClassDB::bind_method(D_METHOD("hdr_headroom"), &OS::hdr_headroom);
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "low_processor_usage_mode"), "set_low_processor_usage_mode", "is_in_low_processor_usage_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "low_processor_usage_mode_sleep_usec"), "set_low_processor_usage_mode_sleep_usec", "get_low_processor_usage_mode_sleep_usec");

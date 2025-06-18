@@ -336,6 +336,21 @@ String OS_IOS::get_cache_path() const {
 	return ret;
 }
 
+float OS_IOS::hdr_headroom() const {
+	if (@available(iOS 16.0, *)) {
+		if ([NSProcessInfo processInfo].lowPowerModeEnabled) {
+			return 0.0;
+		}
+		UIScreen *screen = [UIScreen mainScreen];
+		if (screen.currentEDRHeadroom > 1.0) {
+			return screen.currentEDRHeadroom;
+		} else {
+			return screen.potentialEDRHeadroom;
+		}
+	}
+	return 1.0;
+}
+
 String OS_IOS::get_temp_path() const {
 	static String ret;
 	if (ret.is_empty()) {
@@ -600,18 +615,6 @@ bool OS_IOS::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "mobile") {
 		return true;
 	}
-	if (p_feature == "hdr_screen") {
-		if (@available(iOS 16.0, *)) {
-			if ([NSProcessInfo processInfo].lowPowerModeEnabled) {
-				return false;
-			}
-			UIScreen *screen = [UIScreen mainScreen];
-			CGFloat maxEDR = screen.potentialEDRHeadroom;
-			return maxEDR > 1.0f;
-		}
-		return NO;
-	}
-
 	return false;
 }
 
