@@ -463,6 +463,15 @@
 				[b]Note:[/b] This method is only implemented on Windows, macOS, Linux and iOS. On Android and Web, [method get_processor_name] returns an empty string.
 			</description>
 		</method>
+		<method name="get_hdr_headroom" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the current HDR headroom available on the display. A value greater than [code]1.0[/code] indicates that the display supports Extended Dynamic Range (EDR) and can show brightness values above standard dynamic range.
+				On macOS, this returns [code]NSScreen.maximumExtendedDynamicRangeColorComponentValue[/code] (or the potential value if not currently in EDR mode). On iOS, this returns [code]UIScreen.currentEDRHeadroom[/code] (or the potential value).
+				Returns [code]0.0[/code] if the device is in low power mode. Returns [code]1.0[/code] on platforms that do not support HDR/EDR.
+				[b]Note:[/b] This method is only implemented on macOS and iOS. On all other platforms, it always returns [code]1.0[/code].
+			</description>
+		</method>
 		<method name="get_restart_on_exit_arguments" qualifiers="const">
 			<return type="PackedStringArray" />
 			<description>

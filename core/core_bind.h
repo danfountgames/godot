@@ -276,6 +276,7 @@ public:
 
 	int get_processor_count() const;
 	String get_processor_name() const;
+	float get_hdr_headroom() const;
 
 	enum SystemDir {
 		SYSTEM_DIR_DESKTOP,

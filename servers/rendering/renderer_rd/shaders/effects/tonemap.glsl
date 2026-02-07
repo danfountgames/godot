@@ -936,7 +936,8 @@ void main() {
 		color.rgb = mix(vec3(dot(vec3(1.0), color.rgb) * (1.0 / 3.0)), color.rgb, params.bcs.z);
 
 		if (bool(params.flags & FLAG_USE_COLOR_CORRECTION)) {
-			color.rgb = clamp(color.rgb, vec3(0.0), vec3(1.0));
+			// Clamp removed for HDR/EDR display support.
+			// color.rgb = clamp(color.rgb, vec3(0.0), vec3(1.0));
 			color.rgb = apply_color_correction(color.rgb);
 			// When using color correction and  FLAG_CONVERT_TO_SRGB is false, there
 			// is no need to convert back to linear because the color correction

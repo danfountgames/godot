@@ -48,6 +48,7 @@
 #else
 typedef enum MTLPixelFormat {
 	MTLPixelFormatBGRA8Unorm = 80,
+	MTLPixelFormatRGBA16Float = 115,
 } MTLPixelFormat;
 class MDCommandBuffer;
 #endif
@@ -113,7 +114,14 @@ public:
 				device(p_device) {}
 		virtual ~Surface() = default;
 
-		MTLPixelFormat get_pixel_format() const { return MTLPixelFormatBGRA8Unorm; }
+		MTLPixelFormat get_pixel_format() const {
+#if __has_builtin(__builtin_available)
+		if (__builtin_available(iOS 16.0, macOS 10.11, *)) {
+			return MTLPixelFormatRGBA16Float;
+		}
+#endif
+		return MTLPixelFormatBGRA8Unorm;
+	}
 		virtual Error resize(uint32_t p_desired_framebuffer_count) = 0;
 		virtual RDD::FramebufferID acquire_next_frame_buffer() = 0;
 		virtual void present(MDCommandBuffer *p_cmd_buffer) = 0;

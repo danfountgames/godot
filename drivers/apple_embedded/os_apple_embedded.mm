@@ -719,6 +719,21 @@ void OS_AppleEmbedded::vibrate_handheld(int p_duration_ms, float p_amplitude) {
 	}
 }
 
+float OS_AppleEmbedded::get_hdr_headroom() const {
+	if (@available(iOS 16.0, *)) {
+		if ([NSProcessInfo processInfo].lowPowerModeEnabled) {
+			return 0.0;
+		}
+		UIScreen *screen = [UIScreen mainScreen];
+		if (screen.currentEDRHeadroom > 1.0) {
+			return screen.currentEDRHeadroom;
+		} else {
+			return screen.potentialEDRHeadroom;
+		}
+	}
+	return 1.0;
+}
+
 bool OS_AppleEmbedded::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "system_fonts") {
 		return true;

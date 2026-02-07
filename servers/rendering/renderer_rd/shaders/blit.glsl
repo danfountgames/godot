@@ -146,6 +146,7 @@ void main() {
 			color.rgb += screen_space_dither(gl_FragCoord.xy);
 		}
 
-		color.rgb = clamp(color.rgb, vec3(0.0), vec3(1.0));
+		// Clamp removed for HDR/EDR display support.
+		// color.rgb = clamp(color.rgb, vec3(0.0), vec3(1.0));
 	}
 }

@@ -334,6 +334,8 @@ public:
 	virtual String get_processor_name() const;
 	virtual int get_default_thread_pool_size() const { return get_processor_count(); }
 
+	virtual float get_hdr_headroom() const { return 1.0; }
+
 	virtual String get_unique_id() const;
 
 	bool has_feature(const String &p_feature);

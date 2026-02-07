@@ -973,6 +973,21 @@ String OS_MacOS::get_unique_id() const {
 	return serial_number;
 }
 
+float OS_MacOS::get_hdr_headroom() const {
+	if (@available(macOS 12.0, *)) {
+		if ([NSProcessInfo processInfo].lowPowerModeEnabled) {
+			return 0.0;
+		}
+		NSScreen *screen = [NSScreen mainScreen];
+		if (screen.maximumExtendedDynamicRangeColorComponentValue > 1.0) {
+			return screen.maximumExtendedDynamicRangeColorComponentValue;
+		} else {
+			return screen.maximumPotentialExtendedDynamicRangeColorComponentValue;
+		}
+	}
+	return 1.0;
+}
+
 bool OS_MacOS::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "system_fonts") {
 		return true;

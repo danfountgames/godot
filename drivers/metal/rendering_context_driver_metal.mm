@@ -114,6 +114,14 @@ public:
 		layer.framebufferOnly = YES;
 		layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
 		layer.pixelFormat = get_pixel_format();
+#if __has_builtin(__builtin_available)
+		if (__builtin_available(iOS 16.0, macOS 10.11, *)) {
+			layer.wantsExtendedDynamicRangeContent = YES;
+			CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+			layer.colorspace = colorSpace;
+			CFRelease(colorSpace);
+		}
+#endif
 		layer.device = p_device;
 	}
 
@@ -218,6 +226,14 @@ public:
 		layer.framebufferOnly = YES;
 		layer.opaque = OS::get_singleton()->is_layered_allowed() ? NO : YES;
 		layer.pixelFormat = get_pixel_format();
+#if __has_builtin(__builtin_available)
+		if (__builtin_available(iOS 16.0, macOS 10.11, *)) {
+			layer.wantsExtendedDynamicRangeContent = YES;
+			CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+			layer.colorspace = colorSpace;
+			CFRelease(colorSpace);
+		}
+#endif
 		layer.device = p_device;
 #if TARGET_OS_OSX
 		layer.displaySyncEnabled = NO;

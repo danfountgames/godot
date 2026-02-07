@@ -141,6 +141,7 @@ public:
 
 	virtual String get_unique_id() const override;
 	virtual String get_processor_name() const override;
+	virtual float get_hdr_headroom() const override;
 
 	virtual String get_model_name() const override;
 

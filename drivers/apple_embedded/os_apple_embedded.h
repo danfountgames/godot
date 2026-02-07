@@ -124,6 +124,7 @@ public:
 
 	virtual String get_unique_id() const override;
 	virtual String get_processor_name() const override;
+	virtual float get_hdr_headroom() const override;
 
 	virtual void vibrate_handheld(int p_duration_ms = 500, float p_amplitude = -1.0) override;
 

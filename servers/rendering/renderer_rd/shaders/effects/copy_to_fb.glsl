@@ -106,8 +106,8 @@ layout(set = 1, binding = 0) uniform sampler2D source_color2;
 layout(location = 0) out vec4 frag_color;
 
 vec3 linear_to_srgb(vec3 color) {
-	//if going to srgb, clamp from 0 to 1.
-	color = clamp(color, vec3(0.0), vec3(1.0));
+	// Clamp removed to allow HDR/EDR values > 1.0 through to HDR displays.
+	// On SDR displays, out-of-range values are clamped by the display hardware.
 	const vec3 a = vec3(0.055f);
 	return mix((vec3(1.0f) + a) * pow(color.rgb, vec3(1.0f / 2.4f)) - a, 12.92f * color.rgb, lessThan(color.rgb, vec3(0.0031308f)));
 }
