@@ -2,14 +2,15 @@
 set -e
 
 # Godot Engine [FI] — iOS Export Templates (device + simulator)
+# No extra_suffix on templates — the editor expects standard filenames.
 
 # Build device templates
-BUILD_NAME=fi scons platform=ios target=template_debug arch=arm64 extra_suffix=fi -j$(nproc)
-BUILD_NAME=fi scons platform=ios target=template_release arch=arm64 extra_suffix=fi -j$(nproc)
+BUILD_NAME=fi scons platform=ios target=template_debug arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=ios target=template_release arch=arm64 -j$(nproc)
 
 # Build simulator templates
-BUILD_NAME=fi scons platform=ios target=template_debug ios_simulator=yes arch=arm64 extra_suffix=fi -j$(nproc)
-BUILD_NAME=fi scons platform=ios target=template_release ios_simulator=yes arch=arm64 extra_suffix=fi -j$(nproc)
+BUILD_NAME=fi scons platform=ios target=template_debug ios_simulator=yes arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=ios target=template_release ios_simulator=yes arch=arm64 -j$(nproc)
 
 # Assemble export templates
 mkdir -p templates
@@ -17,15 +18,15 @@ rm -rf templates/ios
 cp -r misc/dist/apple_embedded_xcode templates/ios
 
 # Device
-cp bin/libgodot.ios.template_debug.fi.arm64.a \
+cp bin/libgodot.ios.template_debug.arm64.a \
     templates/ios/libgodot.ios.debug.xcframework/ios-arm64/libgodot.a
-cp bin/libgodot.ios.template_release.fi.arm64.a \
+cp bin/libgodot.ios.template_release.arm64.a \
     templates/ios/libgodot.ios.release.xcframework/ios-arm64/libgodot.a
 
 # Simulator
-cp bin/libgodot.ios.template_debug.fi.arm64.simulator.a \
+cp bin/libgodot.ios.template_debug.arm64.simulator.a \
     templates/ios/libgodot.ios.debug.xcframework/ios-arm64_x86_64-simulator/libgodot.a
-cp bin/libgodot.ios.template_release.fi.arm64.simulator.a \
+cp bin/libgodot.ios.template_release.arm64.simulator.a \
     templates/ios/libgodot.ios.release.xcframework/ios-arm64_x86_64-simulator/libgodot.a
 
 # Remove x86_64 arch references (arm64-only simulator)

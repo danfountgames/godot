@@ -96,32 +96,35 @@ The fork identifies itself everywhere version information is surfaced:
 |-------|-------|-----|
 | Window title / CLI | `Godot Engine [FI]` | `version.py` `name` field |
 | Version string | `4.6.stable.fi` | `BUILD_NAME=fi` env var at build time |
-| Binary filenames | `godot.*.fi.*` | `extra_suffix=fi` scons option |
+| Editor binary names | `*.x86_64.fi` | `extra_suffix=fi` scons option (editors only) |
 | macOS .app bundle | `Godot [FI]` | `CFBundleName` in `Info.plist` |
 | Linux desktop entry | `Godot Engine [FI]` | `.desktop` and `.appdata.xml` |
 
-`BUILD_NAME` and `extra_suffix` are passed at build time, not baked into source.
-The only source files modified for branding are `version.py`, `Info.plist`,
-`.desktop`, and `.appdata.xml`.
+`BUILD_NAME` is set on all builds (editor + templates) so the version string
+always reads `fi`. `extra_suffix` is only used on **editor** builds to brand
+the binary filename. Templates are built **without** `extra_suffix` so the
+editor's export system finds them at the standard paths automatically — no
+custom template configuration needed.
 
 ---
 
 ## Build scripts
 
-All scripts live in the repo root. Every one sets `BUILD_NAME=fi` and
-`extra_suffix=fi`.
+All scripts live in the repo root. Editor scripts use `BUILD_NAME=fi` +
+`extra_suffix=fi`. Template scripts use `BUILD_NAME=fi` only (no extra_suffix)
+so the editor finds them automatically.
 
 | Script | Platform | Output |
 |--------|----------|--------|
-| `make_linux_editor.sh` | Linux x86_64 | `bin/godot-fi.linuxbsd.editor.dev.x86_64` |
+| `make_linux_editor.sh` | Linux x86_64 | `bin/godot-fi` (symlink) |
 | `make_macos_editor.sh` | macOS arm64 (dev) | `Godot FI.app` |
 | `make_macos_release.sh` | macOS arm64 (release) | `Godot FI.app` |
-| `make_windows_editor.sh` | Windows x86_64 (cross-compile) | `bin/godot.windows.editor.dev.fi.x86_64.exe` |
+| `make_windows_editor.sh` | Windows x86_64 (cross-compile) | `bin/godot.windows.editor.dev.x86_64.fi.exe` |
 | `make_ios_templates.sh` | iOS arm64 + simulator | `templates/ios.zip` |
 | `make_visionos_templates.sh` | visionOS arm64 + simulator | `templates/visionos.zip` |
 | `make_apple_templates.sh` | iOS + visionOS combined | `apple_embedded_xcode/` |
 | `make_android_templates.sh` | Android arm64 + x86_64 | scons output (then Gradle) |
-| `make_web_templates.sh` | Web / Emscripten | `bin/godot.web.template_*.fi.wasm32.zip` |
+| `make_web_templates.sh` | Web / Emscripten | `bin/godot.web.template_*.wasm32.zip` |
 
 ### Prerequisites
 
