@@ -1,76 +1,172 @@
-# Godot Engine
+# Godot Engine [FI]
 
-<p align="center">
-  <a href="https://godotengine.org">
-    <img src="logo_outlined.svg" width="400" alt="Godot Engine logo">
-  </a>
-</p>
+**Fountain Interactive's fork of Godot 4.6-stable.**
 
-## 2D and 3D cross-platform game engine
+Small, focused engine patches maintained as individual upstream-submittable
+branches. The `fi-build` branch merges them all with FI branding for production
+use. If upstream accepts a PR, it gets dropped from this fork. If not, it
+rebases cleanly onto the next stable release.
 
-**[Godot Engine](https://godotengine.org) is a feature-packed, cross-platform
-game engine to create 2D and 3D games from a unified interface.** It provides a
-comprehensive set of [common tools](https://godotengine.org/features), so that
-users can focus on making games without having to reinvent the wheel. Games can
-be exported with one click to a number of platforms, including the major desktop
-platforms (Linux, macOS, Windows), mobile platforms (Android, iOS), as well as
-Web-based platforms and [consoles](https://godotengine.org/consoles).
+---
 
-## Free, open source and community-driven
+## What's changed
 
-Godot is completely free and open source under the very permissive [MIT license](https://godotengine.org/license).
-No strings attached, no royalties, nothing. The users' games are theirs, down
-to the last line of engine code. Godot's development is fully independent and
-community-driven, empowering users to help shape their engine to match their
-expectations. It is supported by the [Godot Foundation](https://godot.foundation/)
-not-for-profit.
+### PR 1 — HDR / EDR output (`feature/hdr-edr-output`)
 
-Before being open sourced in [February 2014](https://github.com/godotengine/godot/commit/0b806ee0fc9097fa7bda7ac0109191c9c5e0a1ac),
-Godot had been developed by [Juan Linietsky](https://github.com/reduz) and
-[Ariel Manzur](https://github.com/punto-) for several years as an in-house
-engine, used to publish several work-for-hire titles.
+14 files, +81 / -7
 
-![Screenshot of a 3D scene in the Godot Engine editor](https://raw.githubusercontent.com/godotengine/godot-design/master/screenshots/editor_tps_demo_1920x1080.jpg)
+Enables true HDR output on Apple platforms via Metal:
 
-## Getting the engine
+- **Metal pixel format** — `CAMetalLayer` uses `RGBA16Float` instead of
+  `BGRA8Unorm` on iOS 16+ and macOS 10.11+, with
+  `wantsExtendedDynamicRangeContent` and `kCGColorSpaceExtendedSRGB`.
+- **sRGB clamp removal** — Removes the `clamp(color.rgb, vec3(0.0), vec3(1.0))`
+  after sRGB conversion in `copy_to_fb.glsl`, `sdfgi_debug.glsl`, `blit.glsl`,
+  and `tonemap.glsl`. Without this, HDR values above 1.0 are crushed.
+- **`OS.get_hdr_headroom()` API** — Returns the display's current EDR headroom
+  (iOS: `UIScreen.currentEDRHeadroom`, macOS:
+  `NSScreen.maximumExtendedDynamicRangeColorComponentValue`). Falls back to `1.0`
+  on non-HDR displays or unsupported platforms. Exposed to GDScript via ClassDB.
 
-### Binary downloads
+### PR 2 — ScrollContainer directional drag (`feature/scroll-container-directional-drag`)
 
-Official binaries for the Godot editor and the export templates can be found
-[on the Godot website](https://godotengine.org/download).
+1 file, +12 / -3
 
-### Compiling from source
+Fixes touch UX when a `ScrollContainer` only scrolls in one axis. If the user
+drags perpendicular to the scroll direction and exceeds the deadzone, the drag is
+cancelled instead of consumed. This lets parent controls (another ScrollContainer,
+swipe gestures, etc.) pick up the event. Also tightens `accept_event()` to only
+fire when the deadzone is actually exceeded.
 
-[See the official docs](https://docs.godotengine.org/en/latest/engine_details/development/compiling)
-for compilation instructions for every supported platform.
+### PR 3 — BaseButton scroll deadzone (`feature/basebutton-deadzone`)
 
-## Community and contributing
+3 files, +39
 
-Godot is not only an engine but an ever-growing community of users and engine
-developers. The main community channels are listed [on the homepage](https://godotengine.org/community).
+Adds a `scroll_deadzone` property to `BaseButton`. When a button is inside a
+`ScrollContainer`, small finger movements during a tap can trigger a scroll
+instead of a press. This property tracks drag distance in `gui_input` and
+suppresses the button action if the finger moves beyond the threshold. Reads the
+global `gui/common/default_scroll_deadzone` by default, or can be overridden
+per-button in the inspector.
 
-The best way to get in touch with the core engine developers is to join the
-[Godot Contributors Chat](https://chat.godotengine.org).
+### PR 4 — iOS Metal-only export cleanup (`feature/ios-metal-cleanup`)
 
-To get started contributing to the project, see the [contributing guide](CONTRIBUTING.md).
-This document also includes guidelines for reporting bugs.
+1 file, +12 / -1
 
-## Documentation and demos
+Wraps MoltenVK framework substitution in the iOS export plugin behind
+`#ifdef VULKAN_ENABLED`. When building Godot with Metal-only (no Vulkan), the
+export plugin no longer references MoltenVK at all instead of substituting an
+empty path, which previously caused warnings.
 
-The official documentation is hosted on [Read the Docs](https://docs.godotengine.org).
-It is maintained by the Godot community in its own [GitHub repository](https://github.com/godotengine/godot-docs).
+---
 
-The [class reference](https://docs.godotengine.org/en/latest/classes/)
-is also accessible from the Godot editor.
+## Branch structure
 
-We also maintain official demos in their own [GitHub repository](https://github.com/godotengine/godot-demo-projects)
-as well as a list of [awesome Godot community resources](https://github.com/godotengine/awesome-godot).
+```
+4.6-stable (upstream tag)
+│
+├── feature/hdr-edr-output              ← PR-ready, single commit
+├── feature/scroll-container-directional-drag  ← PR-ready, single commit
+├── feature/basebutton-deadzone         ← PR-ready, single commit
+├── feature/ios-metal-cleanup           ← PR-ready, single commit
+│
+├── verify/all-prs-combined             ← all 4 features merged, no branding
+│                                         (compile verification only)
+│
+└── fi-build                            ← all 4 features merged + FI branding
+                                          (this branch — production use)
+```
 
-There are also a number of other
-[learning resources](https://docs.godotengine.org/en/latest/community/tutorials.html)
-provided by the community, such as text and video tutorials, demos, etc.
-Consult the [community channels](https://godotengine.org/community)
-for more information.
+**`feature/*`** branches each contain a single commit on top of `4.6-stable`.
+They are designed to be submitted as upstream PRs independently.
 
-[![Code Triagers Badge](https://www.codetriage.com/godotengine/godot/badges/users.svg)](https://www.codetriage.com/godotengine/godot)
-[![Translate on Weblate](https://hosted.weblate.org/widgets/godot-engine/-/godot/svg-badge.svg)](https://hosted.weblate.org/engage/godot-engine/?utm_source=widget)
+**`verify/all-prs-combined`** merges all four feature branches with no other
+changes. Exists purely to verify the patches compile and don't conflict.
+
+**`fi-build`** (this branch) is `verify/all-prs-combined` plus FI branding and
+build tooling. This is the branch you check out to build and ship with.
+
+---
+
+## FI branding
+
+The fork identifies itself everywhere version information is surfaced:
+
+| Where | Value | How |
+|-------|-------|-----|
+| Window title / CLI | `Godot Engine [FI]` | `version.py` `name` field |
+| Version string | `4.6.stable.fi` | `BUILD_NAME=fi` env var at build time |
+| Binary filenames | `godot.*.fi.*` | `extra_suffix=fi` scons option |
+| macOS .app bundle | `Godot [FI]` | `CFBundleName` in `Info.plist` |
+| Linux desktop entry | `Godot Engine [FI]` | `.desktop` and `.appdata.xml` |
+
+`BUILD_NAME` and `extra_suffix` are passed at build time, not baked into source.
+The only source files modified for branding are `version.py`, `Info.plist`,
+`.desktop`, and `.appdata.xml`.
+
+---
+
+## Build scripts
+
+All scripts live in the repo root. Every one sets `BUILD_NAME=fi` and
+`extra_suffix=fi`.
+
+| Script | Platform | Output |
+|--------|----------|--------|
+| `make_linux_editor.sh` | Linux x86_64 | `bin/godot-fi.linuxbsd.editor.dev.x86_64` |
+| `make_macos_editor.sh` | macOS arm64 (dev) | `Godot FI.app` |
+| `make_macos_release.sh` | macOS arm64 (release) | `Godot FI.app` |
+| `make_windows_editor.sh` | Windows x86_64 (cross-compile) | `bin/godot.windows.editor.dev.fi.x86_64.exe` |
+| `make_ios_templates.sh` | iOS arm64 + simulator | `templates/ios.zip` |
+| `make_visionos_templates.sh` | visionOS arm64 + simulator | `templates/visionos.zip` |
+| `make_apple_templates.sh` | iOS + visionOS combined | `apple_embedded_xcode/` |
+| `make_android_templates.sh` | Android arm64 + x86_64 | scons output (then Gradle) |
+| `make_web_templates.sh` | Web / Emscripten | `bin/godot.web.template_*.fi.wasm32.zip` |
+
+### Prerequisites
+
+- **Linux editor:** `scons`, `pkg-config`, standard build deps
+- **macOS editor:** Xcode command line tools, scons
+- **Windows editor:** `mingw-w64` cross-compiler
+- **iOS / visionOS:** macOS + Xcode with appropriate SDKs
+- **Android:** `ANDROID_SDK_ROOT` and `ANDROID_NDK_ROOT` set
+- **Web:** Emscripten SDK sourced (`source emsdk_env.sh`)
+
+---
+
+## Rebasing onto new releases
+
+When a new stable ships:
+
+```bash
+git fetch upstream
+
+# Rebase each feature branch
+git checkout feature/hdr-edr-output
+git rebase upstream/4.7-stable
+
+# Repeat for other feature branches...
+
+# Rebuild fi-build
+git checkout -B fi-build 4.7-stable
+git merge feature/hdr-edr-output
+git merge feature/scroll-container-directional-drag
+git merge feature/basebutton-deadzone
+git merge feature/ios-metal-cleanup
+# Cherry-pick or reapply FI branding commits
+```
+
+If a feature gets accepted upstream, stop merging that branch. The rest rebase
+independently.
+
+---
+
+## Companion: Lens Effects addon
+
+A standalone CompositorEffect-based addon lives separately at `../lens-effects-addon/`.
+Barrel distortion, bokeh, and vignette as a post-process compute shader. No
+engine modifications required — works with upstream Godot 4.6+ or this fork.
+
+---
+
+Based on Godot 4.6-stable ([`89cea143`](https://github.com/godotengine/godot/commit/89cea14398)). MIT license.
