@@ -235,7 +235,16 @@ void ScrollContainer::gui_input(const Ref<InputEvent> &p_gui_input) {
 			Vector2 motion = mm->get_relative();
 			drag_accum -= motion;
 
-			if (beyond_deadzone || (h_scroll_enabled && Math::abs(drag_accum.x) > deadzone) || (v_scroll_enabled && Math::abs(drag_accum.y) > deadzone)) {
+			bool beyond_deadzone_x = Math::abs(drag_accum.x) > deadzone;
+			bool beyond_deadzone_y = Math::abs(drag_accum.y) > deadzone;
+
+			if (beyond_deadzone || (h_scroll_enabled && beyond_deadzone_x) || (v_scroll_enabled && beyond_deadzone_y)) {
+				// If the user drags past deadzone on a disabled axis, cancel the drag
+				// so a parent ScrollContainer (or other input handler) can handle it.
+				if (!beyond_deadzone && ((!h_scroll_enabled && beyond_deadzone_x) || (!v_scroll_enabled && beyond_deadzone_y))) {
+					_cancel_drag();
+					return;
+				}
 				if (!beyond_deadzone) {
 					propagate_notification(NOTIFICATION_SCROLL_BEGIN);
 					emit_signal(SNAME("scroll_started"));
@@ -259,8 +268,8 @@ void ScrollContainer::gui_input(const Ref<InputEvent> &p_gui_input) {
 			}
 		}
 
-		if (v_scroll->get_value() != prev_v_scroll || h_scroll->get_value() != prev_h_scroll) {
-			accept_event(); // Accept event if scroll changed.
+		if (beyond_deadzone) {
+			accept_event(); // Accept event once scrolling has begun.
 		}
 		return;
 	}
