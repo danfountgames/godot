@@ -68,6 +68,9 @@ private:
 
 	Ref<ButtonGroup> button_group;
 
+	int scroll_deadzone = 0;
+	Vector2 drag_accum;
+
 	void _unpress_group();
 	void _pressed();
 	void _toggled(bool p_pressed);
@@ -136,6 +139,9 @@ public:
 	Ref<Shortcut> get_shortcut() const;
 
 	virtual Control *make_custom_tooltip(const String &p_text) const override;
+
+	void set_scroll_deadzone(int p_deadzone);
+	int get_scroll_deadzone() const;
 
 	void set_button_group(const Ref<ButtonGroup> &p_group);
 	Ref<ButtonGroup> get_button_group() const;

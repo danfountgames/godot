@@ -68,6 +68,10 @@
 			If [code]true[/code], the button stays pressed when moving the cursor outside the button while pressing it.
 			[b]Note:[/b] This property only affects the button's visual appearance. Signals will be emitted at the same moment regardless of this property's value.
 		</member>
+		<member name="scroll_deadzone" type="int" setter="set_scroll_deadzone" getter="get_scroll_deadzone" default="0">
+			The distance in pixels that the mouse must be dragged while the button is pressed before the press is cancelled. This is useful for buttons inside [ScrollContainer] nodes, where dragging should scroll rather than activate the button.
+			When set to [code]0[/code], the button uses the value from [member ProjectSettings.gui/common/default_scroll_deadzone].
+		</member>
 		<member name="shortcut" type="Shortcut" setter="set_shortcut" getter="get_shortcut">
 			[Shortcut] associated to the button.
 		</member>

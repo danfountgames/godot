@@ -81,6 +81,21 @@ void BaseButton::gui_input(const Ref<InputEvent> &p_event) {
 			if (last_press_inside != status.pressing_inside) {
 				queue_redraw();
 			}
+
+			if (scroll_deadzone > 0) {
+				drag_accum += mouse_motion->get_relative();
+				if (drag_accum.length() > scroll_deadzone) {
+					status.press_attempt = false;
+					status.pressing_inside = false;
+					if (status.pressed_down_with_focus) {
+						status.pressed_down_with_focus = false;
+						emit_signal(SNAME("button_up"));
+					}
+					queue_redraw();
+				} else {
+					accept_event();
+				}
+			}
 		}
 	}
 }
@@ -206,6 +221,7 @@ void BaseButton::on_action_event(Ref<InputEvent> p_event) {
 
 	if (p_event->is_pressed() && (mouse_button.is_null() || status.hovering)) {
 		status.press_attempt = true;
+		drag_accum = Vector2();
 		status.pressing_inside = true;
 		if (!status.pressed_down_with_focus) {
 			status.pressed_down_with_focus = true;
@@ -495,6 +511,14 @@ Control *BaseButton::make_custom_tooltip(const String &p_text) const {
 	return label;
 }
 
+void BaseButton::set_scroll_deadzone(int p_deadzone) {
+	scroll_deadzone = p_deadzone;
+}
+
+int BaseButton::get_scroll_deadzone() const {
+	return scroll_deadzone;
+}
+
 void BaseButton::set_button_group(const Ref<ButtonGroup> &p_group) {
 	if (button_group.is_valid()) {
 		button_group->buttons.erase(this);
@@ -553,6 +577,9 @@ void BaseButton::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shortcut", "shortcut"), &BaseButton::set_shortcut);
 	ClassDB::bind_method(D_METHOD("get_shortcut"), &BaseButton::get_shortcut);
 
+	ClassDB::bind_method(D_METHOD("set_scroll_deadzone", "deadzone"), &BaseButton::set_scroll_deadzone);
+	ClassDB::bind_method(D_METHOD("get_scroll_deadzone"), &BaseButton::get_scroll_deadzone);
+
 	ClassDB::bind_method(D_METHOD("set_button_group", "button_group"), &BaseButton::set_button_group);
 	ClassDB::bind_method(D_METHOD("get_button_group"), &BaseButton::get_button_group);
 
@@ -570,6 +597,7 @@ void BaseButton::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "action_mode", PROPERTY_HINT_ENUM, "Button Press,Button Release"), "set_action_mode", "get_action_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "button_mask", PROPERTY_HINT_FLAGS, "Mouse Left, Mouse Right, Mouse Middle"), "set_button_mask", "get_button_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_pressed_outside"), "set_keep_pressed_outside", "is_keep_pressed_outside");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "scroll_deadzone", PROPERTY_HINT_RANGE, "0,100,1,or_greater,suffix:px"), "set_scroll_deadzone", "get_scroll_deadzone");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "button_group", PROPERTY_HINT_RESOURCE_TYPE, "ButtonGroup"), "set_button_group", "get_button_group");
 
 	ADD_GROUP("Shortcut", "");
@@ -591,6 +619,7 @@ void BaseButton::_bind_methods() {
 
 BaseButton::BaseButton() {
 	set_focus_mode(FOCUS_ALL);
+	scroll_deadzone = GLOBAL_GET_CACHED(int, "gui/common/default_scroll_deadzone");
 }
 
 BaseButton::~BaseButton() {
