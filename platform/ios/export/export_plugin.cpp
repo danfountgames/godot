@@ -407,7 +407,8 @@ String EditorExportPlatformIOS::_process_config_file_line(const Ref<EditorExport
 		}
 		strnew += p_line.replace("$targeted_device_family", xcode_value) + "\n";
 
-		// MoltenVK Framework
+		// MoltenVK Framework — only needed when Vulkan is enabled.
+#ifdef VULKAN_ENABLED
 	} else if (p_line.contains("$moltenvk_buildfile")) {
 		String value = "9039D3BE24C093AC0020482C /* MoltenVK.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9039D3BD24C093AC0020482C /* MoltenVK.xcframework */; };";
 		strnew += p_line.replace("$moltenvk_buildfile", value) + "\n";
@@ -420,6 +421,16 @@ String EditorExportPlatformIOS::_process_config_file_line(const Ref<EditorExport
 	} else if (p_line.contains("$moltenvk_buildgrp")) {
 		String value = "9039D3BD24C093AC0020482C /* MoltenVK.xcframework */,";
 		strnew += p_line.replace("$moltenvk_buildgrp", value) + "\n";
+#else
+	} else if (p_line.contains("$moltenvk_buildfile")) {
+		strnew += p_line.replace("$moltenvk_buildfile", "") + "\n";
+	} else if (p_line.contains("$moltenvk_fileref")) {
+		strnew += p_line.replace("$moltenvk_fileref", "") + "\n";
+	} else if (p_line.contains("$moltenvk_buildphase")) {
+		strnew += p_line.replace("$moltenvk_buildphase", "") + "\n";
+	} else if (p_line.contains("$moltenvk_buildgrp")) {
+		strnew += p_line.replace("$moltenvk_buildgrp", "") + "\n";
+#endif
 
 		// Launch Storyboard
 	} else if (p_line.contains("$plist_launch_screen_name")) {
