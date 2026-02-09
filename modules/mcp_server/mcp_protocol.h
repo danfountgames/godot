@@ -35,8 +35,11 @@
 #include "mcp_tool_registry.h"
 
 #include "core/io/tcp_server.h"
+#include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
 #include "modules/jsonrpc/jsonrpc.h"
+
+struct ProgressContext;
 
 class MCPDebuggerBridge;
 
@@ -60,7 +63,7 @@ private:
 	Ref<TCPServer> server;
 
 	// Tool registry (Phase 2).
-	MCPToolRegistry *tool_registry = nullptr;
+	MCPToolRegistry tool_registry;
 
 	// Resource registry (Phase 5).
 	MCPResourceRegistry resource_registry;
@@ -80,9 +83,21 @@ private:
 	// Origin allowlist for CORS validation.
 	Vector<String> allowed_origin_prefixes;
 
+	// Bearer token for authentication (empty = no auth required).
+	String auth_token;
+
 	// Configuration.
 	int session_timeout_sec = MCP_DEFAULT_SESSION_TIMEOUT_SEC;
 	int max_clients = MCP_MAX_CLIENTS;
+
+	// Active request tracking for cancellation (Phase B).
+	// Key is String(request_id) to avoid Variant-as-key issues.
+	Mutex active_requests_mutex;
+	HashMap<String, ProgressContext *> active_requests; // String(request_id) -> ProgressContext*
+
+	// Logging severity filter (Phase C). RFC 5424: 0=emergency .. 7=debug.
+	// Default: 6 (info) -- send levels 0-6, suppress debug.
+	int min_log_severity = 6;
 
 	// Session ID generation using CSPRNG.
 	String generate_session_id();
@@ -99,9 +114,25 @@ private:
 	void handle_notifications_initialized(const String &p_session_id);
 	Dictionary handle_ping();
 
+	// Tool dispatch wrappers use _handle_ prefix (legacy convention).
+	// Resource dispatch wrappers use handle_ prefix (newer convention).
+	// Both are private methods registered via set_method() for JSON-RPC dispatch.
+
 	// Tool dispatch wrappers for set_method() (callable_mp requires Object).
 	Dictionary _handle_tools_list(const Dictionary &p_params);
 	Dictionary _handle_tools_call(const Dictionary &p_params);
+
+	// SSE-aware tool dispatch: streams progress + final result over POST SSE.
+	void dispatch_tool_with_progress(Ref<MCPSession> p_session,
+			const Dictionary &p_msg, const String &p_progress_token,
+			const Variant &p_request_id, const String &p_origin);
+
+	// Cancellation handler (Phase B).
+	void handle_cancelled(const Dictionary &p_params);
+
+	// Logging handler and emitter (Phase C).
+	Dictionary handle_logging_set_level(const Dictionary &p_params);
+	static int severity_from_string(const String &p_level);
 
 	// Resource dispatch wrappers for set_method().
 	Dictionary handle_resources_list(const Dictionary &p_params);
@@ -130,7 +161,7 @@ private:
 
 	// File tree helper.
 	void _walk_directory(const String &p_path, Array &r_dirs,
-			int &r_total_files, int &r_total_dirs);
+			int &r_total_files, int &r_total_dirs, int p_depth = 0);
 
 	// Session termination (DELETE /mcp).
 	void terminate_session(int p_client_id, const String &p_origin);
@@ -171,12 +202,15 @@ public:
 
 	void set_session_timeout(int p_seconds);
 	void set_max_clients(int p_max);
+	void set_auth_token(const String &p_token) { auth_token = p_token; }
 
-	MCPToolRegistry *get_tool_registry() { return tool_registry; }
+	MCPToolRegistry *get_tool_registry() { return &tool_registry; }
+	const MCPToolRegistry *get_tool_registry() const { return &tool_registry; }
 	MCPResourceRegistry *get_resource_registry() { return &resource_registry; }
+	const MCPResourceRegistry *get_resource_registry() const { return &resource_registry; }
 
 	void set_debugger_bridge(MCPDebuggerBridge *p_bridge) { debugger_bridge = p_bridge; }
-	MCPDebuggerBridge *get_debugger_bridge() { return debugger_bridge; }
+	MCPDebuggerBridge *get_debugger_bridge() const { return debugger_bridge; }
 
 	// Queue a server-initiated notification to all active sessions.
 	// The notification will be delivered to GET SSE streams on the next poll().
@@ -185,4 +219,14 @@ public:
 
 	// Queue a notification to a specific session.
 	void queue_notification(const String &p_session_id, const String &p_json_rpc_message);
+
+	// Server push: notify clients that the tool list has changed (Phase D).
+	void notify_tools_changed();
+
+	// Server push: notify clients that the resource list has changed (Phase D).
+	void notify_resources_list_changed();
+
+	// Emit a log message to all GET SSE streams (Phase C).
+	// Filtered by min_log_severity (set via logging/setLevel).
+	void send_log(const String &p_level, const String &p_logger, const Variant &p_data);
 };

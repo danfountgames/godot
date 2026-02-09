@@ -30,6 +30,7 @@
 
 #include "mcp_server_plugin.h"
 
+#include "core/crypto/crypto_core.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
@@ -56,7 +57,9 @@ MCPServerPlugin::MCPServerPlugin() {
 
 	// Create and register the debugger bridge plugin.
 	debugger_bridge.instantiate();
-	EditorDebuggerNode::get_singleton()->add_debugger_plugin(debugger_bridge);
+	if (EditorDebuggerNode::get_singleton()) {
+		EditorDebuggerNode::get_singleton()->add_debugger_plugin(debugger_bridge);
+	}
 
 	// Give the protocol a pointer to the bridge for tool handlers to use.
 	protocol.set_debugger_bridge(debugger_bridge.ptr());
@@ -70,7 +73,7 @@ MCPServerPlugin::~MCPServerPlugin() {
 	}
 
 	// Remove and release the debugger bridge plugin.
-	if (debugger_bridge.is_valid()) {
+	if (debugger_bridge.is_valid() && EditorDebuggerNode::get_singleton()) {
 		EditorDebuggerNode::get_singleton()->remove_debugger_plugin(debugger_bridge);
 		debugger_bridge.unref();
 	}
@@ -170,9 +173,29 @@ void MCPServerPlugin::start() {
 	protocol.set_max_clients(max_clients);
 	protocol.set_session_timeout(session_timeout);
 
+	// Generate a random bearer token for authentication (32 hex chars = 16 bytes).
+	{
+		uint8_t token_bytes[16];
+		Error token_err = OS::get_singleton()->get_entropy(token_bytes, 16);
+		if (token_err != OK) {
+			CryptoCore::RandomGenerator rng;
+			Error rng_err = rng.init();
+			if (rng_err == OK) {
+				rng_err = rng.get_random_bytes(token_bytes, 16);
+			}
+			ERR_FAIL_COND_MSG(rng_err != OK, "[MCP] Failed to generate auth token -- no CSPRNG available.");
+		}
+		auth_token = String();
+		for (int i = 0; i < 16; i++) {
+			auth_token += String::num_int64(token_bytes[i], 16).lpad(2, "0");
+		}
+		protocol.set_auth_token(auth_token);
+	}
+
 	Error err = protocol.start(port, IPAddress(host));
 	if (err != OK) {
 		ERR_PRINT("[MCP] Failed to start server on " + host + ":" + itos(port) + " (error: " + itos(err) + ")");
+		start_attempted = false; // Allow retry on next process tick.
 		return;
 	}
 
@@ -228,7 +251,7 @@ void MCPServerPlugin::write_discovery_file() {
 
 	Dictionary discovery;
 	discovery["endpoint"] = "http://" + host + ":" + itos(port) + "/mcp";
-	discovery["token"] = "";
+	discovery["token"] = auth_token;
 	discovery["pid"] = OS::get_singleton()->get_process_id();
 	discovery["godot_version"] = GODOT_VERSION_FULL_CONFIG;
 

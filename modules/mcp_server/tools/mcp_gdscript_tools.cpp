@@ -226,6 +226,106 @@ Dictionary MCPGDScriptTools::handle_check_all(const Dictionary &p_args) {
 }
 
 // ============================================================================
+// Tool D2b: gdscript/check_all (progress-aware variant)
+// ============================================================================
+
+#include "../mcp_progress.h"
+
+Dictionary MCPGDScriptTools::handle_check_all_with_progress(
+		const Dictionary &p_args, ProgressContext *p_ctx) {
+	bool include_warnings = p_args.get("include_warnings", false);
+
+	// Find all .gd files in the project.
+	Vector<String> gd_files;
+	_find_gd_files_recursive("res://", gd_files);
+
+	if (gd_files.size() == 0) {
+		Dictionary structured;
+		structured["total_files"] = 0;
+		structured["files_with_errors"] = 0;
+		structured["files_with_warnings"] = 0;
+		structured["files_clean"] = 0;
+		structured["files"] = Array();
+		return make_tool_result("No .gd files found in project.", structured);
+	}
+
+	// Sort for deterministic output.
+	gd_files.sort();
+
+	int total = gd_files.size();
+	Array file_results;
+	int files_with_errors = 0;
+	int files_with_warnings = 0;
+	int files_clean = 0;
+	String text;
+
+	for (int i = 0; i < total; i++) {
+		// Cooperative cancellation check.
+		if (p_ctx && p_ctx->is_cancelled()) {
+			break;
+		}
+
+		// Report progress.
+		if (p_ctx) {
+			p_ctx->report_progress(i, total, "Checking " + gd_files[i]);
+		}
+
+		Dictionary result = _validate_single_file(gd_files[i]);
+		Array errors = result["errors"];
+		Array warnings = result["warnings"];
+
+		if (errors.size() > 0) {
+			files_with_errors++;
+			text += vformat("=== %s (%d errors) ===\n", gd_files[i], errors.size());
+			for (int j = 0; j < errors.size(); j++) {
+				Dictionary e = errors[j];
+				text += vformat("  Line %d, Col %d: %s\n",
+						(int)e["line"], (int)e["column"], (String)e["message"]);
+			}
+		} else if (warnings.size() > 0 && include_warnings) {
+			files_with_warnings++;
+			text += vformat("=== %s (%d warnings) ===\n", gd_files[i], warnings.size());
+			for (int j = 0; j < warnings.size(); j++) {
+				Dictionary w = warnings[j];
+				text += vformat("  Line %d: %s [%s]\n",
+						(int)w["line"], (String)w["message"], (String)w["code_name"]);
+			}
+		} else if (warnings.size() > 0) {
+			files_with_warnings++;
+		} else {
+			files_clean++;
+		}
+
+		file_results.push_back(result);
+	}
+
+	// Final progress.
+	if (p_ctx) {
+		p_ctx->report_progress(total, total, "Done");
+	}
+
+	bool was_cancelled = (p_ctx && p_ctx->is_cancelled());
+	int files_checked = files_with_errors + files_with_warnings + files_clean;
+
+	text += vformat("\nSummary: %d of %d files checked, %d with errors, %d with warnings, %d clean",
+			files_checked, total, files_with_errors, files_with_warnings, files_clean);
+	if (was_cancelled) {
+		text += " (Cancelled by client)";
+	}
+
+	Dictionary structured;
+	structured["total_files"] = total;
+	structured["files_checked"] = files_checked;
+	structured["files_with_errors"] = files_with_errors;
+	structured["files_with_warnings"] = files_with_warnings;
+	structured["files_clean"] = files_clean;
+	structured["cancelled"] = was_cancelled;
+	structured["files"] = file_results;
+
+	return make_tool_result(text, structured);
+}
+
+// ============================================================================
 // Internal: Validate a single .gd file
 // ============================================================================
 
@@ -325,23 +425,11 @@ void MCPGDScriptTools::_find_gd_files_recursive(const String &p_dir,
 		return;
 	}
 
-	// Skip hidden/generated directories.
-	static const char *skip_dirs[] = {
-		".godot", ".import", ".git", ".svn", ".vs", "__pycache__", nullptr
-	};
-
 	da->list_dir_begin();
 	String item = da->get_next();
 	while (!item.is_empty()) {
 		if (da->current_is_dir()) {
-			bool skip = false;
-			for (int i = 0; skip_dirs[i] != nullptr; i++) {
-				if (item == skip_dirs[i]) {
-					skip = true;
-					break;
-				}
-			}
-			if (!skip && !item.begins_with(".")) {
+			if (!is_skip_directory(item) && !item.begins_with(".")) {
 				_find_gd_files_recursive(p_dir + item + "/", r_files);
 			}
 		} else {

@@ -36,6 +36,8 @@
 #include "core/variant/callable.h"
 #include "core/variant/dictionary.h"
 
+struct ProgressContext;
+
 class MCPToolRegistry {
 public:
 	struct ToolDef {
@@ -70,6 +72,16 @@ public:
 	// Accepts params: { "name": "tool/name", "arguments": { ... } }
 	// Returns the tool result dictionary, or a JSON-RPC error if tool not found.
 	Dictionary call_tool(const Dictionary &p_params);
+
+	// Dispatch with progress context. Uses Strategy B (direct C++ dispatch
+	// by tool name) for progress-aware tools. Falls back to call_tool() for
+	// tools without progress support.
+	Dictionary call_tool_with_progress(const String &p_name,
+			const Dictionary &p_arguments, ProgressContext *p_ctx);
+
+	// Returns true for tools that benefit from SSE streaming even without
+	// an explicit progressToken from the client (>500ms expected duration).
+	bool is_long_running_tool(const String &p_name) const;
 
 	bool has_tool(const String &p_name) const;
 	int get_tool_count() const;

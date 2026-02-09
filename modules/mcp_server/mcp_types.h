@@ -61,6 +61,16 @@
 #define MCP_PROTOCOL_VERSION "2025-06-18"
 
 // ---------------------------------------------------------------------------
+// JSON-RPC / MCP error codes
+// ---------------------------------------------------------------------------
+
+// Standard JSON-RPC error: Internal error (-32603).
+#define MCP_ERROR_INTERNAL -32603
+
+// Implementation-defined error: resource unavailable / not found (-32000 to -32099 range).
+#define MCP_ERROR_RESOURCE_UNAVAILABLE -32002
+
+// ---------------------------------------------------------------------------
 // HTTP status codes used in responses
 // ---------------------------------------------------------------------------
 
@@ -68,6 +78,7 @@
 #define MCP_HTTP_202 "202 Accepted"
 #define MCP_HTTP_204 "204 No Content"
 #define MCP_HTTP_400 "400 Bad Request"
+#define MCP_HTTP_401 "401 Unauthorized"
 #define MCP_HTTP_403 "403 Forbidden"
 #define MCP_HTTP_404 "404 Not Found"
 #define MCP_HTTP_405 "405 Method Not Allowed"
@@ -169,4 +180,27 @@ inline Dictionary make_annotations(bool p_read_only, bool p_destructive,
 	ann["idempotentHint"] = p_idempotent;
 	ann["openWorldHint"] = p_open_world;
 	return ann;
+}
+
+// ---------------------------------------------------------------------------
+// Resource error response helper (shared by resource handlers)
+// ---------------------------------------------------------------------------
+
+inline Dictionary make_resource_error(int p_code, const String &p_message) {
+	Dictionary error;
+	error["code"] = p_code;
+	error["message"] = p_message;
+	Dictionary response;
+	response["error"] = error;
+	return response;
+}
+
+// ---------------------------------------------------------------------------
+// Directory skip-list helper (shared by recursive file walkers)
+// ---------------------------------------------------------------------------
+
+inline bool is_skip_directory(const String &p_name) {
+	return p_name == ".godot" || p_name == ".import" || p_name == ".git" ||
+			p_name == ".svn" || p_name == ".vs" || p_name == "__pycache__" ||
+			p_name.begins_with(".godot");
 }

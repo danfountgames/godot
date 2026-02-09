@@ -52,6 +52,7 @@ private:
 
 	String host = MCP_DEFAULT_HOST;
 	int port = MCP_DEFAULT_PORT;
+	String auth_token;
 
 	static void thread_main(void *p_userdata);
 

@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_resource_registry.h                                               */
+/*  mcp_progress.h                                                        */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,70 +30,53 @@
 
 #pragma once
 
-#include "core/os/mutex.h"
+#include "core/io/json.h"
 #include "core/string/ustring.h"
-#include "core/templates/hash_map.h"
-#include "core/templates/hash_set.h"
-#include "core/templates/vector.h"
-#include "core/variant/callable.h"
+#include "core/templates/safe_refcount.h"
 #include "core/variant/dictionary.h"
 
-class MCPResourceRegistry {
-public:
-	// ── Registration structs ──
+class MCPSession; // Forward declaration; do NOT include mcp_session.h to avoid circular deps.
 
-	struct ResourceDef {
-		String uri;
-		String name;
-		String description;
-		String mime_type;
-		Callable handler; // Returns Dictionary with "text" key containing content.
-		bool requires_game = false; // If true, only listed/readable when game is running.
-		bool subscribable = false; // If true, supports change notifications.
-	};
+// ProgressContext bridges tool execution with the SSE event queue.
+// Stack-allocated by dispatch_tool_with_progress(); valid for the duration
+// of tool execution. Tool handlers use report_progress() to send SSE progress
+// events and is_cancelled() to cooperatively abort.
+struct ProgressContext {
+	String token; // From request's _meta.progressToken (may be empty).
+	MCPSession *session = nullptr; // Weak pointer; valid for the duration of tool execution.
+	SafeFlag cancelled; // Set by the cancellation handler (atomic bool).
 
-	struct ResourceTemplateDef {
-		String uri_template; // RFC 6570 Level 1 URI template, e.g. "godot://file/{path}"
-		String name;
-		String description;
-		String mime_type;
-		Callable handler; // Called with Dictionary containing extracted template params.
-	};
+	// Report progress. No-op if token is empty or session is null.
+	// Thread-safe: calls session->queue_sse_event() which is guarded by sse_mutex.
+	void report_progress(int p_progress, int p_total, const String &p_message = "") {
+		if (token.is_empty() || !session) {
+			return;
+		}
+
+		Dictionary params;
+		params["progressToken"] = token;
+		params["progress"] = p_progress;
+		params["total"] = p_total;
+		if (!p_message.is_empty()) {
+			params["message"] = p_message;
+		}
+
+		Dictionary notification;
+		notification["jsonrpc"] = "2.0";
+		notification["method"] = "notifications/progress";
+		notification["params"] = params;
+
+		// _queue_event is implemented in mcp_session.cpp to break the header
+		// dependency cycle (mcp_progress.h forward-declares MCPSession).
+		_queue_event(JSON::stringify(notification));
+	}
+
+	bool is_cancelled() const {
+		return cancelled.is_set();
+	}
 
 private:
-	// ── Resource storage ──
-	HashMap<String, ResourceDef> resources;
-	Vector<ResourceTemplateDef> templates;
-
-	// ── Subscription tracking ──
-	HashMap<String, HashSet<String>> subscriptions; // uri -> set of session_ids
-	Mutex subscription_mutex;
-
-	// ── Per-session pending notifications ──
-	HashMap<String, HashSet<String>> pending_per_session; // session_id -> set of changed URIs
-	Mutex notification_mutex;
-
-	// ── Internal helpers ──
-	bool _try_match_template(const String &p_uri,
-			ResourceTemplateDef &r_template,
-			Dictionary &r_params) const;
-
-public:
-	// ── Registration ──
-	void register_resource(const ResourceDef &p_def);
-	void register_template(const ResourceTemplateDef &p_def);
-
-	// ── MCP method handlers ──
-	Dictionary handle_list(bool p_game_running);
-	Dictionary handle_read(const String &p_uri, bool p_game_running);
-	Dictionary handle_templates_list();
-
-	// ── Subscription management ──
-	Dictionary handle_subscribe(const String &p_uri, const String &p_session_id);
-	Dictionary handle_unsubscribe(const String &p_uri, const String &p_session_id);
-	void unsubscribe_all(const String &p_session_id);
-
-	// ── Notification dispatch ──
-	void notify_changed(const String &p_uri);
-	Vector<String> flush_notifications(const String &p_session_id);
+	// Implemented in mcp_session.cpp to break the circular dependency.
+	// The implementation simply calls session->queue_sse_event(p_json).
+	void _queue_event(const String &p_json);
 };

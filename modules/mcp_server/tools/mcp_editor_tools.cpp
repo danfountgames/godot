@@ -491,6 +491,11 @@ Dictionary MCPEditorTools::handle_write_file(const Dictionary &p_args) {
 	String content = p_args.get("content", "");
 	bool create_directories = p_args.get("create_directories", true);
 
+	// Reject excessively large writes to prevent abuse.
+	if (content.utf8().length() > 10 * 1024 * 1024) {
+		return make_tool_error("Content too large: maximum write size is 10 MB.");
+	}
+
 	// Path validation.
 	if (path.is_empty()) {
 		return make_tool_error("Missing required parameter: path");
@@ -661,23 +666,11 @@ void MCPEditorTools::_list_files_recursive(const String &p_dir,
 		return;
 	}
 
-	// Skip hidden/generated directories.
-	static const char *skip_dirs[] = {
-		".godot", ".import", ".git", ".svn", ".vs", "__pycache__", nullptr
-	};
-
 	da->list_dir_begin();
 	String item = da->get_next();
 	while (!item.is_empty()) {
 		if (da->current_is_dir()) {
-			bool skip = false;
-			for (int i = 0; skip_dirs[i] != nullptr; i++) {
-				if (item == skip_dirs[i]) {
-					skip = true;
-					break;
-				}
-			}
-			if (!skip && !item.begins_with(".")) {
+			if (!is_skip_directory(item) && !item.begins_with(".")) {
 				_list_files_recursive(p_dir + item + "/", p_extension, r_files);
 			}
 		} else {
@@ -725,8 +718,13 @@ Dictionary MCPEditorTools::handle_reimport(const Dictionary &p_args) {
 				"EditorFileSystem not available. This tool requires the Godot editor.");
 	}
 
+	// Convert Vector<String> to PackedStringArray for Variant-based call_deferred.
+	PackedStringArray packed_files;
+	for (const String &f : validated_files) {
+		packed_files.push_back(f);
+	}
 	callable_mp(efs, &EditorFileSystem::reimport_files)
-			.call_deferred(validated_files);
+			.call_deferred(packed_files);
 
 	// Build response.
 	String text = vformat("Reimport queued for %d files:", validated_files.size());
@@ -911,6 +909,10 @@ Vector<String> MCPEditorTools::_find_similar_files(const String &p_basename) {
 	// Recursively search the project for files with matching basename.
 	Vector<String> all_files;
 	_list_files_recursive("res://", "", all_files);
+
+	if (all_files.size() > 5000) {
+		return Vector<String>(); // Project too large for similarity search.
+	}
 
 	String target = p_basename.to_lower();
 	for (int i = 0; i < all_files.size(); i++) {

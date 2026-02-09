@@ -321,6 +321,41 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 				"  current_scene.name");
 	}
 
+	// Security: block dangerous expressions that could execute arbitrary
+	// OS commands, load untrusted resources, or bypass the sandbox.
+	{
+		String expr_lower = expression.to_lower();
+		static const char *blocked_patterns[] = {
+			"os.execute",
+			"os.shell_open",
+			"os.create_process",
+			"os.create_instance",
+			"os.kill",
+			".call_deferred(",
+			".callv(",
+			"classdb",
+			"engine.get_singleton",
+			"load(",
+			"preload(",
+			"resourceloader",
+			"fileaccess",
+			"diraccess",
+			"thread",
+			"marshalls",
+			nullptr
+		};
+		for (const char **p = blocked_patterns; *p != nullptr; p++) {
+			if (expr_lower.find(*p) != -1) {
+				return make_tool_error(
+						"Blocked: expression contains a disallowed pattern (\"" +
+						String(*p) +
+						"\"). For security, OS commands, dynamic loading, "
+						"file system access, and reflection APIs are not "
+						"permitted in evaluated expressions.");
+			}
+		}
+	}
+
 	MCPDebuggerBridge *bridge = _get_bridge();
 	Dictionary result = bridge->send_evaluate(expression);
 

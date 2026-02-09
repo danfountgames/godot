@@ -33,6 +33,7 @@
 #include "core/object/script_language.h"
 
 #include "mcp_debugger_bridge.h"
+#include "mcp_progress.h"
 #include "mcp_tool_registry.h"
 #include "mcp_types.h"
 #include "tools/mcp_automation_tools.h"
@@ -76,21 +77,19 @@ MCPProtocol::MCPProtocol() {
 	allowed_origin_prefixes.push_back("http://[::1]");
 	allowed_origin_prefixes.push_back("https://[::1]");
 
-	// Create the tool registry and register tools/list + tools/call as
-	// JSON-RPC methods. process_action() in the base JSONRPC class will
-	// dispatch to these callables automatically.
+	// Register tools/list + tools/call as JSON-RPC methods.
+	// process_action() in the base JSONRPC class will dispatch to these
+	// callables automatically.
 	// We use wrapper methods on MCPProtocol because callable_mp requires
 	// an Object-derived target (MCPToolRegistry is a plain class).
-	tool_registry = memnew(MCPToolRegistry);
-
 	set_method("tools/list", callable_mp(this, &MCPProtocol::_handle_tools_list));
 	set_method("tools/call", callable_mp(this, &MCPProtocol::_handle_tools_call));
 
 	// Register all tools into the registry.
-	MCPEditorTools::register_tools(tool_registry);
-	MCPGDScriptTools::register_tools(tool_registry);
-	MCPDebugTools::register_tools(tool_registry);
-	MCPAutomationTools::register_tools(tool_registry);
+	MCPEditorTools::register_tools(&tool_registry);
+	MCPGDScriptTools::register_tools(&tool_registry);
+	MCPDebugTools::register_tools(&tool_registry);
+	MCPAutomationTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
@@ -104,6 +103,10 @@ MCPProtocol::MCPProtocol() {
 	set_method("resources/unsubscribe",
 			callable_mp(this, &MCPProtocol::handle_resources_unsubscribe));
 
+	// Logging (Phase C).
+	set_method("logging/setLevel",
+			callable_mp(this, &MCPProtocol::handle_logging_set_level));
+
 	// Register all resources into the registry.
 	_register_project_resources();
 	_register_game_resources();
@@ -113,11 +116,6 @@ MCPProtocol::MCPProtocol() {
 MCPProtocol::~MCPProtocol() {
 	singleton = nullptr;
 	stop();
-
-	if (tool_registry) {
-		memdelete(tool_registry);
-		tool_registry = nullptr;
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +197,15 @@ bool MCPProtocol::validate_origin(const String &p_origin) {
 	}
 	for (int i = 0; i < allowed_origin_prefixes.size(); i++) {
 		if (p_origin.begins_with(allowed_origin_prefixes[i])) {
-			return true;
+			// Prevent subdomain bypass: after the prefix match, the next
+			// character must be end-of-string, ':' (port), or '/' (path).
+			// This stops "http://localhost.evil.com" from matching "http://localhost".
+			int prefix_len = allowed_origin_prefixes[i].length();
+			if (p_origin.length() == prefix_len ||
+					p_origin[prefix_len] == ':' ||
+					p_origin[prefix_len] == '/') {
+				return true;
+			}
 		}
 	}
 	return false;
@@ -233,6 +239,9 @@ Error MCPProtocol::on_client_connected() {
 	session->connection = tcp_peer;
 
 	int client_id = next_client_id++;
+	if (next_client_id < 0) {
+		next_client_id = 0; // Handle overflow: wrap back to zero.
+	}
 	clients.insert(client_id, session);
 
 	print_verbose("[MCP] Client connected (id: " + itos(client_id) + ")");
@@ -292,6 +301,7 @@ void MCPProtocol::gc_stale_sessions() {
 	}
 	for (int i = 0; i < sessions_to_remove.size(); i++) {
 		print_verbose("[MCP] Session expired: " + sessions_to_remove[i].substr(0, 8) + "...");
+		resource_registry.unsubscribe_all(sessions_to_remove[i]);
 		sessions.erase(sessions_to_remove[i]);
 	}
 }
@@ -321,12 +331,17 @@ void MCPProtocol::poll() {
 			continue;
 		}
 
-		if (session->is_sse_stream) {
-			// SSE streams are long-lived. Don't parse new HTTP requests --
-			// just keep sending queued SSE events and check for disconnection.
-			// Keep the parent MCP session alive while SSE is connected.
-			if (sessions.has(session->sse_session_id)) {
+		// ── SSE streams (GET or POST): skip request reading, flush events ──
+		if (session->is_sse_stream ||
+				session->response_mode == MCPSession::RESPONSE_SSE_POST) {
+			// GET SSE: keep the parent MCP session alive.
+			if (session->is_sse_stream && sessions.has(session->sse_session_id)) {
 				sessions[session->sse_session_id].last_activity = OS::get_singleton()->get_ticks_usec();
+			}
+			// POST SSE: flush thread-safe event queue to res_queue.
+			if (session->response_mode == MCPSession::RESPONSE_SSE_POST) {
+				session->flush_sse_events();
+				session->last_activity = OS::get_singleton()->get_ticks_usec();
 			}
 			Error err = session->send_data();
 			if (err != OK && err != ERR_BUSY) {
@@ -335,7 +350,7 @@ void MCPProtocol::poll() {
 			continue;
 		}
 
-		// Read incoming data.
+		// ── Standard request processing ──
 		Error err = OK;
 		while (session->connection->get_available_bytes() > 0) {
 			err = session->handle_data();
@@ -344,7 +359,13 @@ void MCPProtocol::poll() {
 			}
 			if (session->parse_state == MCPSession::REQUEST_COMPLETE) {
 				process_request(client_id);
-				session->reset_request();
+				// Only reset if we're NOT in SSE mode after dispatch.
+				// SSE mode means process_request() started an SSE stream
+				// and will reset later via end_sse_stream().
+				if (session->response_mode == MCPSession::RESPONSE_NONE ||
+						session->response_mode == MCPSession::RESPONSE_DISCRETE) {
+					session->reset_request();
+				}
 			}
 			if (err == ERR_BUSY) {
 				break;
@@ -385,33 +406,56 @@ void MCPProtocol::process_request(int p_client_id) {
 	Ref<MCPSession> session = clients[p_client_id];
 	ERR_FAIL_COND(!session.is_valid());
 
+	// ── Step 1: Extract request data ─────────────────────────────────────
+
 	String host_header = session->headers.has("host") ? session->headers["host"] : String();
 	String origin_header = session->headers.has("origin") ? session->headers["origin"] : String();
 	String content_type = session->headers.has("content-type") ? session->headers["content-type"] : String();
 	String session_id_header = session->headers.has(MCP_SESSION_HEADER) ? session->headers[MCP_SESSION_HEADER] : String();
 
-	// Step 1: Host header validation (DNS rebinding protection).
-	if (!host_header.is_empty() && !validate_host(host_header)) {
+	// ── Step 2: Validate host and origin ─────────────────────────────────
+
+	// Host header validation (DNS rebinding protection).
+	if (host_header.is_empty()) {
+		session->queue_response(MCP_HTTP_400,
+				make_error_body(JSONRPC::INVALID_REQUEST, "Missing Host header"),
+				origin_header);
+		return;
+	}
+	if (!validate_host(host_header)) {
 		session->queue_response(MCP_HTTP_403, "", origin_header);
 		return;
 	}
 
-	// Step 2: Origin validation (CORS).
+	// Origin validation (CORS).
 	if (!validate_origin(origin_header)) {
 		session->queue_response(MCP_HTTP_403, "", String());
 		return;
 	}
 
-	// Step 3: Path validation.
+	// ── Step 3: Validate path ────────────────────────────────────────────
 	if (session->http_path != "/mcp") {
 		session->queue_response(MCP_HTTP_404, "", origin_header);
 		return;
 	}
 
-	// Step 4: Method routing.
+	// ── Step 4: Route by HTTP method (OPTIONS / DELETE / GET / POST) ─────
 	if (session->http_method == "OPTIONS") {
 		session->queue_response(MCP_HTTP_204, "", origin_header);
 		return;
+	}
+
+	// ── Step 4b: Bearer token authentication ─────────────────────────────
+	if (!auth_token.is_empty()) {
+		String auth_header = session->headers.has("authorization")
+				? session->headers["authorization"]
+				: String();
+		if (auth_header.is_empty() || auth_header != "Bearer " + auth_token) {
+			session->queue_response(MCP_HTTP_401,
+					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid or missing Bearer token"),
+					origin_header);
+			return;
+		}
 	}
 
 	if (session->http_method == "DELETE") {
@@ -430,7 +474,7 @@ void MCPProtocol::process_request(int p_client_id) {
 		return;
 	}
 
-	// Step 5: Content-Type validation (POST only).
+	// ── Step 5: Validate Content-Type (POST only) ────────────────────────
 	if (!content_type.begins_with("application/json")) {
 		String err_body = make_error_body(JSONRPC::INVALID_REQUEST,
 				"Content-Type must be application/json");
@@ -438,7 +482,7 @@ void MCPProtocol::process_request(int p_client_id) {
 		return;
 	}
 
-	// Step 6: JSON parse.
+	// ── Step 6: Parse JSON body ──────────────────────────────────────────
 	JSON json;
 	Error json_err = json.parse(session->request_body);
 
@@ -473,7 +517,7 @@ void MCPProtocol::process_request(int p_client_id) {
 	String method = json_request.get("method", "");
 	Variant request_id = json_request.get("id", Variant());
 
-	// Step 6b: MCP-Protocol-Version header validation.
+	// ── Step 7: Validate MCP-Protocol-Version header ─────────────────────
 	if (method != "initialize") {
 		String protocol_version_header = session->headers.has("mcp-protocol-version")
 				? session->headers["mcp-protocol-version"]
@@ -489,7 +533,7 @@ void MCPProtocol::process_request(int p_client_id) {
 		}
 	}
 
-	// Step 7: Session enforcement.
+	// ── Step 8: Session enforcement (initialize / lookup / validate) ─────
 	if (method == "initialize") {
 		// Reject if the client already sent a session ID header (re-initialize attempt).
 		if (!session_id_header.is_empty()) {
@@ -575,7 +619,71 @@ void MCPProtocol::process_request(int p_client_id) {
 		return;
 	}
 
-	// Step 8: JSON-RPC dispatch via process_action().
+	// ── Step 9: JSON-RPC dispatch ────────────────────────────────────────
+	// Inject the validated MCP session ID into request params so method
+	// handlers (e.g., resources/subscribe) can access the caller's session.
+	// The "_mcp_session_id" key is stripped from client-visible schemas.
+	if (json_request.has("params") && json_request["params"].get_type() == Variant::DICTIONARY) {
+		Dictionary params = json_request["params"];
+		params["_mcp_session_id"] = session_id_header;
+		json_request["params"] = params;
+	} else {
+		Dictionary params;
+		params["_mcp_session_id"] = session_id_header;
+		json_request["params"] = params;
+	}
+
+	// ── Step 9a: Handle notifications/cancelled specially ────────────────
+	// This is a notification (no "id") that must set the cancelled flag on
+	// the in-flight request identified by params.requestId.
+	if (method == "notifications/cancelled") {
+		Dictionary params = json_request.get("params", Dictionary());
+		handle_cancelled(params);
+		session->queue_response(MCP_HTTP_202, "", origin_header);
+		return;
+	}
+
+	// ── Step 9b: SSE negotiation for tools/call ─────────────────────────
+	// If the client accepts SSE and the request has a progressToken or the
+	// tool is known to be long-running, use POST SSE streaming.
+	bool is_notification = (request_id.get_type() == Variant::NIL);
+	if (method == "tools/call" && !is_notification) {
+		bool accepts_sse = false;
+		String accept = session->headers.has("accept") ? session->headers["accept"] : String();
+		if (accept.find("text/event-stream") != -1) {
+			accepts_sse = true;
+		}
+
+		bool has_progress_token = false;
+		String progress_token;
+		Dictionary params = json_request.get("params", Dictionary());
+		if (params.has("_meta")) {
+			Variant meta_v = params["_meta"];
+			if (meta_v.get_type() == Variant::DICTIONARY) {
+				Dictionary meta = meta_v;
+				if (meta.has("progressToken")) {
+					has_progress_token = true;
+					progress_token = String(meta["progressToken"]);
+				}
+			}
+		}
+
+		String tool_name = params.get("name", "");
+		bool tool_is_long_running = tool_registry.is_long_running_tool(tool_name);
+
+		if (accepts_sse && (has_progress_token || tool_is_long_running)) {
+			// SSE path: stream progress + final result.
+			session->begin_sse_response(session_id_header, origin_header);
+
+			dispatch_tool_with_progress(session, json_request, progress_token,
+					request_id, origin_header);
+
+			// DO NOT call reset_request() here. end_sse_stream() handles it.
+			return;
+		}
+	}
+
+	// ── Step 9c: Standard discrete dispatch ─────────────────────────────
 	// The base JSONRPC class looks up 'method' in the registered callables map.
 	// Returns a Dictionary: either {"jsonrpc":"2.0","result":...,"id":...}
 	// or {"jsonrpc":"2.0","error":...,"id":...}.
@@ -584,6 +692,23 @@ void MCPProtocol::process_request(int p_client_id) {
 
 	if (result.get_type() == Variant::DICTIONARY) {
 		Dictionary result_dict = result;
+
+		// Fix up nested errors: process_action() always wraps handler return
+		// values with make_response(), producing {"result": <handler_return>}.
+		// When a handler returns {"error": {code, message}} to signal an error,
+		// it ends up as {"result": {"error": {...}}} — a successful response
+		// with an error buried inside "result". MCP clients won't detect this.
+		// Detect this case and convert to a proper JSON-RPC error response.
+		if (result_dict.has("result") && result_dict["result"].get_type() == Variant::DICTIONARY) {
+			Dictionary inner_result = result_dict["result"];
+			if (inner_result.has("error") && inner_result["error"].get_type() == Variant::DICTIONARY) {
+				Dictionary inner_error = inner_result["error"];
+				int error_code = inner_error.get("code", JSONRPC::INTERNAL_ERROR);
+				String error_message = inner_error.get("message", "Unknown error");
+				result_dict = make_response_error(error_code, error_message, request_id);
+			}
+		}
+
 		String body = JSON::stringify(result_dict);
 		session->queue_response(MCP_HTTP_200, body, origin_header);
 	} else if (result.get_type() == Variant::NIL) {
@@ -666,13 +791,11 @@ Dictionary MCPProtocol::handle_ping() {
 // ---------------------------------------------------------------------------
 
 Dictionary MCPProtocol::_handle_tools_list(const Dictionary &p_params) {
-	ERR_FAIL_NULL_V(tool_registry, Dictionary());
-	return tool_registry->list_tools(p_params);
+	return tool_registry.list_tools(p_params);
 }
 
 Dictionary MCPProtocol::_handle_tools_call(const Dictionary &p_params) {
-	ERR_FAIL_NULL_V(tool_registry, Dictionary());
-	return tool_registry->call_tool(p_params);
+	return tool_registry.call_tool(p_params);
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +829,9 @@ void MCPProtocol::terminate_session(int p_client_id, const String &p_origin) {
 			// when it fails to send or the client detects closure.
 		}
 	}
+
+	// Clean up resource subscriptions for this session.
+	resource_registry.unsubscribe_all(session_id_header);
 
 	// Remove the session from the protocol-level sessions map.
 	sessions.erase(session_id_header);
@@ -777,8 +903,33 @@ void MCPProtocol::handle_get_sse(int p_client_id, const String &p_origin) {
 // ---------------------------------------------------------------------------
 
 void MCPProtocol::flush_sse_notifications() {
-	// For each session that has queued notifications, deliver them
-	// to all connected SSE streams for that session.
+	// Step 1: Pull resource change notifications from the registry and convert
+	// them to JSON-RPC "notifications/resources/updated" messages, queued into
+	// each session's notification_queue.
+	for (KeyValue<String, MCPSessionState> &E : sessions) {
+		MCPSessionState &state = E.value;
+		if (!state.initialized) {
+			continue;
+		}
+
+		Vector<String> changed_uris = resource_registry.flush_notifications(state.session_id);
+		for (int i = 0; i < changed_uris.size(); i++) {
+			// MCP spec: notifications/resources/updated
+			Dictionary notification;
+			notification["jsonrpc"] = "2.0";
+			notification["method"] = "notifications/resources/updated";
+			Dictionary params;
+			params["uri"] = changed_uris[i];
+			notification["params"] = params;
+
+			String json_str = JSON::stringify(notification);
+			if (state.notification_queue.size() < 1000) { // Cap per session.
+				state.notification_queue.push_back(json_str);
+			}
+		}
+	}
+
+	// Step 2: Deliver all queued notifications to SSE streams.
 	for (KeyValue<String, MCPSessionState> &E : sessions) {
 		MCPSessionState &state = E.value;
 		if (state.notification_queue.is_empty()) {
@@ -809,14 +960,18 @@ void MCPProtocol::flush_sse_notifications() {
 void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
 	for (KeyValue<String, MCPSessionState> &E : sessions) {
 		if (E.value.initialized) {
-			E.value.notification_queue.push_back(p_json_rpc_message);
+			if (E.value.notification_queue.size() < 1000) { // Cap at 1000.
+				E.value.notification_queue.push_back(p_json_rpc_message);
+			}
 		}
 	}
 }
 
 void MCPProtocol::queue_notification(const String &p_session_id, const String &p_json_rpc_message) {
 	if (sessions.has(p_session_id) && sessions[p_session_id].initialized) {
-		sessions[p_session_id].notification_queue.push_back(p_json_rpc_message);
+		if (sessions[p_session_id].notification_queue.size() < 1000) { // Cap at 1000.
+			sessions[p_session_id].notification_queue.push_back(p_json_rpc_message);
+		}
 	}
 }
 
@@ -832,7 +987,12 @@ Dictionary MCPProtocol::handle_resources_list(const Dictionary &p_params) {
 Dictionary MCPProtocol::handle_resources_read(const Dictionary &p_params) {
 	String uri = p_params.get("uri", "");
 	if (uri.is_empty()) {
-		return make_response_error(INVALID_PARAMS, "Missing required parameter: uri");
+		Dictionary err;
+		err["code"] = INVALID_PARAMS;
+		err["message"] = "Missing required parameter: uri";
+		Dictionary response;
+		response["error"] = err;
+		return response;
 	}
 	bool game_running = debugger_bridge && debugger_bridge->is_game_running();
 	return resource_registry.handle_read(uri, game_running);
@@ -844,20 +1004,50 @@ Dictionary MCPProtocol::handle_resources_templates_list(const Dictionary &p_para
 
 Dictionary MCPProtocol::handle_resources_subscribe(const Dictionary &p_params) {
 	String uri = p_params.get("uri", "");
+	String session_id = p_params.get("_mcp_session_id", "");
+
 	if (uri.is_empty()) {
-		return make_response_error(INVALID_PARAMS, "Missing required parameter: uri");
+		Dictionary err;
+		err["code"] = INVALID_PARAMS;
+		err["message"] = "Missing required parameter: uri";
+		Dictionary response;
+		response["error"] = err;
+		return response;
 	}
-	// Subscription tracking is a stub. Pass a placeholder session ID.
-	// Full session-aware subscription delivery will be implemented in AGENT_06.
-	return resource_registry.handle_subscribe(uri, "stub_session");
+	if (session_id.is_empty()) {
+		Dictionary err;
+		err["code"] = INTERNAL_ERROR;
+		err["message"] = "Internal error: missing session context";
+		Dictionary response;
+		response["error"] = err;
+		return response;
+	}
+
+	return resource_registry.handle_subscribe(uri, session_id);
 }
 
 Dictionary MCPProtocol::handle_resources_unsubscribe(const Dictionary &p_params) {
 	String uri = p_params.get("uri", "");
+	String session_id = p_params.get("_mcp_session_id", "");
+
 	if (uri.is_empty()) {
-		return make_response_error(INVALID_PARAMS, "Missing required parameter: uri");
+		Dictionary err;
+		err["code"] = INVALID_PARAMS;
+		err["message"] = "Missing required parameter: uri";
+		Dictionary response;
+		response["error"] = err;
+		return response;
 	}
-	return resource_registry.handle_unsubscribe(uri, "stub_session");
+	if (session_id.is_empty()) {
+		Dictionary err;
+		err["code"] = INTERNAL_ERROR;
+		err["message"] = "Internal error: missing session context";
+		Dictionary response;
+		response["error"] = err;
+		return response;
+	}
+
+	return resource_registry.handle_unsubscribe(uri, session_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -1044,7 +1234,14 @@ Dictionary MCPProtocol::_read_file_tree() {
 }
 
 void MCPProtocol::_walk_directory(const String &p_path, Array &r_dirs,
-		int &r_total_files, int &r_total_dirs) {
+		int &r_total_files, int &r_total_dirs, int p_depth) {
+	if (p_depth > 20) {
+		return; // Max depth.
+	}
+	if (r_total_files > 10000) {
+		return; // Max files.
+	}
+
 	Ref<DirAccess> dir = DirAccess::open(p_path);
 	ERR_FAIL_COND(dir.is_null());
 
@@ -1057,8 +1254,8 @@ void MCPProtocol::_walk_directory(const String &p_path, Array &r_dirs,
 	Vector<String> subdirs;
 
 	while (!item_name.is_empty()) {
-		// Skip hidden directories and Godot internal cache.
-		if (item_name == "." || item_name == ".." || item_name.begins_with(".godot")) {
+		// Skip hidden/generated directories.
+		if (item_name == "." || item_name == ".." || is_skip_directory(item_name)) {
 			item_name = dir->get_next();
 			continue;
 		}
@@ -1087,7 +1284,7 @@ void MCPProtocol::_walk_directory(const String &p_path, Array &r_dirs,
 	// Recurse into subdirectories (sorted for deterministic output).
 	subdirs.sort();
 	for (const String &subdir : subdirs) {
-		_walk_directory(subdir, r_dirs, r_total_files, r_total_dirs);
+		_walk_directory(subdir, r_dirs, r_total_files, r_total_dirs, p_depth + 1);
 	}
 }
 
@@ -1290,63 +1487,36 @@ Dictionary MCPProtocol::_read_file_resource(const Dictionary &p_params) {
 
 	// Rule 1: Reject empty paths.
 	if (path.is_empty()) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "Invalid path: path is empty";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602, "Invalid path: path is empty");
 	}
 
 	// Rule 2: Reject directory traversal sequences.
 	if (path.find("..") != -1) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "Invalid path: path traversal detected in '" + path + "'";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602,
+				"Invalid path: path traversal detected in '" + path + "'");
 	}
 
 	// Rule 3: Reject null bytes (path truncation attack).
 	if (path.find_char('\0') != -1) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "Invalid path: null byte in path";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602, "Invalid path: null byte in path");
 	}
 
 	// Rule 4: Reject absolute paths (must be relative within project).
 	if (path.begins_with("/") || path.find("://") != -1) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "Invalid path: must be a relative project path, got '" + path + "'";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602,
+				"Invalid path: must be a relative project path, got '" + path + "'");
 	}
 
 	// Rule 5: Construct res:// path and validate via validate_path().
 	String res_path = "res://" + path;
 	if (!validate_path(res_path)) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "Invalid path: '" + path + "' is outside the project or targets a restricted directory";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602,
+				"Invalid path: '" + path + "' is outside the project or targets a restricted directory");
 	}
 
 	// Read the file.
 	if (!FileAccess::exists(res_path)) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "File not found: " + res_path;
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602, "File not found: " + res_path);
 	}
 
 	String content = FileAccess::get_file_as_string(res_path);
@@ -1360,40 +1530,30 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 	String node_id_str = p_params.get("node_id", "");
 
 	if (node_id_str.is_empty() || !node_id_str.is_valid_int()) {
-		Dictionary error;
-		error["code"] = -32602;
-		error["message"] = "Invalid node_id: must be a numeric object ID";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(-32602, "Invalid node_id: must be a numeric object ID");
 	}
 
 	if (!debugger_bridge || !debugger_bridge->is_game_running()) {
-		Dictionary error;
-		error["code"] = -32002;
-		error["message"] = "Game is not running. Start the game first with debug/run_project.";
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE,
+				"Game is not running. Start the game first with debug/run_project.");
 	}
 
 	// Use send_evaluate() to get node properties via an expression.
 	// This constructs an expression that gets the node by object ID and
 	// retrieves its property list.
-	String object_id = node_id_str;
-	String expression = "var n = instance_from_id(" + object_id + "); "
+	// Sanitize: convert to int64 and back to string to guarantee only digits,
+	// preventing any expression injection even if is_valid_int() were bypassed.
+	int64_t id_val = node_id_str.to_int();
+	String safe_id = itos(id_val);
+	String expression = "var n = instance_from_id(" + safe_id + "); "
 						"n.get_class() if n != null else \"<not found>\"";
 
 	Dictionary eval_result = debugger_bridge->send_evaluate(expression);
 
 	if (!(bool)eval_result.get("success", false)) {
-		Dictionary error;
-		error["code"] = -32002;
-		error["message"] = "Failed to inspect node " + node_id_str + ": " +
-				String(eval_result.get("value", eval_result.get("error", "Unknown error")));
-		Dictionary response;
-		response["error"] = error;
-		return response;
+		return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE,
+				"Failed to inspect node " + node_id_str + ": " +
+						String(eval_result.get("value", eval_result.get("error", "Unknown error"))));
 	}
 
 	// Build a simple properties response.
@@ -1405,4 +1565,188 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 	Dictionary item;
 	item["text"] = JSON::stringify(props);
 	return item;
+}
+
+// ---------------------------------------------------------------------------
+// SSE-Aware Tool Dispatch (Phase A)
+// ---------------------------------------------------------------------------
+
+void MCPProtocol::dispatch_tool_with_progress(
+		Ref<MCPSession> p_session,
+		const Dictionary &p_msg,
+		const String &p_progress_token,
+		const Variant &p_request_id,
+		const String &p_origin) {
+	Dictionary params = p_msg.get("params", Dictionary());
+	String tool_name = params.get("name", "");
+	Dictionary arguments;
+	if (params.has("arguments")) {
+		arguments = params["arguments"];
+	}
+
+	// Create progress context (stack-allocated; valid for tool execution duration).
+	ProgressContext ctx;
+	ctx.token = p_progress_token;
+	ctx.session = p_session.ptr();
+
+	// Register in active requests map (for cancellation lookup).
+	String request_key = String(p_request_id);
+	{
+		MutexLock lock(active_requests_mutex);
+		active_requests[request_key] = &ctx;
+	}
+
+	// Log the tool invocation.
+	send_log("notice", "mcp.tools", "Calling " + tool_name);
+
+	// Execute the tool (blocks until complete or cancelled).
+	// The tool calls ctx.report_progress() to send SSE progress events.
+	// The tool checks ctx.is_cancelled() at natural loop boundaries.
+	Dictionary tool_result = tool_registry.call_tool_with_progress(
+			tool_name, arguments, &ctx);
+
+	// Unregister from active requests (cancellation no longer possible).
+	{
+		MutexLock lock(active_requests_mutex);
+		active_requests.erase(request_key);
+	}
+
+	// Build the final JSON-RPC response.
+	Dictionary response;
+	response["jsonrpc"] = "2.0";
+	response["id"] = p_request_id;
+	response["result"] = tool_result;
+
+	// Send as the last SSE event (via thread-safe queue).
+	p_session->queue_sse_event_threadsafe(JSON::stringify(response));
+
+	// Flush all remaining events to the TCP send buffer, then close the stream.
+	p_session->end_sse_stream();
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation Handler (Phase B)
+// ---------------------------------------------------------------------------
+
+void MCPProtocol::handle_cancelled(const Dictionary &p_params) {
+	Variant request_id = p_params.get("requestId", Variant());
+	String reason = p_params.get("reason", "");
+
+	if (request_id.get_type() == Variant::NIL) {
+		// Invalid notification; ignore per JSON-RPC spec (no error response
+		// for notifications).
+		return;
+	}
+
+	String request_key = String(request_id);
+	MutexLock lock(active_requests_mutex);
+	ProgressContext **ctx_ptr = active_requests.getptr(request_key);
+	if (ctx_ptr && *ctx_ptr) {
+		(*ctx_ptr)->cancelled.set();
+		print_verbose("[MCP] Request " + request_key +
+				" cancelled" + (reason.is_empty() ? "" : ": " + reason));
+	}
+	// If request_id is not found, the request may have already completed.
+	// Silently ignore (per MCP spec: cancellation is best-effort).
+}
+
+// ---------------------------------------------------------------------------
+// Logging (Phase C)
+// ---------------------------------------------------------------------------
+
+int MCPProtocol::severity_from_string(const String &p_level) {
+	if (p_level == "emergency") {
+		return 0;
+	}
+	if (p_level == "alert") {
+		return 1;
+	}
+	if (p_level == "critical") {
+		return 2;
+	}
+	if (p_level == "error") {
+		return 3;
+	}
+	if (p_level == "warning") {
+		return 4;
+	}
+	if (p_level == "notice") {
+		return 5;
+	}
+	if (p_level == "info") {
+		return 6;
+	}
+	if (p_level == "debug") {
+		return 7;
+	}
+	return 6; // Default to info for unknown levels.
+}
+
+Dictionary MCPProtocol::handle_logging_set_level(const Dictionary &p_params) {
+	String level = p_params.get("level", "info");
+	int severity = severity_from_string(level);
+
+	// Validate that the level string is recognized.
+	if (level != "emergency" && level != "alert" && level != "critical" &&
+			level != "error" && level != "warning" && level != "notice" &&
+			level != "info" && level != "debug") {
+		severity = 6;
+		print_verbose("[MCP] Unknown log level '" + level + "', defaulting to 'info'");
+	}
+
+	min_log_severity = severity;
+	print_verbose("[MCP] Log level set to '" + level + "' (severity " + itos(severity) + ")");
+
+	// logging/setLevel is a JSON-RPC request (has an id), not a notification.
+	// Return an empty result to acknowledge success.
+	return Dictionary();
+}
+
+void MCPProtocol::send_log(const String &p_level, const String &p_logger,
+		const Variant &p_data) {
+	int severity = severity_from_string(p_level);
+
+	// Filter: only send if severity <= min_log_severity.
+	// Lower number = higher severity. debug=7, info=6, error=3, etc.
+	if (severity > min_log_severity) {
+		return;
+	}
+
+	Dictionary params;
+	params["level"] = p_level;
+	params["logger"] = p_logger;
+	params["data"] = p_data;
+
+	Dictionary notification;
+	notification["jsonrpc"] = "2.0";
+	notification["method"] = "notifications/message";
+	notification["params"] = params;
+
+	String json = JSON::stringify(notification);
+
+	// Broadcast to all sessions via the notification queue.
+	// This is delivered to GET SSE streams on the next flush.
+	queue_notification_all(json);
+}
+
+// ---------------------------------------------------------------------------
+// Server Push Notifications (Phase D)
+// ---------------------------------------------------------------------------
+
+void MCPProtocol::notify_tools_changed() {
+	Dictionary notification;
+	notification["jsonrpc"] = "2.0";
+	notification["method"] = "notifications/tools/list_changed";
+
+	String json = JSON::stringify(notification);
+	queue_notification_all(json);
+}
+
+void MCPProtocol::notify_resources_list_changed() {
+	Dictionary notification;
+	notification["jsonrpc"] = "2.0";
+	notification["method"] = "notifications/resources/list_changed";
+
+	String json = JSON::stringify(notification);
+	queue_notification_all(json);
 }

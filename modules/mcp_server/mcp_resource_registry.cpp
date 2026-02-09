@@ -30,6 +30,8 @@
 
 #include "mcp_resource_registry.h"
 
+#include "mcp_types.h"
+
 #include "core/variant/variant.h"
 
 // ============================================================================
@@ -83,25 +85,17 @@ Dictionary MCPResourceRegistry::handle_read(const String &p_uri, bool p_game_run
 
 		// Gate dynamic resources on game running state.
 		if (def.requires_game && !p_game_running) {
-			Dictionary error;
-			error["code"] = -32002;
-			error["message"] = "Resource unavailable: " + p_uri +
-					" requires a running game. Use debug/run_project first.";
-			Dictionary response;
-			response["error"] = error;
-			return response;
+			return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE,
+					"Resource unavailable: " + p_uri +
+							" requires a running game. Use debug/run_project first.");
 		}
 
 		// Call the handler to produce content.
 		Variant handler_result = def.handler.call();
 		if (handler_result.get_type() != Variant::DICTIONARY) {
-			Dictionary error;
-			error["code"] = -32603;
-			error["message"] = "Internal error: handler for " + p_uri +
-					" returned non-Dictionary";
-			Dictionary response;
-			response["error"] = error;
-			return response;
+			return make_resource_error(MCP_ERROR_INTERNAL,
+					"Internal error: handler for " + p_uri +
+							" returned non-Dictionary");
 		}
 
 		Dictionary content_item = handler_result;
@@ -124,12 +118,8 @@ Dictionary MCPResourceRegistry::handle_read(const String &p_uri, bool p_game_run
 		// Call the template handler with extracted params.
 		Variant handler_result = matched_template.handler.call(matched_params);
 		if (handler_result.get_type() != Variant::DICTIONARY) {
-			Dictionary error;
-			error["code"] = -32603;
-			error["message"] = "Internal error: template handler returned non-Dictionary";
-			Dictionary response;
-			response["error"] = error;
-			return response;
+			return make_resource_error(MCP_ERROR_INTERNAL,
+					"Internal error: template handler returned non-Dictionary");
 		}
 
 		Dictionary content_item = handler_result;
@@ -151,12 +141,7 @@ Dictionary MCPResourceRegistry::handle_read(const String &p_uri, bool p_game_run
 	}
 
 	// Step 3: Unknown URI.
-	Dictionary error;
-	error["code"] = -32002;
-	error["message"] = "Resource not found: " + p_uri;
-	Dictionary response;
-	response["error"] = error;
-	return response;
+	return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE, "Resource not found: " + p_uri);
 }
 
 // ============================================================================
@@ -239,7 +224,7 @@ bool MCPResourceRegistry::_try_match_template(const String &p_uri,
 }
 
 // ============================================================================
-// Subscription Management (stubs -- delivery requires SSE from AGENT_06)
+// Subscription Management
 // ============================================================================
 
 Dictionary MCPResourceRegistry::handle_subscribe(const String &p_uri,
@@ -267,7 +252,10 @@ Dictionary MCPResourceRegistry::handle_unsubscribe(const String &p_uri,
 }
 
 void MCPResourceRegistry::unsubscribe_all(const String &p_session_id) {
-	MutexLock lock(subscription_mutex);
+	MutexLock slock(subscription_mutex); // Always acquire subscription_mutex first.
+	MutexLock nlock(notification_mutex);
+
+	// Remove session from all subscription sets.
 	Vector<String> empty_uris;
 	for (KeyValue<String, HashSet<String>> &E : subscriptions) {
 		E.value.erase(p_session_id);
@@ -278,42 +266,40 @@ void MCPResourceRegistry::unsubscribe_all(const String &p_session_id) {
 	for (const String &uri : empty_uris) {
 		subscriptions.erase(uri);
 	}
+
+	// Clear any pending notifications for this session.
+	pending_per_session.erase(p_session_id);
 }
 
 // ============================================================================
-// Notification Dispatch (queue only -- delivery via AGENT_06 SSE)
+// Notification Dispatch (per-session)
 // ============================================================================
 
 void MCPResourceRegistry::notify_changed(const String &p_uri) {
-	// Only queue if someone is subscribed.
-	{
-		MutexLock slock(subscription_mutex);
-		if (!subscriptions.has(p_uri)) {
-			return;
-		}
+	MutexLock slock(subscription_mutex); // Always acquire subscription_mutex first.
+	MutexLock nlock(notification_mutex);
+
+	if (!subscriptions.has(p_uri)) {
+		return;
 	}
 
-	MutexLock nlock(notification_mutex);
-	// Deduplicate: if this URI is already pending, skip.
-	if (pending_notifications.find(p_uri) == -1) {
-		pending_notifications.push_back(p_uri);
+	// For every session subscribed to this URI, add it to their pending set.
+	// HashSet deduplicates automatically -- no need for manual find().
+	for (const String &session_id : subscriptions[p_uri]) {
+		pending_per_session[session_id].insert(p_uri);
 	}
 }
 
 Vector<String> MCPResourceRegistry::flush_notifications(const String &p_session_id) {
+	MutexLock slock(subscription_mutex); // Always acquire subscription_mutex first.
 	MutexLock nlock(notification_mutex);
-	MutexLock slock(subscription_mutex);
 
 	Vector<String> result;
-	for (const String &uri : pending_notifications) {
-		if (subscriptions.has(uri) && subscriptions[uri].has(p_session_id)) {
+	if (pending_per_session.has(p_session_id)) {
+		for (const String &uri : pending_per_session[p_session_id]) {
 			result.push_back(uri);
 		}
+		pending_per_session.erase(p_session_id);
 	}
-	// Clear all pending notifications after flush.
-	// NOTE: This means if multiple sessions are subscribed, only the first
-	// to flush gets notifications. AGENT_06 must change this to per-session
-	// queues when SSE delivery is implemented.
-	pending_notifications.clear();
 	return result;
 }

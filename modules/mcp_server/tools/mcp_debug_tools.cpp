@@ -613,12 +613,24 @@ Dictionary MCPDebugTools::handle_get_node_properties(const Dictionary &p_args) {
 				"Get paths from debug/get_scene_tree or debug/search_scene_tree results.");
 	}
 
+	// Validate node_path contains only safe characters to prevent expression injection.
+	// Valid Godot node paths contain: alphanumeric, underscore, forward slash,
+	// period, at-sign, colon, hyphen, and space.
+	for (int i = 0; i < node_path.length(); i++) {
+		char32_t c = node_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' && c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error("Invalid node path: contains disallowed character");
+		}
+	}
+
 	MCPDebuggerBridge *bridge = _get_bridge();
 
 	// Use the evaluate mechanism to introspect the node.
 	// Build an expression that gets common properties from the node.
 	// We evaluate a string representation which gives useful debug info.
-	String expr = "get_root().get_node(\"" + node_path.replace("\"", "\\\"") + "\")";
+	// Escape backslashes BEFORE quotes to prevent injection via crafted paths.
+	String safe_path = node_path.replace("\\", "\\\\").replace("\"", "\\\"");
+	String expr = "get_root().get_node(\"" + safe_path + "\")";
 	Dictionary result = bridge->send_evaluate(expr);
 
 	if (!(bool)result.get("success", false)) {
@@ -876,18 +888,23 @@ Dictionary MCPDebugTools::handle_get_performance(const Dictionary &p_args) {
 	}
 
 	// Extract values from bridge result.
+	// The bridge populates: fps, frame_time, physics_frame_time, memory,
+	// object_count, node_count, orphan_count.
 	double fps = result.get("fps", 0.0);
 	double frame_time = result.get("frame_time", 0.0);
-	double physics_fps = result.get("physics_fps", 0.0);
-	int64_t static_memory = result.get("static_memory", 0);
-	int64_t dynamic_memory = result.get("dynamic_memory", 0);
+	double physics_frame_time = result.get("physics_frame_time", 0.0);
+	int64_t memory = result.get("memory", 0);
 	int object_count = result.get("object_count", 0);
 	int node_count = result.get("node_count", 0);
 	int orphan_count = result.get("orphan_count", 0);
-	int resource_count = result.get("resource_count", 0);
+
+	// Placeholder fields -- not yet provided by the bridge, always 0.
+	// TODO: Wire these up when the game-side profiler exposes them.
+	int64_t dynamic_memory = 0;
+	int resource_count = 0;
 
 	// Format memory to MB.
-	double static_mb = (double)static_memory / (1024.0 * 1024.0);
+	double memory_mb = (double)memory / (1024.0 * 1024.0);
 	double dynamic_mb = (double)dynamic_memory / (1024.0 * 1024.0);
 
 	String text = "Performance Metrics:\n"
@@ -895,10 +912,10 @@ Dictionary MCPDebugTools::handle_get_performance(const Dictionary &p_args) {
 			String::num(fps, 1) + "\n"
 								  "  Frame Time: " +
 			String::num(frame_time * 1000.0, 1) + "ms\n"
-												   "  Physics FPS: " +
-			String::num(physics_fps, 1) + "\n"
-										  "  Static Memory: " +
-			String::num(static_mb, 1) + " MB\n"
+												   "  Physics Frame Time: " +
+			String::num(physics_frame_time * 1000.0, 1) + "ms\n"
+														   "  Memory: " +
+			String::num(memory_mb, 1) + " MB\n"
 										"  Dynamic Memory: " +
 			String::num(dynamic_mb, 1) + " MB\n"
 										 "  Object Count: " +
@@ -913,13 +930,13 @@ Dictionary MCPDebugTools::handle_get_performance(const Dictionary &p_args) {
 	Dictionary structured;
 	structured["fps"] = fps;
 	structured["frame_time_msec"] = frame_time * 1000.0;
-	structured["physics_fps"] = physics_fps;
-	structured["static_memory_bytes"] = static_memory;
-	structured["dynamic_memory_bytes"] = dynamic_memory;
+	structured["physics_frame_time_msec"] = physics_frame_time * 1000.0;
+	structured["memory_bytes"] = memory;
+	structured["dynamic_memory_bytes"] = dynamic_memory; // Placeholder (always 0).
 	structured["object_count"] = object_count;
 	structured["node_count"] = node_count;
 	structured["orphan_node_count"] = orphan_count;
-	structured["resource_count"] = resource_count;
+	structured["resource_count"] = resource_count; // Placeholder (always 0).
 
 	return make_tool_result(text, structured);
 }
@@ -948,9 +965,8 @@ Dictionary MCPDebugTools::handle_session_summary(const Dictionary &p_args) {
 		Dictionary structured;
 		Dictionary status;
 		status["state"] = "stopped";
-		if (bridge) {
-			status["stop_reason"] = bridge->get_last_stop_reason();
-		}
+		// bridge is guaranteed non-null here (null-checked above).
+		status["stop_reason"] = bridge->get_last_stop_reason();
 		structured["status"] = status;
 		structured["performance"] = Variant(); // null
 		structured["scene_tree"] = Variant(); // null

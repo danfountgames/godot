@@ -106,8 +106,9 @@ private:
 	SafeFlag game_paused; // Set when debugger signals pause, cleared on resume or session_stopped.
 	SafeNumeric<uint64_t> game_start_time_msec; // Set in _on_session_started().
 	SafeNumeric<int64_t> game_frame_count; // Incremented by game-side heartbeat.
-	String last_stop_reason = "not_started"; // Why the game last stopped (only written from main thread).
-	int active_session_id = -1;
+	mutable Mutex stop_reason_mutex;
+	String last_stop_reason = "not_started"; // Why the game last stopped. Guarded by stop_reason_mutex.
+	SafeNumeric<int> active_session_id; // Initialized to -1 in constructor.
 
 	// --- Ring Buffers ---
 	OutputRingBuffer output_buffer;
@@ -157,7 +158,7 @@ public:
 	// "not_started" - no game session has ever been started
 	// "normal"      - game exited (debug/stop, user closed window, or get_tree().quit())
 	// "timeout"     - launching timed out (15s without session connect, likely compile error)
-	String get_last_stop_reason() const { return last_stop_reason; }
+	String get_last_stop_reason() const;
 
 	// Called by debug tool handlers BEFORE call_deferred to EditorRunBar.
 	void set_game_launching();

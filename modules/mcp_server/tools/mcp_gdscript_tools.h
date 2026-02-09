@@ -35,6 +35,7 @@
 #include "core/variant/dictionary.h"
 
 class MCPToolRegistry;
+struct ProgressContext;
 
 class MCPGDScriptTools {
 public:
@@ -44,6 +45,11 @@ public:
 	// Tool handlers.
 	static Dictionary handle_check_errors(const Dictionary &p_args);
 	static Dictionary handle_check_all(const Dictionary &p_args);
+
+	// Progress-aware variant of check_all. Reports per-file progress via
+	// ProgressContext and supports cooperative cancellation.
+	static Dictionary handle_check_all_with_progress(const Dictionary &p_args,
+			ProgressContext *p_ctx);
 
 private:
 	// Validate a single GDScript file. Returns a Dictionary with

@@ -34,6 +34,7 @@
 
 #include "core/io/stream_peer_tcp.h"
 #include "core/object/ref_counted.h"
+#include "core/os/mutex.h"
 #include "core/string/ustring.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/vector.h"
@@ -51,7 +52,8 @@
 // tracked separately in MCPSessionState (defined in mcp_protocol.h), because
 // MCP Streamable HTTP sessions persist across TCP connections.
 
-struct MCPSession : public RefCounted {
+class MCPSession : public RefCounted {
+public:
 	// -----------------------------------------------------------------------
 	// HTTP parser state machine
 	// -----------------------------------------------------------------------
@@ -64,6 +66,17 @@ struct MCPSession : public RefCounted {
 	};
 
 	// -----------------------------------------------------------------------
+	// SSE response mode
+	// -----------------------------------------------------------------------
+
+	enum ResponseMode {
+		RESPONSE_NONE, // Not currently processing a request.
+		RESPONSE_DISCRETE, // Standard JSON response (Content-Type: application/json).
+		RESPONSE_SSE_POST, // SSE stream in response to a POST (progress + result).
+		RESPONSE_SSE_GET, // Long-lived SSE stream from GET (server push channel).
+	};
+
+	// -----------------------------------------------------------------------
 	// Connection
 	// -----------------------------------------------------------------------
 
@@ -73,7 +86,7 @@ struct MCPSession : public RefCounted {
 	// HTTP parser state
 	// -----------------------------------------------------------------------
 
-	uint8_t req_buf[MCP_MAX_BUFFER_SIZE];
+	Vector<uint8_t> req_buf;
 	int req_pos = 0;
 	ParseState parse_state = READING_REQUEST_LINE;
 
@@ -96,6 +109,9 @@ struct MCPSession : public RefCounted {
 	// SSE (Server-Sent Events) state
 	// -----------------------------------------------------------------------
 
+	ResponseMode response_mode = RESPONSE_NONE;
+	bool sse_headers_sent = false;
+
 	// When true, this TCP connection is a long-lived GET SSE stream.
 	// The initial HTTP response headers have been sent; subsequent data is
 	// SSE event frames ("event: message\ndata: ...\n\n").
@@ -104,6 +120,12 @@ struct MCPSession : public RefCounted {
 	// The MCP session ID associated with this SSE stream (set when GET /mcp
 	// is accepted). Used to look up the MCPSessionState for notification delivery.
 	String sse_session_id;
+
+	// Thread-safe SSE event queue for POST SSE streams. Tool threads push
+	// formatted events via queue_sse_event_threadsafe(); the poll loop flushes
+	// them to res_queue via flush_sse_events().
+	Mutex sse_mutex;
+	Vector<String> sse_event_queue;
 
 	// -----------------------------------------------------------------------
 	// Timestamps for timeout / GC
@@ -128,16 +150,39 @@ struct MCPSession : public RefCounted {
 	// Attempt to send queued responses over the TCP connection.
 	Error send_data();
 
+	// Build CORS header lines for a given origin. Returns a string containing
+	// the full set of Access-Control-* headers (with trailing \r\n on each line).
+	static String _build_cors_headers(const String &p_origin);
+
 	// Queue a complete HTTP response for sending.
 	void queue_response(const String &p_status, const String &p_body,
 			const String &p_origin, const HashMap<String, String> &p_extra_headers = HashMap<String, String>());
 
 	// Begin an SSE stream response (sends HTTP headers, sets is_sse_stream flag).
+	// Used for GET SSE streams (server push).
 	void begin_sse_stream(const String &p_session_id, const String &p_origin);
+
+	// Begin a POST SSE response (sends HTTP headers for SSE, sets RESPONSE_SSE_POST).
+	// Used for streaming progress + final result on tools/call.
+	void begin_sse_response(const String &p_session_id, const String &p_origin);
 
 	// Queue a single SSE event frame for delivery on this stream.
 	// The p_data string is a complete JSON-RPC message.
+	// NOT thread-safe: only call from the main poll thread.
 	void queue_sse_event(const String &p_data);
+
+	// Thread-safe version: pushes to sse_event_queue (guarded by sse_mutex).
+	// Called from tool threads via ProgressContext. The poll loop calls
+	// flush_sse_events() to move events to res_queue.
+	void queue_sse_event_threadsafe(const String &p_data);
+
+	// Move queued events from sse_event_queue into res_queue for TCP transmission.
+	// Called from the poll loop. Non-blocking.
+	Error flush_sse_events();
+
+	// End a POST SSE stream: flush remaining events, reset state so the TCP
+	// connection can accept new HTTP requests.
+	void end_sse_stream();
 
 	// Reset the parser state for the next request on the same connection.
 	void reset_request();

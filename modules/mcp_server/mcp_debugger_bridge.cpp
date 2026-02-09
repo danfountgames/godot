@@ -30,6 +30,8 @@
 
 #include "mcp_debugger_bridge.h"
 
+#include "mcp_protocol.h"
+
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/string/print_string.h"
@@ -116,6 +118,7 @@ MCPDebuggerBridge::MCPDebuggerBridge() {
 	game_running.clear();
 	game_launching.clear();
 	game_paused.clear();
+	active_session_id.set(-1);
 }
 
 MCPDebuggerBridge::~MCPDebuggerBridge() {
@@ -150,7 +153,7 @@ void MCPDebuggerBridge::setup_session(int p_idx) {
 		dbg->connect("output", callable_mp(this, &MCPDebuggerBridge::_on_output_received));
 	}
 
-	active_session_id = p_idx;
+	active_session_id.set(p_idx);
 }
 
 bool MCPDebuggerBridge::has_capture(const String &p_capture) const {
@@ -289,25 +292,53 @@ void MCPDebuggerBridge::_on_session_started() {
 	}
 
 	print_verbose("[MCP] Debugger bridge: game session started.");
+
+	// Notify MCP clients that tool/resource lists have changed (debug tools now available).
+	MCPProtocol *protocol = MCPProtocol::get_singleton();
+	if (protocol) {
+		protocol->notify_tools_changed();
+		protocol->notify_resources_list_changed();
+		protocol->send_log("info", "mcp.debug", "Game started");
+
+		// Notify subscribers that game status changed.
+		protocol->get_resource_registry()->notify_changed("godot://game/status");
+	}
 }
 
 void MCPDebuggerBridge::_on_session_stopped() {
 	// Determine stop reason BEFORE clearing state flags.
+	String reason;
 	if (game_launching.is_set() && !game_running.is_set()) {
-		last_stop_reason = "timeout";
+		reason = "timeout";
 	} else {
-		last_stop_reason = "normal";
+		reason = "normal";
+	}
+
+	{
+		MutexLock lock(stop_reason_mutex);
+		last_stop_reason = reason;
 	}
 
 	game_running.clear();
 	game_launching.clear();
 	game_paused.clear();
-	active_session_id = -1;
+	active_session_id.set(-1);
 
 	// Wake ALL pending requests with an error -- the game is gone.
 	_wake_all_pending("Game session ended");
 
-	print_verbose("[MCP] Debugger bridge: game session stopped (reason: " + last_stop_reason + ").");
+	print_verbose("[MCP] Debugger bridge: game session stopped (reason: " + reason + ").");
+
+	// Notify MCP clients that tool/resource lists have changed (debug tools unavailable).
+	MCPProtocol *protocol = MCPProtocol::get_singleton();
+	if (protocol) {
+		protocol->notify_tools_changed();
+		protocol->notify_resources_list_changed();
+		protocol->send_log("info", "mcp.debug", "Game stopped (reason: " + reason + ")");
+
+		// Notify subscribers that game status changed.
+		protocol->get_resource_registry()->notify_changed("godot://game/status");
+	}
 }
 
 void MCPDebuggerBridge::_on_output_received(const String &p_msg, int p_type) {
@@ -364,6 +395,11 @@ double MCPDebuggerBridge::get_game_uptime_seconds() const {
 
 int64_t MCPDebuggerBridge::get_game_frame_count() const {
 	return game_frame_count.get();
+}
+
+String MCPDebuggerBridge::get_last_stop_reason() const {
+	MutexLock lock(stop_reason_mutex);
+	return last_stop_reason;
 }
 
 void MCPDebuggerBridge::set_game_launching() {
@@ -509,9 +545,13 @@ void MCPDebuggerBridge::_wake_all_pending(const String &p_error_message) {
 
 #define MCP_BRIDGE_SEND_OR_FAIL(p_type, p_message, p_data)                                                    \
 	PendingRequest *req = _create_pending(p_type);                                                             \
-	Ref<EditorDebuggerSession> session = get_session(active_session_id >= 0 ? active_session_id : 0);          \
+	int _sid = active_session_id.get();                                                                        \
+	Ref<EditorDebuggerSession> session = get_session(_sid >= 0 ? _sid : 0);                                    \
 	if (session.is_valid()) {                                                                                  \
-		session->send_message(p_message, p_data);                                                              \
+		/* Dispatch send_message to the main thread via call_deferred.                  */                     \
+		/* This method may be called from MCP background threads, but                   */                     \
+		/* EditorDebuggerSession::send_message() is only safe on the main thread.       */                     \
+		callable_mp(session.ptr(), &EditorDebuggerSession::send_message).call_deferred(p_message, p_data);     \
 	} else {                                                                                                   \
 		Dictionary err;                                                                                        \
 		err["error"] = "No active debugger session";                                                           \
