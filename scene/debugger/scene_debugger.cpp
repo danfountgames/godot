@@ -527,6 +527,8 @@ HashMap<String, SceneDebugger::ParseMessageFunc> SceneDebugger::message_handlers
 
 #ifdef MODULE_MCP_SERVER_ENABLED
 int SceneDebugger::_mcp_wait_frames_remaining = 0;
+int64_t SceneDebugger::_mcp_frame_counter = 0;
+bool SceneDebugger::_mcp_heartbeat_connected = false;
 #endif // MODULE_MCP_SERVER_ENABLED
 
 Error SceneDebugger::parse_message(void *p_user, const String &p_msg, const Array &p_args, bool &r_captured) {
@@ -3166,9 +3168,33 @@ void SceneDebugger::_mcp_process_frame_tick() {
 	}
 }
 
+void SceneDebugger::_mcp_heartbeat_tick() {
+	_mcp_frame_counter++;
+	if (_mcp_frame_counter % 60 == 0) {
+		Array data;
+		data.push_back(_mcp_frame_counter);
+		EngineDebugger::get_singleton()->send_message("mcp:heartbeat", data);
+	}
+}
+
+void SceneDebugger::_mcp_start_heartbeat() {
+	if (_mcp_heartbeat_connected) {
+		return;
+	}
+	SceneTree *st = SceneTree::get_singleton();
+	if (st) {
+		_mcp_frame_counter = 0;
+		st->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_heartbeat_tick));
+		_mcp_heartbeat_connected = true;
+	}
+}
+
 Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured) {
 	SceneTree *scene_tree = SceneTree::get_singleton();
 	ERR_FAIL_NULL_V(scene_tree, ERR_UNCONFIGURED);
+
+	// Start heartbeat on first MCP message from the editor.
+	_mcp_start_heartbeat();
 
 	r_captured = true;
 

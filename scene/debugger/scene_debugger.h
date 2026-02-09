@@ -136,10 +136,14 @@ public:
 
 #ifdef MODULE_MCP_SERVER_ENABLED
 	static Error _mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured);
+	static void _mcp_start_heartbeat();
 
 private:
 	static int _mcp_wait_frames_remaining;
+	static int64_t _mcp_frame_counter;
+	static bool _mcp_heartbeat_connected;
 	static void _mcp_process_frame_tick();
+	static void _mcp_heartbeat_tick();
 #endif // MODULE_MCP_SERVER_ENABLED
 
 #endif

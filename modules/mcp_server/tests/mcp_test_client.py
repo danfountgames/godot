@@ -525,8 +525,19 @@ class MCPClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"Game did not reach running state within {timeout}s")
 
-    def start_game_and_wait(self, scene: Optional[str] = None, timeout: float = 10.0) -> dict:
-        """Start the game (optionally a specific scene) and wait for it to run."""
+    def start_game_and_wait(self, scene: Optional[str] = None, timeout: float = 15.0) -> dict:
+        """Start the game (optionally a specific scene) and wait for it to run.
+
+        If the game is already running, stops it first and waits for it to
+        fully stop before relaunching.
+        """
+        # If a game is already running, stop it first.
+        status = self.call_tool("debug/get_status")
+        state = status.get("result", {}).get("structuredContent", {}).get("state")
+        if state == "running":
+            self.call_tool("debug/stop")
+            time.sleep(1.0)
+
         if scene:
             self.call_tool("debug/run_scene", {"scene": scene})
         else:
