@@ -37,6 +37,7 @@
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/io/resource_loader.h"
 #include "core/io/resource_uid.h"
 #include "core/variant/variant.h"
 #include "editor/file_system/editor_file_system.h"
@@ -784,48 +785,15 @@ Dictionary MCPEditorTools::handle_get_uid(const Dictionary &p_args) {
 	ResourceUID *ruid = ResourceUID::get_singleton();
 	ERR_FAIL_NULL_V(ruid, make_tool_error("ResourceUID singleton not available."));
 
-	ResourceUID::ID found_id = ResourceUID::INVALID_ID;
-
-	// For imported files (those with .import files):
-	String import_path = path + ".import";
-	if (FileAccess::exists(import_path)) {
-		String import_content = FileAccess::get_file_as_string(import_path);
-		int uid_pos = import_content.find("uid=\"uid://");
-		if (uid_pos != -1) {
-			int start = uid_pos + 5; // Skip uid="
-			int end = import_content.find("\"", start);
-			if (end != -1) {
-				String uid_str = import_content.substr(start, end - start);
-				found_id = ruid->text_to_id(uid_str);
-			}
-		}
-	}
-
-	// For non-imported text resources (.tscn, .tres, .gd):
-	// Check the first few lines for [gd_scene ... uid="uid://..."]
-	// or [gd_resource ... uid="uid://..."]
-	if (found_id == ResourceUID::INVALID_ID && FileAccess::exists(path)) {
-		String header = FileAccess::get_file_as_string(path);
-		// Only check the first 500 characters for efficiency.
-		if (header.length() > 500) {
-			header = header.substr(0, 500);
-		}
-		int uid_pos = header.find("uid=\"uid://");
-		if (uid_pos != -1) {
-			int start = uid_pos + 5;
-			int end = header.find("\"", start);
-			if (end != -1) {
-				String uid_str = header.substr(start, end - start);
-				found_id = ruid->text_to_id(uid_str);
-			}
-		}
-	}
+	// Use the engine's own UID lookup which handles all resource types:
+	// .import files, .uid sidecar files, and embedded uid:// in text resources.
+	ResourceUID::ID found_id = ResourceLoader::get_resource_uid(path);
 
 	if (found_id == ResourceUID::INVALID_ID) {
 		return make_tool_error(vformat(
 				"No UID found for: %s\n\n"
 				"This file may not have been assigned a UID yet. "
-				"Not all file types have UIDs (e.g., .gd files without a class_name).",
+				"Try editor/scan_filesystem first, or check that the file exists.",
 				path));
 	}
 

@@ -282,6 +282,7 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 	// on the main thread because it modifies editor UI state.
 	callable_mp(EditorRunBar::get_singleton(),
 			&EditorRunBar::play_main_scene)
+			.bind(false, Vector<String>())
 			.call_deferred();
 
 	// Build response.
@@ -338,7 +339,8 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 	// Dispatch to main thread.
 	callable_mp(EditorRunBar::get_singleton(),
 			&EditorRunBar::play_custom_scene)
-			.call_deferred(scene);
+			.bind(scene, Vector<String>())
+			.call_deferred();
 
 	String text = "Scene launch queued: " + scene + "\n"
 												"Use debug/get_status to check when the game is running.";

@@ -30,6 +30,8 @@
 
 #include "scene_debugger.h"
 
+#include "modules/modules_enabled.gen.h" // For mcp_server.
+
 #include "core/config/project_settings.h"
 #include "core/debugger/debugger_marshalls.h"
 #include "core/debugger/engine_debugger.h"

@@ -1,0 +1,17 @@
+# Godot editor cache (regenerated on launch)
+.godot/editor/
+.godot/imported/
+.godot/uid_cache.bin
+.godot/filesystem_cache*
+.godot/global_script_class_cache.cfg
+.godot/scene_groups_cache.cfg
+
+# Test artifacts created by security tests
+scripts/*evil*
+scripts/%2e*
+scripts/test_write.gd
+scripts/test_write.gd.uid
+
+# Python
+__pycache__/
+*.pyc

@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "modules/modules_enabled.gen.h" // For mcp_server.
+
 #include "core/input/shortcut.h"
 #include "core/object/ref_counted.h"
 #include "core/string/ustring.h"
