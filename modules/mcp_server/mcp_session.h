@@ -70,8 +70,7 @@ public:
 	// -----------------------------------------------------------------------
 
 	enum ResponseMode {
-		RESPONSE_NONE, // Not currently processing a request.
-		RESPONSE_DISCRETE, // Standard JSON response (Content-Type: application/json).
+		RESPONSE_NONE, // Not currently processing a request / standard JSON response.
 		RESPONSE_SSE_POST, // SSE stream in response to a POST (progress + result).
 		RESPONSE_SSE_GET, // Long-lived SSE stream from GET (server push channel).
 	};
@@ -112,14 +111,12 @@ public:
 	ResponseMode response_mode = RESPONSE_NONE;
 	bool sse_headers_sent = false;
 
-	// When true, this TCP connection is a long-lived GET SSE stream.
-	// The initial HTTP response headers have been sent; subsequent data is
-	// SSE event frames ("event: message\ndata: ...\n\n").
-	bool is_sse_stream = false;
-
 	// The MCP session ID associated with this SSE stream (set when GET /mcp
 	// is accepted). Used to look up the MCPSessionState for notification delivery.
 	String sse_session_id;
+
+	// Convenience: true when this TCP connection is a long-lived GET SSE stream.
+	bool is_get_sse_stream() const { return response_mode == RESPONSE_SSE_GET; }
 
 	// Thread-safe SSE event queue for POST SSE streams. Tool threads push
 	// formatted events via queue_sse_event_threadsafe(); the poll loop flushes
@@ -158,7 +155,7 @@ public:
 	void queue_response(const String &p_status, const String &p_body,
 			const String &p_origin, const HashMap<String, String> &p_extra_headers = HashMap<String, String>());
 
-	// Begin an SSE stream response (sends HTTP headers, sets is_sse_stream flag).
+	// Begin an SSE stream response (sends HTTP headers, sets RESPONSE_SSE_GET).
 	// Used for GET SSE streams (server push).
 	void begin_sse_stream(const String &p_session_id, const String &p_origin);
 
@@ -186,6 +183,10 @@ public:
 
 	// Reset the parser state for the next request on the same connection.
 	void reset_request();
+
+	// Format a JSON-RPC message as an SSE event frame (HTML Living Standard).
+	// Handles multi-line data by prefixing each line with "data: ".
+	static String _format_sse_frame(const String &p_data);
 
 	MCPSession();
 };

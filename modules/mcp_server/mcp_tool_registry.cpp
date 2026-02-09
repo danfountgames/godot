@@ -30,6 +30,8 @@
 
 #include "mcp_tool_registry.h"
 
+#include "mcp_progress.h"
+
 #include "core/error/error_macros.h"
 #include "core/string/print_string.h"
 #include "modules/jsonrpc/jsonrpc.h"
@@ -60,6 +62,22 @@ void MCPToolRegistry::register_tool(
 	tools.insert(p_name, def);
 
 	print_verbose("[MCP] Tool registered: " + p_name);
+}
+
+void MCPToolRegistry::register_tool(
+		const String &p_name,
+		const String &p_title,
+		const String &p_description,
+		const Dictionary &p_input_schema,
+		const Dictionary &p_annotations,
+		const Callable &p_handler,
+		ProgressHandler p_progress_handler) {
+	// Delegate to the base overload, then set the progress handler.
+	register_tool(p_name, p_title, p_description, p_input_schema,
+			p_annotations, p_handler);
+	if (tools.has(p_name)) {
+		tools[p_name].progress_handler = p_progress_handler;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -173,11 +191,8 @@ Dictionary MCPToolRegistry::call_tool(const Dictionary &p_params) {
 }
 
 // ---------------------------------------------------------------------------
-// Progress-aware dispatch (Strategy B: direct C++ dispatch by tool name)
+// Progress-aware dispatch
 // ---------------------------------------------------------------------------
-
-#include "mcp_progress.h"
-#include "tools/mcp_gdscript_tools.h"
 
 bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 	// Tools that typically take >500ms and benefit from SSE streaming.
@@ -204,13 +219,12 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 Dictionary MCPToolRegistry::call_tool_with_progress(
 		const String &p_name, const Dictionary &p_arguments,
 		ProgressContext *p_ctx) {
-	// Direct dispatch for progress-aware tools (Strategy B).
-	if (p_name == "gdscript/check_all") {
-		return MCPGDScriptTools::handle_check_all_with_progress(p_arguments, p_ctx);
+	// Use the registered progress handler if available.
+	if (tools.has(p_name) && tools[p_name].progress_handler) {
+		return tools[p_name].progress_handler(p_arguments, p_ctx);
 	}
 
 	// Fallback: standard dispatch for tools without progress support.
-	// Build the params dictionary that call_tool() expects.
 	Dictionary params;
 	params["name"] = p_name;
 	params["arguments"] = p_arguments;

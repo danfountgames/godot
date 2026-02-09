@@ -30,6 +30,7 @@
 
 #include "mcp_gdscript_tools.h"
 
+#include "../mcp_progress.h"
 #include "../mcp_tool_registry.h"
 #include "../mcp_types.h"
 
@@ -80,7 +81,8 @@ void MCPGDScriptTools::register_tools(MCPToolRegistry *p_registry) {
 				"on projects with many scripts (>100 files). Optionally includes warnings.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
-				callable_mp_static(&MCPGDScriptTools::handle_check_all));
+				callable_mp_static(&MCPGDScriptTools::handle_check_all),
+				&MCPGDScriptTools::handle_check_all_with_progress);
 	}
 }
 
@@ -155,81 +157,14 @@ Dictionary MCPGDScriptTools::handle_check_errors(const Dictionary &p_args) {
 // ============================================================================
 
 Dictionary MCPGDScriptTools::handle_check_all(const Dictionary &p_args) {
-	bool include_warnings = p_args.get("include_warnings", false);
-
-	// Find all .gd files in the project.
-	Vector<String> gd_files;
-	_find_gd_files_recursive("res://", gd_files);
-
-	if (gd_files.size() == 0) {
-		Dictionary structured;
-		structured["total_files"] = 0;
-		structured["files_with_errors"] = 0;
-		structured["files_with_warnings"] = 0;
-		structured["files_clean"] = 0;
-		structured["files"] = Array();
-		return make_tool_result("No .gd files found in project.", structured);
-	}
-
-	// Sort for deterministic output.
-	gd_files.sort();
-
-	// Validate each file.
-	Array file_results;
-	int files_with_errors = 0;
-	int files_with_warnings = 0;
-	int files_clean = 0;
-	String text;
-
-	for (int i = 0; i < gd_files.size(); i++) {
-		Dictionary result = _validate_single_file(gd_files[i]);
-		Array errors = result["errors"];
-		Array warnings = result["warnings"];
-
-		if (errors.size() > 0) {
-			files_with_errors++;
-			text += vformat("=== %s (%d errors) ===\n", gd_files[i], errors.size());
-			for (int j = 0; j < errors.size(); j++) {
-				Dictionary e = errors[j];
-				text += vformat("  Line %d, Col %d: %s\n",
-						(int)e["line"], (int)e["column"], (String)e["message"]);
-			}
-		} else if (warnings.size() > 0 && include_warnings) {
-			files_with_warnings++;
-			text += vformat("=== %s (%d warnings) ===\n", gd_files[i], warnings.size());
-			for (int j = 0; j < warnings.size(); j++) {
-				Dictionary w = warnings[j];
-				text += vformat("  Line %d: %s [%s]\n",
-						(int)w["line"], (String)w["message"], (String)w["code_name"]);
-			}
-		} else if (warnings.size() > 0) {
-			files_with_warnings++;
-			// Don't print details when include_warnings is false.
-		} else {
-			files_clean++;
-		}
-
-		file_results.push_back(result);
-	}
-
-	text += vformat("\nSummary: %d files checked, %d with errors, %d with warnings, %d clean",
-			gd_files.size(), files_with_errors, files_with_warnings, files_clean);
-
-	Dictionary structured;
-	structured["total_files"] = gd_files.size();
-	structured["files_with_errors"] = files_with_errors;
-	structured["files_with_warnings"] = files_with_warnings;
-	structured["files_clean"] = files_clean;
-	structured["files"] = file_results;
-
-	return make_tool_result(text, structured);
+	// Delegates to the progress-aware variant with a null context.
+	// When p_ctx is null, progress reporting and cancellation are no-ops.
+	return handle_check_all_with_progress(p_args, nullptr);
 }
 
 // ============================================================================
 // Tool D2b: gdscript/check_all (progress-aware variant)
 // ============================================================================
-
-#include "../mcp_progress.h"
 
 Dictionary MCPGDScriptTools::handle_check_all_with_progress(
 		const Dictionary &p_args, ProgressContext *p_ctx) {
@@ -299,12 +234,11 @@ Dictionary MCPGDScriptTools::handle_check_all_with_progress(
 		file_results.push_back(result);
 	}
 
-	// Final progress.
-	if (p_ctx) {
+	// Final progress (skip if cancelled -- don't send misleading 100% completion).
+	bool was_cancelled = (p_ctx && p_ctx->is_cancelled());
+	if (p_ctx && !was_cancelled) {
 		p_ctx->report_progress(total, total, "Done");
 	}
-
-	bool was_cancelled = (p_ctx && p_ctx->is_cancelled());
 	int files_checked = files_with_errors + files_with_warnings + files_clean;
 
 	text += vformat("\nSummary: %d of %d files checked, %d with errors, %d with warnings, %d clean",

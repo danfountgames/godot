@@ -275,7 +275,7 @@ void MCPProtocol::gc_stale_sessions() {
 			continue;
 		}
 		// SSE streams are long-lived; they are only GC'd when their session expires.
-		if (session->is_sse_stream) {
+		if (session->is_get_sse_stream()) {
 			if (!sessions.has(session->sse_session_id)) {
 				// Orphaned SSE stream -- session was terminated or expired.
 				connections_to_remove.push_back(E.key);
@@ -332,10 +332,10 @@ void MCPProtocol::poll() {
 		}
 
 		// ── SSE streams (GET or POST): skip request reading, flush events ──
-		if (session->is_sse_stream ||
+		if (session->is_get_sse_stream() ||
 				session->response_mode == MCPSession::RESPONSE_SSE_POST) {
 			// GET SSE: keep the parent MCP session alive.
-			if (session->is_sse_stream && sessions.has(session->sse_session_id)) {
+			if (session->is_get_sse_stream() && sessions.has(session->sse_session_id)) {
 				sessions[session->sse_session_id].last_activity = OS::get_singleton()->get_ticks_usec();
 			}
 			// POST SSE: flush thread-safe event queue to res_queue.
@@ -362,8 +362,7 @@ void MCPProtocol::poll() {
 				// Only reset if we're NOT in SSE mode after dispatch.
 				// SSE mode means process_request() started an SSE stream
 				// and will reset later via end_sse_stream().
-				if (session->response_mode == MCPSession::RESPONSE_NONE ||
-						session->response_mode == MCPSession::RESPONSE_DISCRETE) {
+				if (session->response_mode == MCPSession::RESPONSE_NONE) {
 					session->reset_request();
 				}
 			}
@@ -820,11 +819,11 @@ void MCPProtocol::terminate_session(int p_client_id, const String &p_origin) {
 		return;
 	}
 
-	// Close any SSE streams associated with this session.
+	// Close any GET SSE streams associated with this session.
 	for (KeyValue<int, Ref<MCPSession>> &E : clients) {
-		if (E.value.is_valid() && E.value->is_sse_stream &&
+		if (E.value.is_valid() && E.value->is_get_sse_stream() &&
 				E.value->sse_session_id == session_id_header) {
-			E.value->is_sse_stream = false;
+			E.value->response_mode = MCPSession::RESPONSE_NONE;
 			// The SSE stream will be disconnected on next poll cycle
 			// when it fails to send or the client detects closure.
 		}
@@ -923,23 +922,25 @@ void MCPProtocol::flush_sse_notifications() {
 			notification["params"] = params;
 
 			String json_str = JSON::stringify(notification);
-			if (state.notification_queue.size() < 1000) { // Cap per session.
+			if (state.notification_queue.size() < MCP_MAX_EVENT_QUEUE_SIZE) {
 				state.notification_queue.push_back(json_str);
 			}
 		}
 	}
 
-	// Step 2: Deliver all queued notifications to SSE streams.
+	// Step 2: Deliver all queued notifications to ONE SSE stream per session.
+	// MCP Streamable HTTP spec: server MUST send each notification on only
+	// one SSE stream per session. We pick the first matching GET SSE stream.
 	for (KeyValue<String, MCPSessionState> &E : sessions) {
 		MCPSessionState &state = E.value;
 		if (state.notification_queue.is_empty()) {
 			continue;
 		}
 
-		// Find SSE stream clients for this session.
+		// Find the first GET SSE stream client for this session.
 		for (KeyValue<int, Ref<MCPSession>> &C : clients) {
 			Ref<MCPSession> client = C.value;
-			if (!client.is_valid() || !client->is_sse_stream) {
+			if (!client.is_valid() || !client->is_get_sse_stream()) {
 				continue;
 			}
 			if (client->sse_session_id != state.session_id) {
@@ -950,9 +951,11 @@ void MCPProtocol::flush_sse_notifications() {
 			for (int i = 0; i < state.notification_queue.size(); i++) {
 				client->queue_sse_event(state.notification_queue[i]);
 			}
+			break; // One stream per session (spec requirement).
 		}
 
-		// Clear the queue after delivery.
+		// Clear the queue after delivery (even if no stream was found,
+		// to prevent unbounded accumulation).
 		state.notification_queue.clear();
 	}
 }
@@ -960,7 +963,7 @@ void MCPProtocol::flush_sse_notifications() {
 void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
 	for (KeyValue<String, MCPSessionState> &E : sessions) {
 		if (E.value.initialized) {
-			if (E.value.notification_queue.size() < 1000) { // Cap at 1000.
+			if (E.value.notification_queue.size() < MCP_MAX_EVENT_QUEUE_SIZE) {
 				E.value.notification_queue.push_back(p_json_rpc_message);
 			}
 		}
@@ -969,7 +972,7 @@ void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
 
 void MCPProtocol::queue_notification(const String &p_session_id, const String &p_json_rpc_message) {
 	if (sessions.has(p_session_id) && sessions[p_session_id].initialized) {
-		if (sessions[p_session_id].notification_queue.size() < 1000) { // Cap at 1000.
+		if (sessions[p_session_id].notification_queue.size() < MCP_MAX_EVENT_QUEUE_SIZE) {
 			sessions[p_session_id].notification_queue.push_back(p_json_rpc_message);
 		}
 	}
@@ -1571,12 +1574,37 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 // SSE-Aware Tool Dispatch (Phase A)
 // ---------------------------------------------------------------------------
 
+// RAII guard to ensure active_requests cleanup on all code paths
+// (including ERR_FAIL early returns from tool dispatch).
+struct ActiveRequestGuard {
+	Mutex &mutex;
+	HashMap<String, ProgressContext *> &map;
+	String key;
+
+	ActiveRequestGuard(Mutex &p_mutex, HashMap<String, ProgressContext *> &p_map,
+			const String &p_key, ProgressContext *p_ctx) :
+			mutex(p_mutex), map(p_map), key(p_key) {
+		MutexLock lock(mutex);
+		map[key] = p_ctx;
+	}
+
+	~ActiveRequestGuard() {
+		MutexLock lock(mutex);
+		map.erase(key);
+	}
+};
+
 void MCPProtocol::dispatch_tool_with_progress(
 		Ref<MCPSession> p_session,
 		const Dictionary &p_msg,
 		const String &p_progress_token,
 		const Variant &p_request_id,
 		const String &p_origin) {
+	// NOTE: This executes synchronously on the poll thread, blocking other
+	// clients for the duration of tool execution. This is acceptable for the
+	// single-threaded model. A future phase will move tool execution to a
+	// worker thread, activating the existing synchronization primitives.
+
 	Dictionary params = p_msg.get("params", Dictionary());
 	String tool_name = params.get("name", "");
 	Dictionary arguments;
@@ -1590,11 +1618,9 @@ void MCPProtocol::dispatch_tool_with_progress(
 	ctx.session = p_session.ptr();
 
 	// Register in active requests map (for cancellation lookup).
+	// RAII guard ensures cleanup even if an ERR_FAIL macro triggers early return.
 	String request_key = String(p_request_id);
-	{
-		MutexLock lock(active_requests_mutex);
-		active_requests[request_key] = &ctx;
-	}
+	ActiveRequestGuard guard(active_requests_mutex, active_requests, request_key, &ctx);
 
 	// Log the tool invocation.
 	send_log("notice", "mcp.tools", "Calling " + tool_name);
@@ -1604,12 +1630,6 @@ void MCPProtocol::dispatch_tool_with_progress(
 	// The tool checks ctx.is_cancelled() at natural loop boundaries.
 	Dictionary tool_result = tool_registry.call_tool_with_progress(
 			tool_name, arguments, &ctx);
-
-	// Unregister from active requests (cancellation no longer possible).
-	{
-		MutexLock lock(active_requests_mutex);
-		active_requests.erase(request_key);
-	}
 
 	// Build the final JSON-RPC response.
 	Dictionary response;

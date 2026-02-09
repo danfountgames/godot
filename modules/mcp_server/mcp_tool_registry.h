@@ -40,6 +40,11 @@ struct ProgressContext;
 
 class MCPToolRegistry {
 public:
+	// Function pointer type for progress-aware tool handlers.
+	// ProgressContext cannot be passed through Godot's Callable system,
+	// so we use a raw function pointer for the progress-aware path.
+	typedef Dictionary (*ProgressHandler)(const Dictionary &, ProgressContext *);
+
 	struct ToolDef {
 		String name;
 		String title;
@@ -47,6 +52,7 @@ public:
 		Dictionary input_schema; // JSON Schema object.
 		Dictionary annotations; // MCP annotations: readOnlyHint, destructiveHint, etc.
 		Callable handler; // fn(Dictionary args) -> Dictionary result.
+		ProgressHandler progress_handler = nullptr; // Optional progress-aware handler.
 	};
 
 private:
@@ -64,6 +70,16 @@ public:
 			const Dictionary &p_annotations,
 			const Callable &p_handler);
 
+	// Overload with optional progress-aware handler for long-running tools.
+	void register_tool(
+			const String &p_name,
+			const String &p_title,
+			const String &p_description,
+			const Dictionary &p_input_schema,
+			const Dictionary &p_annotations,
+			const Callable &p_handler,
+			ProgressHandler p_progress_handler);
+
 	// JSON-RPC handler for "tools/list". Returns the tool list per MCP spec.
 	// Accepts params with optional "cursor" for pagination (we return all at once).
 	Dictionary list_tools(const Dictionary &p_params);
@@ -73,9 +89,8 @@ public:
 	// Returns the tool result dictionary, or a JSON-RPC error if tool not found.
 	Dictionary call_tool(const Dictionary &p_params);
 
-	// Dispatch with progress context. Uses Strategy B (direct C++ dispatch
-	// by tool name) for progress-aware tools. Falls back to call_tool() for
-	// tools without progress support.
+	// Dispatch with progress context. Uses the registered progress_handler
+	// if available. Falls back to call_tool() for tools without one.
 	Dictionary call_tool_with_progress(const String &p_name,
 			const Dictionary &p_arguments, ProgressContext *p_ctx);
 

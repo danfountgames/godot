@@ -54,6 +54,9 @@
 #define MCP_DEFAULT_SESSION_TIMEOUT_SEC 300
 #define MCP_DEFAULT_CONNECTION_IDLE_TIMEOUT_SEC 60
 
+// Maximum SSE / notification event queue size per session/stream (backpressure cap).
+#define MCP_MAX_EVENT_QUEUE_SIZE 1000
+
 // ---------------------------------------------------------------------------
 // MCP Protocol version
 // ---------------------------------------------------------------------------

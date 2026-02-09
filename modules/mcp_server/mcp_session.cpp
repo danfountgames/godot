@@ -30,6 +30,8 @@
 
 #include "mcp_session.h"
 
+#include "mcp_progress.h"
+
 #include "core/os/os.h"
 #include "core/string/print_string.h"
 
@@ -285,7 +287,6 @@ void MCPSession::queue_response(const String &p_status, const String &p_body,
 }
 
 void MCPSession::begin_sse_stream(const String &p_session_id, const String &p_origin) {
-	is_sse_stream = true;
 	sse_session_id = p_session_id;
 	response_mode = RESPONSE_SSE_GET;
 	sse_headers_sent = true;
@@ -314,7 +315,7 @@ void MCPSession::begin_sse_response(const String &p_session_id, const String &p_
 	response += "HTTP/1.1 200 OK\r\n";
 	response += "Content-Type: text/event-stream\r\n";
 	response += "Cache-Control: no-cache\r\n";
-	response += "Connection: keep-alive\r\n";
+	response += "Connection: close\r\n"; // POST SSE: close after final event.
 
 	if (!p_session_id.is_empty()) {
 		response += "Mcp-Session-Id: " + p_session_id + "\r\n";
@@ -327,7 +328,7 @@ void MCPSession::begin_sse_response(const String &p_session_id, const String &p_
 	res_queue.push_back(response.utf8());
 }
 
-void MCPSession::queue_sse_event(const String &p_data) {
+String MCPSession::_format_sse_frame(const String &p_data) {
 	// SSE event frame format (HTML Living Standard, Server-Sent Events):
 	// Multi-line data must prefix each line with "data: ".
 	//   event: message\n
@@ -340,20 +341,22 @@ void MCPSession::queue_sse_event(const String &p_data) {
 		frame += "data: " + lines[i] + "\n";
 	}
 	frame += "\n"; // Empty line terminates the event.
-	res_queue.push_back(frame.utf8());
+	return frame;
+}
+
+void MCPSession::queue_sse_event(const String &p_data) {
+	res_queue.push_back(_format_sse_frame(p_data).utf8());
 }
 
 void MCPSession::queue_sse_event_threadsafe(const String &p_data) {
 	MutexLock lock(sse_mutex);
 
-	// Backpressure: cap the queue at 1000 events.
-	if (sse_event_queue.size() >= 1000) {
+	// Backpressure: cap the queue.
+	if (sse_event_queue.size() >= MCP_MAX_EVENT_QUEUE_SIZE) {
 		sse_event_queue.remove_at(0); // Drop oldest event.
 	}
 
-	// SSE format: "event: message\ndata: <json>\n\n"
-	String frame = "event: message\ndata: " + p_data + "\n\n";
-	sse_event_queue.push_back(frame);
+	sse_event_queue.push_back(_format_sse_frame(p_data));
 }
 
 Error MCPSession::flush_sse_events() {
@@ -383,10 +386,10 @@ void MCPSession::end_sse_stream() {
 }
 
 // ---------------------------------------------------------------------------
-// ProgressContext::_queue_event (breaks mcp_progress.h -> mcp_session.h cycle)
+// ProgressContext::_queue_event -- implemented here (not in mcp_progress.h)
+// to break the circular header dependency: mcp_progress.h forward-declares
+// MCPSession, while mcp_session.h does not include mcp_progress.h.
 // ---------------------------------------------------------------------------
-
-#include "mcp_progress.h"
 
 void ProgressContext::_queue_event(const String &p_json) {
 	if (session) {
