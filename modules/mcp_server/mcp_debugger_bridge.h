@@ -1,0 +1,185 @@
+/**************************************************************************/
+/*  mcp_debugger_bridge.h                                                 */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+#include "editor/debugger/editor_debugger_plugin.h"
+
+#include "core/os/mutex.h"
+#include "core/os/semaphore.h"
+#include "core/templates/safe_refcount.h"
+#include "core/variant/dictionary.h"
+
+// ---------------------------------------------------------------------------
+// OutputRingBuffer -- cursor-based ring buffer for output/error messages.
+//
+// Entries are never lost from the reader's perspective (unless the buffer
+// wraps past the reader's cursor). Clients read by providing a cursor
+// (sequence number) from their previous read. Returns only entries with
+// seq > cursor.
+// ---------------------------------------------------------------------------
+
+struct OutputEntry {
+	uint64_t seq = 0; // Monotonically increasing sequence number.
+	String text;
+	int type = 0; // 0 = normal, 1 = warning, 2 = error.
+	uint64_t timestamp_msec = 0;
+};
+
+class OutputRingBuffer {
+public:
+	static const int CAPACITY = 10000;
+
+private:
+	Vector<OutputEntry> entries;
+	uint64_t next_seq = 1;
+	int write_pos = 0;
+	int count = 0;
+	mutable Mutex mutex;
+
+public:
+	OutputRingBuffer();
+
+	void push(const String &p_text, int p_type);
+	Vector<OutputEntry> read_since(uint64_t p_cursor, int p_limit = 200) const;
+	uint64_t latest_seq() const;
+	void clear();
+};
+
+// ---------------------------------------------------------------------------
+// PendingRequest -- async request/response pattern.
+//
+// MCP HTTP threads call bridge methods that block on a semaphore.
+// The editor main thread receives the response and posts the semaphore.
+// ---------------------------------------------------------------------------
+
+struct PendingRequest {
+	String type;
+	Semaphore semaphore;
+	Dictionary result;
+	SafeFlag completed;
+
+	PendingRequest() :
+			completed(false) {}
+};
+
+// ---------------------------------------------------------------------------
+// MCPDebuggerBridge -- the EditorDebuggerPlugin that manages all
+// communication between the MCP server and the running game.
+// ---------------------------------------------------------------------------
+
+class MCPDebuggerBridge : public EditorDebuggerPlugin {
+	GDCLASS(MCPDebuggerBridge, EditorDebuggerPlugin);
+
+private:
+	// --- State ---
+	SafeFlag game_running;
+	SafeFlag game_launching; // Set when run_project/run_scene called, cleared on session started/stopped.
+	SafeNumeric<uint64_t> game_launch_time_msec; // When set_game_launching() was called.
+	SafeFlag game_paused; // Set when debugger signals pause, cleared on resume or session_stopped.
+	SafeNumeric<uint64_t> game_start_time_msec; // Set in _on_session_started().
+	SafeNumeric<int64_t> game_frame_count; // Incremented by game-side heartbeat.
+	String last_stop_reason = "not_started"; // Why the game last stopped (only written from main thread).
+	int active_session_id = -1;
+
+	// --- Ring Buffers ---
+	OutputRingBuffer output_buffer;
+	OutputRingBuffer error_buffer;
+
+	// --- Pending Requests ---
+	mutable Mutex request_mutex;
+	HashMap<String, PendingRequest *> pending_requests;
+
+	// --- Cached Scene Tree ---
+	mutable Mutex scene_tree_mutex;
+	Dictionary cached_scene_tree;
+	uint64_t scene_tree_timestamp = 0;
+
+	// --- Internal Helpers ---
+	PendingRequest *_create_pending(const String &p_type);
+	Dictionary _wait_for_pending(PendingRequest *p_request, int p_timeout_msec = 10000);
+	void _complete_pending(const String &p_request_id, const Dictionary &p_result);
+	void _wake_all_pending(const String &p_error_message);
+
+	// --- Signal Callbacks (editor main thread) ---
+	void _on_session_started();
+	void _on_session_stopped();
+	void _on_output_received(const String &p_msg, int p_type);
+
+	// --- Scene Tree Helpers ---
+	Dictionary _flat_tree_to_hierarchical(const Array &p_flat_data) const;
+	String _tree_to_text(const Dictionary &p_tree, int p_indent = 0) const;
+
+protected:
+	static void _bind_methods();
+
+public:
+	// --- EditorDebuggerPlugin overrides ---
+	virtual void setup_session(int p_idx) override;
+	virtual bool capture(const String &p_message, const Array &p_data, int p_session) override;
+	virtual bool has_capture(const String &p_capture) const override;
+
+	// --- State Queries (thread-safe) ---
+	bool is_game_running() const;
+	bool is_game_launching() const;
+	bool is_game_paused() const;
+	double get_game_uptime_seconds() const;
+	int64_t get_game_frame_count() const;
+
+	// Returns why the game last stopped. Values:
+	// "not_started" - no game session has ever been started
+	// "normal"      - game exited (debug/stop, user closed window, or get_tree().quit())
+	// "timeout"     - launching timed out (15s without session connect, likely compile error)
+	String get_last_stop_reason() const { return last_stop_reason; }
+
+	// Called by debug tool handlers BEFORE call_deferred to EditorRunBar.
+	void set_game_launching();
+
+	// --- Output/Error Access (thread-safe, called from MCP HTTP threads) ---
+	Vector<OutputEntry> get_output_since(uint64_t p_cursor, int p_limit = 200) const;
+	Vector<OutputEntry> get_errors_since(uint64_t p_cursor, int p_limit = 200) const;
+	uint64_t get_output_latest_seq() const;
+	uint64_t get_error_latest_seq() const;
+
+	// --- Async Request Methods (block calling thread, called from MCP HTTP threads) ---
+	Dictionary request_scene_tree(int p_timeout_msec = 10000);
+	Dictionary send_evaluate(const String &p_expression, int p_timeout_msec = 10000);
+	Dictionary send_inject_action(const String &p_action, bool p_pressed, int p_hold_frames = 0, float p_strength = 1.0f, int p_timeout_msec = 10000);
+	Dictionary send_click_control(const String &p_node_path, int p_timeout_msec = 10000);
+	Dictionary send_wait_frames(int p_frame_count, int p_timeout_msec = 30000);
+	Dictionary send_screenshot(int p_timeout_msec = 10000);
+	Dictionary send_get_performance(int p_timeout_msec = 5000);
+
+	// --- Cached Scene Tree (thread-safe) ---
+	Dictionary get_cached_scene_tree() const;
+
+	MCPDebuggerBridge();
+	~MCPDebuggerBridge();
+};

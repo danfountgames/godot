@@ -131,6 +131,15 @@ public:
 	static void add_to_cache(const String &p_filename, Node *p_node);
 	static void remove_from_cache(const String &p_filename, Node *p_node);
 	static void reload_cached_files(const PackedStringArray &p_files);
+
+#ifdef MODULE_MCP_SERVER_ENABLED
+	static Error _mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured);
+
+private:
+	static int _mcp_wait_frames_remaining;
+	static void _mcp_process_frame_tick();
+#endif // MODULE_MCP_SERVER_ENABLED
+
 #endif
 };
 

@@ -75,11 +75,17 @@ SceneDebugger::SceneDebugger() {
 	RuntimeNodeSelect::singleton = memnew(RuntimeNodeSelect);
 
 	EngineDebugger::register_message_capture("scene", EngineDebugger::Capture(nullptr, SceneDebugger::parse_message));
+#ifdef MODULE_MCP_SERVER_ENABLED
+	EngineDebugger::register_message_capture("mcp", EngineDebugger::Capture(nullptr, SceneDebugger::_mcp_capture));
+#endif // MODULE_MCP_SERVER_ENABLED
 #endif // DEBUG_ENABLED
 }
 
 SceneDebugger::~SceneDebugger() {
 #ifdef DEBUG_ENABLED
+#ifdef MODULE_MCP_SERVER_ENABLED
+	EngineDebugger::unregister_message_capture("mcp");
+#endif // MODULE_MCP_SERVER_ENABLED
 	if (LiveEditor::singleton) {
 		EngineDebugger::unregister_message_capture("scene");
 		memdelete(LiveEditor::singleton);
@@ -516,6 +522,10 @@ Error SceneDebugger::_msg_rq_screenshot(const Array &p_args) {
 // endregion
 
 HashMap<String, SceneDebugger::ParseMessageFunc> SceneDebugger::message_handlers;
+
+#ifdef MODULE_MCP_SERVER_ENABLED
+int SceneDebugger::_mcp_wait_frames_remaining = 0;
+#endif // MODULE_MCP_SERVER_ENABLED
 
 Error SceneDebugger::parse_message(void *p_user, const String &p_msg, const Array &p_args, bool &r_captured) {
 	ERR_FAIL_NULL_V(SceneTree::get_singleton(), ERR_UNCONFIGURED);
@@ -3114,5 +3124,286 @@ void RuntimeNodeSelect::_reset_camera_3d() {
 	}
 }
 #endif // _3D_DISABLED
+
+// ========================================================================
+// MCP Capture (game-side message handlers)
+// ========================================================================
+
+#ifdef MODULE_MCP_SERVER_ENABLED
+
+#include "core/config/engine.h"
+#include "core/crypto/crypto_core.h"
+#include "core/input/input.h"
+#include "core/input/input_event.h"
+#include "core/input/input_map.h"
+#include "core/io/image.h"
+#include "core/math/expression.h"
+#include "main/performance.h"
+#include "scene/gui/base_button.h"
+#include "scene/gui/control.h"
+
+void SceneDebugger::_mcp_process_frame_tick() {
+	// Called every process frame while waiting.
+	if (_mcp_wait_frames_remaining <= 0) {
+		return;
+	}
+
+	_mcp_wait_frames_remaining--;
+
+	if (_mcp_wait_frames_remaining <= 0) {
+		// Disconnect ourselves from the signal.
+		SceneTree *st = SceneTree::get_singleton();
+		if (st && st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick));
+		}
+
+		// Send completion message back to editor.
+		Array result;
+		result.push_back(0); // success code
+		EngineDebugger::get_singleton()->send_message("mcp:wait_done", result);
+	}
+}
+
+Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured) {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	ERR_FAIL_NULL_V(scene_tree, ERR_UNCONFIGURED);
+
+	r_captured = true;
+
+	// --- inject_action ---
+	// Data: [action_name: String, pressed: bool, hold_frames: int, strength: float]
+	if (p_msg == "inject_action") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+
+		String action_name = p_data[0];
+		bool pressed = p_data[1];
+		int hold_frames = p_data[2];
+		float strength = p_data[3];
+
+		// Validate action exists.
+		if (!InputMap::get_singleton()->has_action(action_name)) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Action not found: " + action_name);
+			EngineDebugger::get_singleton()->send_message("mcp:action_done", result);
+			return OK;
+		}
+
+		// Create and inject the InputEventAction.
+		Ref<InputEventAction> ev;
+		ev.instantiate();
+		ev->set_action(action_name);
+		ev->set_pressed(pressed);
+		ev->set_strength(strength);
+
+		Input::get_singleton()->parse_input_event(ev);
+
+		// If hold_frames > 0 and pressed, schedule a release after N frames
+		// using a SceneTreeTimer with estimated frame duration.
+		if (pressed && hold_frames > 0) {
+			double estimated_frame_time = 1.0 / Engine::get_singleton()->get_physics_ticks_per_second();
+			double hold_time = hold_frames * estimated_frame_time;
+
+			Ref<SceneTreeTimer> timer = scene_tree->create_timer(hold_time);
+			String captured_action = action_name;
+			timer->connect("timeout", callable_mp_static(+[](const String &p_action) {
+				Ref<InputEventAction> release_ev;
+				release_ev.instantiate();
+				release_ev->set_action(p_action);
+				release_ev->set_pressed(false);
+				release_ev->set_strength(0.0f);
+				Input::get_singleton()->parse_input_event(release_ev);
+			}).bind(captured_action));
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:action_done", result);
+		return OK;
+	}
+
+	// --- click_control ---
+	// Data: [node_path: String]
+	if (p_msg == "click_control") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		String node_path_str = p_data[0];
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+
+		if (!node) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Node not found: " + node_path_str);
+			EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+			return OK;
+		}
+
+		BaseButton *btn = Object::cast_to<BaseButton>(node);
+		Control *ctrl = Object::cast_to<Control>(node);
+
+		if (btn) {
+			// For buttons, emit the pressed signal directly.
+			btn->emit_signal(SNAME("pressed"));
+			Array result;
+			result.push_back(true);
+			result.push_back("Button pressed: " + node_path_str);
+			EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+			return OK;
+		}
+
+		if (ctrl) {
+			// For generic controls, simulate a click at the center.
+			Vector2 center = ctrl->get_global_rect().get_center();
+
+			Ref<InputEventMouseButton> press_ev;
+			press_ev.instantiate();
+			press_ev->set_button_index(MouseButton::LEFT);
+			press_ev->set_pressed(true);
+			press_ev->set_position(center);
+			press_ev->set_global_position(center);
+
+			Ref<InputEventMouseButton> release_ev;
+			release_ev.instantiate();
+			release_ev->set_button_index(MouseButton::LEFT);
+			release_ev->set_pressed(false);
+			release_ev->set_position(center);
+			release_ev->set_global_position(center);
+
+			Input::get_singleton()->parse_input_event(press_ev);
+			Input::get_singleton()->parse_input_event(release_ev);
+
+			Array result;
+			result.push_back(true);
+			result.push_back("Clicked control: " + node_path_str);
+			EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+			return OK;
+		}
+
+		Array result;
+		result.push_back(false);
+		result.push_back("Node is not a Control: " + node_path_str);
+		EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+		return OK;
+	}
+
+	// --- evaluate ---
+	// Data: [expression_string: String]
+	if (p_msg == "evaluate") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		String expr_str = p_data[0];
+		Expression expr;
+		Error parse_err = expr.parse(expr_str);
+
+		if (parse_err != OK) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Parse error: " + expr.get_error_text());
+			EngineDebugger::get_singleton()->send_message("mcp:eval_result", result);
+			return OK;
+		}
+
+		// Execute with SceneTree as the base instance.
+		bool is_error = false;
+		Variant value = expr.execute(Array(), scene_tree, false, is_error);
+
+		Array result;
+		if (is_error) {
+			result.push_back(false);
+			result.push_back("Execution error: " + expr.get_error_text());
+		} else {
+			result.push_back(true);
+			// Convert to string representation for transport.
+			result.push_back(Variant::get_type_name(value.get_type()) + ": " + String(value));
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:eval_result", result);
+		return OK;
+	}
+
+	// --- wait_frames ---
+	// Data: [frame_count: int]
+	if (p_msg == "wait_frames") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		int frame_count = p_data[0];
+		if (frame_count <= 0) {
+			Array result;
+			result.push_back(0);
+			EngineDebugger::get_singleton()->send_message("mcp:wait_done", result);
+			return OK;
+		}
+
+		_mcp_wait_frames_remaining = frame_count;
+
+		// Connect to process_frame if not already connected.
+		if (!scene_tree->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick))) {
+			scene_tree->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick));
+		}
+
+		return OK;
+	}
+
+	// --- screenshot ---
+	// Data: [] (empty)
+	if (p_msg == "screenshot") {
+		Viewport *viewport = scene_tree->get_root();
+		ERR_FAIL_NULL_V_MSG(viewport, ERR_UNCONFIGURED, "Cannot get viewport.");
+
+		Ref<ViewportTexture> texture = viewport->get_texture();
+		ERR_FAIL_COND_V_MSG(texture.is_null(), ERR_UNCONFIGURED, "Cannot get viewport texture.");
+
+		Ref<Image> img = texture->get_image();
+		ERR_FAIL_COND_V_MSG(img.is_null(), ERR_UNCONFIGURED, "Cannot get image from viewport.");
+
+		img->clear_mipmaps();
+
+		// Encode as PNG and convert to base64.
+		PackedByteArray png_data = img->save_png_to_buffer();
+		String base64 = CryptoCore::b64_encode_str(png_data.ptr(), png_data.size());
+
+		Array result;
+		result.push_back(base64);
+		EngineDebugger::get_singleton()->send_message("mcp:screenshot_result", result);
+		return OK;
+	}
+
+	// --- get_performance ---
+	// Data: [] (empty)
+	if (p_msg == "get_performance") {
+		Performance *perf = Performance::get_singleton();
+		ERR_FAIL_NULL_V(perf, ERR_UNCONFIGURED);
+
+		Array result;
+		result.push_back(perf->get_monitor(Performance::TIME_FPS));
+		result.push_back(perf->get_monitor(Performance::TIME_PROCESS));
+		result.push_back(perf->get_monitor(Performance::TIME_PHYSICS_PROCESS));
+		result.push_back(perf->get_monitor(Performance::MEMORY_STATIC));
+		result.push_back(perf->get_monitor(Performance::OBJECT_COUNT));
+		result.push_back(perf->get_monitor(Performance::OBJECT_NODE_COUNT));
+		result.push_back(perf->get_monitor(Performance::OBJECT_ORPHAN_NODE_COUNT));
+		EngineDebugger::get_singleton()->send_message("mcp:performance_result", result);
+		return OK;
+	}
+
+	// --- get_scene_tree ---
+	// Data: [] (empty)
+	if (p_msg == "get_scene_tree") {
+		Node *root = scene_tree->get_root();
+		ERR_FAIL_NULL_V(root, ERR_UNCONFIGURED);
+
+		SceneDebuggerTree tree(root);
+		Array arr;
+		tree.serialize(arr);
+		EngineDebugger::get_singleton()->send_message("mcp:scene_tree_result", arr);
+		return OK;
+	}
+
+	// Unknown mcp message -- not captured.
+	r_captured = false;
+	return OK;
+}
+
+#endif // MODULE_MCP_SERVER_ENABLED
 
 #endif // DEBUG_ENABLED
