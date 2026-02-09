@@ -50,13 +50,29 @@ void MCPSession::reset_request() {
 	content_length = 0;
 	request_body = String();
 	body_start_time = 0;
+	request_start_time = 0;
 }
 
 Error MCPSession::handle_data() {
 	int read = 0;
 
 	// Update activity timestamp on any incoming data.
-	last_activity = OS::get_singleton()->get_ticks_usec();
+	uint64_t now = OS::get_singleton()->get_ticks_usec();
+	last_activity = now;
+
+	// Start the request timeout on the first byte of a new request.
+	if (request_start_time == 0 && parse_state != REQUEST_COMPLETE) {
+		request_start_time = now;
+	}
+
+	// Slow-loris protection for all phases (request line, headers, body).
+	if (request_start_time > 0) {
+		uint64_t elapsed_sec = (now - request_start_time) / 1000000;
+		if (elapsed_sec > REQUEST_READ_TIMEOUT_SEC) {
+			reset_request();
+			ERR_FAIL_V_MSG(FAILED, "MCP: Request read timeout (slow-loris protection).");
+		}
+	}
 
 	while (true) {
 		switch (parse_state) {
@@ -215,8 +231,8 @@ Error MCPSession::handle_data() {
 
 Error MCPSession::send_data() {
 	int sent = 0;
-	while (!res_queue.is_empty()) {
-		CharString c_res = res_queue[0];
+	while (res_read_pos < res_queue.size()) {
+		const CharString &c_res = res_queue[res_read_pos];
 		if (res_sent < c_res.size()) {
 			Error err = connection->put_partial_data(
 					(const uint8_t *)c_res.get_data() + res_sent,
@@ -229,10 +245,15 @@ Error MCPSession::send_data() {
 		}
 		if (res_sent >= c_res.size() - 1) {
 			res_sent = 0;
-			res_queue.remove_at(0);
+			res_read_pos++;
 		} else {
 			return ERR_BUSY;
 		}
+	}
+	// Compact: only when the queue is fully drained.
+	if (res_read_pos > 0) {
+		res_queue.clear();
+		res_read_pos = 0;
 	}
 	return OK;
 }
@@ -240,7 +261,8 @@ Error MCPSession::send_data() {
 String MCPSession::_build_cors_headers(const String &p_origin) {
 	String h;
 	// Validated origin echo-back, never wildcards.
-	if (!p_origin.is_empty()) {
+	// Reject origins containing CRLF to prevent header injection.
+	if (!p_origin.is_empty() && p_origin.find("\r") == -1 && p_origin.find("\n") == -1) {
 		h += "Access-Control-Allow-Origin: " + p_origin + "\r\n";
 		h += "Vary: Origin\r\n";
 	}
@@ -252,6 +274,11 @@ String MCPSession::_build_cors_headers(const String &p_origin) {
 
 void MCPSession::queue_response(const String &p_status, const String &p_body,
 		const String &p_origin, const HashMap<String, String> &p_extra_headers) {
+	// Prevent unbounded queue growth from slow/stalled clients.
+	if (res_queue.size() - res_read_pos > MAX_RES_QUEUE_SIZE) {
+		ERR_PRINT_ONCE("MCP: Response queue full, dropping response.");
+		return;
+	}
 	String response;
 
 	response += "HTTP/1.1 " + p_status + "\r\n";

@@ -274,6 +274,14 @@ Dictionary MCPAutomationTools::handle_click_control(const Dictionary &p_args) {
 				"Use debug/search_scene_tree to find Control nodes.");
 	}
 
+	// Validate node_path contains only safe characters (same rules as get_node_properties).
+	for (int i = 0; i < node_path.length(); i++) {
+		char32_t c = node_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' && c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error("Invalid node path: contains disallowed character");
+		}
+	}
+
 	MCPDebuggerBridge *bridge = _get_bridge();
 	Dictionary result = bridge->send_click_control(node_path);
 

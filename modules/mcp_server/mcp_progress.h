@@ -44,6 +44,9 @@ class MCPSession; // Forward declaration; do NOT include mcp_session.h to avoid 
 struct ProgressContext {
 	String token; // From request's _meta.progressToken (may be empty).
 	MCPSession *session = nullptr; // Weak pointer; valid for the duration of tool execution.
+	// SAFETY: The Ref<MCPSession> that owns this pointer is held by the caller
+	// (dispatch_tool_with_progress) for the entire synchronous tool execution.
+	// If tool execution moves to a worker thread, replace with Ref<MCPSession>.
 	SafeFlag cancelled; // Set by the cancellation handler (atomic bool).
 
 	// Report progress. No-op if token is empty or session is null.

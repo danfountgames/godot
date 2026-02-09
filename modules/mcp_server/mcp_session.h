@@ -102,7 +102,9 @@ public:
 
 	// Each entry is a complete HTTP response (headers + body), ready to send.
 	Vector<CharString> res_queue;
+	int res_read_pos = 0; // Index of the current response being sent.
 	int res_sent = 0; // Byte offset into the current response being sent.
+	static const int MAX_RES_QUEUE_SIZE = 500; // Cap to prevent unbounded growth from slow clients.
 
 	// -----------------------------------------------------------------------
 	// SSE (Server-Sent Events) state
@@ -130,9 +132,12 @@ public:
 
 	uint64_t last_activity = 0;
 
-	// Slow-loris protection: time when we entered READING_BODY state.
-	static const int BODY_READ_TIMEOUT_SEC = 30;
+	// Slow-loris protection: time when we started reading the current request.
+	// Covers all phases (request line, headers, body).
+	static const int REQUEST_READ_TIMEOUT_SEC = 30;
+	static const int BODY_READ_TIMEOUT_SEC = 30; // Kept for backward compat; both use REQUEST_READ_TIMEOUT_SEC.
 	uint64_t body_start_time = 0;
+	uint64_t request_start_time = 0; // Set on first byte of a new request.
 
 	// -----------------------------------------------------------------------
 	// Methods

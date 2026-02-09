@@ -155,3 +155,54 @@ def test_r07_resource_templates_list(client):
 
     assert "godot://file/{path}" in uri_templates
     assert any("node" in u and "properties" in u for u in uri_templates)
+
+
+# ---------------------------------------------------------------------------
+# R-08: resources/subscribe  (P1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.p1
+def test_r08_subscribe_accepts_valid_uri(client):
+    """resources/subscribe for a known URI returns 202 (accepted)."""
+    status = client.subscribe_resource("godot://project/info")
+    assert status == 202, f"Expected 202 for subscribe, got {status}"
+
+
+@pytest.mark.p1
+def test_r09_subscribe_unknown_uri_accepted(client):
+    """resources/subscribe for an unknown URI still returns 202.
+
+    The MCP spec says subscribe is a notification (no id), so the server
+    should accept it silently even for unknown URIs.
+    """
+    status = client.subscribe_resource("godot://nonexistent/resource")
+    assert status == 202, f"Expected 202 for subscribe to unknown URI, got {status}"
+
+
+# ---------------------------------------------------------------------------
+# R-10: resources/read game resources  (P1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.p1
+def test_r10_read_game_status(client):
+    """Reading godot://game/status returns state information."""
+    resp = client.read_resource("godot://game/status")
+    contents = resp["result"]["contents"]
+    assert len(contents) > 0
+    data = json.loads(contents[0]["text"])
+    assert "state" in data
+
+
+@pytest.mark.p1
+def test_r11_read_project_settings(client):
+    """Reading godot://project/settings returns project configuration."""
+    resp = client.read_resource("godot://project/settings")
+    contents = resp["result"]["contents"]
+    assert len(contents) > 0
+    text = contents[0]["text"]
+    # Settings may be JSON or plain text; either way it should be non-empty
+    # and contain the project name.
+    assert len(text) > 0
+    assert "MCP Test Project" in text or "mcp_test" in text.lower() or "project" in text.lower(), (
+        f"Expected project name in settings, got: {text[:500]}"
+    )

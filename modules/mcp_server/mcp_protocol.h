@@ -37,6 +37,7 @@
 #include "core/io/tcp_server.h"
 #include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/safe_refcount.h"
 #include "modules/jsonrpc/jsonrpc.h"
 
 struct ProgressContext;
@@ -95,9 +96,14 @@ private:
 	Mutex active_requests_mutex;
 	HashMap<String, ProgressContext *> active_requests; // String(request_id) -> ProgressContext*
 
+	// Notification queue mutex: protects `sessions` notification_queue fields
+	// from concurrent access by the main thread (debugger bridge callbacks) and
+	// the MCP poll thread (flush_sse_notifications).
+	Mutex notification_mutex;
+
 	// Logging severity filter (Phase C). RFC 5424: 0=emergency .. 7=debug.
 	// Default: 6 (info) -- send levels 0-6, suppress debug.
-	int min_log_severity = 6;
+	SafeNumeric<int> min_log_severity; // Atomic for cross-thread reads.
 
 	// Session ID generation using CSPRNG.
 	String generate_session_id();

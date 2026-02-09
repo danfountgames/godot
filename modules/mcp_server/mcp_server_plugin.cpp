@@ -268,6 +268,10 @@ void MCPServerPlugin::write_discovery_file() {
 #ifndef WINDOWS_ENABLED
 	FileAccess::set_unix_permissions(file_path,
 			FileAccess::UNIX_READ_OWNER | FileAccess::UNIX_WRITE_OWNER);
+#else
+	// On Windows, set hidden attribute as a defense-in-depth measure.
+	// The bearer token provides the primary security boundary.
+	FileAccess::set_hidden_attribute(file_path, true);
 #endif
 
 	print_verbose("[MCP] Discovery file written: " + file_path);

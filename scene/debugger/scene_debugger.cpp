@@ -3362,6 +3362,10 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 			return OK;
 		}
 
+		// NOTE: This is a single static counter. If a second wait_frames request
+		// arrives while one is active, the old one is superseded (the bridge's
+		// _create_pending mechanism wakes the old waiter with a "superseded" error).
+		// This is by design for the single-client MCP model.
 		_mcp_wait_frames_remaining = frame_count;
 
 		// Connect to process_frame if not already connected.

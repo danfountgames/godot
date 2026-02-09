@@ -124,6 +124,91 @@ class TestPathTraversalExotic:
 
 
 # ---------------------------------------------------------------------------
+# SEC-01c: Auth Token Rejection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.security
+@pytest.mark.p0
+class TestAuthTokenRejection:
+    """SEC-01c: Requests with wrong or missing auth tokens must be rejected."""
+
+    def test_missing_auth_token_rejected(self, mcp_server_available):
+        """Request with no Authorization header -> 401."""
+        c = MCPClient(auth_token="")
+        c.connect()
+        body = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "clientInfo": {"name": "no-auth-test", "version": "1.0.0"},
+                "capabilities": {},
+            },
+        })
+        # Send raw HTTP without auth header.
+        raw = (
+            "POST /mcp HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:6009\r\n"
+            "Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n"
+            f"{body}"
+        )
+        status, _, _ = c.send_raw(raw.encode("utf-8"))
+        c.disconnect()
+        assert status == 401, f"Expected 401 for missing auth, got {status}"
+
+    def test_wrong_auth_token_rejected(self, mcp_server_available):
+        """Request with an incorrect bearer token -> 401."""
+        c = MCPClient(auth_token="wrong-token-1234567890abcdef")
+        c.connect()
+        body = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "clientInfo": {"name": "bad-auth-test", "version": "1.0.0"},
+                "capabilities": {},
+            },
+        })
+        status, _, _ = c._send_http("POST", body)
+        c.disconnect()
+        assert status == 401, f"Expected 401 for wrong auth token, got {status}"
+
+    def test_malformed_auth_header_rejected(self, mcp_server_available):
+        """Request with malformed Authorization header (no 'Bearer ' prefix) -> 401."""
+        c = MCPClient()
+        c.connect()
+        real_token = c.auth_token or "dummy"
+        body = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "clientInfo": {"name": "bad-auth-test", "version": "1.0.0"},
+                "capabilities": {},
+            },
+        })
+        raw = (
+            "POST /mcp HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:6009\r\n"
+            "Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            f"Authorization: Basic {real_token}\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n"
+            f"{body}"
+        )
+        status, _, _ = c.send_raw(raw.encode("utf-8"))
+        c.disconnect()
+        assert status == 401, f"Expected 401 for 'Basic' auth scheme, got {status}"
+
+
+# ---------------------------------------------------------------------------
 # SEC-02: CORS Wildcard Absence
 # ---------------------------------------------------------------------------
 

@@ -136,7 +136,7 @@ private:
 
 	// --- Scene Tree Helpers ---
 	Dictionary _flat_tree_to_hierarchical(const Array &p_flat_data) const;
-	String _tree_to_text(const Dictionary &p_tree, int p_indent = 0) const;
+	String _tree_to_text(const Dictionary &p_tree, int p_indent = 0, int p_max_depth = 200) const;
 
 protected:
 	static void _bind_methods();

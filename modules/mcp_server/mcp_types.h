@@ -108,12 +108,32 @@ inline bool validate_path(const String &p_path) {
 		return false;
 	}
 
-	// 3. Reject null byte injection.
-	if (p_path.find_char('\0') != -1) {
+	// 3. Reject null byte injection (path truncation attack).
+	// Also reject U+FFFD (replacement character) — Godot's JSON parser
+	// converts raw null bytes (\x00) to U+FFFD before the string reaches us.
+	for (int i = 0; i < p_path.length(); i++) {
+		if (p_path[i] == '\0' || p_path[i] == 0xFFFD) {
+			return false;
+		}
+	}
+
+	// 4. Reject URL-encoded traversal sequences (%2e = '.', %2f = '/').
+	// These could bypass literal ".." checks if any layer URL-decodes.
+	String lower = p_path.to_lower();
+	if (lower.find("%2e") != -1 || lower.find("%2f") != -1 || lower.find("%00") != -1) {
 		return false;
 	}
 
-	// 4. Canonicalize and verify it stays within project root.
+	// 5. Reject access to Godot internal directories (.godot/, .import/).
+	// These contain editor cache, imported resources, and should not be
+	// written to or read from via MCP.
+	String relative = p_path.begins_with("res://") ? p_path.substr(6) : p_path.substr(7);
+	if (relative.begins_with(".godot/") || relative.begins_with(".godot") ||
+			relative.begins_with(".import/") || relative.begins_with(".import")) {
+		return false;
+	}
+
+	// 6. Canonicalize and verify it stays within project root.
 	String canonical = ProjectSettings::get_singleton()
 							   ->globalize_path(p_path)
 							   .simplify_path();

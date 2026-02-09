@@ -242,6 +242,13 @@ Error MCPProtocol::on_client_connected() {
 	if (next_client_id < 0) {
 		next_client_id = 0; // Handle overflow: wrap back to zero.
 	}
+	// Skip IDs that are already in use (prevents silent overwrite on wrap-around).
+	while (clients.has(client_id)) {
+		client_id = next_client_id++;
+		if (next_client_id < 0) {
+			next_client_id = 0;
+		}
+	}
 	clients.insert(client_id, session);
 
 	print_verbose("[MCP] Client connected (id: " + itos(client_id) + ")");
@@ -449,7 +456,16 @@ void MCPProtocol::process_request(int p_client_id) {
 		String auth_header = session->headers.has("authorization")
 				? session->headers["authorization"]
 				: String();
-		if (auth_header.is_empty() || auth_header != "Bearer " + auth_token) {
+		// Constant-time comparison to prevent timing side-channel attacks.
+		String expected = "Bearer " + auth_token;
+		bool token_valid = (auth_header.length() == expected.length());
+		int diff = 0;
+		int len = MIN(auth_header.length(), expected.length());
+		for (int i = 0; i < len; i++) {
+			diff |= auth_header[i] ^ expected[i];
+		}
+		token_valid = token_valid && (diff == 0);
+		if (auth_header.is_empty() || !token_valid) {
 			session->queue_response(MCP_HTTP_401,
 					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid or missing Bearer token"),
 					origin_header);
@@ -902,6 +918,7 @@ void MCPProtocol::handle_get_sse(int p_client_id, const String &p_origin) {
 // ---------------------------------------------------------------------------
 
 void MCPProtocol::flush_sse_notifications() {
+	MutexLock lock(notification_mutex);
 	// Step 1: Pull resource change notifications from the registry and convert
 	// them to JSON-RPC "notifications/resources/updated" messages, queued into
 	// each session's notification_queue.
@@ -961,6 +978,7 @@ void MCPProtocol::flush_sse_notifications() {
 }
 
 void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
+	MutexLock lock(notification_mutex);
 	for (KeyValue<String, MCPSessionState> &E : sessions) {
 		if (E.value.initialized) {
 			if (E.value.notification_queue.size() < MCP_MAX_EVENT_QUEUE_SIZE) {
@@ -971,6 +989,7 @@ void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
 }
 
 void MCPProtocol::queue_notification(const String &p_session_id, const String &p_json_rpc_message) {
+	MutexLock lock(notification_mutex);
 	if (sessions.has(p_session_id) && sessions[p_session_id].initialized) {
 		if (sessions[p_session_id].notification_queue.size() < MCP_MAX_EVENT_QUEUE_SIZE) {
 			sessions[p_session_id].notification_queue.push_back(p_json_rpc_message);
@@ -1500,17 +1519,27 @@ Dictionary MCPProtocol::_read_file_resource(const Dictionary &p_params) {
 	}
 
 	// Rule 3: Reject null bytes (path truncation attack).
-	if (path.find_char('\0') != -1) {
-		return make_resource_error(-32602, "Invalid path: null byte in path");
+	// Also reject U+FFFD — Godot's JSON parser converts raw \x00 to U+FFFD.
+	for (int i = 0; i < path.length(); i++) {
+		if (path[i] == '\0' || path[i] == 0xFFFD) {
+			return make_resource_error(-32602, "Invalid path: null byte in path");
+		}
 	}
 
-	// Rule 4: Reject absolute paths (must be relative within project).
+	// Rule 4: Reject URL-encoded traversal sequences.
+	String path_lower = path.to_lower();
+	if (path_lower.find("%2e") != -1 || path_lower.find("%2f") != -1 || path_lower.find("%00") != -1) {
+		return make_resource_error(-32602,
+				"Invalid path: URL-encoded traversal detected in '" + path + "'");
+	}
+
+	// Rule 5: Reject absolute paths (must be relative within project).
 	if (path.begins_with("/") || path.find("://") != -1) {
 		return make_resource_error(-32602,
 				"Invalid path: must be a relative project path, got '" + path + "'");
 	}
 
-	// Rule 5: Construct res:// path and validate via validate_path().
+	// Rule 6: Construct res:// path and validate via validate_path().
 	String res_path = "res://" + path;
 	if (!validate_path(res_path)) {
 		return make_resource_error(-32602,
@@ -1632,10 +1661,23 @@ void MCPProtocol::dispatch_tool_with_progress(
 			tool_name, arguments, &ctx);
 
 	// Build the final JSON-RPC response.
+	// Check if tool_result is actually an error from the registry (e.g., unknown
+	// tool, missing params). These return {"error": {"code":..., "message":...}}
+	// which must become a top-level JSON-RPC error, not be wrapped under "result".
 	Dictionary response;
 	response["jsonrpc"] = "2.0";
 	response["id"] = p_request_id;
-	response["result"] = tool_result;
+
+	if (tool_result.has("error") && tool_result["error"].get_type() == Variant::DICTIONARY) {
+		Dictionary inner_error = tool_result["error"];
+		if (inner_error.has("code") && inner_error.has("message")) {
+			response["error"] = inner_error;
+		} else {
+			response["result"] = tool_result;
+		}
+	} else {
+		response["result"] = tool_result;
+	}
 
 	// Send as the last SSE event (via thread-safe queue).
 	p_session->queue_sse_event_threadsafe(JSON::stringify(response));
@@ -1714,7 +1756,7 @@ Dictionary MCPProtocol::handle_logging_set_level(const Dictionary &p_params) {
 		print_verbose("[MCP] Unknown log level '" + level + "', defaulting to 'info'");
 	}
 
-	min_log_severity = severity;
+	min_log_severity.set(severity);
 	print_verbose("[MCP] Log level set to '" + level + "' (severity " + itos(severity) + ")");
 
 	// logging/setLevel is a JSON-RPC request (has an id), not a notification.
@@ -1728,7 +1770,7 @@ void MCPProtocol::send_log(const String &p_level, const String &p_logger,
 
 	// Filter: only send if severity <= min_log_severity.
 	// Lower number = higher severity. debug=7, info=6, error=3, etc.
-	if (severity > min_log_severity) {
+	if (severity > min_log_severity.get()) {
 		return;
 	}
 

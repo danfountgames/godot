@@ -772,9 +772,14 @@ Dictionary MCPDebuggerBridge::_flat_tree_to_hierarchical(const Array &p_flat_dat
 	return Dictionary();
 }
 
-String MCPDebuggerBridge::_tree_to_text(const Dictionary &p_tree, int p_indent) const {
+String MCPDebuggerBridge::_tree_to_text(const Dictionary &p_tree, int p_indent, int p_max_depth) const {
 	if (p_tree.is_empty()) {
 		return "[empty tree]";
+	}
+
+	// Guard against pathologically deep scene trees (stack overflow prevention).
+	if (p_indent > p_max_depth) {
+		return "";
 	}
 
 	String result;
@@ -796,7 +801,7 @@ String MCPDebuggerBridge::_tree_to_text(const Dictionary &p_tree, int p_indent) 
 	Array children = p_tree.get("children", Array());
 	for (int i = 0; i < children.size(); i++) {
 		Dictionary child = children[i];
-		result += _tree_to_text(child, p_indent + 1);
+		result += _tree_to_text(child, p_indent + 1, p_max_depth);
 	}
 
 	return result;
