@@ -172,4 +172,10 @@ engine modifications required — works with upstream Godot 4.6+ or this fork.
 
 ---
 
+## MCP Server Module
+
+Built-in [Model Context Protocol](https://modelcontextprotocol.io) server that lets LLM coding agents control the editor — read/write files, run and debug games, inspect the scene tree, evaluate expressions, and automate UI. Starts automatically when the editor opens. See [`modules/mcp_server/README.md`](modules/mcp_server/README.md) for setup and LLM client configuration.
+
+---
+
 Based on Godot 4.6-stable ([`89cea143`](https://github.com/godotengine/godot/commit/89cea14398)). MIT license.
