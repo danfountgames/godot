@@ -4999,6 +4999,255 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		return OK;
 	}
 
+	// --- get_node_signals ---
+	if (p_msg == "get_node_signals") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+		String node_path_str = p_data[0];
+		bool include_inherited = p_data[1];
+		String filter_signal_name = p_data[2];
+
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+		if (!node) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Node not found: " + node_path_str;
+			Array response;
+			response.push_back(result);
+			EngineDebugger::get_singleton()->send_message("mcp:node_signals_result", response);
+			return OK;
+		}
+
+		// Collect script signals to determine origin.
+		List<MethodInfo> script_signals;
+		Ref<Script> script = node->get_script();
+		if (script.is_valid()) {
+			script->get_script_signal_list(&script_signals);
+		}
+		HashSet<StringName> script_signal_names;
+		for (const MethodInfo &mi : script_signals) {
+			script_signal_names.insert(mi.name);
+		}
+
+		// Class signals (optionally without inheritance).
+		List<MethodInfo> class_signals;
+		ClassDB::get_signal_list(node->get_class_name(), &class_signals, false);
+		HashSet<StringName> class_signal_names;
+		for (const MethodInfo &mi : class_signals) {
+			class_signal_names.insert(mi.name);
+		}
+
+		// Direct class signals (no inheritance) for filtering.
+		HashSet<StringName> direct_class_signal_names;
+		if (!include_inherited) {
+			List<MethodInfo> direct_signals;
+			ClassDB::get_signal_list(node->get_class_name(), &direct_signals, true);
+			for (const MethodInfo &mi : direct_signals) {
+				direct_class_signal_names.insert(mi.name);
+			}
+		}
+
+		// Full signal list.
+		List<MethodInfo> all_signals;
+		node->get_signal_list(&all_signals);
+
+		Array signals_arr;
+		for (const MethodInfo &mi : all_signals) {
+			// Filter by signal_name if specified.
+			if (!filter_signal_name.is_empty() && mi.name != StringName(filter_signal_name)) {
+				continue;
+			}
+
+			// Skip inherited signals if include_inherited is false.
+			if (!include_inherited) {
+				bool is_script = script_signal_names.has(mi.name);
+				bool is_direct_class = direct_class_signal_names.has(mi.name);
+				bool is_user = !script_signal_names.has(mi.name) && !class_signal_names.has(mi.name);
+				if (!is_script && !is_direct_class && !is_user) {
+					continue; // Inherited class signal, skip.
+				}
+			}
+
+			Dictionary sig_dict;
+			sig_dict["name"] = String(mi.name);
+
+			// Determine origin.
+			String origin;
+			if (script_signal_names.has(mi.name)) {
+				origin = "script";
+			} else if (class_signal_names.has(mi.name)) {
+				origin = "class";
+			} else {
+				origin = "user";
+			}
+			sig_dict["origin"] = origin;
+
+			// Arguments.
+			Array args_arr;
+			for (int i = 0; i < mi.arguments.size(); i++) {
+				const PropertyInfo &pi = mi.arguments[i];
+				Dictionary arg;
+				arg["name"] = pi.name;
+				arg["type"] = Variant::get_type_name(pi.type);
+				arg["type_id"] = (int)pi.type;
+				if (!pi.class_name.is_empty()) {
+					arg["class_name"] = String(pi.class_name);
+				}
+				args_arr.push_back(arg);
+			}
+			sig_dict["arguments"] = args_arr;
+
+			// Connections.
+			List<Object::Connection> connections;
+			node->get_signal_connection_list(mi.name, &connections);
+
+			Array conn_arr;
+			for (const Object::Connection &conn : connections) {
+				Dictionary conn_dict;
+				ObjectID target_id = conn.callable.get_object_id();
+				Object *target_obj = ObjectDB::get_instance(target_id);
+				Node *target_node = Object::cast_to<Node>(target_obj);
+				if (target_node) {
+					conn_dict["target_path"] = String(target_node->get_path());
+					conn_dict["target_type"] = target_node->get_class();
+				} else if (target_obj) {
+					conn_dict["target_path"] = "<Object#" + itos(target_id) + ">";
+					conn_dict["target_type"] = target_obj->get_class();
+				} else {
+					conn_dict["target_path"] = "<invalid>";
+					conn_dict["target_type"] = "";
+				}
+
+				StringName method = conn.callable.get_method();
+				conn_dict["method"] = method.is_empty() ? String("<lambda>") : String(method);
+				conn_dict["flags"] = (int)conn.flags;
+
+				String flags_desc;
+				if (conn.flags & Object::CONNECT_DEFERRED) {
+					flags_desc += "deferred";
+				}
+				if (conn.flags & Object::CONNECT_ONE_SHOT) {
+					if (!flags_desc.is_empty()) {
+						flags_desc += ",";
+					}
+					flags_desc += "one_shot";
+				}
+				if (conn.flags & Object::CONNECT_PERSIST) {
+					if (!flags_desc.is_empty()) {
+						flags_desc += ",";
+					}
+					flags_desc += "persist";
+				}
+				conn_dict["flags_desc"] = flags_desc;
+				conn_arr.push_back(conn_dict);
+			}
+			sig_dict["connections"] = conn_arr;
+			sig_dict["connection_count"] = conn_arr.size();
+			signals_arr.push_back(sig_dict);
+		}
+
+		Dictionary result;
+		result["success"] = true;
+		result["node_type"] = node->get_class();
+		result["signals"] = signals_arr;
+		Array response;
+		response.push_back(result);
+		EngineDebugger::get_singleton()->send_message("mcp:node_signals_result", response);
+		return OK;
+	}
+
+	// --- emit_signal ---
+	if (p_msg == "emit_signal") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+		String node_path_str = p_data[0];
+		String signal_name = p_data[1];
+		Array args = p_data[2];
+
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+		if (!node) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Node not found: " + node_path_str;
+			Array response;
+			response.push_back(result);
+			EngineDebugger::get_singleton()->send_message("mcp:emit_signal_result", response);
+			return OK;
+		}
+
+		if (!node->has_signal(StringName(signal_name))) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Signal not found on node: " + signal_name;
+			Array response;
+			response.push_back(result);
+			EngineDebugger::get_singleton()->send_message("mcp:emit_signal_result", response);
+			return OK;
+		}
+
+		// Get expected argument types for conversion.
+		List<MethodInfo> all_signals;
+		node->get_signal_list(&all_signals);
+		Vector<PropertyInfo> expected_args;
+		for (const MethodInfo &mi : all_signals) {
+			if (mi.name == StringName(signal_name)) {
+				expected_args = mi.arguments;
+				break;
+			}
+		}
+
+		// Convert args to proper Variant types.
+		Vector<Variant> converted_args;
+		converted_args.resize(args.size());
+		for (int i = 0; i < args.size(); i++) {
+			Variant arg_val = args[i];
+			if (i < expected_args.size()) {
+				Variant::Type expected_type = expected_args[i].type;
+				if (expected_type != Variant::NIL && arg_val.get_type() != expected_type) {
+					Callable::CallError ce;
+					Variant converted;
+					const Variant *v_ptr = &arg_val;
+					Variant::construct(expected_type, converted, &v_ptr, 1, ce);
+					if (ce.error == Callable::CallError::CALL_OK) {
+						arg_val = converted;
+					}
+				}
+			}
+			converted_args.write[i] = arg_val;
+		}
+
+		// Build pointer array.
+		Vector<const Variant *> argptrs;
+		argptrs.resize(converted_args.size());
+		for (int i = 0; i < converted_args.size(); i++) {
+			argptrs.write[i] = &converted_args[i];
+		}
+
+		// Count connections.
+		List<Object::Connection> connections;
+		node->get_signal_connection_list(StringName(signal_name), &connections);
+		int connection_count = connections.size();
+
+		// Emit.
+		const Variant **argptrs_raw = argptrs.is_empty() ? nullptr : (const Variant **)argptrs.ptr();
+		Error err = node->emit_signalp(
+				StringName(signal_name),
+				argptrs_raw,
+				argptrs.size());
+
+		Dictionary result;
+		if (err == OK) {
+			result["success"] = true;
+			result["connections_triggered"] = connection_count;
+		} else {
+			result["success"] = false;
+			result["error"] = "emit_signal returned error code: " + itos((int)err);
+			result["connections_triggered"] = 0;
+		}
+		Array response;
+		response.push_back(result);
+		EngineDebugger::get_singleton()->send_message("mcp:emit_signal_result", response);
+		return OK;
+	}
+
 	// Unknown mcp message -- not captured.
 	r_captured = false;
 	return OK;

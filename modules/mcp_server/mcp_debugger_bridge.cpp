@@ -349,6 +349,22 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- node_signals_result ---
+	if (sub_msg == "node_signals_result") {
+		ERR_FAIL_COND_V(p_data.size() < 1, false);
+		Dictionary result = p_data[0];
+		_complete_pending("get_node_signals", result);
+		return true;
+	}
+
+	// --- emit_signal_result ---
+	if (sub_msg == "emit_signal_result") {
+		ERR_FAIL_COND_V(p_data.size() < 1, false);
+		Dictionary result = p_data[0];
+		_complete_pending("emit_signal", result);
+		return true;
+	}
+
 	// --- heartbeat ---
 	// Game-side heartbeat: sent every 60 frames with the current frame count.
 	if (sub_msg == "heartbeat") {
@@ -820,6 +836,30 @@ Dictionary MCPDebuggerBridge::send_get_held_inputs(bool p_release_all, int p_tim
 	data.push_back(p_release_all);
 
 	MCP_BRIDGE_SEND_OR_FAIL("get_held_inputs", "mcp:get_held_inputs", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_get_node_signals(const String &p_node_path,
+		bool p_include_inherited, const String &p_signal_name,
+		int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+	Array data;
+	data.push_back(p_node_path);
+	data.push_back(p_include_inherited);
+	data.push_back(p_signal_name);
+	MCP_BRIDGE_SEND_OR_FAIL("get_node_signals", "mcp:get_node_signals", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_emit_signal(const String &p_node_path,
+		const String &p_signal_name, const Array &p_args,
+		int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+	Array data;
+	data.push_back(p_node_path);
+	data.push_back(p_signal_name);
+	data.push_back(p_args);
+	MCP_BRIDGE_SEND_OR_FAIL("emit_signal", "mcp:emit_signal", data);
 	return _wait_for_pending(req, p_timeout_msec);
 }
 

@@ -42,6 +42,7 @@
 #include "tools/mcp_editor_tools.h"
 #include "tools/mcp_gdscript_tools.h"
 #include "tools/mcp_input_tools.h"
+#include "tools/mcp_signal_tools.h"
 #include "tools/mcp_ui_tools.h"
 
 #include "core/config/engine.h"
@@ -96,6 +97,7 @@ MCPProtocol::MCPProtocol() {
 	MCPInputTools::register_tools(&tool_registry);
 	MCPUITools::register_tools(&tool_registry);
 	MCPBreakpointTools::register_tools(&tool_registry);
+	MCPSignalTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",

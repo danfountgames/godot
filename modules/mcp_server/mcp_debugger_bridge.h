@@ -231,6 +231,10 @@ public:
 	Dictionary send_get_performance(int p_timeout_msec = 5000);
 	Dictionary send_ui_interact(const String &p_action, const String &p_node_path,
 			const Dictionary &p_params, int p_timeout_msec = 10000);
+	Dictionary send_get_node_signals(const String &p_node_path, bool p_include_inherited = true,
+			const String &p_signal_name = String(), int p_timeout_msec = 10000);
+	Dictionary send_emit_signal(const String &p_node_path, const String &p_signal_name,
+			const Array &p_args = Array(), int p_timeout_msec = 10000);
 
 	// --- Input Simulation Methods (block calling thread, called from MCP HTTP threads) ---
 	Dictionary send_inject_key(const String &p_key_name, bool p_pressed, int p_hold_frames, int p_modifier_flags, bool p_echo, int p_timeout_msec = 10000);

@@ -225,6 +225,8 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 		"debug/get_break_state",
 		"debug/step",
 		"debug/get_breakpoints",
+		"debug/get_node_signals",
+		"debug/emit_signal",
 		nullptr // Sentinel.
 	};
 
