@@ -235,6 +235,8 @@ public:
 			const String &p_signal_name = String(), int p_timeout_msec = 10000);
 	Dictionary send_emit_signal(const String &p_node_path, const String &p_signal_name,
 			const Array &p_args = Array(), int p_timeout_msec = 10000);
+	Dictionary send_set_node_property(const String &p_node_path, const String &p_property,
+			const Variant &p_value, const String &p_field = String(), int p_timeout_msec = 10000);
 
 	// --- Input Simulation Methods (block calling thread, called from MCP HTTP threads) ---
 	Dictionary send_inject_key(const String &p_key_name, bool p_pressed, int p_hold_frames, int p_modifier_flags, bool p_echo, int p_timeout_msec = 10000);

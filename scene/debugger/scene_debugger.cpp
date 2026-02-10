@@ -5248,6 +5248,103 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		return OK;
 	}
 
+	// --- set_node_property ---
+	if (p_msg == "set_node_property") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+		String node_path_str = p_data[0];
+		String property = p_data[1];
+		Variant value = p_data[2];
+		String field = p_data[3];
+
+		auto send_result = [](const Dictionary &p_result) {
+			Array response;
+			response.push_back(p_result);
+			EngineDebugger::get_singleton()->send_message("mcp:set_property_result", response);
+		};
+
+		// 1. Resolve node.
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+		if (!node) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Node not found: " + node_path_str;
+			send_result(result);
+			return OK;
+		}
+
+		// 2. Get current value (validates property exists).
+		bool valid = false;
+		Variant old_value = node->get(StringName(property), &valid);
+		if (!valid) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Property not found on node: " + property;
+			send_result(result);
+			return OK;
+		}
+
+		// 3. Type conversion.
+		Variant::Type target_type = old_value.get_type();
+		if (target_type != Variant::NIL && value.get_type() != target_type) {
+			if (target_type == Variant::OBJECT && value.get_type() == Variant::STRING) {
+				// Resource path auto-loading.
+				String path = value;
+				if (path.begins_with("res://")) {
+					Ref<Resource> res = ResourceLoader::load(path);
+					if (res.is_null()) {
+						Dictionary result;
+						result["success"] = false;
+						result["error"] = "Failed to load resource: " + path;
+						send_result(result);
+						return OK;
+					}
+					value = res;
+				}
+			} else {
+				// Use Variant::construct for type coercion.
+				Callable::CallError ce;
+				Variant converted;
+				const Variant *v_ptr = &value;
+				Variant::construct(target_type, converted, &v_ptr, 1, ce);
+				if (ce.error == Callable::CallError::CALL_OK) {
+					value = converted;
+				} else {
+					Dictionary result;
+					result["success"] = false;
+					result["error"] = vformat("Cannot convert %s to %s for property '%s'",
+							Variant::get_type_name(value.get_type()),
+							Variant::get_type_name(target_type),
+							property);
+					send_result(result);
+					return OK;
+				}
+			}
+		}
+
+		// 4. Field-level assignment (e.g., position.x).
+		if (!field.is_empty()) {
+			value = fieldwise_assign(old_value, value, field);
+		}
+
+		// 5. Set the property.
+		node->set(StringName(property), value);
+
+		// 6. Read back for confirmation.
+		Variant new_value = node->get(StringName(property));
+
+		// 7. Send success.
+		Dictionary result;
+		result["success"] = true;
+		result["node_path"] = node_path_str;
+		result["property"] = property;
+		result["old_value"] = String(old_value);
+		result["old_type"] = Variant::get_type_name(old_value.get_type());
+		result["new_value"] = String(new_value);
+		result["new_type"] = Variant::get_type_name(new_value.get_type());
+		send_result(result);
+		return OK;
+	}
+
 	// Unknown mcp message -- not captured.
 	r_captured = false;
 	return OK;

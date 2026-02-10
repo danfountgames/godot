@@ -186,6 +186,42 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_get_node_properties));
 	}
 
+	// debug/set_node_property
+	{
+		Dictionary props;
+		props["node_path"] = make_prop("string",
+				"Absolute path to the node (e.g., '/root/Main/Player'). "
+				"Get paths from debug/browse_scene_tree or debug/search_scene_tree.");
+		props["property"] = make_prop("string",
+				"Property name to set (e.g., 'position', 'visible', 'modulate', 'text'). "
+				"Use debug/get_node_properties to discover available properties and their types.");
+		Dictionary value_prop;
+		value_prop["description"] = "The new value. Type must be compatible with the property: "
+				"numbers for int/float, strings for String, booleans for bool, "
+				"arrays like [x,y] for Vector2, [x,y,z] for Vector3, "
+				"[r,g,b,a] for Color. Resource paths (res://...) auto-load for Object properties.";
+		props["value"] = value_prop;
+		props["field"] = make_prop("string",
+				"Optional: set only one component of a compound type. "
+				"e.g., field='x' with a Vector2 position sets only X. "
+				"Valid fields: x/y for Vector2, x/y/z for Vector3, r/g/b/a for Color.");
+		Array required;
+		required.push_back("node_path");
+		required.push_back("property");
+		required.push_back("value");
+		p_registry->register_tool(
+				"debug/set_node_property", "Set Node Property",
+				"Set a property on a node in the running game — the live 'edit CSS' equivalent "
+				"for Godot. Modify positions, visibility, colors, text, and any other property "
+				"without restarting. Returns old and new values for confirmation. Supports "
+				"field-level updates (e.g., just position.x) and auto-loads resource paths. "
+				"Use debug/get_node_properties to discover properties first. "
+				"Tip: edit .gd scripts with normal file tools and they hot-reload automatically.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
+				callable_mp_static(&MCPDebugTools::handle_set_node_property));
+	}
+
 	// debug/search_scene_tree
 	{
 		Dictionary props;
@@ -836,6 +872,112 @@ Array MCPDebugTools::_search_tree(const Dictionary &p_tree,
 	}
 
 	return matches;
+}
+
+// ============================================================================
+// Set Node Property
+// ============================================================================
+
+Dictionary MCPDebugTools::handle_set_node_property(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	String node_path = p_args.get("node_path", "");
+	String property = p_args.get("property", "");
+	Variant value = p_args.get("value", Variant());
+	String field = p_args.get("field", "");
+
+	// Validate required params.
+	if (node_path.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: node_path\n\n"
+				"Provide the scene tree path of a node.\n"
+				"Get paths from debug/browse_scene_tree or debug/search_scene_tree.");
+	}
+	if (property.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: property\n\n"
+				"Provide the property name to set.\n"
+				"Use debug/get_node_properties to discover available properties.");
+	}
+
+	// Validate node_path characters (same sanitization as get_node_properties).
+	for (int i = 0; i < node_path.length(); i++) {
+		char32_t c = node_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' &&
+				c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error(vformat(
+					"'node_path' contains invalid character '%c' at position %d. "
+					"Allowed: alphanumeric, _ / . @ : - and space.",
+					(char)c, i));
+		}
+	}
+
+	// Validate property name characters (alphanumeric, underscore, slash, colon, period).
+	for (int i = 0; i < property.length(); i++) {
+		char32_t c = property[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' &&
+				c != ':' && c != '.') {
+			return make_tool_error(vformat(
+					"'property' contains invalid character '%c' at position %d. "
+					"Allowed: alphanumeric, _ / : and period.",
+					(char)c, i));
+		}
+	}
+
+	// Validate field name if present.
+	if (!field.is_empty()) {
+		for (int i = 0; i < field.length(); i++) {
+			char32_t c = field[i];
+			if (!is_ascii_alphanumeric_char(c) && c != '_') {
+				return make_tool_error(vformat(
+						"'field' contains invalid character '%c' at position %d. "
+						"Allowed: alphanumeric and underscore.",
+						(char)c, i));
+			}
+		}
+	}
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result = bridge->send_set_node_property(node_path, property, value, field);
+
+	if (!(bool)result.get("success", false)) {
+		String error_msg = result.get("error", "Unknown error");
+		String guidance;
+		if (error_msg.contains("not found")) {
+			guidance = "\n\nUse debug/search_scene_tree to find the correct path, "
+					"or debug/get_node_properties to see available properties.";
+		}
+		return make_tool_error("Failed to set property: " + error_msg + guidance);
+	}
+
+	// Build text output.
+	String old_val = result.get("old_value", "");
+	String old_type = result.get("old_type", "");
+	String new_val = result.get("new_value", "");
+	String new_type = result.get("new_type", "");
+
+	String text = vformat("Property '%s' on %s updated.\n  Old: %s (%s)\n  New: %s (%s)",
+			property, node_path, old_val, old_type, new_val, new_type);
+	if (!field.is_empty()) {
+		text += "\n  Field: " + field;
+	}
+
+	Dictionary structured;
+	structured["node_path"] = node_path;
+	structured["property"] = property;
+	structured["old_value"] = old_val;
+	structured["old_type"] = old_type;
+	structured["new_value"] = new_val;
+	structured["new_type"] = new_type;
+	structured["success"] = true;
+	if (!field.is_empty()) {
+		structured["field"] = field;
+	}
+
+	return make_tool_result(text, structured);
 }
 
 Dictionary MCPDebugTools::handle_search_scene_tree(const Dictionary &p_args) {

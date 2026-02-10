@@ -54,6 +54,7 @@ public:
 	static Dictionary handle_get_errors(const Dictionary &p_args);
 	static Dictionary handle_get_scene_tree(const Dictionary &p_args);
 	static Dictionary handle_get_node_properties(const Dictionary &p_args);
+	static Dictionary handle_set_node_property(const Dictionary &p_args);
 
 	// --- Inspection/Search ---
 	static Dictionary handle_search_scene_tree(const Dictionary &p_args);

@@ -365,6 +365,14 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- set_property_result ---
+	if (sub_msg == "set_property_result") {
+		ERR_FAIL_COND_V(p_data.size() < 1, false);
+		Dictionary result = p_data[0];
+		_complete_pending("set_node_property", result);
+		return true;
+	}
+
 	// --- heartbeat ---
 	// Game-side heartbeat: sent every 60 frames with the current frame count.
 	if (sub_msg == "heartbeat") {
@@ -860,6 +868,19 @@ Dictionary MCPDebuggerBridge::send_emit_signal(const String &p_node_path,
 	data.push_back(p_signal_name);
 	data.push_back(p_args);
 	MCP_BRIDGE_SEND_OR_FAIL("emit_signal", "mcp:emit_signal", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_set_node_property(const String &p_node_path,
+		const String &p_property, const Variant &p_value, const String &p_field,
+		int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+	Array data;
+	data.push_back(p_node_path);
+	data.push_back(p_property);
+	data.push_back(p_value);
+	data.push_back(p_field);
+	MCP_BRIDGE_SEND_OR_FAIL("set_node_property", "mcp:set_node_property", data);
 	return _wait_for_pending(req, p_timeout_msec);
 }
 
