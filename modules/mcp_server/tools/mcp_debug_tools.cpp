@@ -108,8 +108,10 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool(
 				"debug/get_status", "Get Game Status",
 				"Get the current state of the game session: stopped, launching, running, or paused. "
-				"When running/paused, includes uptime and frame count. When stopped, includes "
-				"stop_reason ('not_started', 'normal', or 'timeout').",
+				"IMPORTANT: after debug/run_project or debug/run_scene, the game is NOT ready "
+				"immediately — you MUST poll this every 1-2s until state='running' before using "
+				"any debug/ inspection tools. When running/paused, includes uptime and frame count. "
+				"When stopped, includes stop_reason ('not_started', 'normal', or 'timeout').",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDebugTools::handle_get_status));
@@ -216,6 +218,10 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"without restarting. Returns old and new values for confirmation. Supports "
 				"field-level updates (e.g., just position.x) and auto-loads resource paths. "
 				"Use debug/get_node_properties to discover properties first. "
+				"Key Godot facts: 'position' is LOCAL (relative to parent), 'global_position' "
+				"is read-only — move nodes by setting 'position'. Rotation is in RADIANS "
+				"(1.5708 = 90 degrees). 2D Y-axis points DOWN (positive Y = lower on screen). "
+				"Color is [r,g,b,a] with 0.0-1.0 range. "
 				"Tip: edit .gd scripts with normal file tools and they hot-reload automatically.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
@@ -271,7 +277,9 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"summaries (name, type, path, child count, script/group indicators) for quick "
 				"orientation. Supports subtree drilling, depth control, type/name filtering, "
 				"and pagination. Start here to understand scene structure, then use "
-				"debug/get_node_properties for details on specific nodes. Uses cached tree by default.",
+				"debug/get_node_properties for details on specific nodes. "
+				"Node paths are absolute from '/root' (e.g., '/root/Main/Player'). "
+				"Node names are case-sensitive. Uses cached tree by default.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false,
 						/*idempotent=*/false),

@@ -167,7 +167,9 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				"Returns type, visibility, enabled state, focus state, rect, and type-specific "
 				"data (text for LineEdit, value for Slider, items for OptionButton, etc.). "
 				"Use this to inspect a control's current state before interacting with it. "
-				"Game must be running.",
+				"IMPORTANT: All debug/ui_* tools only work on Control nodes (Button, Label, "
+				"LineEdit, etc.) — NOT on Node2D sprites or Node3D meshes. Use "
+				"debug/browse_scene_tree to identify Control nodes. Game must be running.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPUITools::handle_get_control_info));

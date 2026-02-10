@@ -63,9 +63,12 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 		required.push_back("action");
 		p_registry->register_tool(
 				"debug/send_input", "Send Input Action",
-				"Send an input action to the running game. Action must exist in Input Map "
-				"(use project/get_input_map). Supports hold_frames for sustained input and "
-				"strength for analog control. Game must be running.",
+				"Send an input action to the running game. Action names are project-specific "
+				"and must exist in Input Map (use project/get_input_map to discover them). "
+				"These are NOT raw key names — use debug/send_key for raw keyboard input. "
+				"Actions prefixed 'ui_' are Godot built-ins (ui_accept, ui_cancel, etc). "
+				"Supports hold_frames for sustained input and strength for analog. "
+				"Game must be running.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPAutomationTools::handle_send_input));
@@ -99,8 +102,11 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				"debug/evaluate", "Evaluate Expression",
 				"Evaluate a GDScript expression in the running game's SceneTree context. "
 				"SceneTree is the base instance, so get_root(), get_nodes_in_group(), "
-				"current_scene work. $ shorthand does NOT work -- use get_root().get_node() "
-				"instead. No var declarations or control flow.",
+				"current_scene work directly. $ shorthand does NOT work -- use "
+				"get_root().get_node(\"Main/Player\") instead. No var declarations or "
+				"control flow. Rotation values are in RADIANS (PI/2 = 90 degrees). "
+				"2D uses Y-down coordinates (positive Y = down on screen). "
+				"print() output goes to debug/get_output.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPAutomationTools::handle_evaluate));

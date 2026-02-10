@@ -58,9 +58,11 @@ void MCPEditorTools::register_tools(MCPToolRegistry *p_registry) {
 				"Get Project Info",
 				"Get comprehensive project metadata: project name, Godot version, "
 				"main scene path, autoload list, renderer settings, physics tick rate, "
-				"and window size. Call this first when starting a new session to understand "
-				"the project structure. Returns immediately. All file paths use res:// format "
-				"(Godot's virtual filesystem rooted at the project directory).",
+				"and window size. CALL THIS FIRST when starting a new session to understand "
+				"the project. All file paths use res:// format (Godot's virtual filesystem "
+				"rooted at the project directory). Key Godot concepts: .tscn = scene files, "
+				".gd = GDScript code, .tres = data resources. Scene tree paths (like "
+				"'/root/Main/Player') are separate from file paths (like 'res://scenes/player.tscn').",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPEditorTools::handle_get_info));
