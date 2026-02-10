@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  agent_panel.h                                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,59 +30,40 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#ifdef MCP_TERMINAL_ENABLED
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+#include "scene/gui/box_container.h"
 
 class Button;
+class Label;
+class TerminalWidget;
+class MCPServerPlugin;
 
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
-
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+class AgentPanel : public VBoxContainer {
+	GDCLASS(AgentPanel, VBoxContainer)
 
 private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+	MCPServerPlugin *server_plugin = nullptr;
+	TerminalWidget *terminal = nullptr;
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
+	// Toolbar widgets.
+	Button *launch_button = nullptr;
+	Button *stop_button = nullptr;
+	Button *clear_button = nullptr;
+	Label *status_label = nullptr;
 
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
+	bool claude_running = false;
 
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	AgentPanel *agent_panel = nullptr;
-	Button *agent_panel_button = nullptr;
-#endif
-#endif
+	void _build_ui();
+	void _on_launch_pressed();
+	void _on_stop_pressed();
+	void _on_clear_pressed();
+	void _update_status();
 
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
+	String _find_claude_binary() const;
+	String _build_mcp_config_json() const;
+	Vector<String> _build_claude_args() const;
+	Vector<String> _build_claude_env() const;
 
 	void _notification(int p_what);
 
@@ -90,18 +71,10 @@ protected:
 	static void _bind_methods();
 
 public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
+	void set_server_plugin(MCPServerPlugin *p_plugin) { server_plugin = p_plugin; }
 
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	AgentPanel();
+	~AgentPanel();
 };
+
+#endif // MCP_TERMINAL_ENABLED

@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  pty_manager.h                                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,78 +30,51 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
-
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
-
-class Button;
-
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
 #ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
 
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+#include "core/string/ustring.h"
+#include "core/templates/vector.h"
 
+#include <sys/types.h>
+
+class PTYManager {
 private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
-
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
-
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
-
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	AgentPanel *agent_panel = nullptr;
-	Button *agent_panel_button = nullptr;
-#endif
-#endif
-
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
+	int master_fd = -1;
+	pid_t child_pid = -1;
+	int rows = 24;
+	int cols = 80;
 
 public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
+	// Calls forkpty(), sets non-blocking on master_fd, execvp in child.
+	bool fork_and_exec(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env);
 
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
+	// Non-blocking read from master_fd. Returns bytes read, 0 if EAGAIN, -1 if error/closed.
+	int read_pty(uint8_t *p_buffer, int p_max_len);
 
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
+	// Write to master_fd. Returns true on success.
+	bool write_pty(const uint8_t *p_data, int p_len);
 
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	// Send TIOCSWINSZ ioctl to master_fd.
+	void resize(int p_rows, int p_cols);
+
+	// Check if child is alive via waitpid(WNOHANG).
+	bool is_running() const;
+
+	// Returns exit code after child exits. -1 if still running.
+	int get_exit_code();
+
+	// Send SIGTERM, then SIGKILL after short wait.
+	void kill_child();
+
+	// Close master_fd, reap child.
+	void close_pty();
+
+	int get_master_fd() const { return master_fd; }
+	int get_rows() const { return rows; }
+	int get_cols() const { return cols; }
+
+	PTYManager();
+	~PTYManager();
 };
+
+#endif // MCP_TERMINAL_ENABLED

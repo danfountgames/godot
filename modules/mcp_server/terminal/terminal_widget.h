@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  terminal_widget.h                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,78 +30,75 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
-
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
-
-class Button;
-
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
 #ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
 
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+#include "terminal_emulator.h"
+#include "pty_manager.h"
+
+#include "scene/gui/control.h"
+#include "scene/resources/font.h"
+
+class TerminalWidget : public Control {
+	GDCLASS(TerminalWidget, Control)
 
 private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+	TerminalEmulator emulator;
+	PTYManager pty;
+	bool running = false;
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
+	// Rendering config.
+	Ref<Font> font;
+	int font_size = 14;
+	int cell_width = 0;   // Computed from font.
+	int cell_height = 0;  // Computed from font.
 
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
+	// Blink state for cursor.
+	float cursor_blink_timer = 0.0f;
+	bool cursor_visible_blink = true;
 
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	AgentPanel *agent_panel = nullptr;
-	Button *agent_panel_button = nullptr;
-#endif
-#endif
+	// Read buffer for PTY polling.
+	static const int READ_BUFFER_SIZE = 65536;
+	uint8_t read_buffer[READ_BUFFER_SIZE];
 
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
+	// Methods.
+	void _calculate_cell_size();
+	void _recalculate_grid_size();
+	void _poll_pty();
+	void _send_output_to_pty();
+	void _draw_terminal();
+	void _draw_cell(int p_row, int p_col, const TerminalEmulator::Cell &p_cell);
+	void _draw_cursor();
+	Color _effective_fg(const TerminalEmulator::Cell &p_cell) const;
+	Color _effective_bg(const TerminalEmulator::Cell &p_cell) const;
 
 	void _notification(int p_what);
+	virtual void gui_input(const Ref<InputEvent> &p_event) override;
+
+	// Keyboard mapping.
+	VTermKey _godot_key_to_vterm(Key p_key) const;
+	VTermModifier _godot_mods_to_vterm(const Ref<InputEvent> &p_event) const;
 
 protected:
 	static void _bind_methods();
 
 public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
+	// Start a process in the terminal.
+	bool start_process(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env = Vector<String>());
 
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
+	// Stop the running process.
+	void stop_process();
 
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
+	// Is a process running?
+	bool is_process_running() const;
 
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	// Access to sub-components.
+	TerminalEmulator *get_emulator() { return &emulator; }
+	PTYManager *get_pty() { return &pty; }
+
+	virtual Size2 get_minimum_size() const override;
+
+	TerminalWidget();
+	~TerminalWidget();
 };
+
+#endif // MCP_TERMINAL_ENABLED

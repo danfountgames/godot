@@ -32,6 +32,9 @@
 
 #ifdef TOOLS_ENABLED
 #include "editor/mcp_status_panel.h"
+#ifdef MCP_TERMINAL_ENABLED
+#include "terminal/agent_panel.h"
+#endif
 #endif
 
 #include "core/crypto/crypto_core.h"
@@ -75,6 +78,13 @@ MCPServerPlugin::MCPServerPlugin() {
 	status_panel->set_debugger_bridge(debugger_bridge.ptr());
 	status_panel->set_server_plugin(this);
 	panel_button = add_control_to_bottom_panel(status_panel, "MCP");
+
+#ifdef MCP_TERMINAL_ENABLED
+	// Create and register the Agent terminal bottom panel.
+	agent_panel = memnew(AgentPanel);
+	agent_panel->set_server_plugin(this);
+	agent_panel_button = add_control_to_bottom_panel(agent_panel, "Agent");
+#endif
 #endif
 
 	set_process_internal(true);
@@ -86,6 +96,13 @@ MCPServerPlugin::~MCPServerPlugin() {
 	}
 
 #ifdef TOOLS_ENABLED
+#ifdef MCP_TERMINAL_ENABLED
+	if (agent_panel) {
+		remove_control_from_bottom_panel(agent_panel);
+		memdelete(agent_panel);
+		agent_panel = nullptr;
+	}
+#endif
 	if (status_panel) {
 		remove_control_from_bottom_panel(status_panel);
 		memdelete(status_panel);
