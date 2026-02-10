@@ -13,7 +13,7 @@ env_mcp = env_modules.Clone()
 
 thirdparty_obj = []
 
-if env["platform"] != "windows" and env["platform"] != "web":
+if env.editor_build and env["platform"] != "windows" and env["platform"] != "web":
     env_mcp.Append(CPPDEFINES=["MCP_TERMINAL_ENABLED"])
 
     thirdparty_dir = "thirdparty/libvterm/"
@@ -49,7 +49,7 @@ env_mcp.add_source_files(module_obj, "*.cpp")
 env_mcp.add_source_files(module_obj, "tools/*.cpp")
 env_mcp.add_source_files(module_obj, "editor/*.cpp")
 
-if env["platform"] != "windows" and env["platform"] != "web":
+if env.editor_build and env["platform"] != "windows" and env["platform"] != "web":
     env_mcp.add_source_files(module_obj, "terminal/*.cpp")
 
 env.modules_sources += module_obj
