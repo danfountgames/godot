@@ -35,8 +35,10 @@
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/string/print_string.h"
+#include "core/debugger/debugger_marshalls.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
+#include "editor/script/script_editor_plugin.h"
 
 // ========================================================================
 // OutputRingBuffer Implementation
@@ -151,6 +153,12 @@ void MCPDebuggerBridge::setup_session(int p_idx) {
 	ScriptEditorDebugger *dbg = EditorDebuggerNode::get_singleton()->get_debugger(p_idx);
 	if (dbg) {
 		dbg->connect("output", callable_mp(this, &MCPDebuggerBridge::_on_output_received));
+
+		// Breakpoint signals.
+		dbg->connect("breaked", callable_mp(this, &MCPDebuggerBridge::_on_breaked));
+		dbg->connect("stack_dump", callable_mp(this, &MCPDebuggerBridge::_on_stack_dump));
+		dbg->connect("stack_frame_vars", callable_mp(this, &MCPDebuggerBridge::_on_stack_frame_vars));
+		dbg->connect("stack_frame_var", callable_mp(this, &MCPDebuggerBridge::_on_stack_frame_var));
 	}
 
 	active_session_id.set(p_idx);
@@ -361,6 +369,10 @@ void MCPDebuggerBridge::_on_session_started() {
 	game_running.set();
 	game_launching.clear(); // No longer launching -- session is connected.
 	game_paused.clear();
+	{
+		MutexLock lock(break_state_mutex);
+		cached_break_state.clear();
+	}
 	game_start_time_msec.set(Time::get_singleton()->get_ticks_msec());
 	game_frame_count.set(0);
 	output_buffer.clear();
@@ -409,6 +421,11 @@ void MCPDebuggerBridge::_on_session_stopped() {
 	game_running.clear();
 	game_launching.clear();
 	game_paused.clear();
+	{
+		MutexLock lock(break_state_mutex);
+		cached_break_state.clear();
+	}
+	break_state_ready.post(); // Wake anyone waiting for break state.
 	active_session_id.set(-1);
 
 	// Wake ALL pending requests with an error -- the game is gone.
@@ -821,6 +838,230 @@ Dictionary MCPDebuggerBridge::get_cached_scene_tree() const {
 Dictionary MCPDebuggerBridge::get_cached_browse_tree() const {
 	MutexLock lock(browse_tree_mutex);
 	return cached_browse_tree;
+}
+
+// ------------------------------------------------------------------------
+// Breakpoint Signal Handlers (editor main thread)
+// ------------------------------------------------------------------------
+
+void MCPDebuggerBridge::_on_breaked(bool p_reallydid, bool p_can_debug, const String &p_reason, bool p_has_stackdump) {
+	MutexLock lock(break_state_mutex);
+
+	if (p_reallydid) {
+		cached_break_state.paused = true;
+		cached_break_state.can_debug = p_can_debug;
+		cached_break_state.reason = p_reason;
+		cached_break_state.has_stackdump = p_has_stackdump;
+		game_paused.set();
+		break_state_ready.post(); // Wake anyone waiting for break state (step-and-wait).
+		print_verbose("[MCP] Debugger bridge: game paused (reason: " + p_reason + ").");
+	} else {
+		cached_break_state.clear();
+		game_paused.clear();
+		print_verbose("[MCP] Debugger bridge: game resumed.");
+	}
+}
+
+void MCPDebuggerBridge::_on_stack_dump(const Array &p_stack_dump) {
+	MutexLock lock(break_state_mutex);
+
+	cached_break_state.stack.clear();
+	for (int i = 0; i < p_stack_dump.size(); i++) {
+		Dictionary d = p_stack_dump[i];
+		BreakState::StackFrame sf;
+		sf.frame_index = d.get("frame", 0);
+		sf.file = d.get("file", "");
+		sf.function = d.get("function", "");
+		sf.line = d.get("line", 0);
+		cached_break_state.stack.push_back(sf);
+	}
+
+	if (cached_break_state.inspected_frame < 0) {
+		break_state_ready.post();
+	}
+
+	print_verbose("[MCP] Debugger bridge: received stack dump (" + itos(cached_break_state.stack.size()) + " frames).");
+}
+
+void MCPDebuggerBridge::_on_stack_frame_vars(int p_num_vars) {
+	MutexLock lock(break_state_mutex);
+
+	cached_break_state.expected_var_count = p_num_vars;
+	cached_break_state.variables.clear();
+
+	if (p_num_vars == 0) {
+		break_state_ready.post();
+	}
+
+	print_verbose("[MCP] Debugger bridge: expecting " + itos(p_num_vars) + " stack frame variables.");
+}
+
+void MCPDebuggerBridge::_on_stack_frame_var(const Array &p_data) {
+	MutexLock lock(break_state_mutex);
+
+	DebuggerMarshalls::ScriptStackVariable var_data;
+	if (var_data.deserialize(p_data)) {
+		BreakState::Variable var;
+		var.name = var_data.name;
+		var.value = var_data.value.stringify();
+		var.type_name = Variant::get_type_name(var_data.value.get_type());
+		var.category = var_data.type; // 0=local, 1=member, 2=global
+		cached_break_state.variables.push_back(var);
+	}
+
+	if (cached_break_state.variables.size() >= cached_break_state.expected_var_count &&
+			cached_break_state.expected_var_count > 0) {
+		break_state_ready.post();
+	}
+}
+
+// ------------------------------------------------------------------------
+// Break State Query Methods (thread-safe, called from MCP HTTP threads)
+// ------------------------------------------------------------------------
+
+Dictionary MCPDebuggerBridge::get_break_state_snapshot() const {
+	MutexLock lock(break_state_mutex);
+
+	Dictionary result;
+	result["paused"] = cached_break_state.paused;
+	result["reason"] = cached_break_state.reason;
+	result["can_debug"] = cached_break_state.can_debug;
+	result["has_stackdump"] = cached_break_state.has_stackdump;
+
+	Array stack_arr;
+	for (int i = 0; i < cached_break_state.stack.size(); i++) {
+		const BreakState::StackFrame &sf = cached_break_state.stack[i];
+		Dictionary fd;
+		fd["frame"] = sf.frame_index;
+		fd["file"] = sf.file;
+		fd["function"] = sf.function;
+		fd["line"] = sf.line;
+		stack_arr.push_back(fd);
+	}
+	result["stack"] = stack_arr;
+
+	if (cached_break_state.inspected_frame >= 0) {
+		Array locals;
+		Array members;
+		Array globals;
+		for (int i = 0; i < cached_break_state.variables.size(); i++) {
+			const BreakState::Variable &v = cached_break_state.variables[i];
+			Dictionary vd;
+			vd["name"] = v.name;
+			vd["value"] = v.value;
+			vd["type"] = v.type_name;
+			if (v.category == 0) {
+				locals.push_back(vd);
+			} else if (v.category == 1) {
+				members.push_back(vd);
+			} else {
+				globals.push_back(vd);
+			}
+		}
+		result["inspected_frame"] = cached_break_state.inspected_frame;
+		result["locals"] = locals;
+		result["members"] = members;
+		result["globals"] = globals;
+	}
+
+	return result;
+}
+
+Dictionary MCPDebuggerBridge::request_frame_variables(int p_frame, int p_timeout_msec) {
+	{
+		MutexLock lock(break_state_mutex);
+		if (!cached_break_state.paused) {
+			Dictionary err;
+			err["error"] = "Game is not paused at a breakpoint";
+			err["success"] = false;
+			return err;
+		}
+		cached_break_state.inspected_frame = p_frame;
+		cached_break_state.variables.clear();
+		cached_break_state.expected_var_count = 0;
+	}
+
+	// Request stack dump for the given frame on the main thread.
+	ScriptEditorDebugger *dbg = EditorDebuggerNode::get_singleton()->get_debugger(active_session_id.get() >= 0 ? active_session_id.get() : 0);
+	if (dbg) {
+		callable_mp(dbg, &ScriptEditorDebugger::request_stack_dump).call_deferred(p_frame);
+	} else {
+		Dictionary err;
+		err["error"] = "No active debugger session";
+		err["success"] = false;
+		return err;
+	}
+
+	// Wait for variables to arrive.
+	uint64_t start = Time::get_singleton()->get_ticks_msec();
+	while (Time::get_singleton()->get_ticks_msec() - start < (uint64_t)p_timeout_msec) {
+		bool ready = false;
+		{
+			MutexLock lock(break_state_mutex);
+			if (cached_break_state.expected_var_count > 0 &&
+					cached_break_state.variables.size() >= cached_break_state.expected_var_count) {
+				ready = true;
+			}
+		}
+		if (ready) {
+			return get_break_state_snapshot();
+		}
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+
+	// Timeout -- return whatever we have.
+	return get_break_state_snapshot();
+}
+
+void MCPDebuggerBridge::wait_for_rebreak(int p_timeout_msec) {
+	uint64_t start = Time::get_singleton()->get_ticks_msec();
+	while (Time::get_singleton()->get_ticks_msec() - start < (uint64_t)p_timeout_msec) {
+		{
+			MutexLock lock(break_state_mutex);
+			if (cached_break_state.paused && !cached_break_state.stack.is_empty()) {
+				return; // Re-paused with stack info.
+			}
+		}
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+}
+
+// ------------------------------------------------------------------------
+// Breakpoint Management (deferred to main thread)
+// ------------------------------------------------------------------------
+
+Dictionary MCPDebuggerBridge::get_all_breakpoints(int p_timeout_msec) {
+	// Called from tool handler (MCP HTTP thread).
+	// Create a pending request, dispatch to main thread, wait for result.
+	PendingRequest *req = _create_pending("get_breakpoints");
+	callable_mp(this, &MCPDebuggerBridge::_do_get_breakpoints).call_deferred(String("get_breakpoints"));
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+void MCPDebuggerBridge::_do_get_breakpoints(const String &p_request_id) {
+	// Runs on main thread.
+	Dictionary result;
+	Array breakpoints;
+
+	ScriptEditor *se = ScriptEditor::get_singleton();
+	if (se) {
+		List<String> bp_strings;
+		se->get_breakpoints(&bp_strings);
+		for (const String &bp : bp_strings) {
+			int colon = bp.rfind(":");
+			if (colon < 0) {
+				continue;
+			}
+			Dictionary bpd;
+			bpd["path"] = bp.substr(0, colon);
+			bpd["line"] = bp.substr(colon + 1).to_int();
+			bpd["enabled"] = true;
+			breakpoints.push_back(bpd);
+		}
+	}
+
+	result["breakpoints"] = breakpoints;
+	_complete_pending(p_request_id, result);
 }
 
 // ------------------------------------------------------------------------

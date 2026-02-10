@@ -222,6 +222,9 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 		"debug/type_text",
 		"debug/send_input_sequence",
 		"debug/get_held_inputs",
+		"debug/get_break_state",
+		"debug/step",
+		"debug/get_breakpoints",
 		nullptr // Sentinel.
 	};
 

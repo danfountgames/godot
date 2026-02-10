@@ -128,6 +128,47 @@ private:
 	Dictionary cached_browse_tree;
 	uint64_t browse_tree_timestamp = 0;
 
+	// --- Cached Break State ---
+	mutable Mutex break_state_mutex;
+
+	struct BreakState {
+		bool paused = false;
+		bool can_debug = false;
+		String reason;
+		bool has_stackdump = false;
+
+		struct StackFrame {
+			int frame_index = 0;
+			String file;
+			String function;
+			int line = 0;
+		};
+		Vector<StackFrame> stack;
+
+		int inspected_frame = -1;
+		struct Variable {
+			String name;
+			String value;
+			String type_name;
+			int category = 0; // 0=local, 1=member, 2=global
+		};
+		Vector<Variable> variables;
+		int expected_var_count = 0;
+
+		void clear() {
+			paused = false;
+			can_debug = false;
+			reason = "";
+			has_stackdump = false;
+			stack.clear();
+			inspected_frame = -1;
+			variables.clear();
+			expected_var_count = 0;
+		}
+	};
+	BreakState cached_break_state;
+	Semaphore break_state_ready;
+
 	// --- Internal Helpers ---
 	PendingRequest *_create_pending(const String &p_type);
 	Dictionary _wait_for_pending(PendingRequest *p_request, int p_timeout_msec = 10000);
@@ -138,6 +179,10 @@ private:
 	void _on_session_started();
 	void _on_session_stopped();
 	void _on_output_received(const String &p_msg, int p_type);
+	void _on_breaked(bool p_reallydid, bool p_can_debug, const String &p_reason, bool p_has_stackdump);
+	void _on_stack_dump(const Array &p_stack_dump);
+	void _on_stack_frame_vars(int p_num_vars);
+	void _on_stack_frame_var(const Array &p_data);
 
 	// --- Scene Tree Helpers ---
 	Dictionary _flat_tree_to_hierarchical(const Array &p_flat_data) const;
@@ -194,6 +239,15 @@ public:
 	Dictionary send_type_text(const String &p_text, int p_interval_frames, int p_timeout_msec = 30000);
 	Dictionary send_input_sequence(const Array &p_steps, int p_timeout_msec = 60000);
 	Dictionary send_get_held_inputs(bool p_release_all, int p_timeout_msec = 10000);
+
+	// --- Break State (thread-safe, called from MCP HTTP threads) ---
+	Dictionary get_break_state_snapshot() const;
+	Dictionary request_frame_variables(int p_frame, int p_timeout_msec = 10000);
+	void wait_for_rebreak(int p_timeout_msec = 2000);
+
+	// --- Breakpoint Management (deferred to main thread) ---
+	Dictionary get_all_breakpoints(int p_timeout_msec = 5000);
+	void _do_get_breakpoints(const String &p_request_id);
 
 	// --- Cached Scene Tree (thread-safe) ---
 	Dictionary get_cached_scene_tree() const;
