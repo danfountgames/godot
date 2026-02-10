@@ -337,6 +337,7 @@ def forward_to_backend(instance, payload, session_id=None):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {instance.token}",
         "Accept": "application/json",
+        "Connection": "close",
     }
     if session_id:
         headers["Mcp-Session-Id"] = session_id

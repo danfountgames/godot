@@ -45,6 +45,16 @@ if [ -f "$PROXY_DISCOVERY" ]; then
 fi
 
 if [ -z "$PROXY_PID" ] || ! kill -0 "$PROXY_PID" 2>/dev/null; then
+    # Kill anything squatting on our port
+    STALE=$(lsof -ti :"$PROXY_PORT" 2>/dev/null)
+    if [ -n "$STALE" ]; then
+        echo "Killing stale process on port $PROXY_PORT (PID $STALE)..."
+        kill "$STALE" 2>/dev/null
+        sleep 1
+        kill -9 "$STALE" 2>/dev/null
+        sleep 0.5
+    fi
+
     echo "Starting MCP proxy on port $PROXY_PORT..."
     python3 "$PROXY_SCRIPT" --port "$PROXY_PORT" --host "$PROXY_HOST" &
     PROXY_BG_PID=$!
