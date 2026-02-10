@@ -158,9 +158,11 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		p_registry->register_tool(
 				"debug/get_scene_tree", "Get Remote Scene Tree",
-				"Get the scene tree from the running game. Returns hierarchical view of all "
-				"nodes with names, types, IDs, and scene files. Game must be running. "
-				"Async round-trip with 10s timeout.",
+				"Get the full verbose scene tree from the running game. Returns hierarchical "
+				"view of all nodes with names, types, IDs, and scene files. "
+				"WARNING: This is expensive on large scenes. Prefer debug/browse_scene_tree "
+				"for exploration (lightweight, paginated, filterable) and only use this when "
+				"you need complete node data. Game must be running. Async round-trip with 10s timeout.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPDebugTools::handle_get_scene_tree));
@@ -229,11 +231,11 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		p_registry->register_tool(
 				"debug/browse_scene_tree", "Browse Scene Tree",
-				"Browse the running game's scene tree with lightweight summary data. "
-				"Returns minimal per-node info (name, type, path, child count, indicators) "
-				"for understanding scene structure. Supports subtree browsing, depth control, "
-				"type/name filtering, and pagination. Use debug/get_node_properties for "
-				"full details on specific nodes. Uses cached tree by default.",
+				"Preferred way to explore the running scene tree. Returns lightweight per-node "
+				"summaries (name, type, path, child count, script/group indicators) for quick "
+				"orientation. Supports subtree drilling, depth control, type/name filtering, "
+				"and pagination. Start here to understand scene structure, then use "
+				"debug/get_node_properties for details on specific nodes. Uses cached tree by default.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false,
 						/*idempotent=*/false),
