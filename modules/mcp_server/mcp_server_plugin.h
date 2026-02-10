@@ -63,6 +63,8 @@ private:
 	void write_discovery_file();
 	void delete_discovery_file();
 	String get_discovery_file_path() const;
+	String get_legacy_discovery_file_path() const;
+	void cleanup_stale_discovery_files();
 
 	void _notification(int p_what);
 

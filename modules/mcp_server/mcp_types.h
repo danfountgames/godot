@@ -50,6 +50,7 @@
 // ---------------------------------------------------------------------------
 
 #define MCP_DEFAULT_PORT 6009
+#define MCP_PORT_RANGE 100
 #define MCP_DEFAULT_HOST "127.0.0.1"
 #define MCP_DEFAULT_SESSION_TIMEOUT_SEC 300
 #define MCP_DEFAULT_CONNECTION_IDLE_TIMEOUT_SEC 60

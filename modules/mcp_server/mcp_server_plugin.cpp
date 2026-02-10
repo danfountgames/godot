@@ -192,15 +192,26 @@ void MCPServerPlugin::start() {
 		protocol.set_auth_token(auth_token);
 	}
 
+	int preferred_port = port;
 	Error err = protocol.start(port, IPAddress(host));
 	if (err != OK) {
-		ERR_PRINT("[MCP] Failed to start server on " + host + ":" + itos(port) + " (error: " + itos(err) + ")");
-		start_attempted = false; // Allow retry on next process tick.
+		for (int try_port = preferred_port + 1; try_port <= preferred_port + MCP_PORT_RANGE; try_port++) {
+			err = protocol.start(try_port, IPAddress(host));
+			if (err == OK) {
+				port = try_port;
+				break;
+			}
+		}
+	}
+	if (err != OK) {
+		ERR_PRINT("[MCP] All ports " + itos(preferred_port) + "-" + itos(preferred_port + MCP_PORT_RANGE) + " in use.");
+		start_attempted = false;
 		return;
 	}
 
 	print_line("[MCP] Server started on " + host + ":" + itos(port));
 
+	cleanup_stale_discovery_files();
 	write_discovery_file();
 
 	if (use_thread) {
@@ -235,54 +246,137 @@ void MCPServerPlugin::stop() {
 // ---------------------------------------------------------------------------
 
 String MCPServerPlugin::get_discovery_file_path() const {
+	return EditorPaths::get_singleton()->get_data_dir().path_join("mcp_server").path_join("discovery").path_join(itos(port) + ".json");
+}
+
+String MCPServerPlugin::get_legacy_discovery_file_path() const {
 	return EditorPaths::get_singleton()->get_data_dir().path_join("mcp_server").path_join("discovery.json");
 }
 
-void MCPServerPlugin::write_discovery_file() {
-	String dir_path = EditorPaths::get_singleton()->get_data_dir().path_join("mcp_server");
+void MCPServerPlugin::cleanup_stale_discovery_files() {
+	String discovery_dir = EditorPaths::get_singleton()->get_data_dir().path_join("mcp_server").path_join("discovery");
 
-	Error dir_err = DirAccess::make_dir_recursive_absolute(dir_path);
-	if (dir_err != OK) {
-		ERR_PRINT("[MCP] Failed to create discovery directory: " + dir_path);
-		return;
+	Ref<DirAccess> da = DirAccess::open(discovery_dir);
+	if (da.is_null()) {
+		return; // Directory doesn't exist yet, nothing to clean.
 	}
 
-	String file_path = get_discovery_file_path();
+	da->list_dir_begin();
+	String file_name = da->get_next();
+	while (!file_name.is_empty()) {
+		if (!da->current_is_dir() && file_name.ends_with(".json")) {
+			String full_path = discovery_dir.path_join(file_name);
+			Ref<FileAccess> f = FileAccess::open(full_path, FileAccess::READ);
+			if (f.is_valid()) {
+				String content = f->get_as_text();
+				f.unref();
+
+				JSON json;
+				if (json.parse(content) == OK) {
+					Dictionary data = json.get_data();
+					if (data.has("pid")) {
+						int file_pid = (int)data["pid"];
+						if (!OS::get_singleton()->is_process_running(file_pid)) {
+							da->remove(file_name);
+							print_verbose("[MCP] Cleaned up stale discovery file: " + file_name);
+						}
+					}
+				}
+			}
+		}
+		file_name = da->get_next();
+	}
+	da->list_dir_end();
+}
+
+void MCPServerPlugin::write_discovery_file() {
+	String discovery_dir = EditorPaths::get_singleton()->get_data_dir().path_join("mcp_server").path_join("discovery");
+
+	Error dir_err = DirAccess::make_dir_recursive_absolute(discovery_dir);
+	if (dir_err != OK) {
+		ERR_PRINT("[MCP] Failed to create discovery directory: " + discovery_dir);
+		return;
+	}
 
 	Dictionary discovery;
 	discovery["endpoint"] = "http://" + host + ":" + itos(port) + "/mcp";
 	discovery["token"] = auth_token;
 	discovery["pid"] = OS::get_singleton()->get_process_id();
 	discovery["godot_version"] = GODOT_VERSION_FULL_CONFIG;
+	discovery["project_path"] = ProjectSettings::get_singleton()->get_resource_path();
+	discovery["project_name"] = (String)ProjectSettings::get_singleton()->get_setting("application/config/name", "Unknown");
 
 	String json_content = JSON::stringify(discovery, "\t");
 
-	Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::WRITE);
-	if (f.is_null()) {
-		ERR_PRINT("[MCP] Failed to write discovery file: " + file_path);
-		return;
-	}
-	f->store_string(json_content);
-	f.unref();
+	// Write per-instance discovery file: discovery/<port>.json
+	String file_path = get_discovery_file_path();
+	{
+		Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::WRITE);
+		if (f.is_null()) {
+			ERR_PRINT("[MCP] Failed to write discovery file: " + file_path);
+			return;
+		}
+		f->store_string(json_content);
+		f.unref();
 
 #ifndef WINDOWS_ENABLED
-	FileAccess::set_unix_permissions(file_path,
-			FileAccess::UNIX_READ_OWNER | FileAccess::UNIX_WRITE_OWNER);
+		FileAccess::set_unix_permissions(file_path,
+				FileAccess::UNIX_READ_OWNER | FileAccess::UNIX_WRITE_OWNER);
 #else
-	// On Windows, set hidden attribute as a defense-in-depth measure.
-	// The bearer token provides the primary security boundary.
-	FileAccess::set_hidden_attribute(file_path, true);
+		FileAccess::set_hidden_attribute(file_path, true);
 #endif
+	}
 
-	print_verbose("[MCP] Discovery file written: " + file_path);
+	// Write legacy discovery.json for backward compatibility.
+	String legacy_path = get_legacy_discovery_file_path();
+	{
+		Ref<FileAccess> f = FileAccess::open(legacy_path, FileAccess::WRITE);
+		if (f.is_valid()) {
+			f->store_string(json_content);
+			f.unref();
+
+#ifndef WINDOWS_ENABLED
+			FileAccess::set_unix_permissions(legacy_path,
+					FileAccess::UNIX_READ_OWNER | FileAccess::UNIX_WRITE_OWNER);
+#else
+			FileAccess::set_hidden_attribute(legacy_path, true);
+#endif
+		}
+	}
+
+	print_verbose("[MCP] Discovery files written: " + file_path + " + legacy");
 }
 
 void MCPServerPlugin::delete_discovery_file() {
+	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	if (da.is_null()) {
+		return;
+	}
+
+	// Remove per-instance discovery file.
 	String file_path = get_discovery_file_path();
 	if (FileAccess::exists(file_path)) {
-		Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
-		if (da.is_valid()) {
-			da->remove(file_path);
+		da->remove(file_path);
+	}
+
+	// Remove legacy discovery.json if it belongs to this instance.
+	String legacy_path = get_legacy_discovery_file_path();
+	if (FileAccess::exists(legacy_path)) {
+		Ref<FileAccess> f = FileAccess::open(legacy_path, FileAccess::READ);
+		if (f.is_valid()) {
+			String content = f->get_as_text();
+			f.unref();
+
+			JSON json;
+			if (json.parse(content) == OK) {
+				Dictionary data = json.get_data();
+				if (data.has("pid")) {
+					int file_pid = (int)data["pid"];
+					if (file_pid == OS::get_singleton()->get_process_id()) {
+						da->remove(legacy_path);
+					}
+				}
+			}
 		}
 	}
 }
