@@ -58,7 +58,8 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"debug/run_project", "Run Project",
 				"Launch the project's main scene in debug mode. If already running, stops first. "
 				"Returns immediately. Poll debug/get_status every 1-2s: 'launching' -> 'running' (ready) "
-				"or 'stopped' (failed, check debug/get_errors). Times out after 15s.",
+				"or 'stopped' (failed, check debug/get_errors). Times out after 15s. "
+				"Tip: use debug/run_scene instead to test individual scenes in isolation.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDebugTools::handle_run_project));
@@ -68,12 +69,17 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 	{
 		Dictionary props;
 		props["scene"] = make_prop("string",
-				"Scene file path in res:// format (e.g., res://scenes/level1.tscn)");
+				"Scene file path in res:// format (e.g., res://scenes/level1.tscn). "
+				"Use editor/list_files with pattern '**/*.tscn' to discover available scenes.");
 		Array required;
 		required.push_back("scene");
 		p_registry->register_tool(
 				"debug/run_scene", "Run Scene",
-				"Launch a specific scene in debug mode. If already running, stops first. "
+				"Launch a specific scene in debug mode for targeted testing. Prefer this over "
+				"debug/run_project when testing a single feature, UI screen, or component in "
+				"isolation — it's faster and produces cleaner debug output. Combine with "
+				"debug/set_breakpoint, debug/get_scene_tree, and debug/get_node_signals to "
+				"inspect behavior. If already running, stops first. "
 				"Returns immediately. Poll debug/get_status every 1-2s. Path must be .tscn in res:// format.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
