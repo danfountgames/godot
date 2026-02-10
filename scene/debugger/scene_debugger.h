@@ -144,6 +144,65 @@ private:
 	static bool _mcp_heartbeat_connected;
 	static void _mcp_process_frame_tick();
 	static void _mcp_heartbeat_tick();
+
+	// --- Input Simulation State ---
+
+	// Held input tracking for MCP-injected inputs.
+	struct MCPHeldInput {
+		String name; // Unique identifier, e.g., "key:space", "joypad_button:a:0".
+		int type; // 0=key, 1=action, 2=joypad_button, 3=joypad_axis.
+		int device; // Joypad device index (0 for keys/actions).
+		float value; // Axis value or strength.
+		int frames_held; // Incremented each process frame.
+		int auto_release_at; // Frame count at which to auto-release. -1 = manual.
+		int keycode; // For keys: the keycode value.
+		int button_idx; // For joypad buttons: the JoyButton enum value.
+		int axis_idx; // For joypad axes: the JoyAxis enum value.
+		int modifier_flags; // For keys: modifier bitmask.
+	};
+
+	static Vector<MCPHeldInput> _mcp_held_inputs;
+	static bool _mcp_held_tick_connected;
+
+	// Held input management.
+	static void _mcp_held_inputs_tick();
+	static void _mcp_add_held_input(const MCPHeldInput &p_input);
+	static void _mcp_remove_held_input(const String &p_name);
+	static void _mcp_release_held_input(const MCPHeldInput &p_input);
+	static void _mcp_ensure_held_tick_connected();
+
+	// Typing queue state.
+	static String _mcp_type_queue;
+	static int _mcp_type_index;
+	static int _mcp_type_interval;
+	static int _mcp_type_frame_counter;
+	static bool _mcp_type_tick_connected;
+	static void _mcp_type_text_tick();
+
+	// Sequence execution state.
+	struct MCPSequenceState {
+		Array steps;
+		int current_step;
+		int wait_frames_remaining;
+		Array results;
+		bool active;
+
+		MCPSequenceState() :
+				current_step(0), wait_frames_remaining(0), active(false) {}
+	};
+
+	static MCPSequenceState _mcp_sequence;
+	static bool _mcp_sequence_tick_connected;
+	static void _mcp_sequence_tick();
+	static void _mcp_sequence_execute_step();
+	static void _mcp_sequence_complete();
+
+	// Key/button/axis name lookup helpers (game-side).
+	static int _mcp_key_name_to_keycode(const String &p_name);
+	static int _mcp_button_name_to_enum(const String &p_name);
+	static int _mcp_axis_name_to_enum(const String &p_name);
+	static char32_t _mcp_keycode_to_unicode(int p_keycode);
+	static void _mcp_send_char_key(char32_t p_char, bool p_pressed);
 #endif // MODULE_MCP_SERVER_ENABLED
 
 #endif

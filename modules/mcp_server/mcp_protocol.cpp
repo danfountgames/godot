@@ -40,6 +40,8 @@
 #include "tools/mcp_debug_tools.h"
 #include "tools/mcp_editor_tools.h"
 #include "tools/mcp_gdscript_tools.h"
+#include "tools/mcp_input_tools.h"
+#include "tools/mcp_ui_tools.h"
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -90,6 +92,8 @@ MCPProtocol::MCPProtocol() {
 	MCPGDScriptTools::register_tools(&tool_registry);
 	MCPDebugTools::register_tools(&tool_registry);
 	MCPAutomationTools::register_tools(&tool_registry);
+	MCPInputTools::register_tools(&tool_registry);
+	MCPUITools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
@@ -133,6 +137,9 @@ void MCPProtocol::_bind_methods() {
 // ---------------------------------------------------------------------------
 
 Error MCPProtocol::start(int p_port, const IPAddress &p_bind_ip) {
+	server_start_time_usec = OS::get_singleton()->get_ticks_usec();
+	listen_address = String(p_bind_ip);
+	listen_port = p_port;
 	return server->listen(p_port, p_bind_ip);
 }
 
@@ -146,6 +153,7 @@ void MCPProtocol::stop() {
 	clients.clear();
 	sessions.clear();
 	server->stop();
+	server_start_time_usec = 0;
 }
 
 void MCPProtocol::set_session_timeout(int p_seconds) {
@@ -412,12 +420,20 @@ void MCPProtocol::process_request(int p_client_id) {
 	Ref<MCPSession> session = clients[p_client_id];
 	ERR_FAIL_COND(!session.is_valid());
 
+	uint64_t request_start_usec = OS::get_singleton()->get_ticks_usec();
+
 	// ── Step 1: Extract request data ─────────────────────────────────────
 
 	String host_header = session->headers.has("host") ? session->headers["host"] : String();
 	String origin_header = session->headers.has("origin") ? session->headers["origin"] : String();
 	String content_type = session->headers.has("content-type") ? session->headers["content-type"] : String();
 	String session_id_header = session->headers.has(MCP_SESSION_HEADER) ? session->headers[MCP_SESSION_HEADER] : String();
+
+	// Peer address for event logging.
+	String client_ip;
+	if (session->connection.is_valid()) {
+		client_ip = String(session->connection->get_connected_host());
+	}
 
 	// ── Step 2: Validate host and origin ─────────────────────────────────
 
@@ -583,6 +599,10 @@ void MCPProtocol::process_request(int p_client_id) {
 
 		String body = make_result_body(result, request_id);
 		session->queue_response(MCP_HTTP_200, body, origin_header, extra_headers);
+
+		uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+		_emit_request_event("initialize", new_session_id, client_ip, 200,
+				duration_usec, session->request_body, body, "");
 		return;
 	}
 
@@ -615,6 +635,10 @@ void MCPProtocol::process_request(int p_client_id) {
 		}
 		handle_notifications_initialized(session_id_header);
 		session->queue_response(MCP_HTTP_202, "", origin_header);
+
+		uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+		_emit_request_event("notifications/initialized", session_id_header, client_ip, 202,
+				duration_usec, session->request_body, "", "");
 		return;
 	}
 
@@ -623,6 +647,10 @@ void MCPProtocol::process_request(int p_client_id) {
 		Dictionary ping_result = handle_ping();
 		String body = make_result_body(ping_result, request_id);
 		session->queue_response(MCP_HTTP_200, body, origin_header);
+
+		uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+		_emit_request_event("ping", session_id_header, client_ip, 200,
+				duration_usec, session->request_body, body, "");
 		return;
 	}
 
@@ -705,6 +733,13 @@ void MCPProtocol::process_request(int p_client_id) {
 	// Returns Variant::NIL for notifications (no "id").
 	Variant result = process_action(json_request);
 
+	// Extract tool name for tools/call events.
+	String event_tool_name;
+	if (method == "tools/call") {
+		Dictionary tc_params = json_request.get("params", Dictionary());
+		event_tool_name = tc_params.get("name", "");
+	}
+
 	if (result.get_type() == Variant::DICTIONARY) {
 		Dictionary result_dict = result;
 
@@ -714,6 +749,7 @@ void MCPProtocol::process_request(int p_client_id) {
 		// it ends up as {"result": {"error": {...}}} — a successful response
 		// with an error buried inside "result". MCP clients won't detect this.
 		// Detect this case and convert to a proper JSON-RPC error response.
+		bool is_error_response = false;
 		if (result_dict.has("result") && result_dict["result"].get_type() == Variant::DICTIONARY) {
 			Dictionary inner_result = result_dict["result"];
 			if (inner_result.has("error") && inner_result["error"].get_type() == Variant::DICTIONARY) {
@@ -721,19 +757,39 @@ void MCPProtocol::process_request(int p_client_id) {
 				int error_code = inner_error.get("code", JSONRPC::INTERNAL_ERROR);
 				String error_message = inner_error.get("message", "Unknown error");
 				result_dict = make_response_error(error_code, error_message, request_id);
+				is_error_response = true;
 			}
 		}
 
 		String body = JSON::stringify(result_dict);
 		session->queue_response(MCP_HTTP_200, body, origin_header);
+
+		// Emit event to status panel.
+		uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+		int event_status = is_error_response ? 500 : 200;
+		_emit_request_event(method, session_id_header, client_ip, event_status,
+				duration_usec, session->request_body, body, event_tool_name);
+
+		// Update tool stats for tools/call.
+		if (method == "tools/call" && !event_tool_name.is_empty()) {
+			_update_tool_stats(event_tool_name, duration_usec, is_error_response);
+		}
 	} else if (result.get_type() == Variant::NIL) {
 		// Notification — no response expected per JSON-RPC spec.
 		// Send 202 Accepted per MCP Streamable HTTP transport.
 		session->queue_response(MCP_HTTP_202, "", origin_header);
+
+		uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+		_emit_request_event(method, session_id_header, client_ip, 202,
+				duration_usec, session->request_body, "", event_tool_name);
 	} else {
 		String err_body = make_error_body(JSONRPC::METHOD_NOT_FOUND,
 				"Method not found: " + method, request_id);
 		session->queue_response(MCP_HTTP_404, err_body, origin_header);
+
+		uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+		_emit_request_event(method, session_id_header, client_ip, 404,
+				duration_usec, session->request_body, err_body, event_tool_name);
 	}
 }
 
@@ -1679,11 +1735,45 @@ void MCPProtocol::dispatch_tool_with_progress(
 		response["result"] = tool_result;
 	}
 
+	String response_body = JSON::stringify(response);
+
 	// Send as the last SSE event (via thread-safe queue).
-	p_session->queue_sse_event_threadsafe(JSON::stringify(response));
+	p_session->queue_sse_event_threadsafe(response_body);
 
 	// Flush all remaining events to the TCP send buffer, then close the stream.
 	p_session->end_sse_stream();
+
+	// Emit event for the status panel.
+	{
+		uint64_t now_usec = OS::get_singleton()->get_ticks_usec();
+		// We don't have direct access to request_start_usec here (it's in process_request),
+		// so compute duration from the start of dispatch_tool_with_progress.
+		// For a more accurate duration, compute from the session's request_start_time.
+		uint64_t duration_usec = (p_session->request_start_time > 0)
+				? (now_usec - p_session->request_start_time)
+				: 0;
+
+		bool is_error = response.has("error");
+		int status_code = is_error ? 500 : 200;
+
+		String session_id_short;
+		if (!p_session->sse_session_id.is_empty()) {
+			session_id_short = p_session->sse_session_id.substr(0, 8);
+		}
+
+		String peer_ip;
+		if (p_session->connection.is_valid()) {
+			peer_ip = String(p_session->connection->get_connected_host());
+		}
+
+		bool capture_json = panel_visible.is_set();
+		String req_json = capture_json ? p_session->request_body.left(4096) : String();
+		String res_json = capture_json ? response_body.left(4096) : String();
+
+		_emit_request_event("tools/call", session_id_short, peer_ip, status_code,
+				duration_usec, req_json, res_json, tool_name);
+		_update_tool_stats(tool_name, duration_usec, is_error);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1811,4 +1901,123 @@ void MCPProtocol::notify_resources_list_changed() {
 
 	String json = JSON::stringify(notification);
 	queue_notification_all(json);
+}
+
+// ---------------------------------------------------------------------------
+// Status Panel Data Feed
+// ---------------------------------------------------------------------------
+
+void MCPProtocol::_emit_request_event(const String &p_method, const String &p_session_id,
+		const String &p_client_ip, int p_http_status, uint64_t p_duration_usec,
+		const String &p_request_json, const String &p_response_json,
+		const String &p_tool_name) {
+	MCPRequestEvent evt;
+	evt.timestamp_usec = OS::get_singleton()->get_ticks_usec();
+	evt.method = p_method;
+	evt.session_id = p_session_id.is_empty() ? "-" : p_session_id.substr(0, 8);
+	evt.client_ip = p_client_ip;
+	evt.http_status = p_http_status;
+	evt.is_error = (p_http_status >= 400);
+	evt.duration_usec = p_duration_usec;
+	evt.tool_name = p_tool_name;
+
+	// Conditional JSON capture: full JSON only when the panel is visible.
+	bool capture_json = panel_visible.is_set();
+	evt.request_json = capture_json ? p_request_json.left(4096) : String();
+	evt.response_json = capture_json ? p_response_json.left(4096) : String();
+
+	event_buffer.push(evt);
+}
+
+void MCPProtocol::_update_tool_stats(const String &p_tool_name, uint64_t p_duration_usec, bool p_is_error) {
+	MutexLock lock(tool_stats_mutex);
+
+	MCPToolStats &stats = tool_stats[p_tool_name];
+	stats.call_count++;
+	stats.total_duration_usec += p_duration_usec;
+	stats.last_call_time_usec = OS::get_singleton()->get_ticks_usec();
+	stats.last_was_error = p_is_error;
+}
+
+Vector<MCPClientSnapshot> MCPProtocol::get_client_snapshots() const {
+	// NOTE: This is called from the main (UI) thread. The clients HashMap is
+	// only modified on the poll thread. We snapshot under no lock because the
+	// worst case is a slightly stale read (the panel updates every 500ms anyway).
+	// In threaded mode, there is a small race window, but the data is non-critical
+	// display data and the HashMap iteration is safe as long as no mutations happen
+	// concurrently. This is acceptable per the design doc's threading model.
+	Vector<MCPClientSnapshot> result;
+	uint64_t now_usec = OS::get_singleton()->get_ticks_usec();
+
+	for (const KeyValue<int, Ref<MCPSession>> &E : clients) {
+		Ref<MCPSession> session = E.value;
+		if (!session.is_valid()) {
+			continue;
+		}
+
+		MCPClientSnapshot snap;
+		if (!session->sse_session_id.is_empty()) {
+			snap.session_id = session->sse_session_id.substr(0, 8) + "...";
+		} else {
+			// Check the headers for the session ID.
+			if (session->headers.has(MCP_SESSION_HEADER)) {
+				String sid = session->headers[MCP_SESSION_HEADER];
+				snap.session_id = sid.substr(0, 8) + "...";
+			} else {
+				snap.session_id = "-";
+			}
+		}
+
+		if (session->connection.is_valid()) {
+			snap.peer_address = String(session->connection->get_connected_host()) + ":" +
+					itos(session->connection->get_connected_port());
+		}
+
+		snap.connected_since = session->request_start_time > 0
+				? session->request_start_time
+				: now_usec;
+		snap.last_activity = session->last_activity;
+		snap.is_sse_stream = session->is_get_sse_stream();
+
+		result.push_back(snap);
+	}
+
+	return result;
+}
+
+HashMap<String, MCPToolStats> MCPProtocol::get_tool_stats() const {
+	MutexLock lock(tool_stats_mutex);
+	return tool_stats;
+}
+
+bool MCPProtocol::is_running() const {
+	return server.is_valid() && server->is_listening();
+}
+
+String MCPProtocol::get_listen_address() const {
+	return listen_address;
+}
+
+int MCPProtocol::get_listen_port() const {
+	return listen_port;
+}
+
+uint64_t MCPProtocol::get_start_time_usec() const {
+	return server_start_time_usec;
+}
+
+int MCPProtocol::get_session_count() const {
+	return sessions.size();
+}
+
+int MCPProtocol::get_client_count() const {
+	return clients.size();
+}
+
+void MCPProtocol::set_panel_visible(bool p_visible) {
+	if (p_visible) {
+		panel_visible.set();
+	} else {
+		panel_visible.clear();
+	}
 }

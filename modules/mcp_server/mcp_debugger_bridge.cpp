@@ -191,6 +191,26 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- browse_tree_result ---
+	if (sub_msg == "browse_tree_result") {
+		// Convert extended flat tree data (8 fields per node) to hierarchical Dictionary.
+		Dictionary tree_dict = _flat_tree_to_hierarchical_browse(p_data);
+
+		// Cache it.
+		{
+			MutexLock lock(browse_tree_mutex);
+			cached_browse_tree = tree_dict;
+			browse_tree_timestamp = Time::get_singleton()->get_ticks_msec();
+		}
+
+		// Complete any pending browse tree request.
+		Dictionary result;
+		result["success"] = true;
+		result["tree"] = tree_dict;
+		_complete_pending("browse_scene_tree", result);
+		return true;
+	}
+
 	// --- eval_result ---
 	if (sub_msg == "eval_result") {
 		ERR_FAIL_COND_V(p_data.size() < 2, false);
@@ -259,6 +279,68 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- ui_interact_result ---
+	if (sub_msg == "ui_interact_result") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["data"] = p_data[1];
+		_complete_pending("ui_interact", result);
+		return true;
+	}
+
+	// --- key_done ---
+	if (sub_msg == "key_done") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["message"] = p_data[1];
+		_complete_pending("inject_key", result);
+		return true;
+	}
+
+	// --- joypad_done ---
+	if (sub_msg == "joypad_done") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["message"] = p_data[1];
+		_complete_pending("inject_joypad", result);
+		return true;
+	}
+
+	// --- type_text_done ---
+	if (sub_msg == "type_text_done") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["chars_typed"] = p_data[1];
+		_complete_pending("type_text", result);
+		return true;
+	}
+
+	// --- sequence_done ---
+	if (sub_msg == "sequence_done") {
+		ERR_FAIL_COND_V(p_data.size() < 3, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["steps_executed"] = p_data[1];
+		result["step_results"] = p_data[2];
+		_complete_pending("input_sequence", result);
+		return true;
+	}
+
+	// --- held_inputs_result ---
+	if (sub_msg == "held_inputs_result") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = true;
+		result["data"] = p_data[0];
+		result["released_count"] = p_data[1];
+		_complete_pending("get_held_inputs", result);
+		return true;
+	}
+
 	// --- heartbeat ---
 	// Game-side heartbeat: sent every 60 frames with the current frame count.
 	if (sub_msg == "heartbeat") {
@@ -284,11 +366,16 @@ void MCPDebuggerBridge::_on_session_started() {
 	output_buffer.clear();
 	error_buffer.clear();
 
-	// Clear cached scene tree.
+	// Clear cached scene trees.
 	{
 		MutexLock lock(scene_tree_mutex);
 		cached_scene_tree = Dictionary();
 		scene_tree_timestamp = 0;
+	}
+	{
+		MutexLock lock(browse_tree_mutex);
+		cached_browse_tree = Dictionary();
+		browse_tree_timestamp = 0;
 	}
 
 	print_verbose("[MCP] Debugger bridge: game session started.");
@@ -568,6 +655,12 @@ Dictionary MCPDebuggerBridge::request_scene_tree(int p_timeout_msec) {
 	return _wait_for_pending(req, p_timeout_msec);
 }
 
+Dictionary MCPDebuggerBridge::request_browse_scene_tree(int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+	MCP_BRIDGE_SEND_OR_FAIL("browse_scene_tree", "mcp:get_scene_tree_browse", Array());
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
 Dictionary MCPDebuggerBridge::send_evaluate(const String &p_expression, int p_timeout_msec) {
 	MCP_BRIDGE_CHECK_RUNNING();
 
@@ -623,6 +716,96 @@ Dictionary MCPDebuggerBridge::send_get_performance(int p_timeout_msec) {
 	return _wait_for_pending(req, p_timeout_msec);
 }
 
+Dictionary MCPDebuggerBridge::send_ui_interact(const String &p_action, const String &p_node_path,
+		const Dictionary &p_params, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_action);
+	data.push_back(p_node_path);
+	data.push_back(p_params);
+
+	MCP_BRIDGE_SEND_OR_FAIL("ui_interact", "mcp:ui_interact", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+// --- Input Simulation Bridge Methods ---
+
+Dictionary MCPDebuggerBridge::send_inject_key(const String &p_key_name, bool p_pressed,
+		int p_hold_frames, int p_modifier_flags, bool p_echo, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_key_name);
+	data.push_back(p_pressed);
+	data.push_back(p_hold_frames);
+	data.push_back(p_modifier_flags);
+	data.push_back(p_echo);
+
+	MCP_BRIDGE_SEND_OR_FAIL("inject_key", "mcp:inject_key", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_inject_joypad_button(const String &p_button_name, bool p_pressed,
+		int p_hold_frames, int p_device, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_button_name);
+	data.push_back(p_pressed);
+	data.push_back(p_hold_frames);
+	data.push_back(p_device);
+
+	MCP_BRIDGE_SEND_OR_FAIL("inject_joypad", "mcp:inject_joypad_button", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_inject_joypad_axis(const String &p_axis_name, float p_value,
+		int p_hold_frames, int p_device, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_axis_name);
+	data.push_back(p_value);
+	data.push_back(p_hold_frames);
+	data.push_back(p_device);
+
+	MCP_BRIDGE_SEND_OR_FAIL("inject_joypad", "mcp:inject_joypad_axis", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_type_text(const String &p_text, int p_interval_frames,
+		int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_text);
+	data.push_back(p_interval_frames);
+
+	MCP_BRIDGE_SEND_OR_FAIL("type_text", "mcp:type_text", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_input_sequence(const Array &p_steps, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_steps);
+
+	MCP_BRIDGE_SEND_OR_FAIL("input_sequence", "mcp:run_input_sequence", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_get_held_inputs(bool p_release_all, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_release_all);
+
+	MCP_BRIDGE_SEND_OR_FAIL("get_held_inputs", "mcp:get_held_inputs", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
 #undef MCP_BRIDGE_CHECK_RUNNING
 #undef MCP_BRIDGE_SEND_OR_FAIL
 
@@ -633,6 +816,20 @@ Dictionary MCPDebuggerBridge::send_get_performance(int p_timeout_msec) {
 Dictionary MCPDebuggerBridge::get_cached_scene_tree() const {
 	MutexLock lock(scene_tree_mutex);
 	return cached_scene_tree;
+}
+
+Dictionary MCPDebuggerBridge::get_cached_browse_tree() const {
+	MutexLock lock(browse_tree_mutex);
+	return cached_browse_tree;
+}
+
+// ------------------------------------------------------------------------
+// Status Panel Queries
+// ------------------------------------------------------------------------
+
+int MCPDebuggerBridge::get_pending_request_count() const {
+	MutexLock lock(request_mutex);
+	return pending_requests.size();
 }
 
 // ------------------------------------------------------------------------
@@ -692,6 +889,7 @@ Dictionary MCPDebuggerBridge::_flat_tree_to_hierarchical(const Array &p_flat_dat
 		d["type"] = info.type;
 		d["id"] = info.id;
 		d["scene_file_path"] = info.scene_file_path;
+		d["view_flags"] = info.view_flags;
 		d["children"] = Array();
 		return d;
 	};
@@ -746,6 +944,139 @@ Dictionary MCPDebuggerBridge::_flat_tree_to_hierarchical(const Array &p_flat_dat
 			stack.push_back(child_entry);
 		} else {
 			// Leaf node. Add directly to current node.
+			child_entry.dict["children"] = child_entry.children_array;
+			current.children_array.push_back(child_entry.dict);
+			current.children_remaining--;
+		}
+	}
+
+	// Unwind remaining stack.
+	while (stack.size() > 1) {
+		StackEntry &current = stack.write[stack.size() - 1];
+		current.dict["children"] = current.children_array;
+		Dictionary completed_dict = current.dict;
+		stack.resize(stack.size() - 1);
+
+		StackEntry &parent = stack.write[stack.size() - 1];
+		parent.children_array.push_back(completed_dict);
+		parent.children_remaining--;
+	}
+
+	if (!stack.is_empty()) {
+		stack.write[0].dict["children"] = stack[0].children_array;
+		return stack[0].dict;
+	}
+
+	return Dictionary();
+}
+
+Dictionary MCPDebuggerBridge::_flat_tree_to_hierarchical_browse(const Array &p_flat_data) const {
+	// Extended flat data from mcp:get_scene_tree_browse is 8 fields per node:
+	//   [child_count, name, type_name, id, scene_file_path, view_flags, has_script, group_count]
+
+	if (p_flat_data.is_empty()) {
+		return Dictionary();
+	}
+
+	struct NodeInfo {
+		String name;
+		String type;
+		uint64_t id = 0;
+		String scene_file_path;
+		int view_flags = 0;
+		bool has_script = false;
+		int group_count = 0;
+		int child_count = 0;
+	};
+
+	// Parse all nodes from flat array (8 fields per node).
+	Vector<NodeInfo> nodes;
+	int idx = 0;
+	while (idx + 7 < p_flat_data.size()) {
+		NodeInfo info;
+		info.child_count = p_flat_data[idx];
+		info.name = p_flat_data[idx + 1];
+		info.type = p_flat_data[idx + 2];
+		info.id = (uint64_t)(int64_t)p_flat_data[idx + 3];
+		info.scene_file_path = p_flat_data[idx + 4];
+		info.view_flags = p_flat_data[idx + 5];
+		info.has_script = (bool)p_flat_data[idx + 6];
+		info.group_count = (int)p_flat_data[idx + 7];
+		nodes.push_back(info);
+		idx += 8;
+	}
+
+	if (nodes.is_empty()) {
+		return Dictionary();
+	}
+
+	// Build hierarchical structure using an explicit stack.
+	struct StackEntry {
+		int node_index;
+		int children_remaining;
+		Dictionary dict;
+		Array children_array;
+	};
+
+	auto make_dict = [](const NodeInfo &info) -> Dictionary {
+		Dictionary d;
+		d["name"] = info.name;
+		d["type"] = info.type;
+		d["id"] = info.id;
+		d["scene_file_path"] = info.scene_file_path;
+		d["view_flags"] = info.view_flags;
+		d["has_script"] = info.has_script;
+		d["group_count"] = info.group_count;
+		d["children"] = Array();
+		return d;
+	};
+
+	Vector<StackEntry> stack;
+	int parse_idx = 0;
+
+	if (parse_idx >= nodes.size()) {
+		return Dictionary();
+	}
+
+	StackEntry root_entry;
+	root_entry.node_index = parse_idx;
+	root_entry.children_remaining = nodes[parse_idx].child_count;
+	root_entry.dict = make_dict(nodes[parse_idx]);
+	root_entry.children_array = root_entry.dict["children"];
+	parse_idx++;
+
+	stack.push_back(root_entry);
+
+	while (parse_idx < nodes.size() && !stack.is_empty()) {
+		StackEntry &current = stack.write[stack.size() - 1];
+
+		if (current.children_remaining <= 0) {
+			current.dict["children"] = current.children_array;
+			Dictionary completed_dict = current.dict;
+			stack.resize(stack.size() - 1);
+
+			if (!stack.is_empty()) {
+				StackEntry &parent = stack.write[stack.size() - 1];
+				parent.children_array.push_back(completed_dict);
+				parent.children_remaining--;
+			}
+			continue;
+		}
+
+		if (parse_idx >= nodes.size()) {
+			break;
+		}
+
+		StackEntry child_entry;
+		child_entry.node_index = parse_idx;
+		child_entry.children_remaining = nodes[parse_idx].child_count;
+		child_entry.dict = make_dict(nodes[parse_idx]);
+		child_entry.children_array = child_entry.dict["children"];
+		parse_idx++;
+
+		if (child_entry.children_remaining > 0) {
+			stack.push_back(child_entry);
+		} else {
 			child_entry.dict["children"] = child_entry.children_array;
 			current.children_array.push_back(child_entry.dict);
 			current.children_remaining--;

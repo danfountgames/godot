@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_status_data.cpp                                                   */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,72 +28,66 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+#include "mcp_status_data.h"
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+// =========================================================================
+// MCPEventBuffer Implementation
+// =========================================================================
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+MCPEventBuffer::MCPEventBuffer() {
+	events.resize(CAPACITY);
+}
 
-class Button;
+void MCPEventBuffer::push(const MCPRequestEvent &p_event) {
+	MutexLock lock(mutex);
 
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#endif
+	MCPRequestEvent &entry = events.write[write_pos];
+	entry = p_event;
+	entry.seq = next_seq++;
 
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+	write_pos = (write_pos + 1) % CAPACITY;
+	if (count < CAPACITY) {
+		count++;
+	}
+}
 
-private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+Vector<MCPRequestEvent> MCPEventBuffer::read_since(uint64_t p_cursor, int p_limit) const {
+	MutexLock lock(mutex);
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
+	Vector<MCPRequestEvent> result;
 
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
+	if (count == 0) {
+		return result;
+	}
 
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#endif
+	// Find the oldest entry's position.
+	int oldest_pos = (count < CAPACITY) ? 0 : write_pos;
 
-	static void thread_main(void *p_userdata);
+	// Scan entries from oldest to newest, collecting those with seq > p_cursor.
+	int collected = 0;
+	for (int i = 0; i < count && collected < p_limit; i++) {
+		int idx = (oldest_pos + i) % CAPACITY;
+		const MCPRequestEvent &entry = events[idx];
+		if (entry.seq > p_cursor) {
+			result.push_back(entry);
+			collected++;
+		}
+	}
 
-	void start();
-	void stop();
+	return result;
+}
 
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
+uint64_t MCPEventBuffer::latest_seq() const {
+	MutexLock lock(mutex);
+	if (next_seq <= 1) {
+		return 0;
+	}
+	return next_seq - 1;
+}
 
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
-public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
-
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port for the panel.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	bool is_started() const { return started; }
-};
+void MCPEventBuffer::clear() {
+	MutexLock lock(mutex);
+	write_pos = 0;
+	count = 0;
+	next_seq = 1;
+}

@@ -96,4 +96,7 @@ public:
 	// ── Notification dispatch ──
 	void notify_changed(const String &p_uri);
 	Vector<String> flush_notifications(const String &p_session_id);
+
+	// ── Status panel queries ──
+	int get_resource_count() const { return resources.size(); }
 };

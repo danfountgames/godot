@@ -201,10 +201,27 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 	static const char *long_running_tools[] = {
 		"gdscript/check_all",
 		"debug/get_scene_tree",
+		"debug/browse_scene_tree",
 		"debug/evaluate",
 		"debug/get_session_summary",
 		"debug/get_node_properties",
 		"debug/get_performance",
+		"debug/ui_get_control_info",
+		"debug/ui_set_text",
+		"debug/ui_get_text",
+		"debug/ui_set_range_value",
+		"debug/ui_get_range_value",
+		"debug/ui_select_option",
+		"debug/ui_get_options",
+		"debug/ui_set_tab",
+		"debug/ui_get_tabs",
+		"debug/ui_set_checked",
+		"debug/ui_focus",
+		"debug/send_key",
+		"debug/send_joypad",
+		"debug/type_text",
+		"debug/send_input_sequence",
+		"debug/get_held_inputs",
 		nullptr // Sentinel.
 	};
 

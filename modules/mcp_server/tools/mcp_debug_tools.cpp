@@ -197,6 +197,43 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_search_scene_tree));
 	}
 
+	// debug/browse_scene_tree
+	{
+		Dictionary props;
+		props["root_path"] = make_prop("string",
+				"Subtree root path to browse from (default: '/root'). "
+				"Use paths from previous browse results to drill in.");
+		props["max_depth"] = make_prop("integer",
+				"Max depth relative to root_path (default: 2). "
+				"1 = immediate children. 0 = root only. -1 = unlimited.");
+		props["type_filter"] = make_prop("string",
+				"Exact type name filter (e.g., 'Button'). Ancestors always shown.");
+		props["name_pattern"] = make_prop("string",
+				"Glob pattern for node names (e.g., '*Enemy*'). Case-insensitive.");
+		props["include_indicators"] = make_prop("boolean",
+				"Include has_script/is_visible/group_count per node (default: true).");
+		props["include_stats"] = make_prop("boolean",
+				"Include summary statistics (default: true).");
+		props["offset"] = make_prop("integer",
+				"Skip N direct children of root (default: 0). For pagination.");
+		props["limit"] = make_prop("integer",
+				"Max direct children to return (default: 50, max: 200).");
+		props["refresh"] = make_prop("boolean",
+				"Fetch fresh tree from game (default: false, uses cache).");
+		Array required;
+		p_registry->register_tool(
+				"debug/browse_scene_tree", "Browse Scene Tree",
+				"Browse the running game's scene tree with lightweight summary data. "
+				"Returns minimal per-node info (name, type, path, child count, indicators) "
+				"for understanding scene structure. Supports subtree browsing, depth control, "
+				"type/name filtering, and pagination. Use debug/get_node_properties for "
+				"full details on specific nodes. Uses cached tree by default.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/true, /*destructive=*/false,
+						/*idempotent=*/false),
+				callable_mp_static(&MCPDebugTools::handle_browse_scene_tree));
+	}
+
 	// debug/get_performance
 	{
 		Dictionary props;
@@ -872,6 +909,577 @@ Dictionary MCPDebugTools::handle_search_scene_tree(const Dictionary &p_args) {
 	structured["matches"] = matches;
 
 	return make_tool_result(text, structured);
+}
+
+// ============================================================================
+// Browse Scene Tree - Handler
+// ============================================================================
+
+// Comparator for sorting type distribution entries by count descending.
+// Defined here (before the handler) because it is used by handle_browse_scene_tree.
+struct _SortTypeCountDesc {
+	bool operator()(const Pair<String, int> &a, const Pair<String, int> &b) const {
+		return a.second > b.second;
+	}
+};
+
+Dictionary MCPDebugTools::handle_browse_scene_tree(const Dictionary &p_args) {
+	// 1. Require game running.
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	// 2. Parse parameters with defaults.
+	String root_path = p_args.get("root_path", "/root");
+	int max_depth = (int)p_args.get("max_depth", 2);
+	String type_filter = p_args.get("type_filter", "");
+	String name_pattern = p_args.get("name_pattern", "");
+	bool include_indicators = (bool)p_args.get("include_indicators", true);
+	bool include_stats = (bool)p_args.get("include_stats", true);
+	int offset = (int)p_args.get("offset", 0);
+	int limit = (int)p_args.get("limit", 50);
+	bool refresh = (bool)p_args.get("refresh", false);
+
+	// 3. Clamp pagination values.
+	offset = MAX(offset, 0);
+	limit = CLAMP(limit, 1, 200);
+
+	// 4. Validate root_path characters (prevent injection).
+	for (int i = 0; i < root_path.length(); i++) {
+		char32_t c = root_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' && c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error(
+					"Invalid root_path: contains disallowed character.\n\n"
+					"Valid characters: alphanumeric, _, /, ., @, :, -, space.");
+		}
+	}
+
+	// 5. Get the scene tree (cached or fresh).
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary full_tree;
+	bool used_cache = false;
+
+	if (refresh) {
+		Dictionary result = bridge->request_browse_scene_tree();
+		if (!(bool)result.get("success", false)) {
+			return make_tool_error("Failed to fetch scene tree: " +
+					String(result.get("error", "Unknown")));
+		}
+		full_tree = result.get("tree", Dictionary());
+	} else {
+		full_tree = bridge->get_cached_browse_tree();
+		if (full_tree.is_empty()) {
+			// No browse-specific cache -- try regular cached tree as fallback.
+			full_tree = bridge->get_cached_scene_tree();
+		}
+		if (full_tree.is_empty()) {
+			// Auto-refresh on cache miss.
+			Dictionary result = bridge->request_browse_scene_tree();
+			if (!(bool)result.get("success", false)) {
+				return make_tool_error("No cached tree and failed to fetch: " +
+						String(result.get("error", "Unknown")));
+			}
+			full_tree = result.get("tree", Dictionary());
+		} else {
+			used_cache = true;
+		}
+	}
+
+	if (full_tree.is_empty()) {
+		return make_tool_error(
+				"Scene tree is empty. The game may not have initialized yet.\n\n"
+				"Try debug/get_status to check game state.");
+	}
+
+	// 6. Navigate to the requested subtree root.
+	Dictionary subtree = _find_subtree(full_tree, root_path);
+	if (subtree.is_empty()) {
+		return make_tool_error("Subtree not found: " + root_path +
+				"\n\nUse debug/browse_scene_tree with no root_path to see the full tree, "
+				"or debug/search_scene_tree to find a node by name.");
+	}
+
+	// 7. Apply filters if requested.
+	Dictionary working_tree = subtree;
+	bool has_filters = !type_filter.is_empty() || !name_pattern.is_empty();
+	if (has_filters) {
+		working_tree = _filter_tree(subtree, type_filter, name_pattern);
+		if (working_tree.is_empty()) {
+			// No matches.
+			String filter_desc;
+			if (!type_filter.is_empty()) {
+				filter_desc += "type='" + type_filter + "'";
+			}
+			if (!name_pattern.is_empty()) {
+				if (!filter_desc.is_empty()) {
+					filter_desc += " and ";
+				}
+				filter_desc += "name='" + name_pattern + "'";
+			}
+
+			String text = "No nodes matching " + filter_desc + " found under " + root_path + ".\n\n"
+						  "Try debug/search_scene_tree to search by name, or call debug/browse_scene_tree "
+						  "without filters to see the full structure.";
+
+			Dictionary structured;
+			structured["root_path"] = root_path;
+			structured["node"] = Dictionary();
+			structured["cached"] = used_cache || !refresh;
+			Dictionary filters_applied;
+			filters_applied["type_filter"] = type_filter;
+			filters_applied["name_pattern"] = name_pattern;
+			structured["filters_applied"] = filters_applied;
+			structured["match_count"] = 0;
+
+			return make_tool_result(text, structured);
+		}
+	}
+
+	// 8. Cap max_depth for safety (-1 = unlimited, capped at 100).
+	int effective_depth = max_depth;
+	if (effective_depth < 0) {
+		effective_depth = 100;
+	}
+
+	// 9. Build the browse-format tree with pagination.
+	Dictionary browse_node = _build_browse_node(working_tree, root_path,
+			effective_depth, include_indicators, offset, limit, true);
+
+	// 10. Build statistics if requested.
+	Dictionary stats;
+	if (include_stats) {
+		int total_descendants = _count_descendants(subtree);
+		stats["total_nodes"] = total_descendants + 1;
+		stats["type_distribution"] = _build_type_distribution(subtree);
+		stats["groups"] = _build_group_stats(subtree);
+	}
+
+	// 11. Build pagination info (based on unfiltered subtree children for correct total).
+	Array all_children = subtree.get("children", Array());
+	int total_children_for_pagination = all_children.size();
+	if (has_filters) {
+		// When filtered, report filtered children count.
+		Array filtered_children = working_tree.get("children", Array());
+		total_children_for_pagination = filtered_children.size();
+	}
+
+	Dictionary pagination;
+	pagination["offset"] = offset;
+	pagination["limit"] = limit;
+	pagination["total_children"] = total_children_for_pagination;
+	pagination["has_more"] = (offset + limit) < total_children_for_pagination;
+
+	// 12. Build text representation.
+	int total_nodes = _count_descendants(subtree) + 1;
+	String text = "Scene Tree Browser: " + root_path +
+			" (" + itos(total_nodes) + " nodes";
+	if (!type_filter.is_empty()) {
+		text += ", filtered: type='" + type_filter + "'";
+	}
+	if (!name_pattern.is_empty()) {
+		text += ", filtered: name='" + name_pattern + "'";
+	}
+	text += ")\n\n";
+	text += _browse_node_to_text(browse_node, 0, include_indicators);
+
+	// Append stats summary.
+	if (include_stats && stats.has("type_distribution")) {
+		Dictionary type_dist = stats.get("type_distribution", Dictionary());
+		if (!type_dist.is_empty()) {
+			// Sort by count descending, show top 5.
+			Vector<Pair<String, int>> type_vec;
+			LocalVector<Variant> keys = type_dist.get_key_list();
+			for (const Variant &k : keys) {
+				type_vec.push_back(Pair<String, int>(k, type_dist[k]));
+			}
+			type_vec.sort_custom<_SortTypeCountDesc>();
+
+			text += "\nTop types: ";
+			int shown = 0;
+			for (int i = 0; i < type_vec.size() && shown < 5; i++) {
+				if (shown > 0) {
+					text += " ";
+				}
+				text += type_vec[i].first + "(" + itos(type_vec[i].second) + ")";
+				shown++;
+			}
+			text += "\n";
+		}
+
+		Dictionary groups = stats.get("groups", Dictionary());
+		if (!groups.is_empty()) {
+			text += "Groups: ";
+			LocalVector<Variant> group_keys = groups.get_key_list();
+			bool first = true;
+			for (const Variant &k : group_keys) {
+				if (!first) {
+					text += " ";
+				}
+				text += String(k) + "(" + itos((int)groups[k]) + ")";
+				first = false;
+			}
+			text += "\n";
+		}
+	}
+
+	// Pagination footer.
+	if (total_children_for_pagination > limit) {
+		int end_idx = MIN(offset + limit, total_children_for_pagination) - 1;
+		text += "Page: showing children " + itos(offset) + "-" + itos(end_idx) +
+				" of " + itos(total_children_for_pagination);
+		int remaining = total_children_for_pagination - (offset + limit);
+		if (remaining > 0) {
+			text += " (" + itos(remaining) + " more)";
+		}
+		text += "\n";
+	}
+
+	// 13. Build structured response.
+	Dictionary structured;
+	structured["root_path"] = root_path;
+	structured["node"] = browse_node;
+	if (include_stats) {
+		structured["stats"] = stats;
+	}
+	structured["pagination"] = pagination;
+
+	Dictionary filters_applied;
+	filters_applied["type_filter"] = type_filter;
+	filters_applied["name_pattern"] = name_pattern;
+	structured["filters_applied"] = filters_applied;
+	structured["cached"] = used_cache || !refresh;
+
+	return make_tool_result(text, structured);
+}
+
+// ============================================================================
+// Browse Scene Tree - Helpers
+// ============================================================================
+
+Dictionary MCPDebugTools::_find_subtree(const Dictionary &p_tree,
+		const String &p_target_path, const String &p_current_path) {
+	if (p_tree.is_empty()) {
+		return Dictionary();
+	}
+
+	String name = p_tree.get("name", "");
+	String current_path;
+	if (p_current_path.is_empty()) {
+		// Root node: path is "/" + name, but for the Godot root it is "/root".
+		current_path = "/" + name;
+	} else if (p_current_path == "/") {
+		current_path = "/" + name;
+	} else {
+		current_path = p_current_path + "/" + name;
+	}
+
+	// Check if this node matches the target path.
+	if (current_path == p_target_path) {
+		return p_tree;
+	}
+
+	// Only recurse if the target path starts with our current path.
+	if (!p_target_path.begins_with(current_path + "/") && current_path != "/") {
+		return Dictionary();
+	}
+
+	// Search children.
+	Array children = p_tree.get("children", Array());
+	for (int i = 0; i < children.size(); i++) {
+		Dictionary child = children[i];
+		Dictionary found = _find_subtree(child, p_target_path, current_path);
+		if (!found.is_empty()) {
+			return found;
+		}
+	}
+
+	return Dictionary();
+}
+
+int MCPDebugTools::_count_descendants(const Dictionary &p_tree) {
+	if (p_tree.is_empty()) {
+		return 0;
+	}
+
+	int count = 0;
+	Array children = p_tree.get("children", Array());
+	for (int i = 0; i < children.size(); i++) {
+		count += 1 + _count_descendants(children[i]);
+	}
+	return count;
+}
+
+Dictionary MCPDebugTools::_build_browse_node(const Dictionary &p_tree_node,
+		const String &p_current_path, int p_remaining_depth,
+		bool p_include_indicators, int p_child_offset,
+		int p_child_limit, bool p_is_root) {
+	if (p_tree_node.is_empty()) {
+		return Dictionary();
+	}
+
+	String name = p_tree_node.get("name", "?");
+	String type = p_tree_node.get("type", "?");
+
+	Dictionary node;
+	node["name"] = name;
+	node["type"] = type;
+	node["path"] = p_current_path;
+
+	Array original_children = p_tree_node.get("children", Array());
+	int child_count = original_children.size();
+	node["child_count"] = child_count;
+	node["descendant_count"] = _count_descendants(p_tree_node);
+
+	// Scene file.
+	String scene_file = p_tree_node.get("scene_file_path", "");
+	if (!scene_file.is_empty()) {
+		node["scene_file"] = scene_file;
+	}
+
+	// Indicators.
+	if (p_include_indicators) {
+		// is_visible: derived from view_flags.
+		int view_flags = (int)p_tree_node.get("view_flags", 0);
+		// Bit 2 = VIEW_VISIBLE (see SceneDebuggerTree::RemoteNode::ViewFlags).
+		bool is_visible = (view_flags & 4) != 0;
+		// If the node does not have a visible method, consider it visible.
+		bool has_visible_method = (view_flags & 2) != 0;
+		if (!has_visible_method) {
+			is_visible = true;
+		}
+		node["is_visible"] = is_visible;
+
+		// has_script and group_count: available from extended browse tree.
+		if (p_tree_node.has("has_script")) {
+			node["has_script"] = (bool)p_tree_node.get("has_script", false);
+		}
+		if (p_tree_node.has("group_count")) {
+			node["group_count"] = (int)p_tree_node.get("group_count", 0);
+		}
+	}
+
+	// Children: apply depth control.
+	if (p_remaining_depth <= 0 && child_count > 0) {
+		node["children"] = "_truncated";
+	} else if (child_count == 0) {
+		node["children"] = Array();
+	} else {
+		Array browse_children;
+
+		// Pagination: only apply at root level of the browse call.
+		int start = p_is_root ? p_child_offset : 0;
+		int end = p_is_root ? MIN(start + p_child_limit, child_count) : child_count;
+
+		// Clamp start.
+		if (start >= child_count) {
+			// Offset beyond available children -- return empty.
+			node["children"] = Array();
+			return node;
+		}
+
+		for (int i = start; i < end; i++) {
+			Dictionary child = original_children[i];
+			String child_name = child.get("name", "?");
+			String child_path = p_current_path + "/" + child_name;
+
+			Dictionary browse_child = _build_browse_node(child, child_path,
+					p_remaining_depth - 1, p_include_indicators,
+					0, p_child_limit, false);
+			browse_children.push_back(browse_child);
+		}
+
+		node["children"] = browse_children;
+	}
+
+	return node;
+}
+
+void MCPDebugTools::_accumulate_types(const Dictionary &p_tree,
+		HashMap<String, int> &r_counts) {
+	if (p_tree.is_empty()) {
+		return;
+	}
+
+	String type = p_tree.get("type", "?");
+	if (r_counts.has(type)) {
+		r_counts[type]++;
+	} else {
+		r_counts[type] = 1;
+	}
+
+	Array children = p_tree.get("children", Array());
+	for (int i = 0; i < children.size(); i++) {
+		_accumulate_types(children[i], r_counts);
+	}
+}
+
+Dictionary MCPDebugTools::_build_type_distribution(const Dictionary &p_tree) {
+	HashMap<String, int> counts;
+	_accumulate_types(p_tree, counts);
+
+	Dictionary result;
+	for (const KeyValue<String, int> &kv : counts) {
+		result[kv.key] = kv.value;
+	}
+	return result;
+}
+
+void MCPDebugTools::_accumulate_groups(const Dictionary &p_tree,
+		HashMap<String, int> &r_counts) {
+	if (p_tree.is_empty()) {
+		return;
+	}
+
+	// group_count is available in extended browse tree data.
+	// We do not have group names from the tree data -- only the count.
+	// For now, we track the aggregate group_count.
+	// Group names would require additional game-side data.
+
+	Array children = p_tree.get("children", Array());
+	for (int i = 0; i < children.size(); i++) {
+		_accumulate_groups(children[i], r_counts);
+	}
+}
+
+Dictionary MCPDebugTools::_build_group_stats(const Dictionary &p_tree) {
+	// Group names are not available in the current tree data structure.
+	// We return an empty dict. Future: extend game-side to send group names.
+	return Dictionary();
+}
+
+bool MCPDebugTools::_subtree_has_match(const Dictionary &p_tree,
+		const String &p_type_filter, const String &p_name_pattern) {
+	if (p_tree.is_empty()) {
+		return false;
+	}
+
+	String name = p_tree.get("name", "?");
+	String type = p_tree.get("type", "?");
+
+	bool name_match = p_name_pattern.is_empty() || name.matchn(p_name_pattern);
+	bool type_match = p_type_filter.is_empty() || type == p_type_filter;
+
+	if (name_match && type_match) {
+		return true;
+	}
+
+	Array children = p_tree.get("children", Array());
+	for (int i = 0; i < children.size(); i++) {
+		if (_subtree_has_match(children[i], p_type_filter, p_name_pattern)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+Dictionary MCPDebugTools::_filter_tree(const Dictionary &p_tree,
+		const String &p_type_filter, const String &p_name_pattern) {
+	if (p_tree.is_empty()) {
+		return Dictionary();
+	}
+
+	String name = p_tree.get("name", "?");
+	String type = p_tree.get("type", "?");
+
+	bool name_match = p_name_pattern.is_empty() || name.matchn(p_name_pattern);
+	bool type_match = p_type_filter.is_empty() || type == p_type_filter;
+	bool self_matches = name_match && type_match;
+
+	// Recursively filter children, keeping those that match or have matching descendants.
+	Array original_children = p_tree.get("children", Array());
+	Array filtered_children;
+
+	for (int i = 0; i < original_children.size(); i++) {
+		Dictionary child = original_children[i];
+		if (_subtree_has_match(child, p_type_filter, p_name_pattern)) {
+			Dictionary filtered_child = _filter_tree(child, p_type_filter, p_name_pattern);
+			if (!filtered_child.is_empty()) {
+				filtered_children.push_back(filtered_child);
+			}
+		}
+	}
+
+	// Include this node if it matches, or if it has matching descendants (ancestor context).
+	if (self_matches || filtered_children.size() > 0) {
+		Dictionary result;
+		// Copy all fields from the original node.
+		LocalVector<Variant> keys = p_tree.get_key_list();
+		for (const Variant &k : keys) {
+			if (String(k) != "children") {
+				result[k] = p_tree[k];
+			}
+		}
+		result["children"] = filtered_children;
+		return result;
+	}
+
+	return Dictionary();
+}
+
+String MCPDebugTools::_browse_node_to_text(const Dictionary &p_node,
+		int p_indent, bool p_include_indicators) {
+	if (p_node.is_empty()) {
+		return "";
+	}
+
+	String indent;
+	for (int i = 0; i < p_indent; i++) {
+		indent += "  ";
+	}
+
+	String name = p_node.get("name", "?");
+	String type = p_node.get("type", "?");
+	int child_count = (int)p_node.get("child_count", 0);
+	int descendant_count = (int)p_node.get("descendant_count", 0);
+
+	String line = indent + name + " (" + type + ") [" + itos(child_count);
+	if (child_count == 1) {
+		line += " child";
+	} else {
+		line += " ch";
+	}
+	if (descendant_count > 0) {
+		line += ", " + itos(descendant_count) + " desc";
+	}
+	line += "]";
+
+	if (p_include_indicators) {
+		if (p_node.has("has_script") && (bool)p_node.get("has_script", false)) {
+			line += " [script]";
+		}
+		if (p_node.has("is_visible") && !(bool)p_node.get("is_visible", true)) {
+			line += " [hidden]";
+		}
+		if (p_node.has("group_count") && (int)p_node.get("group_count", 0) > 0) {
+			int gc = (int)p_node["group_count"];
+			line += " [" + itos(gc) + " group" + (gc != 1 ? "s" : "") + "]";
+		}
+	}
+
+	String scene_file = p_node.get("scene_file", "");
+	if (!scene_file.is_empty()) {
+		line += " [" + scene_file + "]";
+	}
+
+	line += "\n";
+
+	// Children.
+	Variant children_var = p_node.get("children", Variant());
+	if (children_var.get_type() == Variant::STRING) {
+		// Truncated indicator.
+		if (child_count > 0) {
+			// Already shown in the "[N ch]" count, no extra text needed.
+		}
+	} else if (children_var.get_type() == Variant::ARRAY) {
+		Array children = children_var;
+		for (int i = 0; i < children.size(); i++) {
+			line += _browse_node_to_text(children[i], p_indent + 1, p_include_indicators);
+		}
+	}
+
+	return line;
 }
 
 Dictionary MCPDebugTools::handle_get_performance(const Dictionary &p_args) {

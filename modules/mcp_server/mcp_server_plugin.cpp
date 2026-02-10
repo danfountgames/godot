@@ -30,6 +30,10 @@
 
 #include "mcp_server_plugin.h"
 
+#ifdef TOOLS_ENABLED
+#include "editor/mcp_status_panel.h"
+#endif
+
 #include "core/crypto/crypto_core.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
@@ -64,6 +68,15 @@ MCPServerPlugin::MCPServerPlugin() {
 	// Give the protocol a pointer to the bridge for tool handlers to use.
 	protocol.set_debugger_bridge(debugger_bridge.ptr());
 
+#ifdef TOOLS_ENABLED
+	// Create and register the MCP status bottom panel.
+	status_panel = memnew(MCPStatusPanel);
+	status_panel->set_protocol(&protocol);
+	status_panel->set_debugger_bridge(debugger_bridge.ptr());
+	status_panel->set_server_plugin(this);
+	panel_button = add_control_to_bottom_panel(status_panel, "MCP");
+#endif
+
 	set_process_internal(true);
 }
 
@@ -71,6 +84,14 @@ MCPServerPlugin::~MCPServerPlugin() {
 	if (started) {
 		stop();
 	}
+
+#ifdef TOOLS_ENABLED
+	if (status_panel) {
+		remove_control_from_bottom_panel(status_panel);
+		memdelete(status_panel);
+		status_panel = nullptr;
+	}
+#endif
 
 	// Remove and release the debugger bridge plugin.
 	if (debugger_bridge.is_valid() && EditorDebuggerNode::get_singleton()) {
@@ -239,6 +260,18 @@ void MCPServerPlugin::stop() {
 	delete_discovery_file();
 
 	print_verbose("[MCP] Server stopped.");
+}
+
+// ---------------------------------------------------------------------------
+// Toggle Server (called from the status panel)
+// ---------------------------------------------------------------------------
+
+void MCPServerPlugin::toggle_server() {
+	if (started) {
+		stop();
+	} else {
+		start();
+	}
 }
 
 // ---------------------------------------------------------------------------

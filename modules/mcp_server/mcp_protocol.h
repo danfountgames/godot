@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "editor/mcp_status_data.h"
 #include "mcp_resource_registry.h"
 #include "mcp_session.h"
 #include "mcp_tool_registry.h"
@@ -104,6 +105,24 @@ private:
 	// Logging severity filter (Phase C). RFC 5424: 0=emergency .. 7=debug.
 	// Default: 6 (info) -- send levels 0-6, suppress debug.
 	SafeNumeric<int> min_log_severity; // Atomic for cross-thread reads.
+
+	// --- Status panel data feed ---
+	MCPEventBuffer event_buffer;
+	mutable Mutex tool_stats_mutex;
+	HashMap<String, MCPToolStats> tool_stats;
+	uint64_t server_start_time_usec = 0;
+	SafeFlag panel_visible; // Set by panel when it becomes visible.
+	String listen_address; // Cached from start() for panel display.
+	int listen_port = 0; // Cached from start() for panel display.
+
+	// Internal: emit an event to the event buffer after a request completes.
+	void _emit_request_event(const String &p_method, const String &p_session_id,
+			const String &p_client_ip, int p_http_status, uint64_t p_duration_usec,
+			const String &p_request_json, const String &p_response_json,
+			const String &p_tool_name);
+
+	// Internal: update tool stats after a tool call.
+	void _update_tool_stats(const String &p_tool_name, uint64_t p_duration_usec, bool p_is_error);
 
 	// Session ID generation using CSPRNG.
 	String generate_session_id();
@@ -235,4 +254,16 @@ public:
 	// Emit a log message to all GET SSE streams (Phase C).
 	// Filtered by min_log_severity (set via logging/setLevel).
 	void send_log(const String &p_level, const String &p_logger, const Variant &p_data);
+
+	// --- Status panel API ---
+	MCPEventBuffer *get_event_buffer() { return &event_buffer; }
+	Vector<MCPClientSnapshot> get_client_snapshots() const;
+	HashMap<String, MCPToolStats> get_tool_stats() const;
+	bool is_running() const;
+	String get_listen_address() const;
+	int get_listen_port() const;
+	uint64_t get_start_time_usec() const;
+	int get_session_count() const;
+	int get_client_count() const;
+	void set_panel_visible(bool p_visible);
 };

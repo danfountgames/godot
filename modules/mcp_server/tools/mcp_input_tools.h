@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_input_tools.h                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,70 +30,64 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#include "core/string/ustring.h"
+#include "core/templates/hash_map.h"
+#include "core/variant/dictionary.h"
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+class MCPToolRegistry;
 
-class Button;
+class MCPInputTools {
+public:
+	// Register all input simulation tools into the registry.
+	static void register_tools(MCPToolRegistry *p_registry);
 
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#endif
+	// Tool handlers.
+	static Dictionary handle_send_key(const Dictionary &p_args);
+	static Dictionary handle_send_joypad(const Dictionary &p_args);
+	static Dictionary handle_type_text(const Dictionary &p_args);
+	static Dictionary handle_send_input_sequence(const Dictionary &p_args);
+	static Dictionary handle_get_held_inputs(const Dictionary &p_args);
 
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+	// Modifier flag constants (bitmask).
+	enum ModifierFlags {
+		MOD_SHIFT = 1,
+		MOD_CTRL = 2,
+		MOD_ALT = 4,
+		MOD_META = 8,
+	};
 
 private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+	// Helper: get the MCPDebuggerBridge pointer.
+	static class MCPDebuggerBridge *_get_bridge();
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
+	// Helper: check game is running, return error dict if not.
+	static Dictionary _require_game_running();
 
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
+	// Helper: parse modifier array into bitmask.
+	static int _parse_modifier_flags(const Array &p_modifiers);
 
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#endif
+	// Helper: validate key name. Returns true if valid.
+	static bool _validate_key_name(const String &p_key);
 
-	static void thread_main(void *p_userdata);
+	// Helper: validate joypad button name. Returns true if valid.
+	static bool _validate_button_name(const String &p_button);
 
-	void start();
-	void stop();
+	// Helper: validate joypad axis name. Returns true if valid.
+	static bool _validate_axis_name(const String &p_axis);
 
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
+	// Helper: get list of valid key names for error messages.
+	static String _get_valid_key_names_hint();
 
-	void _notification(int p_what);
+	// Helper: get list of valid button names for error messages.
+	static String _get_valid_button_names_hint();
 
-protected:
-	static void _bind_methods();
+	// Helper: get list of valid axis names for error messages.
+	static String _get_valid_axis_names_hint();
 
-public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
-
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port for the panel.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	bool is_started() const { return started; }
+	// Lookup tables (lazy-initialized).
+	static bool _tables_initialized;
+	static void _ensure_lookup_tables();
+	static HashMap<String, int> key_name_map;
+	static HashMap<String, int> button_name_map;
+	static HashMap<String, int> axis_name_map;
 };

@@ -123,6 +123,11 @@ private:
 	Dictionary cached_scene_tree;
 	uint64_t scene_tree_timestamp = 0;
 
+	// --- Cached Browse Tree (extended: includes has_script, group_count per node) ---
+	mutable Mutex browse_tree_mutex;
+	Dictionary cached_browse_tree;
+	uint64_t browse_tree_timestamp = 0;
+
 	// --- Internal Helpers ---
 	PendingRequest *_create_pending(const String &p_type);
 	Dictionary _wait_for_pending(PendingRequest *p_request, int p_timeout_msec = 10000);
@@ -136,6 +141,7 @@ private:
 
 	// --- Scene Tree Helpers ---
 	Dictionary _flat_tree_to_hierarchical(const Array &p_flat_data) const;
+	Dictionary _flat_tree_to_hierarchical_browse(const Array &p_flat_data) const;
 	String _tree_to_text(const Dictionary &p_tree, int p_indent = 0, int p_max_depth = 200) const;
 
 protected:
@@ -171,15 +177,30 @@ public:
 
 	// --- Async Request Methods (block calling thread, called from MCP HTTP threads) ---
 	Dictionary request_scene_tree(int p_timeout_msec = 10000);
+	Dictionary request_browse_scene_tree(int p_timeout_msec = 10000);
 	Dictionary send_evaluate(const String &p_expression, int p_timeout_msec = 10000);
 	Dictionary send_inject_action(const String &p_action, bool p_pressed, int p_hold_frames = 0, float p_strength = 1.0f, int p_timeout_msec = 10000);
 	Dictionary send_click_control(const String &p_node_path, int p_timeout_msec = 10000);
 	Dictionary send_wait_frames(int p_frame_count, int p_timeout_msec = 30000);
 	Dictionary send_screenshot(int p_timeout_msec = 10000);
 	Dictionary send_get_performance(int p_timeout_msec = 5000);
+	Dictionary send_ui_interact(const String &p_action, const String &p_node_path,
+			const Dictionary &p_params, int p_timeout_msec = 10000);
+
+	// --- Input Simulation Methods (block calling thread, called from MCP HTTP threads) ---
+	Dictionary send_inject_key(const String &p_key_name, bool p_pressed, int p_hold_frames, int p_modifier_flags, bool p_echo, int p_timeout_msec = 10000);
+	Dictionary send_inject_joypad_button(const String &p_button_name, bool p_pressed, int p_hold_frames, int p_device, int p_timeout_msec = 10000);
+	Dictionary send_inject_joypad_axis(const String &p_axis_name, float p_value, int p_hold_frames, int p_device, int p_timeout_msec = 10000);
+	Dictionary send_type_text(const String &p_text, int p_interval_frames, int p_timeout_msec = 30000);
+	Dictionary send_input_sequence(const Array &p_steps, int p_timeout_msec = 60000);
+	Dictionary send_get_held_inputs(bool p_release_all, int p_timeout_msec = 10000);
 
 	// --- Cached Scene Tree (thread-safe) ---
 	Dictionary get_cached_scene_tree() const;
+	Dictionary get_cached_browse_tree() const;
+
+	// --- Status panel queries (thread-safe) ---
+	int get_pending_request_count() const;
 
 	MCPDebuggerBridge();
 	~MCPDebuggerBridge();

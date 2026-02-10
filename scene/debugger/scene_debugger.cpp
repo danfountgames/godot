@@ -529,6 +529,17 @@ HashMap<String, SceneDebugger::ParseMessageFunc> SceneDebugger::message_handlers
 int SceneDebugger::_mcp_wait_frames_remaining = 0;
 int64_t SceneDebugger::_mcp_frame_counter = 0;
 bool SceneDebugger::_mcp_heartbeat_connected = false;
+
+// Input simulation state.
+Vector<SceneDebugger::MCPHeldInput> SceneDebugger::_mcp_held_inputs;
+bool SceneDebugger::_mcp_held_tick_connected = false;
+String SceneDebugger::_mcp_type_queue;
+int SceneDebugger::_mcp_type_index = 0;
+int SceneDebugger::_mcp_type_interval = 0;
+int SceneDebugger::_mcp_type_frame_counter = 0;
+bool SceneDebugger::_mcp_type_tick_connected = false;
+SceneDebugger::MCPSequenceState SceneDebugger::_mcp_sequence;
+bool SceneDebugger::_mcp_sequence_tick_connected = false;
 #endif // MODULE_MCP_SERVER_ENABLED
 
 Error SceneDebugger::parse_message(void *p_user, const String &p_msg, const Array &p_args, bool &r_captured) {
@@ -3144,7 +3155,23 @@ void RuntimeNodeSelect::_reset_camera_3d() {
 #include "core/math/expression.h"
 #include "main/performance.h"
 #include "scene/gui/base_button.h"
+#include "scene/gui/button.h"
+#include "scene/gui/check_box.h"
+#include "scene/gui/check_button.h"
 #include "scene/gui/control.h"
+#include "scene/gui/item_list.h"
+#include "scene/gui/label.h"
+#include "scene/gui/line_edit.h"
+#include "scene/gui/option_button.h"
+#include "scene/gui/progress_bar.h"
+#include "scene/gui/range.h"
+#include "scene/gui/scroll_container.h"
+#include "scene/gui/slider.h"
+#include "scene/gui/spin_box.h"
+#include "scene/gui/tab_bar.h"
+#include "scene/gui/tab_container.h"
+#include "scene/gui/text_edit.h"
+#include "scene/gui/tree.h"
 
 void SceneDebugger::_mcp_process_frame_tick() {
 	// Called every process frame while waiting.
@@ -3187,6 +3214,487 @@ void SceneDebugger::_mcp_start_heartbeat() {
 		st->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_heartbeat_tick));
 		_mcp_heartbeat_connected = true;
 	}
+}
+
+// ========================================================================
+// Input Simulation Helpers (game-side)
+// ========================================================================
+
+#include "core/input/input_event.h"
+
+int SceneDebugger::_mcp_key_name_to_keycode(const String &p_name) {
+	String name = p_name.to_lower().strip_edges();
+	if (name.length() == 1 && name[0] >= 'a' && name[0] <= 'z') {
+		return 65 + (name[0] - 'a');
+	}
+	if (name.length() == 1 && name[0] >= '0' && name[0] <= '9') {
+		return 48 + (name[0] - '0');
+	}
+	if (name.begins_with("f") && name.length() >= 2 && name.length() <= 3) {
+		String num_str = name.substr(1);
+		if (num_str.is_valid_int()) {
+			int n = num_str.to_int();
+			if (n >= 1 && n <= 12) {
+				return 4194332 + (n - 1);
+			}
+		}
+	}
+	if (name == "space") return 32;
+	if (name == "enter" || name == "return") return 4194309;
+	if (name == "escape" || name == "esc") return 4194305;
+	if (name == "tab") return 4194306;
+	if (name == "backspace") return 4194308;
+	if (name == "insert") return 4194311;
+	if (name == "delete") return 4194312;
+	if (name == "home") return 4194313;
+	if (name == "end") return 4194314;
+	if (name == "pageup" || name == "page_up") return 4194315;
+	if (name == "pagedown" || name == "page_down") return 4194316;
+	if (name == "left") return 4194319;
+	if (name == "up") return 4194320;
+	if (name == "right") return 4194321;
+	if (name == "down") return 4194322;
+	if (name == "shift") return 4194325;
+	if (name == "ctrl" || name == "control") return 4194326;
+	if (name == "alt") return 4194327;
+	if (name == "meta" || name == "super") return 4194328;
+	if (name == "capslock" || name == "caps_lock") return 4194329;
+	if (name == "numlock" || name == "num_lock") return 4194330;
+	if (name == "scrolllock" || name == "scroll_lock") return 4194331;
+	if (name == "pause") return 4194310;
+	if (name == "print_screen" || name == "printscreen") return 4194307;
+	if (name == "minus") return 45;
+	if (name == "equal") return 61;
+	if (name == "bracketleft") return 91;
+	if (name == "bracketright") return 93;
+	if (name == "backslash") return 92;
+	if (name == "semicolon") return 59;
+	if (name == "apostrophe") return 39;
+	if (name == "quoteleft") return 96;
+	if (name == "comma") return 44;
+	if (name == "period") return 46;
+	if (name == "slash") return 47;
+	return 0; // KEY_NONE
+}
+
+int SceneDebugger::_mcp_button_name_to_enum(const String &p_name) {
+	String name = p_name.to_lower().strip_edges();
+	if (name == "a") return 0;
+	if (name == "b") return 1;
+	if (name == "x") return 2;
+	if (name == "y") return 3;
+	if (name == "back") return 4;
+	if (name == "guide") return 5;
+	if (name == "start") return 6;
+	if (name == "left_stick") return 7;
+	if (name == "right_stick") return 8;
+	if (name == "left_shoulder" || name == "lb") return 9;
+	if (name == "right_shoulder" || name == "rb") return 10;
+	if (name == "dpad_up") return 11;
+	if (name == "dpad_down") return 12;
+	if (name == "dpad_left") return 13;
+	if (name == "dpad_right") return 14;
+	return -1;
+}
+
+int SceneDebugger::_mcp_axis_name_to_enum(const String &p_name) {
+	String name = p_name.to_lower().strip_edges();
+	if (name == "left_x") return 0;
+	if (name == "left_y") return 1;
+	if (name == "right_x") return 2;
+	if (name == "right_y") return 3;
+	if (name == "trigger_left" || name == "lt") return 4;
+	if (name == "trigger_right" || name == "rt") return 5;
+	return -1;
+}
+
+char32_t SceneDebugger::_mcp_keycode_to_unicode(int p_keycode) {
+	if (p_keycode >= 32 && p_keycode <= 126) {
+		return (char32_t)p_keycode;
+	}
+	return 0;
+}
+
+void SceneDebugger::_mcp_send_char_key(char32_t p_char, bool p_pressed) {
+	Ref<InputEventKey> ev;
+	ev.instantiate();
+
+	int keycode = 0;
+	if (p_char >= 'a' && p_char <= 'z') {
+		keycode = 65 + (p_char - 'a');
+	} else if (p_char >= 'A' && p_char <= 'Z') {
+		keycode = 65 + (p_char - 'A');
+		ev->set_shift_pressed(true);
+	} else if (p_char >= '0' && p_char <= '9') {
+		keycode = 48 + (p_char - '0');
+	} else if (p_char == ' ') {
+		keycode = 32;
+	} else if (p_char == '\n') {
+		keycode = 4194309;
+	} else if (p_char == '\t') {
+		keycode = 4194306;
+	}
+
+	ev->set_keycode((Key)keycode);
+	ev->set_physical_keycode((Key)keycode);
+	ev->set_unicode(p_char);
+	ev->set_pressed(p_pressed);
+	ev->set_echo(false);
+
+	Input::get_singleton()->parse_input_event(ev);
+}
+
+// --- Held Input Management ---
+
+void SceneDebugger::_mcp_ensure_held_tick_connected() {
+	if (_mcp_held_tick_connected) {
+		return;
+	}
+	SceneTree *st = SceneTree::get_singleton();
+	if (st) {
+		st->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_held_inputs_tick));
+		_mcp_held_tick_connected = true;
+	}
+}
+
+void SceneDebugger::_mcp_add_held_input(const MCPHeldInput &p_input) {
+	for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+		if (_mcp_held_inputs[i].name == p_input.name) {
+			_mcp_held_inputs.write[i] = p_input;
+			_mcp_ensure_held_tick_connected();
+			return;
+		}
+	}
+	_mcp_held_inputs.push_back(p_input);
+	_mcp_ensure_held_tick_connected();
+}
+
+void SceneDebugger::_mcp_remove_held_input(const String &p_name) {
+	for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+		if (_mcp_held_inputs[i].name == p_name) {
+			_mcp_held_inputs.remove_at(i);
+			return;
+		}
+	}
+}
+
+void SceneDebugger::_mcp_release_held_input(const MCPHeldInput &p_input) {
+	switch (p_input.type) {
+		case 0: { // Key
+			Ref<InputEventKey> ev;
+			ev.instantiate();
+			ev->set_keycode((Key)p_input.keycode);
+			ev->set_physical_keycode((Key)p_input.keycode);
+			ev->set_pressed(false);
+			ev->set_echo(false);
+			ev->set_unicode(_mcp_keycode_to_unicode(p_input.keycode));
+			ev->set_shift_pressed(p_input.modifier_flags & 1);
+			ev->set_ctrl_pressed(p_input.modifier_flags & 2);
+			ev->set_alt_pressed(p_input.modifier_flags & 4);
+			ev->set_meta_pressed(p_input.modifier_flags & 8);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+		case 1: { // Action
+			Ref<InputEventAction> ev;
+			ev.instantiate();
+			String action_name = p_input.name.substr(7); // Skip "action:"
+			ev->set_action(action_name);
+			ev->set_pressed(false);
+			ev->set_strength(0.0f);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+		case 2: { // Joypad button
+			Ref<InputEventJoypadButton> ev;
+			ev.instantiate();
+			ev->set_device(p_input.device);
+			ev->set_button_index((JoyButton)p_input.button_idx);
+			ev->set_pressed(false);
+			ev->set_pressure(0.0f);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+		case 3: { // Joypad axis -- reset to 0.
+			Ref<InputEventJoypadMotion> ev;
+			ev.instantiate();
+			ev->set_device(p_input.device);
+			ev->set_axis((JoyAxis)p_input.axis_idx);
+			ev->set_axis_value(0.0f);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+	}
+}
+
+void SceneDebugger::_mcp_held_inputs_tick() {
+	const int SAFETY_CEILING = 1800;
+
+	for (int i = _mcp_held_inputs.size() - 1; i >= 0; i--) {
+		MCPHeldInput &held = _mcp_held_inputs.write[i];
+		held.frames_held++;
+
+		bool should_release = false;
+		if (held.auto_release_at >= 0 && held.frames_held >= held.auto_release_at) {
+			should_release = true;
+		}
+		if (held.frames_held >= SAFETY_CEILING) {
+			should_release = true;
+		}
+
+		if (should_release) {
+			_mcp_release_held_input(held);
+			_mcp_held_inputs.remove_at(i);
+		}
+	}
+
+	if (_mcp_held_inputs.is_empty() && _mcp_held_tick_connected) {
+		SceneTree *st = SceneTree::get_singleton();
+		if (st && st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_held_inputs_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_held_inputs_tick));
+			_mcp_held_tick_connected = false;
+		}
+	}
+}
+
+// --- Text Typing Tick ---
+
+void SceneDebugger::_mcp_type_text_tick() {
+	if (_mcp_type_index >= _mcp_type_queue.length()) {
+		SceneTree *st = SceneTree::get_singleton();
+		if (st && st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_type_text_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_type_text_tick));
+			_mcp_type_tick_connected = false;
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back(_mcp_type_queue.length());
+		EngineDebugger::get_singleton()->send_message("mcp:type_text_done", result);
+		_mcp_type_queue = "";
+		return;
+	}
+
+	_mcp_type_frame_counter++;
+	if (_mcp_type_frame_counter < _mcp_type_interval) {
+		return;
+	}
+	_mcp_type_frame_counter = 0;
+
+	char32_t c = _mcp_type_queue[_mcp_type_index];
+	_mcp_send_char_key(c, true);
+	_mcp_send_char_key(c, false);
+	_mcp_type_index++;
+}
+
+// --- Sequence Execution ---
+
+void SceneDebugger::_mcp_sequence_execute_step() {
+	if (_mcp_sequence.current_step >= _mcp_sequence.steps.size()) {
+		_mcp_sequence_complete();
+		return;
+	}
+
+	Dictionary step = _mcp_sequence.steps[_mcp_sequence.current_step];
+	String step_type = String(step.get("type", "")).to_lower().strip_edges();
+
+	Dictionary step_result;
+	step_result["type"] = step_type;
+
+	if (step_type == "wait") {
+		int frames = (int)step.get("frames", 0);
+		step_result["frames"] = frames;
+		_mcp_sequence.results.push_back(step_result);
+		_mcp_sequence.wait_frames_remaining = frames;
+		_mcp_sequence.current_step++;
+		return;
+	}
+
+	if (step_type == "key") {
+		String key = String(step.get("key", "")).to_lower().strip_edges();
+		bool pressed = (bool)step.get("pressed", true);
+		int frames = (int)step.get("frames", 0);
+		int modifier_flags = 0;
+
+		if (step.has("modifiers")) {
+			Array modifiers = step["modifiers"];
+			for (int i = 0; i < modifiers.size(); i++) {
+				String mod = String(modifiers[i]).to_lower().strip_edges();
+				if (mod == "shift") modifier_flags |= 1;
+				else if (mod == "ctrl" || mod == "control") modifier_flags |= 2;
+				else if (mod == "alt") modifier_flags |= 4;
+				else if (mod == "meta" || mod == "super") modifier_flags |= 8;
+			}
+		}
+
+		int keycode = _mcp_key_name_to_keycode(key);
+
+		Ref<InputEventKey> ev;
+		ev.instantiate();
+		ev->set_keycode((Key)keycode);
+		ev->set_physical_keycode((Key)keycode);
+		ev->set_pressed(pressed);
+		ev->set_echo(false);
+		char32_t unicode = _mcp_keycode_to_unicode(keycode);
+		if (modifier_flags & 1) {
+			unicode = String::char_uppercase(unicode);
+		}
+		ev->set_unicode(unicode);
+		ev->set_shift_pressed(modifier_flags & 1);
+		ev->set_ctrl_pressed(modifier_flags & 2);
+		ev->set_alt_pressed(modifier_flags & 4);
+		ev->set_meta_pressed(modifier_flags & 8);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_key:" + key;
+			held.type = 0;
+			held.device = 0;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = keycode;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.modifier_flags = modifier_flags;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["key"] = key;
+		step_result["pressed"] = pressed;
+		if (frames > 0) step_result["frames"] = frames;
+
+	} else if (step_type == "action") {
+		String action = step.get("action", "");
+		bool pressed = (bool)step.get("pressed", true);
+		float strength = (float)(double)step.get("value", 1.0);
+		int frames = (int)step.get("frames", 0);
+
+		Ref<InputEventAction> ev;
+		ev.instantiate();
+		ev->set_action(action);
+		ev->set_pressed(pressed);
+		ev->set_strength(pressed ? strength : 0.0f);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_action:" + action;
+			held.type = 1;
+			held.device = 0;
+			held.value = strength;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["action"] = action;
+		step_result["pressed"] = pressed;
+		if (frames > 0) step_result["frames"] = frames;
+
+	} else if (step_type == "joypad_button") {
+		String button = String(step.get("button", "")).to_lower().strip_edges();
+		bool pressed = (bool)step.get("pressed", true);
+		int device = (int)step.get("device", 0);
+		int frames = (int)step.get("frames", 0);
+		int button_idx = _mcp_button_name_to_enum(button);
+
+		Ref<InputEventJoypadButton> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_button_index((JoyButton)button_idx);
+		ev->set_pressed(pressed);
+		ev->set_pressure(pressed ? 1.0f : 0.0f);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_joypad_button:" + button + ":" + itos(device);
+			held.type = 2;
+			held.device = device;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = 0;
+			held.button_idx = button_idx;
+			held.axis_idx = 0;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["button"] = button;
+		step_result["pressed"] = pressed;
+		if (frames > 0) step_result["frames"] = frames;
+
+	} else if (step_type == "joypad_axis") {
+		String axis = String(step.get("axis", "")).to_lower().strip_edges();
+		float value = (float)(double)step.get("value", 1.0);
+		int device = (int)step.get("device", 0);
+		int frames = (int)step.get("frames", 0);
+		int axis_idx = _mcp_axis_name_to_enum(axis);
+
+		Ref<InputEventJoypadMotion> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_axis((JoyAxis)axis_idx);
+		ev->set_axis_value(value);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_joypad_axis:" + axis + ":" + itos(device);
+			held.type = 3;
+			held.device = device;
+			held.value = value;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = axis_idx;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["axis"] = axis;
+		step_result["value"] = value;
+		if (frames > 0) step_result["frames"] = frames;
+	}
+
+	_mcp_sequence.results.push_back(step_result);
+	_mcp_sequence.current_step++;
+}
+
+void SceneDebugger::_mcp_sequence_tick() {
+	if (!_mcp_sequence.active) {
+		return;
+	}
+
+	if (_mcp_sequence.wait_frames_remaining > 0) {
+		_mcp_sequence.wait_frames_remaining--;
+		return;
+	}
+
+	// Execute steps until a wait or end of sequence.
+	_mcp_sequence_execute_step();
+}
+
+void SceneDebugger::_mcp_sequence_complete() {
+	_mcp_sequence.active = false;
+
+	SceneTree *st = SceneTree::get_singleton();
+	if (st && _mcp_sequence_tick_connected) {
+		if (st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick));
+		}
+		_mcp_sequence_tick_connected = false;
+	}
+
+	Array result;
+	result.push_back(true);
+	result.push_back(_mcp_sequence.results.size());
+	result.push_back(_mcp_sequence.results);
+	EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
 }
 
 Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured) {
@@ -3428,6 +3936,1066 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		Array arr;
 		tree.serialize(arr);
 		EngineDebugger::get_singleton()->send_message("mcp:scene_tree_result", arr);
+		return OK;
+	}
+
+	// --- get_scene_tree_browse ---
+	// Extended scene tree serialization for the browse tool.
+	// Sends 8 fields per node instead of 6:
+	//   [child_count, name, type_name, id, scene_file_path, view_flags, has_script, group_count]
+	// Data: [] (empty)
+	if (p_msg == "get_scene_tree_browse") {
+		Node *root = scene_tree->get_root();
+		ERR_FAIL_NULL_V(root, ERR_UNCONFIGURED);
+
+		// Depth-first serialization matching SceneDebuggerTree::serialize() order,
+		// but with two additional fields per node: has_script and group_count.
+		Array arr;
+		List<Node *> stack;
+		stack.push_back(root);
+		while (!stack.is_empty()) {
+			Node *node = stack.front()->get();
+			stack.pop_front();
+
+			int child_count = node->get_child_count();
+			arr.push_back(child_count);
+			arr.push_back(node->get_name());
+			arr.push_back(node->get_class());
+			arr.push_back(node->get_instance_id());
+			arr.push_back(node->get_scene_file_path());
+
+			// view_flags -- mirror SceneDebuggerTree logic exactly.
+			int view_flags = 0;
+			if (node != root && node->has_method(SNAME("is_visible"))) {
+				const Variant visible = node->call(SNAME("is_visible"));
+				if (visible.get_type() == Variant::BOOL) {
+					view_flags = SceneDebuggerTree::RemoteNode::VIEW_HAS_VISIBLE_METHOD;
+					view_flags |= uint8_t(visible) * SceneDebuggerTree::RemoteNode::VIEW_VISIBLE;
+				}
+				if (node->has_method(SNAME("is_visible_in_tree"))) {
+					const Variant visible_in_tree = node->call(SNAME("is_visible_in_tree"));
+					if (visible_in_tree.get_type() == Variant::BOOL) {
+						view_flags |= uint8_t(visible_in_tree) * SceneDebuggerTree::RemoteNode::VIEW_VISIBLE_IN_TREE;
+					}
+				}
+			}
+			arr.push_back(view_flags);
+
+			// Extended fields for browse tool.
+			arr.push_back(!node->get_script().is_null()); // has_script
+			// Count non-internal groups.
+			List<Node::GroupInfo> groups;
+			node->get_groups(&groups);
+			int user_group_count = 0;
+			for (const Node::GroupInfo &gi : groups) {
+				if (!gi.persistent) {
+					continue; // Skip internal/non-persistent groups.
+				}
+				user_group_count++;
+			}
+			arr.push_back(user_group_count); // group_count
+
+			// Push children in reverse order so first child is processed first.
+			for (int i = child_count - 1; i >= 0; i--) {
+				stack.push_front(node->get_child(i));
+			}
+		}
+
+		EngineDebugger::get_singleton()->send_message("mcp:browse_tree_result", arr);
+		return OK;
+	}
+
+	// --- ui_interact ---
+	// Data: [action: String, node_path: String, params: Dictionary]
+	// Single message type for all UI navigation/interaction tools.
+	if (p_msg == "ui_interact") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+
+		String ui_action = p_data[0];
+		String ui_node_path = p_data[1];
+		Dictionary ui_params = p_data[2];
+
+		// Helper lambdas for sending results.
+		auto send_ui_ok = [](const Dictionary &p_result_data) {
+			Array res;
+			res.push_back(true);
+			res.push_back(p_result_data);
+			EngineDebugger::get_singleton()->send_message("mcp:ui_interact_result", res);
+		};
+
+		auto send_ui_err = [](const String &p_error) {
+			Dictionary err_data;
+			err_data["error"] = p_error;
+			Array res;
+			res.push_back(false);
+			res.push_back(err_data);
+			EngineDebugger::get_singleton()->send_message("mcp:ui_interact_result", res);
+		};
+
+		// 1. Find the node.
+		Node *ui_node = scene_tree->get_root()->get_node_or_null(NodePath(ui_node_path));
+		if (!ui_node) {
+			send_ui_err("Node not found: " + ui_node_path +
+					"\n\nThe node may have been removed from the scene. "
+					"Use debug/search_scene_tree to find the correct path.");
+			return OK;
+		}
+
+		// 2. Cast to Control.
+		Control *ui_ctrl = Object::cast_to<Control>(ui_node);
+		if (!ui_ctrl) {
+			send_ui_err("Node is not a Control: " + ui_node_path +
+					" (type: " + ui_node->get_class() + ")");
+			return OK;
+		}
+
+		// 3. Build base info shared by all actions.
+		Dictionary ui_base;
+		ui_base["node_path"] = ui_node_path;
+		ui_base["class"] = ui_node->get_class();
+		ui_base["visible"] = ui_ctrl->is_visible();
+		ui_base["visible_in_tree"] = ui_ctrl->is_visible_in_tree();
+		ui_base["focused"] = ui_ctrl->has_focus();
+
+		Rect2 ui_r = ui_ctrl->get_global_rect();
+		Dictionary ui_rd;
+		ui_rd["x"] = ui_r.position.x;
+		ui_rd["y"] = ui_r.position.y;
+		ui_rd["width"] = ui_r.size.x;
+		ui_rd["height"] = ui_r.size.y;
+		ui_base["rect"] = ui_rd;
+
+		// ========== ACTION: get_info ==========
+		if (ui_action == "get_info") {
+			Dictionary ui_res = ui_base;
+			Dictionary cd;
+
+			LineEdit *le = Object::cast_to<LineEdit>(ui_ctrl);
+			TextEdit *te = Object::cast_to<TextEdit>(ui_ctrl);
+			BaseButton *bb = Object::cast_to<BaseButton>(ui_ctrl);
+			Range *rng = Object::cast_to<Range>(ui_ctrl);
+			OptionButton *ob = Object::cast_to<OptionButton>(ui_ctrl);
+			TabContainer *tc = Object::cast_to<TabContainer>(ui_ctrl);
+			TabBar *tb = Object::cast_to<TabBar>(ui_ctrl);
+			Label *lbl = Object::cast_to<Label>(ui_ctrl);
+			ItemList *il = Object::cast_to<ItemList>(ui_ctrl);
+			Tree *tr = Object::cast_to<Tree>(ui_ctrl);
+			ScrollContainer *sc = Object::cast_to<ScrollContainer>(ui_ctrl);
+
+			if (le) {
+				cd["text"] = le->get_text();
+				cd["placeholder"] = le->get_placeholder();
+				cd["max_length"] = le->get_max_length();
+				cd["editable"] = le->is_editable();
+				cd["secret"] = le->is_secret();
+				cd["caret_column"] = le->get_caret_column();
+			} else if (te) {
+				cd["text"] = te->get_text();
+				cd["line_count"] = te->get_line_count();
+				cd["editable"] = te->is_editable();
+				cd["caret_line"] = te->get_caret_line();
+				cd["caret_column"] = te->get_caret_column();
+				cd["has_selection"] = te->has_selection();
+				cd["selected_text"] = te->has_selection() ? te->get_selected_text() : String();
+			} else if (ob) {
+				// OptionButton before BaseButton since it inherits from it.
+				cd["selected_index"] = ob->get_selected();
+				cd["selected_text"] = ob->get_selected() >= 0 ? ob->get_item_text(ob->get_selected()) : String();
+				cd["item_count"] = ob->get_item_count();
+				cd["text"] = ob->get_text();
+				cd["pressed"] = ob->is_pressed();
+				cd["toggle_mode"] = ob->is_toggle_mode();
+				cd["disabled"] = ob->is_disabled();
+			} else if (bb) {
+				Button *btn = Object::cast_to<Button>(ui_ctrl);
+				if (btn) {
+					cd["text"] = btn->get_text();
+				}
+				cd["pressed"] = bb->is_pressed();
+				cd["toggle_mode"] = bb->is_toggle_mode();
+				cd["disabled"] = bb->is_disabled();
+				if (Object::cast_to<CheckBox>(ui_ctrl) || Object::cast_to<CheckButton>(ui_ctrl)) {
+					cd["checked"] = bb->is_pressed();
+				}
+			} else if (rng) {
+				cd["value"] = rng->get_value();
+				cd["min_value"] = rng->get_min();
+				cd["max_value"] = rng->get_max();
+				cd["step"] = rng->get_step();
+				double rs = rng->get_max() - rng->get_min();
+				cd["ratio"] = rs > 0.0 ? (rng->get_value() - rng->get_min()) / rs : 0.0;
+				Slider *sl = Object::cast_to<Slider>(ui_ctrl);
+				SpinBox *sbx = Object::cast_to<SpinBox>(ui_ctrl);
+				if (sl) {
+					cd["editable"] = sl->is_editable();
+				} else if (sbx) {
+					cd["editable"] = sbx->is_editable();
+				} else {
+					cd["editable"] = true; // Default for Range subclasses without is_editable.
+				}
+				if (sbx) {
+					cd["prefix"] = sbx->get_prefix();
+					cd["suffix"] = sbx->get_suffix();
+				}
+			} else if (tc) {
+				cd["current_tab"] = tc->get_current_tab();
+				cd["tab_count"] = tc->get_tab_count();
+				Array tn;
+				for (int i = 0; i < tc->get_tab_count(); i++) {
+					tn.push_back(tc->get_tab_title(i));
+				}
+				cd["tab_names"] = tn;
+			} else if (tb) {
+				cd["current_tab"] = tb->get_current_tab();
+				cd["tab_count"] = tb->get_tab_count();
+				Array tn;
+				for (int i = 0; i < tb->get_tab_count(); i++) {
+					tn.push_back(tb->get_tab_title(i));
+				}
+				cd["tab_names"] = tn;
+			} else if (il) {
+				cd["item_count"] = il->get_item_count();
+				Array si;
+				for (int i = 0; i < il->get_item_count(); i++) {
+					if (il->is_selected(i)) {
+						si.push_back(i);
+					}
+				}
+				cd["selected_indices"] = si;
+				cd["max_columns"] = il->get_max_columns();
+			} else if (tr) {
+				TreeItem *sel = tr->get_selected();
+				cd["selected_item_text"] = sel ? sel->get_text(0) : String();
+				cd["column_count"] = tr->get_columns();
+				Array ct;
+				for (int i = 0; i < tr->get_columns(); i++) {
+					ct.push_back(tr->get_column_title(i));
+				}
+				cd["column_titles"] = ct;
+			} else if (sc) {
+				cd["scroll_h"] = sc->get_h_scroll();
+				cd["scroll_v"] = sc->get_v_scroll();
+			} else if (lbl) {
+				cd["text"] = lbl->get_text();
+				cd["visible_characters"] = lbl->get_visible_characters();
+				cd["autowrap_mode"] = (int)lbl->get_autowrap_mode();
+			}
+
+			ui_res["control_data"] = cd;
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_text ==========
+		if (ui_action == "set_text") {
+			String mode = ui_params.get("mode", "replace");
+			String text = ui_params.get("text", "");
+			bool do_focus = ui_params.get("focus", true);
+
+			LineEdit *le = Object::cast_to<LineEdit>(ui_ctrl);
+			TextEdit *te = Object::cast_to<TextEdit>(ui_ctrl);
+
+			if (!le && !te) {
+				send_ui_err("Expected LineEdit or TextEdit but found " +
+						ui_node->get_class() + " at " + ui_node_path +
+						"\n\nUse debug/ui_get_control_info to check the control type.");
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["mode"] = mode;
+
+			if (le) {
+				if (!le->is_editable()) {
+					send_ui_err("Control is not editable: " + ui_node_path);
+					return OK;
+				}
+				ui_res["previous_text"] = le->get_text();
+				if (do_focus) {
+					le->grab_focus();
+				}
+				if (mode == "replace") {
+					le->set_text(text);
+					le->emit_signal(SNAME("text_changed"), text);
+				} else if (mode == "clear") {
+					le->set_text("");
+					le->emit_signal(SNAME("text_changed"), String());
+				} else if (mode == "append") {
+					String cur = le->get_text();
+					String nt = cur + text;
+					le->set_text(nt);
+					le->emit_signal(SNAME("text_changed"), nt);
+				} else if (mode == "insert") {
+					int caret = le->get_caret_column();
+					String cur = le->get_text();
+					String nt = cur.insert(caret, text);
+					le->set_text(nt);
+					le->set_caret_column(caret + text.length());
+					le->emit_signal(SNAME("text_changed"), nt);
+				} else {
+					send_ui_err("Unknown text mode: '" + mode + "'. Valid: replace, append, insert, clear");
+					return OK;
+				}
+				ui_res["current_text"] = le->get_text();
+				ui_res["caret_column"] = le->get_caret_column();
+				ui_res["focused"] = le->has_focus();
+			}
+
+			if (te) {
+				if (!te->is_editable()) {
+					send_ui_err("Control is not editable: " + ui_node_path);
+					return OK;
+				}
+				ui_res["previous_text"] = te->get_text();
+				if (do_focus) {
+					te->grab_focus();
+				}
+				if (mode == "replace") {
+					te->set_text(text);
+				} else if (mode == "clear") {
+					te->set_text("");
+				} else if (mode == "append") {
+					String cur = te->get_text();
+					te->set_text(cur + text);
+				} else if (mode == "insert") {
+					te->insert_text_at_caret(text);
+				} else {
+					send_ui_err("Unknown text mode: '" + mode + "'. Valid: replace, append, insert, clear");
+					return OK;
+				}
+				ui_res["current_text"] = te->get_text();
+				ui_res["line_count"] = te->get_line_count();
+				ui_res["caret_line"] = te->get_caret_line();
+				ui_res["caret_column"] = te->get_caret_column();
+				ui_res["focused"] = te->has_focus();
+			}
+
+			ui_res["success"] = true;
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_text ==========
+		if (ui_action == "get_text") {
+			bool sel_only = ui_params.get("selection_only", false);
+
+			LineEdit *le = Object::cast_to<LineEdit>(ui_ctrl);
+			TextEdit *te = Object::cast_to<TextEdit>(ui_ctrl);
+
+			if (!le && !te) {
+				send_ui_err("Expected LineEdit or TextEdit but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+
+			if (le) {
+				ui_res["text"] = (sel_only && le->has_selection()) ? le->get_selected_text() : le->get_text();
+				ui_res["has_selection"] = le->has_selection();
+				ui_res["caret_column"] = le->get_caret_column();
+			}
+
+			if (te) {
+				ui_res["text"] = (sel_only && te->has_selection()) ? te->get_selected_text() : te->get_text();
+				ui_res["line_count"] = te->get_line_count();
+				ui_res["caret_line"] = te->get_caret_line();
+				ui_res["caret_column"] = te->get_caret_column();
+				ui_res["has_selection"] = te->has_selection();
+				ui_res["selected_text"] = te->has_selection() ? te->get_selected_text() : String();
+			}
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_range ==========
+		if (ui_action == "set_range") {
+			Range *rng = Object::cast_to<Range>(ui_ctrl);
+			if (!rng) {
+				send_ui_err("Expected a Range-based control (HSlider, VSlider, SpinBox, ProgressBar) but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+			{
+				Slider *sl = Object::cast_to<Slider>(ui_ctrl);
+				SpinBox *sbx = Object::cast_to<SpinBox>(ui_ctrl);
+				bool editable = true;
+				if (sl) {
+					editable = sl->is_editable();
+				} else if (sbx) {
+					editable = sbx->is_editable();
+				}
+				if (!editable) {
+					send_ui_err("Control is not editable: " + ui_node_path);
+					return OK;
+				}
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_value"] = rng->get_value();
+
+			if (ui_params.has("value")) {
+				rng->set_value((double)ui_params["value"]);
+			} else if (ui_params.has("ratio")) {
+				double ratio = CLAMP((double)ui_params["ratio"], 0.0, 1.0);
+				rng->set_value(rng->get_min() + ratio * (rng->get_max() - rng->get_min()));
+			} else if (ui_params.has("delta")) {
+				rng->set_value(rng->get_value() + (double)ui_params["delta"]);
+			}
+
+			ui_res["current_value"] = rng->get_value();
+			ui_res["min_value"] = rng->get_min();
+			ui_res["max_value"] = rng->get_max();
+			ui_res["step"] = rng->get_step();
+			double rs = rng->get_max() - rng->get_min();
+			ui_res["ratio"] = rs > 0.0 ? (rng->get_value() - rng->get_min()) / rs : 0.0;
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_range ==========
+		if (ui_action == "get_range") {
+			Range *rng = Object::cast_to<Range>(ui_ctrl);
+			if (!rng) {
+				send_ui_err("Expected a Range-based control but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["value"] = rng->get_value();
+			ui_res["min_value"] = rng->get_min();
+			ui_res["max_value"] = rng->get_max();
+			ui_res["step"] = rng->get_step();
+			double rs = rng->get_max() - rng->get_min();
+			ui_res["ratio"] = rs > 0.0 ? (rng->get_value() - rng->get_min()) / rs : 0.0;
+			{
+				Slider *sl = Object::cast_to<Slider>(ui_ctrl);
+				SpinBox *sbx = Object::cast_to<SpinBox>(ui_ctrl);
+				if (sl) {
+					ui_res["editable"] = sl->is_editable();
+				} else if (sbx) {
+					ui_res["editable"] = sbx->is_editable();
+				} else {
+					ui_res["editable"] = true;
+				}
+			}
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: select_option ==========
+		if (ui_action == "select_option") {
+			OptionButton *ob = Object::cast_to<OptionButton>(ui_ctrl);
+			if (!ob) {
+				send_ui_err("Expected OptionButton but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+			if (ob->is_disabled()) {
+				send_ui_err("Control is disabled: " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_index"] = ob->get_selected();
+			ui_res["previous_text"] = ob->get_selected() >= 0 ? ob->get_item_text(ob->get_selected()) : String();
+
+			int tidx = -1;
+			if (ui_params.has("index")) {
+				tidx = (int)ui_params["index"];
+				if (tidx < 0 || tidx >= ob->get_item_count()) {
+					send_ui_err("Index " + itos(tidx) + " is out of range for OptionButton with " +
+							itos(ob->get_item_count()) + " items (valid: 0-" +
+							itos(ob->get_item_count() - 1) + ") at " + ui_node_path);
+					return OK;
+				}
+			} else if (ui_params.has("text")) {
+				String mt = String(ui_params["text"]).to_lower();
+				for (int i = 0; i < ob->get_item_count(); i++) {
+					if (ob->get_item_text(i).to_lower() == mt) {
+						tidx = i;
+						break;
+					}
+				}
+				if (tidx < 0) {
+					String il;
+					for (int i = 0; i < ob->get_item_count(); i++) {
+						if (i > 0) {
+							il += ", ";
+						}
+						il += ob->get_item_text(i);
+					}
+					send_ui_err("No item with text matching '" + String(ui_params["text"]) +
+							"' found in OptionButton at " + ui_node_path +
+							"\n\nAvailable items: " + il +
+							"\n\nUse debug/ui_get_options to see all items.");
+					return OK;
+				}
+			}
+
+			ob->select(tidx);
+			ob->emit_signal(SNAME("item_selected"), tidx);
+
+			ui_res["selected_index"] = ob->get_selected();
+			ui_res["selected_text"] = ob->get_item_text(tidx);
+			ui_res["item_count"] = ob->get_item_count();
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_options ==========
+		if (ui_action == "get_options") {
+			OptionButton *ob = Object::cast_to<OptionButton>(ui_ctrl);
+			if (!ob) {
+				send_ui_err("Expected OptionButton but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["selected_index"] = ob->get_selected();
+			ui_res["selected_text"] = ob->get_selected() >= 0 ? ob->get_item_text(ob->get_selected()) : String();
+
+			Array items;
+			for (int i = 0; i < ob->get_item_count(); i++) {
+				Dictionary item;
+				item["index"] = i;
+				item["text"] = ob->get_item_text(i);
+				item["disabled"] = ob->is_item_disabled(i);
+				item["separator"] = ob->is_item_separator(i);
+				items.push_back(item);
+			}
+			ui_res["items"] = items;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_tab ==========
+		if (ui_action == "set_tab") {
+			TabContainer *tc = Object::cast_to<TabContainer>(ui_ctrl);
+			TabBar *tb = Object::cast_to<TabBar>(ui_ctrl);
+
+			if (!tc && !tb) {
+				send_ui_err("Expected TabContainer or TabBar but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			int tc_n = tc ? tc->get_tab_count() : tb->get_tab_count();
+			int cur_t = tc ? tc->get_current_tab() : tb->get_current_tab();
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_tab"] = cur_t;
+
+			int ttab = -1;
+			if (ui_params.has("index")) {
+				ttab = (int)ui_params["index"];
+				if (ttab < 0 || ttab >= tc_n) {
+					send_ui_err("Tab index " + itos(ttab) + " is out of range (valid: 0-" +
+							itos(tc_n - 1) + ") at " + ui_node_path);
+					return OK;
+				}
+			} else if (ui_params.has("title")) {
+				String mtitle = String(ui_params["title"]).to_lower();
+				for (int i = 0; i < tc_n; i++) {
+					String ttl = tc ? tc->get_tab_title(i) : tb->get_tab_title(i);
+					if (ttl.to_lower() == mtitle) {
+						ttab = i;
+						break;
+					}
+				}
+				if (ttab < 0) {
+					String tl;
+					for (int i = 0; i < tc_n; i++) {
+						if (i > 0) {
+							tl += ", ";
+						}
+						tl += tc ? tc->get_tab_title(i) : tb->get_tab_title(i);
+					}
+					send_ui_err("No tab with title matching '" + String(ui_params["title"]) +
+							"' found at " + ui_node_path +
+							"\n\nAvailable tabs: " + tl +
+							"\n\nUse debug/ui_get_tabs to see all tabs.");
+					return OK;
+				}
+			}
+
+			if (tc) {
+				tc->set_current_tab(ttab);
+			} else {
+				tb->set_current_tab(ttab);
+			}
+
+			Array tab_titles;
+			for (int i = 0; i < tc_n; i++) {
+				tab_titles.push_back(tc ? tc->get_tab_title(i) : tb->get_tab_title(i));
+			}
+
+			int nt = tc ? tc->get_current_tab() : tb->get_current_tab();
+			ui_res["current_tab"] = nt;
+			ui_res["current_tab_title"] = tc ? tc->get_tab_title(nt) : tb->get_tab_title(nt);
+			ui_res["tab_count"] = tc_n;
+			ui_res["tab_titles"] = tab_titles;
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_tabs ==========
+		if (ui_action == "get_tabs") {
+			TabContainer *tc = Object::cast_to<TabContainer>(ui_ctrl);
+			TabBar *tb = Object::cast_to<TabBar>(ui_ctrl);
+
+			if (!tc && !tb) {
+				send_ui_err("Expected TabContainer or TabBar but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			int tc_n = tc ? tc->get_tab_count() : tb->get_tab_count();
+			int cur_t = tc ? tc->get_current_tab() : tb->get_current_tab();
+
+			Dictionary ui_res = ui_base;
+			ui_res["current_tab"] = cur_t;
+			ui_res["tab_count"] = tc_n;
+
+			Array tabs;
+			for (int i = 0; i < tc_n; i++) {
+				Dictionary tab;
+				tab["index"] = i;
+				tab["title"] = tc ? tc->get_tab_title(i) : tb->get_tab_title(i);
+				tab["disabled"] = tc ? tc->is_tab_disabled(i) : tb->is_tab_disabled(i);
+				tab["hidden"] = tc ? tc->is_tab_hidden(i) : tb->is_tab_hidden(i);
+				tabs.push_back(tab);
+			}
+			ui_res["tabs"] = tabs;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_checked ==========
+		if (ui_action == "set_checked") {
+			BaseButton *bb = Object::cast_to<BaseButton>(ui_ctrl);
+			if (!bb) {
+				send_ui_err("Expected CheckBox, CheckButton, or BaseButton but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+			if (bb->is_disabled()) {
+				send_ui_err("Control is disabled: " + ui_node_path);
+				return OK;
+			}
+			if (!bb->is_toggle_mode()) {
+				send_ui_err("Control at " + ui_node_path + " does not have toggle_mode enabled. "
+						"set_checked only works on toggle-mode buttons (CheckBox, CheckButton, etc.).");
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_checked"] = bb->is_pressed();
+
+			if (ui_params.has("checked")) {
+				bb->set_pressed((bool)ui_params["checked"]);
+			} else {
+				bb->set_pressed(!bb->is_pressed());
+			}
+
+			bb->emit_signal(SNAME("toggled"), bb->is_pressed());
+
+			ui_res["current_checked"] = bb->is_pressed();
+			Button *btn = Object::cast_to<Button>(ui_ctrl);
+			if (btn) {
+				ui_res["text"] = btn->get_text();
+			}
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: focus ==========
+		if (ui_action == "focus") {
+			String focus_act = ui_params.get("action", "grab");
+			Dictionary ui_res = ui_base;
+
+			if (focus_act == "grab") {
+				if (ui_ctrl->get_focus_mode() == Control::FOCUS_NONE) {
+					ui_res["warning"] = "Control has focus_mode=NONE; focus was not changed";
+					ui_res["focused"] = ui_ctrl->has_focus();
+					ui_res["focus_mode"] = "none";
+					ui_res["success"] = true;
+					send_ui_ok(ui_res);
+					return OK;
+				}
+				ui_ctrl->grab_focus();
+			} else if (focus_act == "release") {
+				ui_ctrl->release_focus();
+			} else {
+				send_ui_err("Unknown focus action: '" + focus_act + "'. Valid: grab, release");
+				return OK;
+			}
+
+			ui_res["focused"] = ui_ctrl->has_focus();
+			String fm_str;
+			switch (ui_ctrl->get_focus_mode()) {
+				case Control::FOCUS_NONE:
+					fm_str = "none";
+					break;
+				case Control::FOCUS_CLICK:
+					fm_str = "click";
+					break;
+				case Control::FOCUS_ALL:
+					fm_str = "all";
+					break;
+				default:
+					fm_str = "unknown";
+					break;
+			}
+			ui_res["focus_mode"] = fm_str;
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// Unknown UI action.
+		send_ui_err("Unknown UI action: " + ui_action);
+		return OK;
+	}
+
+	// --- inject_key ---
+	// Data: [key_name: String, pressed: bool, hold_frames: int, modifier_flags: int, echo: bool]
+	if (p_msg == "inject_key") {
+		ERR_FAIL_COND_V(p_data.size() < 5, ERR_INVALID_DATA);
+
+		String key_name = String(p_data[0]).to_lower().strip_edges();
+		bool pressed = p_data[1];
+		int hold_frames = p_data[2];
+		int modifier_flags = p_data[3];
+		bool echo = p_data[4];
+
+		int keycode = _mcp_key_name_to_keycode(key_name);
+		if (keycode < 0) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Unknown key name: " + key_name);
+			EngineDebugger::get_singleton()->send_message("mcp:key_done", result);
+			return OK;
+		}
+
+		Ref<InputEventKey> ev;
+		ev.instantiate();
+		ev->set_keycode((Key)keycode);
+		ev->set_physical_keycode((Key)keycode);
+		ev->set_pressed(pressed);
+		ev->set_echo(echo);
+		char32_t unicode = _mcp_keycode_to_unicode(keycode);
+		if (modifier_flags & 1) { // Shift
+			unicode = String::char_uppercase(unicode);
+		}
+		ev->set_unicode(unicode);
+		ev->set_shift_pressed(modifier_flags & 1);
+		ev->set_ctrl_pressed(modifier_flags & 2);
+		ev->set_alt_pressed(modifier_flags & 4);
+		ev->set_meta_pressed(modifier_flags & 8);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "key:" + key_name;
+			held.type = 0; // Key
+			held.device = 0;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = keycode;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.modifier_flags = modifier_flags;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:key_done", result);
+		return OK;
+	}
+
+	// --- inject_joypad_button ---
+	// Data: [button_name: String, pressed: bool, hold_frames: int, device: int]
+	if (p_msg == "inject_joypad_button") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+
+		String button_name = String(p_data[0]).to_lower().strip_edges();
+		bool pressed = p_data[1];
+		int hold_frames = p_data[2];
+		int device = p_data[3];
+
+		int button_idx = _mcp_button_name_to_enum(button_name);
+		if (button_idx < 0) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Unknown joypad button: " + button_name);
+			EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+			return OK;
+		}
+
+		Ref<InputEventJoypadButton> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_button_index((JoyButton)button_idx);
+		ev->set_pressed(pressed);
+		ev->set_pressure(pressed ? 1.0f : 0.0f);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "joypad_button:" + button_name + ":" + itos(device);
+			held.type = 2; // Joypad button
+			held.device = device;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = 0;
+			held.button_idx = button_idx;
+			held.axis_idx = 0;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+		return OK;
+	}
+
+	// --- inject_joypad_axis ---
+	// Data: [axis_name: String, value: float, hold_frames: int, device: int]
+	if (p_msg == "inject_joypad_axis") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+
+		String axis_name = String(p_data[0]).to_lower().strip_edges();
+		float value = p_data[1];
+		int hold_frames = p_data[2];
+		int device = p_data[3];
+
+		int axis_idx = _mcp_axis_name_to_enum(axis_name);
+		if (axis_idx < 0) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Unknown joypad axis: " + axis_name);
+			EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+			return OK;
+		}
+
+		Ref<InputEventJoypadMotion> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_axis((JoyAxis)axis_idx);
+		ev->set_axis_value(value);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "joypad_axis:" + axis_name + ":" + itos(device);
+			held.type = 3; // Joypad axis
+			held.device = device;
+			held.value = value;
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = axis_idx;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+		return OK;
+	}
+
+	// --- type_text ---
+	// Data: [text: String, interval_frames: int]
+	if (p_msg == "type_text") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+
+		String text = p_data[0];
+		int interval_frames = p_data[1];
+
+		if (text.is_empty()) {
+			Array result;
+			result.push_back(true);
+			result.push_back(0);
+			EngineDebugger::get_singleton()->send_message("mcp:type_text_done", result);
+			return OK;
+		}
+
+		if (interval_frames <= 0) {
+			// Immediate typing -- send all characters at once.
+			for (int i = 0; i < text.length(); i++) {
+				char32_t c = text[i];
+				_mcp_send_char_key(c, true);
+				_mcp_send_char_key(c, false);
+			}
+
+			Array result;
+			result.push_back(true);
+			result.push_back(text.length());
+			EngineDebugger::get_singleton()->send_message("mcp:type_text_done", result);
+			return OK;
+		}
+
+		// Interval-based typing: queue the text and connect the tick.
+		_mcp_type_queue = text;
+		_mcp_type_index = 0;
+		_mcp_type_interval = interval_frames;
+		_mcp_type_frame_counter = interval_frames; // Fire on first tick.
+
+		if (!_mcp_type_tick_connected) {
+			scene_tree->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_type_text_tick));
+			_mcp_type_tick_connected = true;
+		}
+
+		return OK;
+	}
+
+	// --- run_input_sequence ---
+	// Data: [steps: Array]
+	if (p_msg == "run_input_sequence") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		Array steps = p_data[0];
+
+		if (steps.is_empty()) {
+			Array result;
+			result.push_back(true);
+			result.push_back(0);
+			result.push_back(Array());
+			EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+			return OK;
+		}
+
+		// Validate steps before starting.
+		for (int i = 0; i < steps.size(); i++) {
+			if (steps[i].get_type() != Variant::DICTIONARY) {
+				Array result;
+				result.push_back(false);
+				result.push_back(0);
+				Array err_details;
+				Dictionary err;
+				err["error"] = "Step " + itos(i) + " is not a dictionary.";
+				err_details.push_back(err);
+				result.push_back(err_details);
+				EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+				return OK;
+			}
+			Dictionary step = steps[i];
+			String step_type = String(step.get("type", "")).to_lower().strip_edges();
+			if (step_type != "key" && step_type != "action" && step_type != "joypad_button" &&
+					step_type != "joypad_axis" && step_type != "wait") {
+				Array result;
+				result.push_back(false);
+				result.push_back(0);
+				Array err_details;
+				Dictionary err;
+				err["error"] = "Step " + itos(i) + " has unknown type: '" + step_type + "'. Valid types: key, action, joypad_button, joypad_axis, wait";
+				err_details.push_back(err);
+				result.push_back(err_details);
+				EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+				return OK;
+			}
+		}
+
+		// Abort any previously running sequence.
+		if (_mcp_sequence.active) {
+			_mcp_sequence.active = false;
+			if (_mcp_sequence_tick_connected) {
+				if (scene_tree->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick))) {
+					scene_tree->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick));
+				}
+				_mcp_sequence_tick_connected = false;
+			}
+		}
+
+		// Initialize sequence state.
+		_mcp_sequence.steps = steps;
+		_mcp_sequence.current_step = 0;
+		_mcp_sequence.wait_frames_remaining = 0;
+		_mcp_sequence.results.clear();
+		_mcp_sequence.active = true;
+
+		// Connect tick and execute the first step immediately.
+		if (!_mcp_sequence_tick_connected) {
+			scene_tree->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick));
+			_mcp_sequence_tick_connected = true;
+		}
+
+		_mcp_sequence_execute_step();
+		return OK;
+	}
+
+	// --- get_held_inputs ---
+	// Data: [release_all: bool]
+	if (p_msg == "get_held_inputs") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		bool release_all = p_data[0];
+
+		Array held_list;
+		for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+			const MCPHeldInput &held = _mcp_held_inputs[i];
+			Dictionary entry;
+			entry["name"] = held.name;
+
+			switch (held.type) {
+				case 0: entry["type"] = "key"; break;
+				case 1: entry["type"] = "action"; break;
+				case 2: entry["type"] = "joypad_button"; break;
+				case 3: entry["type"] = "joypad_axis"; break;
+				default: entry["type"] = "unknown"; break;
+			}
+
+			entry["frames_held"] = held.frames_held;
+			entry["auto_release_at"] = held.auto_release_at;
+
+			if (held.type == 3) { // Joypad axis
+				entry["value"] = held.value;
+			}
+			if (held.device != 0) {
+				entry["device"] = held.device;
+			}
+
+			held_list.push_back(entry);
+		}
+
+		int released_count = 0;
+		if (release_all) {
+			released_count = _mcp_held_inputs.size();
+			for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+				_mcp_release_held_input(_mcp_held_inputs[i]);
+			}
+			_mcp_held_inputs.clear();
+		}
+
+		Array result;
+		result.push_back(held_list);
+		result.push_back(released_count);
+		EngineDebugger::get_singleton()->send_message("mcp:held_inputs_result", result);
 		return OK;
 	}
 

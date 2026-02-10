@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_ui_tools.h                                                        */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,70 +30,42 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#include "core/variant/dictionary.h"
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+class MCPToolRegistry;
 
-class Button;
+class MCPUITools {
+public:
+	// Register all UI navigation/interaction tools into the registry.
+	static void register_tools(MCPToolRegistry *p_registry);
 
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#endif
+	// --- Read-Only Inspection ---
+	static Dictionary handle_get_control_info(const Dictionary &p_args);
+	static Dictionary handle_get_text(const Dictionary &p_args);
+	static Dictionary handle_get_range_value(const Dictionary &p_args);
+	static Dictionary handle_get_options(const Dictionary &p_args);
+	static Dictionary handle_get_tabs(const Dictionary &p_args);
 
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+	// --- Write/Interaction ---
+	static Dictionary handle_set_text(const Dictionary &p_args);
+	static Dictionary handle_set_range_value(const Dictionary &p_args);
+	static Dictionary handle_select_option(const Dictionary &p_args);
+	static Dictionary handle_set_tab(const Dictionary &p_args);
+	static Dictionary handle_set_checked(const Dictionary &p_args);
+	static Dictionary handle_focus(const Dictionary &p_args);
 
 private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+	// Helper: get the MCPDebuggerBridge pointer, or return nullptr.
+	static class MCPDebuggerBridge *_get_bridge();
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
+	// Helper: check game is running, return error dict if not.
+	// Returns empty Dictionary if game IS running (meaning: proceed).
+	static Dictionary _require_game_running();
 
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
+	// Helper: validate node_path contains only safe characters.
+	static bool _validate_node_path(const String &p_path);
 
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#endif
-
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
-public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
-
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port for the panel.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	bool is_started() const { return started; }
+	// Helper: send a UI interact request via bridge and return the result.
+	static Dictionary _send_ui_request(const String &p_action,
+			const String &p_node_path, const Dictionary &p_params);
 };
