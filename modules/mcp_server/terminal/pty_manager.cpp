@@ -49,6 +49,8 @@
 #include <termios.h>
 #include <unistd.h>
 
+extern char **environ;
+
 PTYManager::PTYManager() {
 }
 
