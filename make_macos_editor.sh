@@ -2,7 +2,7 @@
 set -e
 
 # Godot Engine [FI] — macOS Editor (arm64)
-BUILD_NAME=fi scons platform=macos arch=arm64 dev_build=true extra_suffix=fi -j$(nproc)
+BUILD_NAME=fi scons platform=macos arch=arm64 dev_build=true extra_suffix=fi -j$(sysctl -n hw.ncpu)
 
 # Bundle as "Godot FI.app" so it sits alongside stock Godot.app
 rm -rf "./Godot FI.app"
