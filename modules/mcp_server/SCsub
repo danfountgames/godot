@@ -20,7 +20,7 @@ if env["platform"] != "windows" and env["platform"] != "web":
     thirdparty_sources = [
         "src/encoding.c",
         "src/keyboard.c",
-        "src/mouse.c",
+        # mouse.c omitted -- we don't use vterm_mouse_move/button.
         "src/parser.c",
         "src/pen.c",
         "src/screen.c",
