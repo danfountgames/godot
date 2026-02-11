@@ -32,6 +32,7 @@
 
 #ifdef TOOLS_ENABLED
 #include "editor/mcp_status_panel.h"
+#include "scene/gui/tab_container.h"
 #ifdef MCP_TERMINAL_ENABLED
 #include "terminal/agent_panel.h"
 #endif
@@ -72,19 +73,26 @@ MCPServerPlugin::MCPServerPlugin() {
 	protocol.set_debugger_bridge(debugger_bridge.ptr());
 
 #ifdef TOOLS_ENABLED
-	// Create and register the MCP status bottom panel.
+	// Create a single "AI" bottom panel with tabs for Agent and MCP Status.
+	ai_tab_container = memnew(TabContainer);
+	ai_tab_container->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+	ai_tab_container->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+
+#ifdef MCP_TERMINAL_ENABLED
+	agent_panel = memnew(AgentPanel);
+	agent_panel->set_server_plugin(this);
+	agent_panel->set_name("Agent");
+	ai_tab_container->add_child(agent_panel);
+#endif
+
 	status_panel = memnew(MCPStatusPanel);
 	status_panel->set_protocol(&protocol);
 	status_panel->set_debugger_bridge(debugger_bridge.ptr());
 	status_panel->set_server_plugin(this);
-	panel_button = add_control_to_bottom_panel(status_panel, "MCP");
+	status_panel->set_name("MCP Status");
+	ai_tab_container->add_child(status_panel);
 
-#ifdef MCP_TERMINAL_ENABLED
-	// Create and register the Agent terminal bottom panel.
-	agent_panel = memnew(AgentPanel);
-	agent_panel->set_server_plugin(this);
-	agent_panel_button = add_control_to_bottom_panel(agent_panel, "Agent");
-#endif
+	panel_button = add_control_to_bottom_panel(ai_tab_container, "AI");
 #endif
 
 	set_process_internal(true);
@@ -96,16 +104,14 @@ MCPServerPlugin::~MCPServerPlugin() {
 	}
 
 #ifdef TOOLS_ENABLED
+	if (ai_tab_container) {
+		remove_control_from_bottom_panel(ai_tab_container);
+		memdelete(ai_tab_container);
+		ai_tab_container = nullptr;
+		// Children (agent_panel, status_panel) are freed by the TabContainer.
 #ifdef MCP_TERMINAL_ENABLED
-	if (agent_panel) {
-		remove_control_from_bottom_panel(agent_panel);
-		memdelete(agent_panel);
 		agent_panel = nullptr;
-	}
 #endif
-	if (status_panel) {
-		remove_control_from_bottom_panel(status_panel);
-		memdelete(status_panel);
 		status_panel = nullptr;
 	}
 #endif

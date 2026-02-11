@@ -35,6 +35,7 @@
 #include "core/input/input_event.h"
 #include "core/os/keyboard.h"
 #include "scene/theme/theme_db.h"
+#include "servers/display/display_server.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // Constructor / Destructor
@@ -43,6 +44,8 @@
 TerminalWidget::TerminalWidget() {
 	set_focus_mode(FOCUS_ALL);
 	set_clip_contents(true);
+	set_mouse_filter(MOUSE_FILTER_STOP);
+	set_force_pass_scroll_events(false);
 }
 
 TerminalWidget::~TerminalWidget() {
@@ -185,6 +188,11 @@ void TerminalWidget::_draw_terminal() {
 	Color default_bg(0.12f, 0.12f, 0.15f);
 	draw_rect(Rect2(Vector2(), get_size()), default_bg);
 
+	// Compute vertical offset to eliminate bottom whitespace gap.
+	// Push the fractional cell remainder to the top (under the toolbar).
+	int visible_rows = MAX(1, (int)(get_size().y / cell_height));
+	y_offset = get_size().y - (visible_rows * cell_height);
+
 	int rows = emulator.get_rows();
 	int cols = emulator.get_cols();
 
@@ -200,16 +208,24 @@ void TerminalWidget::_draw_terminal() {
 }
 
 void TerminalWidget::_draw_cell(int p_row, int p_col, const TerminalEmulator::Cell &p_cell) {
-	Vector2 pos(p_col * cell_width, p_row * cell_height);
+	Vector2 pos(p_col * cell_width, p_row * cell_height + y_offset);
 	Color default_bg(0.12f, 0.12f, 0.15f);
 
+	Color fg = _effective_fg(p_cell);
 	Color bg = _effective_bg(p_cell);
-	if (bg != default_bg) {
+
+	// If cell is selected, invert fg/bg.
+	bool selected = _is_cell_selected(p_row, p_col);
+	if (selected) {
+		Color sel_bg(0.35f, 0.55f, 0.85f);
+		Color sel_fg(1.0f, 1.0f, 1.0f);
+		draw_rect(Rect2(pos, Size2(cell_width * p_cell.width, cell_height)), sel_bg);
+		fg = sel_fg;
+	} else if (bg != default_bg) {
 		draw_rect(Rect2(pos, Size2(cell_width * p_cell.width, cell_height)), bg);
 	}
 
 	if (!p_cell.text.is_empty()) {
-		Color fg = _effective_fg(p_cell);
 		Vector2 text_pos(pos.x, pos.y + font->get_ascent(font_size));
 		float text_width = (float)(cell_width * p_cell.width);
 
@@ -241,7 +257,7 @@ void TerminalWidget::_draw_cursor() {
 		return;
 	}
 
-	Vector2 pos(cs.col * cell_width, cs.row * cell_height);
+	Vector2 pos(cs.col * cell_width, cs.row * cell_height + y_offset);
 	Color cursor_color(0.8f, 0.8f, 0.8f, 0.7f);
 
 	switch (cs.shape) {
@@ -281,16 +297,91 @@ Color TerminalWidget::_effective_bg(const TerminalEmulator::Cell &p_cell) const 
 ///////////////////////////////////////////////////////////////////////////////
 
 void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
+	// --- Mouse button events (scroll + selection) ---
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid()) {
+		// Scroll wheel.
+		if (mb->is_pressed() && mb->get_button_index() == MouseButton::WHEEL_UP) {
+			emulator.scroll_up(3);
+			queue_redraw();
+			accept_event();
+			return;
+		}
+		if (mb->is_pressed() && mb->get_button_index() == MouseButton::WHEEL_DOWN) {
+			emulator.scroll_down(3);
+			queue_redraw();
+			accept_event();
+			return;
+		}
+
+		// Left click — start selection.
+		if (mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
+			grab_focus();
+			selecting = true;
+			sel_start = _pixel_to_cell(mb->get_position());
+			sel_end = sel_start;
+			has_selection = false;
+			queue_redraw();
+			accept_event();
+			return;
+		}
+		if (!mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT && selecting) {
+			selecting = false;
+			sel_end = _pixel_to_cell(mb->get_position());
+			has_selection = (sel_start != sel_end);
+			queue_redraw();
+			accept_event();
+			return;
+		}
+	}
+
+	// --- Mouse motion events (drag selection) ---
+	Ref<InputEventMouseMotion> mm = p_event;
+	if (mm.is_valid() && selecting) {
+		sel_end = _pixel_to_cell(mm->get_position());
+		has_selection = (sel_start != sel_end);
+		queue_redraw();
+		accept_event();
+		return;
+	}
+
+	// --- Key events ---
 	Ref<InputEventKey> key_event = p_event;
 	if (key_event.is_valid()) {
 		if (!key_event->is_pressed() && !key_event->is_echo()) {
-			return; // Only process key-down events.
+			return;
+		}
+
+		// Clipboard shortcuts via Godot input actions (handles Cmd/Ctrl correctly).
+		if (key_event->is_action("ui_copy", true) && has_selection) {
+			String text = _get_selected_text();
+			DisplayServer::get_singleton()->clipboard_set(text);
+			has_selection = false;
+			queue_redraw();
+			accept_event();
+			return;
+		}
+
+		if (key_event->is_action("ui_paste", true)) {
+			String clipboard = DisplayServer::get_singleton()->clipboard_get();
+			if (!clipboard.is_empty() && running) {
+				CharString utf8 = clipboard.utf8();
+				pty.write_pty((const uint8_t *)utf8.get_data(), utf8.length());
+			}
+			accept_event();
+			return;
+		}
+
+		// Don't clear selection on modifier-only keys (Cmd, Ctrl, Shift, Alt).
+		Key keycode = key_event->get_keycode();
+		if (has_selection && !_is_modifier_key(keycode)) {
+			has_selection = false;
+			queue_redraw();
 		}
 
 		accept_event();
 
 		VTermModifier mod = _godot_mods_to_vterm(p_event);
-		Key keycode = key_event->get_keycode();
 		VTermKey vk = _godot_key_to_vterm(keycode);
 
 		if (vk != VTERM_KEY_NONE) {
@@ -313,6 +404,86 @@ void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
 			emulator.scroll_to_bottom();
 		}
 	}
+}
+
+bool TerminalWidget::_is_modifier_key(Key p_keycode) const {
+	return p_keycode == Key::SHIFT ||
+			p_keycode == Key::CTRL ||
+			p_keycode == Key::ALT ||
+			p_keycode == Key::META ||
+			p_keycode == Key::CAPSLOCK;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Selection helpers
+///////////////////////////////////////////////////////////////////////////////
+
+Vector2i TerminalWidget::_pixel_to_cell(Vector2 p_pos) const {
+	int col = CLAMP((int)(p_pos.x / cell_width), 0, emulator.get_cols() - 1);
+	int row = CLAMP((int)((p_pos.y - y_offset) / cell_height), 0, emulator.get_rows() - 1);
+	return Vector2i(row, col);
+}
+
+bool TerminalWidget::_is_cell_selected(int p_row, int p_col) const {
+	if (!has_selection) {
+		return false;
+	}
+
+	// Normalize so start <= end in reading order.
+	Vector2i start = sel_start;
+	Vector2i end = sel_end;
+	if (start.x > end.x || (start.x == end.x && start.y > end.y)) {
+		SWAP(start, end);
+	}
+
+	if (p_row < start.x || p_row > end.x) {
+		return false;
+	}
+	if (p_row == start.x && p_col < start.y) {
+		return false;
+	}
+	if (p_row == end.x && p_col > end.y) {
+		return false;
+	}
+	return true;
+}
+
+String TerminalWidget::_get_selected_text() const {
+	if (!has_selection) {
+		return String();
+	}
+
+	Vector2i start = sel_start;
+	Vector2i end = sel_end;
+	if (start.x > end.x || (start.x == end.x && start.y > end.y)) {
+		SWAP(start, end);
+	}
+
+	String result;
+	for (int row = start.x; row <= end.x; row++) {
+		int col_begin = (row == start.x) ? start.y : 0;
+		int col_end = (row == end.x) ? end.y : emulator.get_cols() - 1;
+
+		String line;
+		for (int col = col_begin; col <= col_end; col++) {
+			TerminalEmulator::Cell cell = emulator.get_cell(row, col);
+			if (!cell.text.is_empty()) {
+				line += cell.text;
+			} else {
+				line += " ";
+			}
+		}
+
+		// Trim trailing spaces from each line.
+		line = line.rstrip(" ");
+		result += line;
+
+		if (row < end.x) {
+			result += "\n";
+		}
+	}
+
+	return result;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

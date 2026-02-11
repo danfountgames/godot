@@ -41,6 +41,7 @@
 #include <pty.h>
 #endif
 
+#include <crt_externs.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -48,6 +49,8 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+
+extern char **environ;
 
 PTYManager::PTYManager() {
 }
@@ -132,7 +135,7 @@ bool PTYManager::fork_and_exec(const String &p_command, const Vector<String> &p_
 		envp.write[env_idx] = nullptr;
 
 		// Set environ manually (macOS doesn't have execvpe).
-		environ = envp.ptrw();
+		*_NSGetEnviron() = envp.ptrw();
 
 		execvp(cmd_utf8.get_data(), argv.ptrw());
 
