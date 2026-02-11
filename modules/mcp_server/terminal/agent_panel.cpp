@@ -163,6 +163,10 @@ Vector<String> AgentPanel::_build_claude_args() const {
 	args.push_back(mcp_config);
 	args.push_back("--strict-mcp-config");
 
+	// Pre-authorize all tools from the Godot MCP server.
+	args.push_back("--allowedTools");
+	args.push_back("mcp__godot__*");
+
 	return args;
 }
 

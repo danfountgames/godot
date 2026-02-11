@@ -38,6 +38,7 @@
 #include "editor/plugins/editor_plugin.h"
 
 class Button;
+class TabContainer;
 
 #ifdef TOOLS_ENABLED
 class MCPStatusPanel;
@@ -64,11 +65,11 @@ private:
 	String auth_token;
 
 #ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
+	TabContainer *ai_tab_container = nullptr;
 	Button *panel_button = nullptr;
+	MCPStatusPanel *status_panel = nullptr;
 #ifdef MCP_TERMINAL_ENABLED
 	AgentPanel *agent_panel = nullptr;
-	Button *agent_panel_button = nullptr;
 #endif
 #endif
 

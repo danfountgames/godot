@@ -56,6 +56,15 @@ private:
 	float cursor_blink_timer = 0.0f;
 	bool cursor_visible_blink = true;
 
+	// Selection state.
+	bool selecting = false;
+	Vector2i sel_start; // (row, col) in grid coordinates.
+	Vector2i sel_end;
+	bool has_selection = false;
+
+	// Vertical offset to push fractional cell space to the top.
+	float y_offset = 0.0f;
+
 	// Read buffer for PTY polling.
 	static const int READ_BUFFER_SIZE = 65536;
 	uint8_t read_buffer[READ_BUFFER_SIZE];
@@ -71,8 +80,14 @@ private:
 	Color _effective_fg(const TerminalEmulator::Cell &p_cell) const;
 	Color _effective_bg(const TerminalEmulator::Cell &p_cell) const;
 
+	// Selection helpers.
+	Vector2i _pixel_to_cell(Vector2 p_pos) const;
+	String _get_selected_text() const;
+	bool _is_cell_selected(int p_row, int p_col) const;
+
 	void _notification(int p_what);
 	virtual void gui_input(const Ref<InputEvent> &p_event) override;
+	bool _is_modifier_key(Key p_keycode) const;
 
 	// Keyboard mapping.
 	VTermKey _godot_key_to_vterm(Key p_key) const;
