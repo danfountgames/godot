@@ -79,10 +79,13 @@ MCPServerPlugin::MCPServerPlugin() {
 	ai_tab_container->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 
 #ifdef MCP_TERMINAL_ENABLED
-	agent_panel = memnew(AgentPanel);
-	agent_panel->set_server_plugin(this);
-	agent_panel->set_name("Agent");
-	ai_tab_container->add_child(agent_panel);
+	// "+" placeholder tab for creating new agents.
+	new_tab_placeholder = memnew(Control);
+	new_tab_placeholder->set_name("+");
+	ai_tab_container->add_child(new_tab_placeholder);
+
+	ai_tab_container->connect("tab_selected", callable_mp(this, &MCPServerPlugin::_on_tab_changed));
+	ai_tab_container->connect("tab_button_pressed", callable_mp(this, &MCPServerPlugin::_on_tab_close_pressed));
 #endif
 
 	status_panel = memnew(MCPStatusPanel);
@@ -108,9 +111,10 @@ MCPServerPlugin::~MCPServerPlugin() {
 		remove_control_from_bottom_panel(ai_tab_container);
 		memdelete(ai_tab_container);
 		ai_tab_container = nullptr;
-		// Children (agent_panel, status_panel) are freed by the TabContainer.
+		// Children (agent_panels, status_panel, new_tab_placeholder) are freed by the TabContainer.
 #ifdef MCP_TERMINAL_ENABLED
-		agent_panel = nullptr;
+		agent_panels.clear();
+		new_tab_placeholder = nullptr;
 #endif
 		status_panel = nullptr;
 	}
@@ -122,6 +126,150 @@ MCPServerPlugin::~MCPServerPlugin() {
 		debugger_bridge.unref();
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Multi-tab Agent Management
+// ---------------------------------------------------------------------------
+
+#ifdef MCP_TERMINAL_ENABLED
+
+void MCPServerPlugin::_create_agent_tab() {
+	agent_counter++;
+	AgentPanel *panel = memnew(AgentPanel);
+	panel->set_server_plugin(this);
+
+	String default_name = "Agent " + itos(agent_counter);
+	panel->set_name(default_name);
+
+	panel->connect("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed));
+
+	// Insert before the "+" tab if it exists, otherwise just add.
+	if (new_tab_placeholder) {
+		int plus_child_idx = new_tab_placeholder->get_index();
+		ai_tab_container->add_child(panel);
+		ai_tab_container->move_child(panel, plus_child_idx);
+	} else {
+		ai_tab_container->add_child(panel);
+	}
+
+	agent_panels.push_back(panel);
+	_update_close_buttons();
+
+	// Switch to the new tab.
+	int new_tab = ai_tab_container->get_tab_idx_from_control(panel);
+	ai_tab_container->set_current_tab(new_tab);
+
+	// Auto-launch Claude.
+	panel->launch();
+}
+
+void MCPServerPlugin::_on_tab_changed(int p_tab) {
+	if (!new_tab_placeholder) {
+		return;
+	}
+	int plus_tab = ai_tab_container->get_tab_idx_from_control(new_tab_placeholder);
+	if (p_tab == plus_tab) {
+		// Defer creation to avoid modifying the tab container during signal processing.
+		callable_mp(this, &MCPServerPlugin::_create_agent_tab).call_deferred();
+	}
+}
+
+void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
+	Control *control = ai_tab_container->get_tab_control(p_tab);
+	AgentPanel *panel = Object::cast_to<AgentPanel>(control);
+	if (!panel) {
+		return;
+	}
+
+	// Stop any running process.
+	panel->stop();
+
+	// Find and remove from our vector.
+	int vec_idx = agent_panels.find(panel);
+	if (vec_idx >= 0) {
+		agent_panels.remove_at(vec_idx);
+	}
+
+	ai_tab_container->remove_child(panel);
+	memdelete(panel);
+
+	// If no agent tabs remain, create a fresh one.
+	if (agent_panels.is_empty()) {
+		_create_agent_tab();
+	}
+
+	_update_close_buttons();
+
+	// Switch to the first agent tab.
+	if (!agent_panels.is_empty()) {
+		int tab_idx = ai_tab_container->get_tab_idx_from_control(agent_panels[0]);
+		ai_tab_container->set_current_tab(tab_idx);
+	}
+}
+
+void MCPServerPlugin::_on_agent_title_changed(const String &p_title) {
+	for (int i = 0; i < agent_panels.size(); i++) {
+		AgentPanel *panel = agent_panels[i];
+		int tab_idx = ai_tab_container->get_tab_idx_from_control(panel);
+		String raw_title = panel->get_current_title().strip_edges();
+
+		// Claude Code title format: "Folder - {icon} Description - claude - 80x24"
+		// Extract just the descriptive segment.
+		String title;
+		PackedStringArray parts = raw_title.split(" - ");
+		if (parts.size() >= 3) {
+			// Skip first (folder) and last segments ("claude", "NxM").
+			// The descriptive part is typically the second segment.
+			for (int p = 1; p < parts.size(); p++) {
+				String seg = parts[p].strip_edges();
+				// Skip "claude" and dimension strings like "80x24".
+				if (seg.to_lower() == "claude") {
+					continue;
+				}
+				if (seg.contains("x") && seg.is_valid_int() == false) {
+					// Check if it looks like dimensions (digits x digits).
+					PackedStringArray dims = seg.split("x");
+					if (dims.size() == 2 && dims[0].is_valid_int() && dims[1].is_valid_int()) {
+						continue;
+					}
+				}
+				title = seg;
+				break;
+			}
+		}
+		if (title.is_empty()) {
+			title = raw_title;
+		}
+
+		String default_name = "Agent " + itos(i + 1);
+		ai_tab_container->set_tab_title(tab_idx, title.is_empty() ? default_name : title);
+	}
+}
+
+void MCPServerPlugin::_update_close_buttons() {
+	Ref<Texture2D> close_icon;
+	if (agent_panels.size() > 1) {
+		close_icon = ai_tab_container->get_theme_icon("close", "TabBar");
+	}
+
+	// Set or clear close buttons on agent tabs only.
+	for (int i = 0; i < agent_panels.size(); i++) {
+		int tab_idx = ai_tab_container->get_tab_idx_from_control(agent_panels[i]);
+		ai_tab_container->set_tab_button_icon(tab_idx, close_icon);
+	}
+
+	// Ensure "+" and MCP Status never have close buttons.
+	if (new_tab_placeholder) {
+		int plus_idx = ai_tab_container->get_tab_idx_from_control(new_tab_placeholder);
+		ai_tab_container->set_tab_button_icon(plus_idx, Ref<Texture2D>());
+	}
+	if (status_panel) {
+		int status_idx = ai_tab_container->get_tab_idx_from_control(status_panel);
+		ai_tab_container->set_tab_button_icon(status_idx, Ref<Texture2D>());
+	}
+}
+
+#endif // MCP_TERMINAL_ENABLED
 
 // ---------------------------------------------------------------------------
 // Binding

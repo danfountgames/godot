@@ -69,7 +69,15 @@ private:
 	Button *panel_button = nullptr;
 	MCPStatusPanel *status_panel = nullptr;
 #ifdef MCP_TERMINAL_ENABLED
-	AgentPanel *agent_panel = nullptr;
+	Vector<AgentPanel *> agent_panels;
+	Control *new_tab_placeholder = nullptr;
+	int agent_counter = 0;
+
+	void _create_agent_tab();
+	void _on_tab_changed(int p_tab);
+	void _on_tab_close_pressed(int p_tab);
+	void _on_agent_title_changed(const String &p_title);
+	void _update_close_buttons();
 #endif
 #endif
 
