@@ -38,16 +38,13 @@ class MCPToolRegistry;
 
 class MCPEditorTools {
 public:
-	// Register all 9 editor/project tools into the registry.
+	// Register all 6 editor/project tools into the registry.
 	static void register_tools(MCPToolRegistry *p_registry);
 
 	// Tool handlers -- each takes a Dictionary of arguments and returns
 	// an MCP tool result Dictionary.
-	static Dictionary handle_get_info(const Dictionary &p_args);
+	static Dictionary handle_get_overview(const Dictionary &p_args);
 	static Dictionary handle_get_input_map(const Dictionary &p_args);
-	static Dictionary handle_read_file(const Dictionary &p_args);
-	static Dictionary handle_write_file(const Dictionary &p_args);
-	static Dictionary handle_list_files(const Dictionary &p_args);
 	static Dictionary handle_reimport(const Dictionary &p_args);
 	static Dictionary handle_scan_filesystem(const Dictionary &p_args);
 	static Dictionary handle_get_uid(const Dictionary &p_args);
@@ -57,7 +54,4 @@ private:
 	// Helper: recursively list files from a DirAccess.
 	static void _list_files_recursive(const String &p_dir,
 			const String &p_extension, Vector<String> &r_files);
-
-	// Helper: find files with a similar basename (for "did you mean?" suggestions).
-	static Vector<String> _find_similar_files(const String &p_basename);
 };

@@ -4,7 +4,7 @@
 
 The MCP server provides a comprehensive toolkit for an LLM to write, validate, run, and debug Godot projects. However, there is a critical gap in the **verification loop**. Today an LLM can:
 
-- Write GDScript files (`editor/write_file`)
+- Write GDScript files (using native file tools + `editor/scan_filesystem`)
 - Check them for compile errors (`gdscript/check_errors`)
 - Run the project or a scene (`runtime/run_project`, `runtime/run_scene`)
 - Evaluate expressions in a running game (`runtime/evaluate`)
@@ -1343,8 +1343,8 @@ Run GDScript tests to verify code behavior. Write test files in res://tests/
 named test_*.gd with test_*() methods. Each method should test one behavior.
 
 WORKFLOW:
-1. Write your code (editor/write_file)
-2. Write a test file (editor/write_file)
+1. Write your code with native file tools, then call editor/scan_filesystem
+2. Write a test file with native file tools, then call editor/scan_filesystem
 3. Check for compile errors (gdscript/check_errors)
 4. Run the tests (test/run)
 5. Fix failures and repeat
@@ -1413,11 +1413,8 @@ def test_run_failing_test(client, project):
 
 @pytest.mark.p1
 def test_run_compile_error(client, project):
-    # Write a bad test file.
-    client.call_tool("editor/write_file", {
-        "path": "res://tests/test_broken.gd",
-        "content": "extends RefCounted\n\nfunc test_bad(\n  broken syntax"
-    })
+    # Write a bad test file using native file I/O + scan.
+    # (In practice, the LLM writes via its native tools and calls editor/scan_filesystem)
     result = client.call_tool("test/run", {"path": "res://tests/test_broken.gd"})
     structured = get_structured(result)
     assert structured["files"][0]["compile_ok"] == False

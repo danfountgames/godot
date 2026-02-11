@@ -1,4 +1,4 @@
-"""MCP tool integration tests -- covers all 29 registered tools.
+"""MCP tool integration tests -- covers all registered tools.
 
 Test plan: AGENT_07
 Requires:
@@ -19,13 +19,13 @@ from conftest import get_structured, get_text, is_error
 
 
 class TestProjectTools:
-    """Tests for project/get_info and project/get_input_map."""
+    """Tests for project/get_overview and project/get_input_map."""
 
     @pytest.mark.p0
-    def test_a01_get_info(self, client):
-        """T-A01: project/get_info returns project metadata."""
-        resp = client.call_tool("project/get_info")
-        assert not is_error(resp), f"project/get_info returned error: {get_text(resp)}"
+    def test_a01_get_overview(self, client):
+        """T-A01: project/get_overview returns project overview."""
+        resp = client.call_tool("project/get_overview")
+        assert not is_error(resp), f"project/get_overview returned error: {get_text(resp)}"
 
         text = get_text(resp)
         assert "MCP Test Project" in text
@@ -33,8 +33,17 @@ class TestProjectTools:
         sc = get_structured(resp)
         assert sc.get("godot_version", "").startswith("4.")
         assert sc.get("main_scene") == "res://scenes/main.tscn"
-        autoloads = sc.get("autoloads", {})
-        assert "TestAutoload" in autoloads or "TestAutoload" in str(autoloads)
+
+        file_counts = sc.get("file_counts", {})
+        assert file_counts.get("total", 0) > 0, (
+            f"Expected file_counts.total > 0, got {file_counts}"
+        )
+
+        autoloads = sc.get("autoloads", [])
+        autoload_names = [a.get("name", "") for a in autoloads]
+        assert "TestAutoload" in autoload_names, (
+            f"Expected 'TestAutoload' in autoloads, got {autoloads}"
+        )
 
     @pytest.mark.p1
     def test_a02_get_input_map(self, client):
@@ -62,98 +71,12 @@ class TestProjectTools:
 
 
 # ===========================================================================
-# Category B -- Editor File Operations
+# Category B -- Editor Operations
 # ===========================================================================
 
 
-class TestEditorFileTools:
-    """Tests for editor/read_file, editor/write_file, editor/list_files, editor/reimport."""
-
-    @pytest.mark.p0
-    def test_b01_read_file_positive(self, client):
-        """T-B01: editor/read_file reads project.godot successfully."""
-        resp = client.call_tool("editor/read_file", {"path": "res://project.godot"})
-        assert not is_error(resp), f"read_file returned error: {get_text(resp)}"
-
-        text = get_text(resp)
-        assert 'config/name="MCP Test Project"' in text
-
-        sc = get_structured(resp)
-        assert sc.get("size_bytes", 1) > 0
-
-    @pytest.mark.p0
-    @pytest.mark.security
-    def test_b02_read_file_path_traversal(self, client):
-        """T-B02: editor/read_file rejects path traversal."""
-        resp = client.call_tool("editor/read_file", {"path": "res://../../etc/passwd"})
-        assert is_error(resp), "Path traversal should be rejected"
-
-    @pytest.mark.p1
-    @pytest.mark.security
-    def test_b03_read_file_no_res_prefix(self, client):
-        """T-B03: editor/read_file rejects paths without res:// prefix."""
-        resp = client.call_tool("editor/read_file", {"path": "/etc/passwd"})
-        assert is_error(resp), "Absolute path without res:// should be rejected"
-
-    @pytest.mark.p1
-    def test_b04_read_file_not_found(self, client):
-        """T-B04: editor/read_file returns error for nonexistent file."""
-        resp = client.call_tool("editor/read_file", {"path": "res://nonexistent_file.gd"})
-        assert is_error(resp), "Reading nonexistent file should return error"
-
-    @pytest.mark.p1
-    def test_b05_write_file_positive(self, client):
-        """T-B05: editor/write_file writes and reads back a file."""
-        test_path = "res://scripts/test_write.gd"
-        test_content = "extends Node\n"
-
-        try:
-            # Write the file.
-            resp = client.call_tool(
-                "editor/write_file",
-                {"path": test_path, "content": test_content},
-            )
-            assert not is_error(resp), f"write_file returned error: {get_text(resp)}"
-
-            sc = get_structured(resp)
-            assert sc.get("bytes_written", 0) > 0
-
-            # Read it back.
-            read_resp = client.call_tool("editor/read_file", {"path": test_path})
-            assert not is_error(read_resp)
-            read_text = get_text(read_resp)
-            assert "extends Node" in read_text
-        finally:
-            # Cleanup: overwrite with empty content or minimal content.
-            client.call_tool(
-                "editor/write_file",
-                {"path": test_path, "content": ""},
-            )
-
-    @pytest.mark.p1
-    @pytest.mark.security
-    def test_b06_write_file_path_traversal(self, client):
-        """T-B06: editor/write_file rejects path traversal."""
-        resp = client.call_tool(
-            "editor/write_file",
-            {"path": "res://../../tmp/evil.gd", "content": "malicious"},
-        )
-        assert is_error(resp), "Path traversal in write should be rejected"
-
-    @pytest.mark.p1
-    def test_b07_list_files_positive(self, client):
-        """T-B07: editor/list_files lists GDScript files recursively."""
-        resp = client.call_tool(
-            "editor/list_files",
-            {"path": "res://scripts/", "extension": "gd", "recursive": True},
-        )
-        assert not is_error(resp), f"list_files returned error: {get_text(resp)}"
-
-        sc = get_structured(resp)
-        count = sc.get("count", sc.get("file_count", 0))
-        files = sc.get("files", [])
-        actual_count = count if count else len(files)
-        assert actual_count >= 22, f"Expected >= 22 GDScript files, got {actual_count}"
+class TestEditorOps:
+    """Tests for editor/reimport, editor/scan_filesystem, editor/get_uid, editor/resolve_uid."""
 
     @pytest.mark.p1
     def test_b08_reimport(self, client):
@@ -167,15 +90,6 @@ class TestEditorFileTools:
         sc = get_structured(resp)
         status = sc.get("status", "")
         assert status == "queued", f"Expected status 'queued', got '{status}'"
-
-
-# ===========================================================================
-# Category C -- Editor Operations
-# ===========================================================================
-
-
-class TestEditorOps:
-    """Tests for editor/scan_filesystem, editor/get_uid, editor/resolve_uid."""
 
     @pytest.mark.p1
     def test_c01_scan_filesystem(self, client):
@@ -228,16 +142,16 @@ class TestEditorOps:
 
 
 class TestGDScriptTools:
-    """Tests for gdscript/check_errors and gdscript/check_all."""
+    """Tests for testing/check_script and testing/check_all_scripts."""
 
     @pytest.mark.p0
     def test_d01_check_errors_valid(self, client):
-        """T-D01: gdscript/check_errors reports valid script as clean."""
+        """T-D01: testing/check_script reports valid script as clean."""
         resp = client.call_tool(
-            "gdscript/check_errors",
+            "testing/check_script",
             {"path": "res://scripts/valid.gd"},
         )
-        assert not is_error(resp), f"check_errors returned error: {get_text(resp)}"
+        assert not is_error(resp), f"check_script returned error: {get_text(resp)}"
 
         sc = get_structured(resp)
         assert sc.get("valid") is True, f"Expected valid=true, got {sc}"
@@ -246,12 +160,12 @@ class TestGDScriptTools:
 
     @pytest.mark.p0
     def test_d02_check_errors_broken(self, client):
-        """T-D02: gdscript/check_errors detects errors in broken script."""
+        """T-D02: testing/check_script detects errors in broken script."""
         resp = client.call_tool(
-            "gdscript/check_errors",
+            "testing/check_script",
             {"path": "res://scripts/broken.gd"},
         )
-        assert not is_error(resp), f"check_errors tool itself errored: {get_text(resp)}"
+        assert not is_error(resp), f"check_script tool itself errored: {get_text(resp)}"
 
         sc = get_structured(resp)
         assert sc.get("valid") is False, f"Expected valid=false for broken script, got {sc}"
@@ -264,18 +178,18 @@ class TestGDScriptTools:
 
     @pytest.mark.p1
     def test_d03_check_errors_nonexistent(self, client):
-        """T-D03: gdscript/check_errors returns error for nonexistent file."""
+        """T-D03: testing/check_script returns error for nonexistent file."""
         resp = client.call_tool(
-            "gdscript/check_errors",
+            "testing/check_script",
             {"path": "res://scripts/does_not_exist.gd"},
         )
         assert is_error(resp), "Checking nonexistent script should return error"
 
     @pytest.mark.p1
     def test_d04_check_all(self, client):
-        """T-D04: gdscript/check_all reports project-wide script health."""
-        resp = client.call_tool("gdscript/check_all")
-        assert not is_error(resp), f"check_all returned error: {get_text(resp)}"
+        """T-D04: testing/check_all_scripts reports project-wide script health."""
+        resp = client.call_tool("testing/check_all_scripts")
+        assert not is_error(resp), f"check_all_scripts returned error: {get_text(resp)}"
 
         sc = get_structured(resp)
         total = sc.get("total_files", 0)

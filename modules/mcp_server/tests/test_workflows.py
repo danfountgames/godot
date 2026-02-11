@@ -9,6 +9,7 @@ Simulates multi-step tool call patterns that LLM agents use in practice:
 Each test is self-contained and uses try/finally to guarantee cleanup.
 """
 
+import os
 import time
 
 import pytest
@@ -59,78 +60,67 @@ def test_workflow_fix_gdscript_bug(client):
     errors, writes a fix, validates the fix, runs the project, and confirms
     startup output.
     """
-    # Step 1: Get project info -- verify metadata and main_scene.
-    resp = client.call_tool("project/get_info")
-    assert not is_error(resp), f"project/get_info failed: {resp}"
+    # Step 1: Get project overview -- verify metadata and main_scene.
+    resp = client.call_tool("project/get_overview")
+    assert not is_error(resp), f"project/get_overview failed: {resp}"
     sc = get_structured(resp)
     text = get_text(resp)
-    # Project info may be in structured content or text; either way it should
-    # contain reference to the project and a main scene.
-    combined = str(sc) + text
-    assert "main_scene" in combined.lower() or "main" in combined.lower(), (
-        f"project/get_info should mention main_scene: {combined[:500]}"
+    # The overview returns text containing "OVERVIEW" and structured content
+    # with a "main_scene" key.
+    assert "OVERVIEW" in text or "overview" in text.lower(), (
+        f"project/get_overview text should contain OVERVIEW: {text[:500]}"
+    )
+    assert isinstance(sc, dict) and "main_scene" in sc, (
+        f"project/get_overview structured content should have main_scene key: {sc}"
     )
 
-    # Step 2: List files -- expect 20+ .gd files, including broken.gd.
-    resp = client.call_tool("editor/list_files", {
-        "directory": "res://",
-        "recursive": True,
-        "extension": "gd",
-    })
-    assert not is_error(resp), f"editor/list_files failed: {resp}"
+    # Step 2: Check all scripts -- discover that there are script errors.
+    resp = client.call_tool("testing/check_all_scripts")
+    assert not is_error(resp), f"testing/check_all_scripts failed: {resp}"
     sc = get_structured(resp)
-    text = get_text(resp)
-    combined = str(sc) + text
-    # The file list may be in structured content (as a list) or text.
-    assert "broken.gd" in combined, (
-        f"File listing should contain broken.gd: {combined[:1000]}"
+    assert isinstance(sc, dict), f"testing/check_all_scripts should return structured content: {sc}"
+    files_with_errors = sc.get("files_with_errors", 0)
+    assert files_with_errors >= 1, (
+        f"testing/check_all_scripts should report at least 1 file with errors: {sc}"
     )
 
-    # Step 3: Read the broken file.
-    resp = client.call_tool("editor/read_file", {"path": "res://scripts/broken.gd"})
-    assert not is_error(resp), f"editor/read_file failed: {resp}"
-    original_content = get_text(resp)
-    sc = get_structured(resp)
-    if not original_content and sc:
-        original_content = sc.get("content", str(sc))
-    assert "broken_syntax" in original_content or "bad_type" in original_content, (
-        f"broken.gd should contain error markers: {original_content[:500]}"
-    )
-
-    # Step 4: Check for errors in the broken file.
-    resp = client.call_tool("gdscript/check_errors", {"path": "res://scripts/broken.gd"})
-    assert not is_error(resp), f"gdscript/check_errors failed: {resp}"
+    # Step 3: Check for errors in the broken file.
+    resp = client.call_tool("testing/check_script", {"path": "res://scripts/broken.gd"})
+    assert not is_error(resp), f"testing/check_script failed: {resp}"
     sc = get_structured(resp)
     text = get_text(resp)
     combined = str(sc) + text
     # Should report invalid / errors, referencing line 5.
     assert "false" in combined.lower() or "error" in combined.lower(), (
-        f"check_errors should report invalid for broken.gd: {combined[:500]}"
+        f"check_script should report invalid for broken.gd: {combined[:500]}"
     )
     assert "5" in combined, (
-        f"check_errors should reference line 5: {combined[:500]}"
+        f"check_script should reference line 5: {combined[:500]}"
     )
 
-    # Steps 5-10 modify the file, so wrap in try/finally to restore it.
+    # Steps 4-9 modify the file, so wrap in try/finally to restore it.
     try:
-        # Step 5: Write the fixed version.
-        resp = client.call_tool("editor/write_file", {
-            "path": "res://scripts/broken.gd",
-            "content": FIXED_GD_CONTENT,
-        })
-        assert not is_error(resp), f"editor/write_file (fix) failed: {resp}"
+        # Step 4: Write the fixed version using native file I/O.
+        project_dir = os.path.join(os.path.dirname(__file__), "mcp_test_project")
+        broken_path = os.path.join(project_dir, "scripts", "broken.gd")
+        with open(broken_path, "w") as f:
+            f.write(FIXED_GD_CONTENT)
+        # Notify the editor of the file change.
+        resp = client.call_tool("editor/scan_filesystem")
+        assert not is_error(resp), f"editor/scan_filesystem failed: {resp}"
+        time.sleep(1.0)  # Give editor time to pick up changes.
 
-        # Step 6: Check errors again -- should be valid now.
-        resp = client.call_tool("gdscript/check_errors", {
+        # Step 5: Check errors again -- should be valid now.
+        resp = client.call_tool("testing/check_script", {
             "path": "res://scripts/broken.gd",
         })
-        assert not is_error(resp), f"gdscript/check_errors (fixed) failed: {resp}"
+        assert not is_error(resp), f"testing/check_script (fixed) failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
         # Should indicate valid / no errors.
         assert "true" in combined.lower() or "valid" in combined.lower(), (
-            f"check_errors should report valid after fix: {combined[:500]}"
+            f"check_script should report valid after fix: {combined[:500]}"
         )
         # Should NOT contain error references now.
         has_errors = "error" in combined.lower() and "no error" not in combined.lower()
@@ -138,10 +128,10 @@ def test_workflow_fix_gdscript_bug(client):
             # Allow structured content that has an empty errors list.
             errors_list = sc.get("errors", []) if isinstance(sc, dict) else []
             assert len(errors_list) == 0, (
-                f"check_errors should have no errors after fix: {combined[:500]}"
+                f"check_script should have no errors after fix: {combined[:500]}"
             )
 
-        # Step 7: Run the project.
+        # Step 6: Run the project.
         resp = client.call_tool("runtime/run_project")
         assert not is_error(resp), f"runtime/run_project failed: {resp}"
         sc = get_structured(resp)
@@ -152,7 +142,7 @@ def test_workflow_fix_gdscript_bug(client):
         )
 
         try:
-            # Step 8: Poll runtime/get_status until running (up to 10s).
+            # Step 7: Poll runtime/get_status until running (up to 10s).
             deadline = time.time() + 10.0
             state = None
             while time.time() < deadline:
@@ -166,7 +156,7 @@ def test_workflow_fix_gdscript_bug(client):
                 f"Game did not reach running state within 10s, last state: {state}"
             )
 
-            # Step 9: Get output -- should contain STARTUP_COMPLETE.
+            # Step 8: Get output -- should contain STARTUP_COMPLETE.
             # The output may take a moment to be captured after the game
             # reaches the running state, so poll with retries.
             combined = ""
@@ -184,7 +174,7 @@ def test_workflow_fix_gdscript_bug(client):
             )
 
         finally:
-            # Step 10: Stop the game.
+            # Step 9: Stop the game.
             try:
                 client.call_tool("runtime/stop")
                 time.sleep(0.5)
@@ -193,10 +183,11 @@ def test_workflow_fix_gdscript_bug(client):
 
     finally:
         # IMPORTANT: Always restore the original broken.gd content.
-        client.call_tool("editor/write_file", {
-            "path": "res://scripts/broken.gd",
-            "content": BROKEN_GD_ORIGINAL,
-        })
+        project_dir = os.path.join(os.path.dirname(__file__), "mcp_test_project")
+        broken_path = os.path.join(project_dir, "scripts", "broken.gd")
+        with open(broken_path, "w") as f:
+            f.write(BROKEN_GD_ORIGINAL)
+        client.call_tool("editor/scan_filesystem")
 
 
 # ---------------------------------------------------------------------------

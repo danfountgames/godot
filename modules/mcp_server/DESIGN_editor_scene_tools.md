@@ -93,7 +93,7 @@ The MCP server operates in **two distinct modes** depending on whether a game is
 - Debugging issues (checking property values during gameplay)
 - Injecting input, evaluating expressions
 
-**Code editing**: The LLM uses its **native file editing tools** (read/write) to modify GDScript files. The MCP server does NOT provide code-writing tools — that's what the LLM already does well. The `editor/read_file` and `editor/write_file` tools exist for project file I/O only.
+**Code editing**: The LLM uses its **native file editing tools** (read/write) to modify GDScript files and project files. The MCP server does NOT provide file read/write/list tools — those are what the LLM already does well. After writing files, the LLM calls `editor/scan_filesystem` so the editor picks up changes.
 
 ## 2. Naming Convention (Revised)
 
@@ -144,7 +144,7 @@ The **coarse/detailed** pattern saves context tokens by giving the LLM a compact
 | `runtime/get_status` | Already minimal (~5 lines: state, scene, uptime, frame count) |
 | `editor/get_open_scenes` | Already compact (just a list of paths) |
 | `runtime/get_session_summary` | Already auto-summarizes (depth-2 tree, last 20 output lines, last 5 errors) |
-| `project/get_info` | Fixed-size output |
+| `project/get_overview` | Fixed-size rollup output |
 
 ## 4. Tool Inventory
 
@@ -577,17 +577,16 @@ List all currently open scene tabs.
 
 ### 4.4 Existing `editor/*` tools (already built)
 
-These stay under `editor/*` as they are project file I/O, not scene mutations:
+These stay under `editor/*` as they are editor-specific operations (not scene mutations):
 
 | Tool | Description |
 |------|-------------|
-| `editor/read_file` | Read a project file |
-| `editor/write_file` | Write a project file |
-| `editor/list_files` | List files in a directory |
 | `editor/reimport` | Reimport a resource |
-| `editor/scan_filesystem` | Scan for new/changed files |
+| `editor/scan_filesystem` | Scan for new/changed files (call after writing files with native tools) |
 | `editor/get_uid` | Get UID for a resource path |
 | `editor/resolve_uid` | Resolve UID to a resource path |
+
+> **Note:** `editor/read_file`, `editor/write_file`, and `editor/list_files` were removed — LLM clients use their native file tools for these operations.
 
 ---
 

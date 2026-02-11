@@ -1230,7 +1230,7 @@ Dictionary MCPSceneTools::handle_instance_scene(const Dictionary &p_args) {
 		return make_tool_error(vformat(
 				"Failed to load scene: '%s'\n\n"
 				"Make sure the file exists and is a valid scene file. "
-				"Use editor/list_files with extension='tscn' to find available scenes.",
+				"Use your native file tools to find available .tscn scenes.",
 				scene_path));
 	}
 
@@ -1512,7 +1512,7 @@ Dictionary MCPSceneTools::handle_attach_script(const Dictionary &p_args) {
 		return make_tool_error(vformat(
 				"Failed to load script: '%s'\n\n"
 				"Make sure the file exists and is a valid script. "
-				"Use editor/write_file to create the script first, then attach it.",
+				"Write the script with your native file tools, then call editor/scan_filesystem.",
 				script_path));
 	}
 
@@ -1881,7 +1881,7 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 				"Path to the node to attach the script to.");
 		props["script_path"] = make_prop("string",
 				"Path to the .gd script file (e.g., 'res://scripts/player.gd'). "
-				"The script must already exist. Use editor/write_file to create it first.");
+				"The script must already exist. Write it with your native file tools and call editor/scan_filesystem first.");
 		Array required;
 		required.push_back("node_path");
 		required.push_back("script_path");
@@ -1889,7 +1889,7 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool("scene/attach_script",
 				"Attach Script to Node",
 				"Attach a .gd or .cs script to a node. Script must exist on disk.\n"
-				"Uses undo/redo. Create the script with editor/write_file first.",
+				"Uses undo/redo. Write the script with your native file tools and call editor/scan_filesystem first.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPSceneTools::handle_attach_script));

@@ -92,20 +92,20 @@ TOOLS_BODY=$(curl -s -X POST "$BASE" \
   -H "Mcp-Session-Id: $SID" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/list"}')
 check "tools/list has tools array" '"tools"' "$TOOLS_BODY"
-check "Has project/get_info" 'project/get_info' "$TOOLS_BODY"
-check "Has gdscript/check_errors" 'gdscript/check_errors' "$TOOLS_BODY"
+check "Has project/get_overview" 'project/get_overview' "$TOOLS_BODY"
+check "Has testing/check_script" 'testing/check_script' "$TOOLS_BODY"
 check "Has runtime/run_project" 'runtime/run_project' "$TOOLS_BODY"
 
 echo ""
 
-# ---- TC-05: project/get_info ----
-echo "=== TC-05: project/get_info ==="
-INFO_BODY=$(curl -s -X POST "$BASE" \
+# ---- TC-05: project/get_overview ----
+echo "=== TC-05: project/get_overview ==="
+OVERVIEW_BODY=$(curl -s -X POST "$BASE" \
   -H "$CT" \
   -H "Mcp-Session-Id: $SID" \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"project/get_info","arguments":{}}}')
-check "Has content" '"content"' "$INFO_BODY"
-check "Has godot_version" 'godot_version' "$INFO_BODY"
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"project/get_overview","arguments":{}}}')
+check "Has content" '"content"' "$OVERVIEW_BODY"
+check "Has godot_version" 'godot_version' "$OVERVIEW_BODY"
 
 echo ""
 

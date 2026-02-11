@@ -70,7 +70,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		Dictionary props;
 		props["scene"] = make_prop("string",
 				"Scene file path in res:// format (e.g., res://scenes/level1.tscn). "
-				"Use editor/list_files with pattern '**/*.tscn' to discover available scenes.");
+				"Use your native file tools to discover available .tscn scenes.");
 		Array required;
 		required.push_back("scene");
 		p_registry->register_tool(
@@ -402,7 +402,7 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 	if (!FileAccess::exists(scene)) {
 		return make_tool_error(vformat(
 				"Scene file not found: %s\n\n"
-				"Use editor/list_files to find available .tscn files.",
+				"Use your native file tools to find available .tscn files.",
 				scene));
 	}
 

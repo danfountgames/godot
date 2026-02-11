@@ -23,7 +23,7 @@ class TestPostSSEWithProgress:
     @pytest.mark.sse
     @pytest.mark.p1
     def test_sse01_post_sse_progress(self, client: MCPClient):
-        """SSE-01: gdscript/check_all via SSE yields progress notifications
+        """SSE-01: testing/check_all_scripts via SSE yields progress notifications
         with progressToken tok_1, increasing progress values, and a final
         JSON-RPC result with matching request id."""
         rid = client._next_request_id()
@@ -32,7 +32,7 @@ class TestPostSSEWithProgress:
             "id": rid,
             "method": "tools/call",
             "params": {
-                "name": "gdscript/check_all",
+                "name": "testing/check_all_scripts",
                 "arguments": {},
                 "_meta": {"progressToken": "tok_1"},
             },
@@ -102,7 +102,7 @@ class TestSSECancellation:
     @pytest.mark.sse
     @pytest.mark.p1
     def test_sse02_cancel_mid_stream(self, client: MCPClient):
-        """SSE-02: Cancel gdscript/check_all mid-stream via a second
+        """SSE-02: Cancel testing/check_all_scripts mid-stream via a second
         connection. Verify a result arrives and the server stays alive."""
         rid = client._next_request_id()
         body = json.dumps({
@@ -110,7 +110,7 @@ class TestSSECancellation:
             "id": rid,
             "method": "tools/call",
             "params": {
-                "name": "gdscript/check_all",
+                "name": "testing/check_all_scripts",
                 "arguments": {},
                 "_meta": {"progressToken": "tok_cancel"},
             },
@@ -227,7 +227,7 @@ class TestSSELogging:
     @pytest.mark.sse
     @pytest.mark.p2
     def test_sse04_logging_notifications(self, client: MCPClient):
-        """SSE-04: Set log level to debug, call project/get_info, and verify
+        """SSE-04: Set log level to debug, call project/get_overview, and verify
         that notifications/message events appear on a GET SSE stream.
 
         Downgraded to P2: The server's logging-over-SSE mechanism may not be
@@ -257,9 +257,9 @@ class TestSSELogging:
 
             # Step 4: Call multiple tools to trigger logging activity.
             for _ in range(3):
-                tool_resp = client.call_tool("project/get_info")
+                tool_resp = client.call_tool("project/get_overview")
                 assert "result" in tool_resp, (
-                    f"project/get_info failed: {tool_resp}"
+                    f"project/get_overview failed: {tool_resp}"
                 )
                 time.sleep(0.3)
 

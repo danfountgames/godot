@@ -1,16 +1,16 @@
 # Godot MCP Server
 
-A built-in [Model Context Protocol](https://modelcontextprotocol.io) server for Godot Engine 4.6. It lets LLM coding agents read and write project files, run and debug games, inspect the live scene tree, evaluate expressions, take screenshots, and automate UI — all through a standard protocol that works with any MCP client.
+A built-in [Model Context Protocol](https://modelcontextprotocol.io) server for Godot Engine 4.6. It lets LLM coding agents run and debug games, inspect the live scene tree, evaluate expressions, take screenshots, and automate UI — all through a standard protocol that works with any MCP client.
 
 The server starts automatically when the editor opens. No external process or plugin required.
 
 ## What It Can Do
 
-**27 tools** across four categories:
+**71 tools** across multiple categories:
 
 | Category | Tools | Examples |
 |----------|-------|---------|
-| **Project & Editor** | 9 | Read/write files, list directory trees, scan filesystem, get/resolve UIDs |
+| **Project & Editor** | 6 | Project overview, scan filesystem, reimport, get/resolve UIDs |
 | **GDScript** | 2 | Check a single file for errors, check all project scripts |
 | **Debug & Inspection** | 10 | Run/stop project, get scene tree, inspect node properties, read output/errors, session summary |
 | **Automation** | 5 | Send input events, click UI controls, evaluate expressions at runtime, wait N frames, take screenshots |
