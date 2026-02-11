@@ -5,20 +5,20 @@ set -e
 # No extra_suffix on templates — the editor expects standard filenames.
 
 echo "=== iOS Device ==="
-BUILD_NAME=fi scons platform=ios target=template_debug arch=arm64 -j$(nproc)
-BUILD_NAME=fi scons platform=ios target=template_release arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=ios target=template_debug arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=ios target=template_release arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
 
 echo "=== iOS Simulator ==="
-BUILD_NAME=fi scons platform=ios target=template_debug ios_simulator=yes arch=arm64 -j$(nproc)
-BUILD_NAME=fi scons platform=ios target=template_release ios_simulator=yes arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=ios target=template_debug ios_simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=ios target=template_release ios_simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
 
 echo "=== visionOS Device ==="
-BUILD_NAME=fi scons platform=visionos target=template_debug arch=arm64 -j$(nproc)
-BUILD_NAME=fi scons platform=visionos target=template_release arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=visionos target=template_debug arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=visionos target=template_release arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
 
 echo "=== visionOS Simulator ==="
-BUILD_NAME=fi scons platform=visionos target=template_debug simulator=yes arch=arm64 -j$(nproc)
-BUILD_NAME=fi scons platform=visionos target=template_release simulator=yes arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=visionos target=template_debug simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=visionos target=template_release simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
 
 # Assemble combined apple_embedded_xcode structure
 rm -rf apple_embedded_xcode

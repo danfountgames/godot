@@ -5,12 +5,12 @@ set -e
 # No extra_suffix on templates — the editor expects standard filenames.
 
 # Build device templates
-BUILD_NAME=fi scons platform=visionos target=template_debug arch=arm64 -j$(nproc)
-BUILD_NAME=fi scons platform=visionos target=template_release arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=visionos target=template_debug arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=visionos target=template_release arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
 
 # Build simulator templates
-BUILD_NAME=fi scons platform=visionos target=template_debug simulator=yes arch=arm64 -j$(nproc)
-BUILD_NAME=fi scons platform=visionos target=template_release simulator=yes arch=arm64 -j$(nproc)
+BUILD_NAME=fi scons platform=visionos target=template_debug simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=visionos target=template_release simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
 
 # Assemble export templates
 mkdir -p templates
