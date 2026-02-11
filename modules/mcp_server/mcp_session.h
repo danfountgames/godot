@@ -105,6 +105,7 @@ public:
 	int res_read_pos = 0; // Index of the current response being sent.
 	int res_sent = 0; // Byte offset into the current response being sent.
 	static const int MAX_RES_QUEUE_SIZE = 500; // Cap to prevent unbounded growth from slow clients.
+	bool close_after_send = false; // Disconnect once the response queue is drained.
 
 	// -----------------------------------------------------------------------
 	// SSE (Server-Sent Events) state

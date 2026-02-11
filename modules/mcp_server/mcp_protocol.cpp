@@ -417,6 +417,12 @@ void MCPProtocol::poll() {
 			to_disconnect.push_back(client_id);
 			continue;
 		}
+		// Close the connection immediately after draining the response queue
+		// when Connection: close was sent (standard POST responses).
+		if (err == OK && session->close_after_send) {
+			to_disconnect.push_back(client_id);
+			continue;
+		}
 	}
 
 	// Deliver queued notifications to SSE streams.

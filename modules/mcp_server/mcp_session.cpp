@@ -282,6 +282,7 @@ void MCPSession::queue_response(const String &p_status, const String &p_body,
 	String response;
 
 	response += "HTTP/1.1 " + p_status + "\r\n";
+	response += "Connection: close\r\n";
 
 	// CORS headers.
 	response += _build_cors_headers(p_origin);
@@ -311,6 +312,7 @@ void MCPSession::queue_response(const String &p_status, const String &p_body,
 		response += "\r\n";
 		res_queue.push_back(response.utf8());
 	}
+	close_after_send = true;
 }
 
 void MCPSession::begin_sse_stream(const String &p_session_id, const String &p_origin) {

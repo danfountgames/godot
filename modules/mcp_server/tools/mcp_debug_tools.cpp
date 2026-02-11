@@ -310,9 +310,14 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 MCPDebuggerBridge *MCPDebugTools::_get_bridge() {
 	MCPProtocol *protocol = MCPProtocol::get_singleton();
 	if (!protocol) {
+		WARN_PRINT("MCP: _get_bridge() failed — MCPProtocol singleton is null.");
 		return nullptr;
 	}
-	return protocol->get_debugger_bridge();
+	MCPDebuggerBridge *bridge = protocol->get_debugger_bridge();
+	if (!bridge) {
+		WARN_PRINT("MCP: _get_bridge() failed — debugger bridge pointer is null on protocol.");
+	}
+	return bridge;
 }
 
 Dictionary MCPDebugTools::_require_game_running() {
@@ -350,9 +355,12 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 
 	// Set launching state before queuing the play action.
 	MCPDebuggerBridge *bridge = _get_bridge();
-	if (bridge) {
-		bridge->set_game_launching();
+	if (!bridge) {
+		return make_tool_error(
+				"Internal error: debugger bridge not available.\n"
+				"The MCP server may not be fully initialized yet. Try again in a moment.");
 	}
+	bridge->set_game_launching();
 
 	// Dispatch to main thread. EditorRunBar::play_main_scene() must run
 	// on the main thread because it modifies editor UI state.
@@ -408,9 +416,12 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 
 	// Set launching state before queuing the play action.
 	MCPDebuggerBridge *bridge = _get_bridge();
-	if (bridge) {
-		bridge->set_game_launching();
+	if (!bridge) {
+		return make_tool_error(
+				"Internal error: debugger bridge not available.\n"
+				"The MCP server may not be fully initialized yet. Try again in a moment.");
 	}
+	bridge->set_game_launching();
 
 	// Dispatch to main thread.
 	callable_mp(EditorRunBar::get_singleton(),
@@ -448,6 +459,13 @@ Dictionary MCPDebugTools::handle_stop(const Dictionary &p_args) {
 
 Dictionary MCPDebugTools::handle_get_status(const Dictionary &p_args) {
 	MCPDebuggerBridge *bridge = _get_bridge();
+
+	if (!bridge) {
+		Dictionary structured;
+		structured["state"] = "error";
+		structured["error"] = "debugger bridge not available";
+		return make_tool_result("Game Status: error\nDebugger bridge not available. The MCP server may not be fully initialized.", structured);
+	}
 
 	// State machine: stopped -> launching -> running -> paused -> stopped
 	String state = "stopped";
