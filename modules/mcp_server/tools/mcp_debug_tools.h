@@ -40,7 +40,7 @@ class MCPToolRegistry;
 
 class MCPDebugTools {
 public:
-	// Register all debug/inspection/session tools into the registry.
+	// Register all runtime inspection/session tools into the registry.
 	static void register_tools(MCPToolRegistry *p_registry);
 
 	// --- Category E: Game Lifecycle ---
@@ -58,7 +58,6 @@ public:
 
 	// --- Inspection/Search ---
 	static Dictionary handle_search_scene_tree(const Dictionary &p_args);
-	static Dictionary handle_get_performance(const Dictionary &p_args);
 
 	// --- Scene Tree Browser ---
 	static Dictionary handle_browse_scene_tree(const Dictionary &p_args);

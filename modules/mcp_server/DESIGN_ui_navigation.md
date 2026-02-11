@@ -8,19 +8,19 @@
 
 This document describes a set of MCP tools that allow an LLM client to discover, inspect, and interact with Godot UI controls in a running game. The LLM operates like an accessibility agent: it perceives the UI through the scene tree and control metadata, then manipulates controls by targeting them via node path.
 
-### Why not just use `debug/evaluate`?
+### Why not just use `runtime/evaluate`?
 
-The existing `debug/evaluate` tool can technically set properties on any node. However:
+The existing `runtime/evaluate` tool can technically set properties on any node. However:
 
 1. **Expression syntax is fragile.** The LLM must construct GDScript expressions that correctly chain method calls, handle quoting, and deal with type coercion. A dedicated tool with typed parameters is far less error-prone.
-2. **No validation.** `debug/evaluate` cannot check whether a control is visible, enabled, or even the right type before modifying it. Dedicated tools can validate preconditions and return meaningful errors.
+2. **No validation.** `runtime/evaluate` cannot check whether a control is visible, enabled, or even the right type before modifying it. Dedicated tools can validate preconditions and return meaningful errors.
 3. **No state reporting.** After setting a slider value via expression, the LLM gets back `"Nil: null"`. Dedicated tools return the new state of the control, confirming the interaction succeeded.
 4. **Focus management.** Many controls require focus before they accept input. Dedicated tools handle focus automatically.
 5. **Security.** Expression evaluation is a broad attack surface. Typed tools constrain the LLM to well-defined operations.
 
 ### Design principles
 
-- **Discover, then interact.** The LLM uses `debug/search_scene_tree` (already implemented) to find controls, then uses these new tools to interact with them. The two systems compose naturally.
+- **Discover, then interact.** The LLM uses `runtime/search_scene_tree` (already implemented) to find controls, then uses these new tools to interact with them. The two systems compose naturally.
 - **Node path targeting.** Every tool takes a `node_path` parameter. The LLM never needs to construct expressions or guess coordinates.
 - **Precondition validation.** Every tool validates that the target node exists, is the correct type, is visible, and is not disabled before attempting the interaction. Errors include actionable guidance.
 - **State echoing.** Every tool returns the post-interaction state of the control, so the LLM can verify the effect without a separate property read.
@@ -36,7 +36,7 @@ The existing `debug/evaluate` tool can technically set properties on any node. H
 LLM Client                MCP Server (Editor)           Running Game
     |                           |                            |
     |-- tools/call ------------>|                            |
-    |   "debug/ui_interact"     |                            |
+    |   "runtime/ui/interact"     |                            |
     |   {node_path, action, ..} |                            |
     |                           |-- validate params -------->|
     |                           |-- bridge.send_ui_interact  |
@@ -72,28 +72,28 @@ The system is split into three layers, matching the existing architecture:
 
 ### Naming convention
 
-All tools in this category are under the `debug/` prefix (they require a running game):
+All tools in this category are under the `runtime/ui/` prefix (they require a running game):
 
-- `debug/ui_get_control_info` -- Read-only inspection of any Control
-- `debug/ui_set_text` -- TextEdit / LineEdit text manipulation
-- `debug/ui_get_text` -- TextEdit / LineEdit text reading
-- `debug/ui_set_range_value` -- HSlider / VSlider / SpinBox / ProgressBar value setting
-- `debug/ui_get_range_value` -- HSlider / VSlider / SpinBox / ProgressBar value reading
-- `debug/ui_select_option` -- OptionButton / PopupMenu item selection
-- `debug/ui_get_options` -- OptionButton / PopupMenu item listing
-- `debug/ui_set_tab` -- TabContainer / TabBar tab switching
-- `debug/ui_get_tabs` -- TabContainer / TabBar tab listing
-- `debug/ui_set_checked` -- CheckBox / CheckButton state setting
-- `debug/ui_tree_select` -- Tree control item selection
-- `debug/ui_tree_get_items` -- Tree control item listing
-- `debug/ui_itemlist_select` -- ItemList item selection
-- `debug/ui_itemlist_get_items` -- ItemList item listing
-- `debug/ui_scroll_to` -- ScrollContainer scrolling
-- `debug/ui_focus` -- Focus management (focus/unfocus a control)
+- `runtime/ui/get_control_info` -- Read-only inspection of any Control
+- `runtime/ui/set_text` -- TextEdit / LineEdit text manipulation
+- `runtime/ui/get_text` -- TextEdit / LineEdit text reading
+- `runtime/ui/set_range_value` -- HSlider / VSlider / SpinBox / ProgressBar value setting
+- `runtime/ui/get_range_value` -- HSlider / VSlider / SpinBox / ProgressBar value reading
+- `runtime/ui/select_option` -- OptionButton / PopupMenu item selection
+- `runtime/ui/get_options` -- OptionButton / PopupMenu item listing
+- `runtime/ui/set_tab` -- TabContainer / TabBar tab switching
+- `runtime/ui/get_tabs` -- TabContainer / TabBar tab listing
+- `runtime/ui/set_checked` -- CheckBox / CheckButton state setting
+- `runtime/ui/tree_select` -- Tree control item selection
+- `runtime/ui/tree_get_items` -- Tree control item listing
+- `runtime/ui/itemlist_select` -- ItemList item selection
+- `runtime/ui/itemlist_get_items` -- ItemList item listing
+- `runtime/ui/scroll_to` -- ScrollContainer scrolling
+- `runtime/ui/focus` -- Focus management (focus/unfocus a control)
 
 ### Why separate tools instead of one mega-tool?
 
-MCP tool schemas serve as the LLM's "API documentation." Separate tools with tailored schemas make it obvious what parameters are available for each control type. A single `debug/ui_interact` tool with a union schema would be harder for the LLM to use correctly.
+MCP tool schemas serve as the LLM's "API documentation." Separate tools with tailored schemas make it obvious what parameters are available for each control type. A single `runtime/ui/interact` tool with a union schema would be harder for the LLM to use correctly.
 
 However, the **game-side** implementation uses a single message type (`mcp:ui_interact`) with an action discriminator to avoid message-type proliferation in the debugger protocol. The MCP tool handlers map their typed parameters into this generic format.
 
@@ -101,7 +101,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ## Tool Schemas and Payloads
 
-### 1. `debug/ui_get_control_info`
+### 1. `runtime/ui/get_control_info`
 
 **Purpose:** Read accessibility-like metadata from any Control node. This is the LLM's primary way to "see" a control's current state before interacting with it.
 
@@ -128,7 +128,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/ui_get_control_info",
+    "name": "runtime/ui/get_control_info",
     "arguments": {
       "node_path": "/root/Main/UI/LoginForm/UsernameField"
     }
@@ -186,7 +186,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 2. `debug/ui_set_text`
+### 2. `runtime/ui/set_text`
 
 **Purpose:** Set, clear, append, or insert text in a TextEdit or LineEdit. Optionally focus the control first.
 
@@ -272,7 +272,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 3. `debug/ui_get_text`
+### 3. `runtime/ui/get_text`
 
 **Purpose:** Read the current text content from a TextEdit or LineEdit. Optionally read only the selected text.
 
@@ -316,7 +316,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 4. `debug/ui_set_range_value`
+### 4. `runtime/ui/set_range_value`
 
 **Purpose:** Set the value of any Range-based control (HSlider, VSlider, SpinBox, ProgressBar, ScrollBar).
 
@@ -391,7 +391,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 5. `debug/ui_get_range_value`
+### 5. `runtime/ui/get_range_value`
 
 **Purpose:** Read the current value and range of any Range-based control.
 
@@ -431,7 +431,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 6. `debug/ui_select_option`
+### 6. `runtime/ui/select_option`
 
 **Purpose:** Select an item in an OptionButton (dropdown). Can target by index or by text match.
 
@@ -490,7 +490,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 7. `debug/ui_get_options`
+### 7. `runtime/ui/get_options`
 
 **Purpose:** List all items in an OptionButton, including which is currently selected.
 
@@ -533,7 +533,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 8. `debug/ui_set_tab`
+### 8. `runtime/ui/set_tab`
 
 **Purpose:** Switch the active tab on a TabContainer or TabBar.
 
@@ -592,7 +592,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 9. `debug/ui_get_tabs`
+### 9. `runtime/ui/get_tabs`
 
 **Purpose:** List all tabs and the current selection.
 
@@ -634,7 +634,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 10. `debug/ui_set_checked`
+### 10. `runtime/ui/set_checked`
 
 **Purpose:** Set or toggle the checked state of a CheckBox or CheckButton.
 
@@ -686,7 +686,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 11. `debug/ui_tree_select`
+### 11. `runtime/ui/tree_select`
 
 **Purpose:** Select an item in a Godot Tree control by path or index, and optionally expand/collapse.
 
@@ -759,7 +759,7 @@ However, the **game-side** implementation uses a single message type (`mcp:ui_in
 
 ---
 
-### 12. `debug/ui_tree_get_items`
+### 12. `runtime/ui/tree_get_items`
 
 **Purpose:** List items in a Tree control. Returns a hierarchical structure up to a maximum depth.
 
@@ -833,7 +833,7 @@ When an item is collapsed and `max_depth` has not been reached, `children_count`
 
 ---
 
-### 13. `debug/ui_itemlist_select`
+### 13. `runtime/ui/itemlist_select`
 
 **Purpose:** Select one or more items in an ItemList by index or text.
 
@@ -883,7 +883,7 @@ When an item is collapsed and `max_depth` has not been reached, `children_count`
 
 ---
 
-### 14. `debug/ui_itemlist_get_items`
+### 14. `runtime/ui/itemlist_get_items`
 
 **Purpose:** List all items in an ItemList.
 
@@ -932,7 +932,7 @@ When an item is collapsed and `max_depth` has not been reached, `children_count`
 
 ---
 
-### 15. `debug/ui_scroll_to`
+### 15. `runtime/ui/scroll_to`
 
 **Purpose:** Scroll a ScrollContainer to a specific position or to bring a child node into view.
 
@@ -994,7 +994,7 @@ When an item is collapsed and `max_depth` has not been reached, `children_count`
 
 ---
 
-### 16. `debug/ui_focus`
+### 16. `runtime/ui/focus`
 
 **Purpose:** Explicitly focus or unfocus a Control. Useful before keyboard input or to verify focus state.
 
@@ -1039,17 +1039,17 @@ When an item is collapsed and `max_depth` has not been reached, `children_count`
 
 ### Primary: Node path
 
-All tools accept a `node_path` parameter. This is the scene tree path as returned by `debug/get_scene_tree` and `debug/search_scene_tree`. Paths are absolute from the root viewport, e.g., `/root/Main/UI/StartButton`.
+All tools accept a `node_path` parameter. This is the scene tree path as returned by `runtime/get_scene_tree` and `runtime/search_scene_tree`. Paths are absolute from the root viewport, e.g., `/root/Main/UI/StartButton`.
 
 ### Discovery workflow
 
 The expected LLM workflow is:
 
-1. **Browse:** `debug/get_scene_tree` with `max_depth: 3` to see the scene structure.
-2. **Search:** `debug/search_scene_tree` with `type: "Button"` (or `name_pattern: "*Login*"`) to find specific controls.
-3. **Inspect:** `debug/ui_get_control_info` to read the control's current state.
-4. **Interact:** `debug/ui_set_text`, `debug/ui_set_range_value`, etc.
-5. **Verify:** The interaction response includes post-state, or use `debug/ui_get_control_info` again, or take a `debug/get_screenshot`.
+1. **Browse:** `runtime/get_scene_tree` with `max_depth: 3` to see the scene structure.
+2. **Search:** `runtime/search_scene_tree` with `type: "Button"` (or `name_pattern: "*Login*"`) to find specific controls.
+3. **Inspect:** `runtime/ui/get_control_info` to read the control's current state.
+4. **Interact:** `runtime/ui/set_text`, `runtime/ui/set_range_value`, etc.
+5. **Verify:** The interaction response includes post-state, or use `runtime/ui/get_control_info` again, or take a `runtime/get_screenshot`.
 
 ### Path validation
 
@@ -1216,10 +1216,10 @@ Write tools (`set_text`, `set_range_value`, `select_option`, `set_checked`) auto
 
 ### Explicit focus
 
-The `debug/ui_focus` tool allows the LLM to explicitly manage focus. This is useful for:
+The `runtime/ui/focus` tool allows the LLM to explicitly manage focus. This is useful for:
 
-- Verifying which control has focus before sending keyboard input via `debug/send_input`.
-- Tabbing through a form (use `debug/send_input` with `ui_focus_next` / `ui_focus_prev`).
+- Verifying which control has focus before sending keyboard input via `runtime/input/send_input`.
+- Tabbing through a form (use `runtime/input/send_input` with `ui_focus_next` / `ui_focus_prev`).
 - Releasing focus before taking a screenshot (to avoid cursor blink artifacts).
 
 ### Focus mode validation
@@ -1246,7 +1246,7 @@ The UI tools are designed to compose with the existing scene tree inspection too
 ### Discover controls by type
 
 ```json
-{"name": "debug/search_scene_tree", "arguments": {"type": "LineEdit"}}
+{"name": "runtime/search_scene_tree", "arguments": {"type": "LineEdit"}}
 ```
 
 Returns all LineEdit nodes with their paths. The LLM picks the one it needs.
@@ -1254,13 +1254,13 @@ Returns all LineEdit nodes with their paths. The LLM picks the one it needs.
 ### Discover controls by name
 
 ```json
-{"name": "debug/search_scene_tree", "arguments": {"name_pattern": "*password*"}}
+{"name": "runtime/search_scene_tree", "arguments": {"name_pattern": "*password*"}}
 ```
 
 ### Inspect before interacting
 
 ```json
-{"name": "debug/ui_get_control_info", "arguments": {"node_path": "/root/Main/UI/LoginForm/PasswordField"}}
+{"name": "runtime/ui/get_control_info", "arguments": {"node_path": "/root/Main/UI/LoginForm/PasswordField"}}
 ```
 
 Returns whether it is editable, visible, what placeholder text says, etc.
@@ -1268,28 +1268,28 @@ Returns whether it is editable, visible, what placeholder text says, etc.
 ### Full login form example workflow
 
 ```
-1. debug/search_scene_tree { "type": "LineEdit" }
+1. runtime/search_scene_tree { "type": "LineEdit" }
    -> finds /root/Main/Login/UsernameField, /root/Main/Login/PasswordField
 
-2. debug/ui_get_control_info { "node_path": "/root/Main/Login/UsernameField" }
+2. runtime/ui/get_control_info { "node_path": "/root/Main/Login/UsernameField" }
    -> editable: true, placeholder: "Username", text: ""
 
-3. debug/ui_set_text { "node_path": "/root/Main/Login/UsernameField", "text": "testuser" }
+3. runtime/ui/set_text { "node_path": "/root/Main/Login/UsernameField", "text": "testuser" }
    -> current_text: "testuser"
 
-4. debug/ui_set_text { "node_path": "/root/Main/Login/PasswordField", "text": "password123" }
+4. runtime/ui/set_text { "node_path": "/root/Main/Login/PasswordField", "text": "password123" }
    -> current_text: "password123"
 
-5. debug/search_scene_tree { "name_pattern": "*Login*", "type": "Button" }
+5. runtime/search_scene_tree { "name_pattern": "*Login*", "type": "Button" }
    -> finds /root/Main/Login/LoginButton
 
-6. debug/click_control { "node_path": "/root/Main/Login/LoginButton" }
+6. runtime/input/click_control { "node_path": "/root/Main/Login/LoginButton" }
    -> Button pressed
 
-7. debug/wait_frames { "frames": 30 }
+7. runtime/wait_frames { "frames": 30 }
    -> Waited 30 frames
 
-8. debug/get_screenshot {}
+8. runtime/get_screenshot {}
    -> Shows the post-login screen
 ```
 
@@ -1304,7 +1304,7 @@ Returns whether it is editable, visible, what placeholder text says, etc.
   "isError": true,
   "content": [{
     "type": "text",
-    "text": "Node not found: /root/Main/UI/OldButton\n\nThe node may have been removed from the scene. Use debug/search_scene_tree to find the correct path."
+    "text": "Node not found: /root/Main/UI/OldButton\n\nThe node may have been removed from the scene. Use runtime/search_scene_tree to find the correct path."
   }]
 }
 ```
@@ -1316,7 +1316,7 @@ Returns whether it is editable, visible, what placeholder text says, etc.
   "isError": true,
   "content": [{
     "type": "text",
-    "text": "Expected LineEdit or TextEdit but found Button at /root/Main/UI/SubmitButton\n\nUse debug/ui_get_control_info to check the control type, or debug/click_control to click a Button."
+    "text": "Expected LineEdit or TextEdit but found Button at /root/Main/UI/SubmitButton\n\nUse runtime/ui/get_control_info to check the control type, or runtime/input/click_control to click a Button."
   }]
 }
 ```
@@ -1353,7 +1353,7 @@ Write operations on disabled controls fail with an error:
 
 ### Control in a popup (not in tree)
 
-A common pattern: OptionButton's popup menu exists but is not visible. The `debug/ui_select_option` tool operates on the OptionButton itself (not its popup), so this is transparent. The tool calls `OptionButton::select()` directly rather than trying to simulate clicking the popup.
+A common pattern: OptionButton's popup menu exists but is not visible. The `runtime/ui/select_option` tool operates on the OptionButton itself (not its popup), so this is transparent. The tool calls `OptionButton::select()` directly rather than trying to simulate clicking the popup.
 
 ### Index out of range
 
@@ -1374,7 +1374,7 @@ A common pattern: OptionButton's popup menu exists but is not visible. The `debu
   "isError": true,
   "content": [{
     "type": "text",
-    "text": "No item with text matching 'Klingon' found in OptionButton at /root/Main/UI/Settings/LanguageDropdown\n\nAvailable items: French, German, English, Spanish, Japanese\n\nUse debug/ui_get_options to see all items."
+    "text": "No item with text matching 'Klingon' found in OptionButton at /root/Main/UI/Settings/LanguageDropdown\n\nAvailable items: French, German, English, Spanish, Japanese\n\nUse runtime/ui/get_options to see all items."
   }]
 }
 ```
@@ -1402,7 +1402,7 @@ When `node_path` is missing (unlikely, since it is `required`, but the LLM might
   "isError": true,
   "content": [{
     "type": "text",
-    "text": "Missing required parameter: node_path\n\nProvide the scene tree path of a Control node.\nUse debug/search_scene_tree to find Control nodes."
+    "text": "Missing required parameter: node_path\n\nProvide the scene tree path of a Control node.\nUse runtime/search_scene_tree to find Control nodes."
   }]
 }
 ```
@@ -1420,7 +1420,7 @@ The bridge request uses the standard `_wait_for_pending()` timeout mechanism (10
   "isError": true,
   "content": [{
     "type": "text",
-    "text": "UI interaction timed out after 10000ms.\n\nThe game may be frozen or processing a heavy frame. Try debug/get_status to check game state."
+    "text": "UI interaction timed out after 10000ms.\n\nThe game may be frozen or processing a heavy frame. Try runtime/get_status to check game state."
   }]
 }
 ```
@@ -1453,7 +1453,7 @@ if (sub_msg == "ui_interact_result") {
 
 ### Long-running tool registration
 
-`debug/ui_get_control_info` and write tools are async round-trips, so they should be added to the `long_running_tools` list in `MCPToolRegistry::is_long_running_tool()`.
+`runtime/ui/get_control_info` and write tools are async round-trips, so they should be added to the `long_running_tools` list in `MCPToolRegistry::is_long_running_tool()`.
 
 ---
 
@@ -1472,7 +1472,7 @@ if (sub_msg == "ui_interact_result") {
 |------|---------|
 | `modules/mcp_server/mcp_debugger_bridge.h` | Add `send_ui_interact()` method declaration |
 | `modules/mcp_server/mcp_debugger_bridge.cpp` | Add `send_ui_interact()` implementation, `ui_interact_result` capture |
-| `modules/mcp_server/mcp_tool_registry.cpp` | Add `debug/ui_*` tools to `long_running_tools` list |
+| `modules/mcp_server/mcp_tool_registry.cpp` | Add `runtime/ui/*` tools to `long_running_tools` list |
 | `scene/debugger/scene_debugger.h` | Add `_mcp_handle_ui_interact()` declaration |
 | `scene/debugger/scene_debugger.cpp` | Add `ui_interact` message handler with sub-action dispatch |
 
@@ -1494,7 +1494,7 @@ MCPUITools::register_tools(registry);
 
 2. **No arbitrary method calls.** The game-side handler only calls specific, known methods on known control types. The LLM cannot call arbitrary methods through these tools.
 
-3. **Signal emission.** The handler explicitly emits signals (like `text_changed`) to trigger game-side listeners. This is intentional -- it simulates real user interaction. However, it means the LLM can trigger game logic. This is equivalent to what `debug/click_control` already does.
+3. **Signal emission.** The handler explicitly emits signals (like `text_changed`) to trigger game-side listeners. This is intentional -- it simulates real user interaction. However, it means the LLM can trigger game logic. This is equivalent to what `runtime/input/click_control` already does.
 
 4. **Read-only controls.** Write operations are blocked on disabled/read-only controls to prevent unintended state modification.
 
@@ -1504,7 +1504,7 @@ MCPUITools::register_tools(registry);
 
 ## Performance Considerations
 
-1. **Single round-trip.** Each tool call results in exactly one debugger message round-trip (same as `debug/evaluate` or `debug/click_control`). No multi-message protocols.
+1. **Single round-trip.** Each tool call results in exactly one debugger message round-trip (same as `runtime/evaluate` or `runtime/input/click_control`). No multi-message protocols.
 
 2. **Data size.** The `tree_get_items` and `itemlist_get_items` tools support pagination to prevent excessive data transfer for large collections.
 
@@ -1519,8 +1519,8 @@ MCPUITools::register_tools(registry);
 These are explicitly out of scope for the initial implementation but noted for completeness:
 
 - **FileDialog interaction.** Navigating file dialogs is complex (involves OS-level dialogs in some configurations). Deferred to a future design.
-- **Drag and drop.** Simulating drag-and-drop between UI elements requires multi-frame input sequences. Could be built on top of `debug/send_input` with coordinate targeting.
-- **Custom controls.** Game-specific custom controls cannot be generically handled. The LLM can fall back to `debug/evaluate` for these, or use `debug/click_control` for basic click interaction.
-- **Animated transitions.** Some games animate UI transitions. The LLM should use `debug/wait_frames` between interactions to allow animations to complete.
+- **Drag and drop.** Simulating drag-and-drop between UI elements requires multi-frame input sequences. Could be built on top of `runtime/input/send_input` with coordinate targeting.
+- **Custom controls.** Game-specific custom controls cannot be generically handled. The LLM can fall back to `runtime/evaluate` for these, or use `runtime/input/click_control` for basic click interaction.
+- **Animated transitions.** Some games animate UI transitions. The LLM should use `runtime/wait_frames` between interactions to allow animations to complete.
 - **Rich text (RichTextLabel).** Reading BBCode content and interacting with embedded links is complex. Deferred.
 - **ColorPicker / ColorPickerButton.** Specialized controls that could benefit from dedicated tools. Deferred.

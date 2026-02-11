@@ -94,7 +94,7 @@ TOOLS_BODY=$(curl -s -X POST "$BASE" \
 check "tools/list has tools array" '"tools"' "$TOOLS_BODY"
 check "Has project/get_info" 'project/get_info' "$TOOLS_BODY"
 check "Has gdscript/check_errors" 'gdscript/check_errors' "$TOOLS_BODY"
-check "Has debug/run_project" 'debug/run_project' "$TOOLS_BODY"
+check "Has runtime/run_project" 'runtime/run_project' "$TOOLS_BODY"
 
 echo ""
 

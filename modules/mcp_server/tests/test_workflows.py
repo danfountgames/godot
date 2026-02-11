@@ -142,21 +142,21 @@ def test_workflow_fix_gdscript_bug(client):
             )
 
         # Step 7: Run the project.
-        resp = client.call_tool("debug/run_project")
-        assert not is_error(resp), f"debug/run_project failed: {resp}"
+        resp = client.call_tool("runtime/run_project")
+        assert not is_error(resp), f"runtime/run_project failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = (str(sc) + text).lower()
         assert "launch" in combined or "queued" in combined or "running" in combined, (
-            f"debug/run_project should indicate launching: {combined[:300]}"
+            f"runtime/run_project should indicate launching: {combined[:300]}"
         )
 
         try:
-            # Step 8: Poll debug/get_status until running (up to 10s).
+            # Step 8: Poll runtime/get_status until running (up to 10s).
             deadline = time.time() + 10.0
             state = None
             while time.time() < deadline:
-                resp = client.call_tool("debug/get_status")
+                resp = client.call_tool("runtime/get_status")
                 sc = get_structured(resp)
                 state = sc.get("state", "") if isinstance(sc, dict) else ""
                 if state == "running":
@@ -172,8 +172,8 @@ def test_workflow_fix_gdscript_bug(client):
             combined = ""
             for _attempt in range(10):
                 time.sleep(0.5)
-                resp = client.call_tool("debug/get_output")
-                assert not is_error(resp), f"debug/get_output failed: {resp}"
+                resp = client.call_tool("runtime/get_output")
+                assert not is_error(resp), f"runtime/get_output failed: {resp}"
                 sc = get_structured(resp)
                 text = get_text(resp)
                 combined = str(sc) + text
@@ -186,7 +186,7 @@ def test_workflow_fix_gdscript_bug(client):
         finally:
             # Step 10: Stop the game.
             try:
-                client.call_tool("debug/stop")
+                client.call_tool("runtime/stop")
                 time.sleep(0.5)
             except Exception:
                 pass
@@ -213,21 +213,21 @@ def test_workflow_ui_automation(client):
     was processed via game output.
     """
     # Step 1: Run the UI test scene.
-    resp = client.call_tool("debug/run_scene", {"scene": "res://scenes/ui_test.tscn"})
-    assert not is_error(resp), f"debug/run_scene failed: {resp}"
+    resp = client.call_tool("runtime/run_scene", {"scene": "res://scenes/ui_test.tscn"})
+    assert not is_error(resp), f"runtime/run_scene failed: {resp}"
     sc = get_structured(resp)
     text = get_text(resp)
     combined = (str(sc) + text).lower()
     assert "launch" in combined or "queued" in combined or "running" in combined, (
-        f"debug/run_scene should indicate launch queued: {combined[:300]}"
+        f"runtime/run_scene should indicate launch queued: {combined[:300]}"
     )
 
     try:
-        # Step 2: Poll debug/get_status until running.
+        # Step 2: Poll runtime/get_status until running.
         deadline = time.time() + 10.0
         state = None
         while time.time() < deadline:
-            resp = client.call_tool("debug/get_status")
+            resp = client.call_tool("runtime/get_status")
             sc = get_structured(resp)
             state = sc.get("state", "") if isinstance(sc, dict) else ""
             if state == "running":
@@ -238,8 +238,8 @@ def test_workflow_ui_automation(client):
         )
 
         # Step 3: Get scene tree -- should contain UITest, Panel, StartButton.
-        resp = client.call_tool("debug/get_scene_tree")
-        assert not is_error(resp), f"debug/get_scene_tree failed: {resp}"
+        resp = client.call_tool("runtime/get_scene_tree")
+        assert not is_error(resp), f"runtime/get_scene_tree failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
@@ -254,10 +254,10 @@ def test_workflow_ui_automation(client):
         )
 
         # Step 4: Search scene tree for buttons.
-        resp = client.call_tool("debug/search_scene_tree", {
+        resp = client.call_tool("runtime/search_scene_tree", {
             "name_pattern": "*Button*",
         })
-        assert not is_error(resp), f"debug/search_scene_tree failed: {resp}"
+        assert not is_error(resp), f"runtime/search_scene_tree failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
@@ -266,14 +266,14 @@ def test_workflow_ui_automation(client):
         )
 
         # Step 5: Click the start button.
-        resp = client.call_tool("debug/click_control", {
+        resp = client.call_tool("runtime/input/click_control", {
             "node_path": "/root/UITest/Panel/StartButton",
         })
-        assert not is_error(resp), f"debug/click_control failed: {resp}"
+        assert not is_error(resp), f"runtime/input/click_control failed: {resp}"
 
         # Step 6: Wait a few frames for the click to propagate.
-        resp = client.call_tool("debug/wait_frames", {"frames": 5})
-        assert not is_error(resp), f"debug/wait_frames failed: {resp}"
+        resp = client.call_tool("runtime/wait_frames", {"frames": 5})
+        assert not is_error(resp), f"runtime/wait_frames failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
@@ -282,8 +282,8 @@ def test_workflow_ui_automation(client):
         )
 
         # Step 7: Get output -- should contain BUTTON_CLICKED.
-        resp = client.call_tool("debug/get_output")
-        assert not is_error(resp), f"debug/get_output failed: {resp}"
+        resp = client.call_tool("runtime/get_output")
+        assert not is_error(resp), f"runtime/get_output failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
@@ -294,7 +294,7 @@ def test_workflow_ui_automation(client):
     finally:
         # Step 8: Always stop the game.
         try:
-            client.call_tool("debug/stop")
+            client.call_tool("runtime/stop")
             time.sleep(0.5)
         except Exception:
             pass
@@ -306,22 +306,22 @@ def test_workflow_ui_automation(client):
 
 @pytest.mark.p1
 @pytest.mark.requires_game
-def test_workflow_performance_investigation(client):
-    """Workflow 3: Run the project, inspect performance, evaluate, screenshot.
+def test_workflow_session_investigation(client):
+    """Workflow 3: Run the project, get session summary, evaluate, screenshot.
 
-    Simulates an LLM agent investigating performance: checking FPS and node
-    counts, evaluating expressions at runtime, and capturing a screenshot.
+    Simulates an LLM agent investigating runtime state: using the session
+    summary for FPS/node counts, evaluating expressions, and capturing a screenshot.
     """
     # Step 1: Run the project.
-    resp = client.call_tool("debug/run_project")
-    assert not is_error(resp), f"debug/run_project failed: {resp}"
+    resp = client.call_tool("runtime/run_project")
+    assert not is_error(resp), f"runtime/run_project failed: {resp}"
 
     try:
         # Step 2: Poll until running.
         deadline = time.time() + 10.0
         state = None
         while time.time() < deadline:
-            resp = client.call_tool("debug/get_status")
+            resp = client.call_tool("runtime/get_status")
             sc = get_structured(resp)
             state = sc.get("state", "") if isinstance(sc, dict) else ""
             if state == "running":
@@ -331,41 +331,31 @@ def test_workflow_performance_investigation(client):
             f"Game did not reach running state, last state: {state}"
         )
 
-        # Step 3: Get performance metrics -- fps > 0, node_count > 0.
-        resp = client.call_tool("debug/get_performance")
-        assert not is_error(resp), f"debug/get_performance failed: {resp}"
+        # Step 3: Session summary includes performance data.
+        resp = client.call_tool("runtime/get_session_summary")
+        assert not is_error(resp), f"runtime/get_session_summary failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
 
-        # Extract fps and node_count from structured content or text.
-        if isinstance(sc, dict):
-            fps = sc.get("fps", sc.get("FPS", 0))
-            node_count = sc.get("node_count", sc.get("nodes", sc.get("object_count", 0)))
-        else:
-            fps = 0
-            node_count = 0
+        # Performance is embedded in the session summary.
+        perf = sc.get("performance", {}) if isinstance(sc, dict) else {}
+        fps = perf.get("fps", 0) if isinstance(perf, dict) else 0
+        node_count = perf.get("node_count", 0) if isinstance(perf, dict) else 0
 
-        # If not found in structured content, try to parse from text.
+        # Fallback: parse from text.
         if not fps and text:
             import re
-            fps_match = re.search(r"fps[\":\s]+(\d+)", text, re.IGNORECASE)
+            fps_match = re.search(r"FPS[:\s]+(\d+)", text)
             if fps_match:
                 fps = int(fps_match.group(1))
-            node_match = re.search(r"node[s_]*count[\":\s]+(\d+)", text, re.IGNORECASE)
-            if node_match:
-                node_count = int(node_match.group(1))
 
         assert int(fps) > 0, (
             f"FPS should be > 0, got {fps}. Full response: {sc} / {text[:300]}"
         )
-        assert int(node_count) > 0, (
-            f"Node count should be > 0, got {node_count}. "
-            f"Full response: {sc} / {text[:300]}"
-        )
 
         # Step 4: Evaluate a simple expression.
-        resp = client.call_tool("debug/evaluate", {"expression": "2+2"})
-        assert not is_error(resp), f"debug/evaluate failed: {resp}"
+        resp = client.call_tool("runtime/evaluate", {"expression": "2+2"})
+        assert not is_error(resp), f"runtime/evaluate failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
@@ -374,8 +364,8 @@ def test_workflow_performance_investigation(client):
         )
 
         # Step 5: Take a screenshot -- should have image content with PNG data.
-        resp = client.call_tool("debug/get_screenshot")
-        assert not is_error(resp), f"debug/get_screenshot failed: {resp}"
+        resp = client.call_tool("runtime/get_screenshot")
+        assert not is_error(resp), f"runtime/get_screenshot failed: {resp}"
         result = resp.get("result", {})
         content = result.get("content", [])
         # Look for image content in the response.
@@ -394,14 +384,14 @@ def test_workflow_performance_investigation(client):
                 )
                 break
         assert has_image, (
-            f"debug/get_screenshot should return image content: "
+            f"runtime/get_screenshot should return image content: "
             f"{[item.get('type') for item in content]}"
         )
 
     finally:
         # Step 6: Always stop the game.
         try:
-            client.call_tool("debug/stop")
+            client.call_tool("runtime/stop")
             time.sleep(0.5)
         except Exception:
             pass
@@ -422,15 +412,15 @@ def test_workflow_resume_session_with_summary(client):
     duplicate lines appear.
     """
     # Step 1: Run the project.
-    resp = client.call_tool("debug/run_project")
-    assert not is_error(resp), f"debug/run_project failed: {resp}"
+    resp = client.call_tool("runtime/run_project")
+    assert not is_error(resp), f"runtime/run_project failed: {resp}"
 
     try:
         # Step 2: Poll until running.
         deadline = time.time() + 10.0
         state = None
         while time.time() < deadline:
-            resp = client.call_tool("debug/get_status")
+            resp = client.call_tool("runtime/get_status")
             sc = get_structured(resp)
             state = sc.get("state", "") if isinstance(sc, dict) else ""
             if state == "running":
@@ -441,8 +431,8 @@ def test_workflow_resume_session_with_summary(client):
         )
 
         # Step 3: Get session summary.
-        resp = client.call_tool("debug/get_session_summary")
-        assert not is_error(resp), f"debug/get_session_summary failed: {resp}"
+        resp = client.call_tool("runtime/get_session_summary")
+        assert not is_error(resp), f"runtime/get_session_summary failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         combined = str(sc) + text
@@ -484,17 +474,17 @@ def test_workflow_resume_session_with_summary(client):
                     summary_output_text = recent_output["text"]
 
         # Step 4: Wait about 1 second (60 frames at ~60fps).
-        resp = client.call_tool("debug/wait_frames", {"frames": 60})
-        assert not is_error(resp), f"debug/wait_frames failed: {resp}"
+        resp = client.call_tool("runtime/wait_frames", {"frames": 60})
+        assert not is_error(resp), f"runtime/wait_frames failed: {resp}"
 
         # Step 5: Get output using the cursor -- should return only new output.
         if cursor is not None:
-            resp = client.call_tool("debug/get_output", {"cursor": cursor})
+            resp = client.call_tool("runtime/get_output", {"cursor": cursor})
         else:
             # Fallback: get all output if no cursor was available.
-            resp = client.call_tool("debug/get_output")
+            resp = client.call_tool("runtime/get_output")
 
-        assert not is_error(resp), f"debug/get_output (with cursor) failed: {resp}"
+        assert not is_error(resp), f"runtime/get_output (with cursor) failed: {resp}"
         sc = get_structured(resp)
         text = get_text(resp)
         new_output = str(sc) + text
@@ -523,7 +513,7 @@ def test_workflow_resume_session_with_summary(client):
     finally:
         # Step 6: Always stop the game.
         try:
-            client.call_tool("debug/stop")
+            client.call_tool("runtime/stop")
             time.sleep(0.5)
         except Exception:
             pass

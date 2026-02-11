@@ -57,9 +57,9 @@ Dictionary MCPUITools::_require_game_running() {
 	if (!bridge->is_game_running()) {
 		return make_tool_error(
 				"No game is currently running.\n\n"
-				"If the game stopped unexpectedly, check debug/get_errors for runtime errors.\n"
-				"To start a game: debug/run_project (main scene) or debug/run_scene (specific scene).\n"
-				"To check status: debug/get_status (includes stop_reason when stopped).");
+				"If the game stopped unexpectedly, check runtime/get_errors for runtime errors.\n"
+				"To start a game: runtime/run_project (main scene) or runtime/run_scene (specific scene).\n"
+				"To check status: runtime/get_status (includes stop_reason when stopped).");
 	}
 	return Dictionary();
 }
@@ -153,7 +153,7 @@ Dictionary MCPUITools::_send_ui_request(const String &p_action,
 void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 	ERR_FAIL_NULL(p_registry);
 
-	// ---- debug/ui_get_control_info ----
+	// ---- runtime/ui/get_control_info ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -161,21 +161,21 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_get_control_info",
+				"runtime/ui/get_control_info",
 				"Get Control Info",
 				"Read accessibility-like metadata from any Control node in the running game. "
 				"Returns type, visibility, enabled state, focus state, rect, and type-specific "
 				"data (text for LineEdit, value for Slider, items for OptionButton, etc.). "
 				"Use this to inspect a control's current state before interacting with it. "
-				"IMPORTANT: All debug/ui_* tools only work on Control nodes (Button, Label, "
+				"IMPORTANT: All runtime/ui/* tools only work on Control nodes (Button, Label, "
 				"LineEdit, etc.) — NOT on Node2D sprites or Node3D meshes. Use "
-				"debug/browse_scene_tree to identify Control nodes. Game must be running.",
+				"runtime/browse_scene_tree to identify Control nodes. Game must be running.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPUITools::handle_get_control_info));
 	}
 
-	// ---- debug/ui_set_text ----
+	// ---- runtime/ui/set_text ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -190,7 +190,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_set_text",
+				"runtime/ui/set_text",
 				"Set UI Text",
 				"Set, clear, append, or insert text in a TextEdit or LineEdit node. "
 				"Returns the previous and current text. Automatically focuses the "
@@ -201,7 +201,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_set_text));
 	}
 
-	// ---- debug/ui_get_text ----
+	// ---- runtime/ui/get_text ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -211,7 +211,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_get_text",
+				"runtime/ui/get_text",
 				"Get UI Text",
 				"Read the current text content from a TextEdit or LineEdit. "
 				"Optionally read only the selected text. Returns text, line count, "
@@ -221,7 +221,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_get_text));
 	}
 
-	// ---- debug/ui_set_range_value ----
+	// ---- runtime/ui/set_range_value ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -237,7 +237,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_set_range_value",
+				"runtime/ui/set_range_value",
 				"Set Range Value",
 				"Set the value of any Range-based control (HSlider, VSlider, SpinBox, "
 				"ProgressBar, ScrollBar). Supports absolute value, ratio (0.0-1.0), or "
@@ -248,7 +248,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_set_range_value));
 	}
 
-	// ---- debug/ui_get_range_value ----
+	// ---- runtime/ui/get_range_value ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -256,7 +256,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_get_range_value",
+				"runtime/ui/get_range_value",
 				"Get Range Value",
 				"Read the current value and range of any Range-based control (HSlider, "
 				"VSlider, SpinBox, ProgressBar, ScrollBar). Returns value, min, max, step, "
@@ -266,7 +266,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_get_range_value));
 	}
 
-	// ---- debug/ui_select_option ----
+	// ---- runtime/ui/select_option ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -279,17 +279,17 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_select_option",
+				"runtime/ui/select_option",
 				"Select Option",
 				"Select an item in an OptionButton (dropdown) by index or text match. "
-				"Returns previous and current selection. Use debug/ui_get_options to see "
+				"Returns previous and current selection. Use runtime/ui/get_options to see "
 				"all available items first. Game must be running.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPUITools::handle_select_option));
 	}
 
-	// ---- debug/ui_get_options ----
+	// ---- runtime/ui/get_options ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -297,7 +297,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_get_options",
+				"runtime/ui/get_options",
 				"Get Option Items",
 				"List all items in an OptionButton, including which is currently selected. "
 				"Returns item index, text, disabled state, and separator flag for each item. "
@@ -307,7 +307,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_get_options));
 	}
 
-	// ---- debug/ui_set_tab ----
+	// ---- runtime/ui/set_tab ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -320,17 +320,17 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_set_tab",
+				"runtime/ui/set_tab",
 				"Set Tab",
 				"Switch the active tab on a TabContainer or TabBar by index or title. "
 				"Returns previous and current tab with all tab titles. "
-				"Use debug/ui_get_tabs to see all tabs first. Game must be running.",
+				"Use runtime/ui/get_tabs to see all tabs first. Game must be running.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPUITools::handle_set_tab));
 	}
 
-	// ---- debug/ui_get_tabs ----
+	// ---- runtime/ui/get_tabs ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -338,7 +338,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_get_tabs",
+				"runtime/ui/get_tabs",
 				"Get Tabs",
 				"List all tabs and the current selection on a TabContainer or TabBar. "
 				"Returns tab index, title, disabled state, and hidden state for each tab. "
@@ -348,7 +348,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_get_tabs));
 	}
 
-	// ---- debug/ui_set_checked ----
+	// ---- runtime/ui/set_checked ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -358,7 +358,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_set_checked",
+				"runtime/ui/set_checked",
 				"Set Checked State",
 				"Set or toggle the checked state of a CheckBox or CheckButton. "
 				"Returns previous and current checked state. Emits toggled signal. "
@@ -368,7 +368,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPUITools::handle_set_checked));
 	}
 
-	// ---- debug/ui_focus ----
+	// ---- runtime/ui/focus ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -378,7 +378,7 @@ void MCPUITools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/ui_focus",
+				"runtime/ui/focus",
 				"Focus Control",
 				"Explicitly focus or unfocus a Control node. Useful before keyboard input "
 				"or to verify focus state. Returns the control's focus state and focus_mode. "
@@ -404,7 +404,7 @@ Dictionary MCPUITools::handle_get_control_info(const Dictionary &p_args) {
 		return make_tool_error(
 				"Missing required parameter: node_path\n\n"
 				"Provide the scene tree path of a Control node.\n"
-				"Use debug/search_scene_tree to find Control nodes.");
+				"Use runtime/search_scene_tree to find Control nodes.");
 	}
 	if (!_validate_node_path(node_path)) {
 		return make_tool_error("Invalid node path: contains disallowed character");
@@ -556,7 +556,7 @@ Dictionary MCPUITools::handle_select_option(const Dictionary &p_args) {
 		return make_tool_error(
 				"Missing selection parameter.\n\n"
 				"Provide 'index' (0-based item index) or 'text' (item text to match).\n"
-				"Use debug/ui_get_options to see available items.");
+				"Use runtime/ui/get_options to see available items.");
 	}
 	if (p_args.has("index") && p_args.has("text")) {
 		return make_tool_error(
@@ -615,7 +615,7 @@ Dictionary MCPUITools::handle_set_tab(const Dictionary &p_args) {
 		return make_tool_error(
 				"Missing selection parameter.\n\n"
 				"Provide 'index' (0-based tab index) or 'title' (tab title to match).\n"
-				"Use debug/ui_get_tabs to see available tabs.");
+				"Use runtime/ui/get_tabs to see available tabs.");
 	}
 	if (p_args.has("index") && p_args.has("title")) {
 		return make_tool_error(

@@ -76,7 +76,7 @@ void MCPEditorTools::register_tools(MCPToolRegistry *p_registry) {
 				"project/get_input_map",
 				"Get Input Map",
 				"Get all input actions defined in the project's Input Map, with their bound "
-				"events. Call this before using debug/send_input to discover valid action names. "
+				"events. Call this before using runtime/input/send_input to discover valid action names. "
 				"Actions prefixed with 'ui_' are Godot built-in actions (ui_accept, ui_cancel, "
 				"ui_left, etc.). Returns immediately.",
 				make_schema(props, required),

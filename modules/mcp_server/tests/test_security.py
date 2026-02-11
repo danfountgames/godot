@@ -431,9 +431,9 @@ class TestExpressionSandbox:
 
     @pytest.mark.parametrize("expression", DANGEROUS_EXPRESSIONS)
     def test_dangerous_expression_rejected(self, client, expression):
-        """debug/evaluate must reject or error on dangerous expressions."""
+        """runtime/evaluate must reject or error on dangerous expressions."""
         response = client.call_tool(
-            "debug/evaluate", {"expression": expression}
+            "runtime/evaluate", {"expression": expression}
         )
         # The server may report the error as an MCP isError flag, as a
         # JSON-RPC error, or return a result whose text makes it clear the

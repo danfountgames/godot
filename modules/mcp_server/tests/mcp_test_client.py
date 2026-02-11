@@ -515,10 +515,10 @@ class MCPClient:
     # -----------------------------------------------------------------------
 
     def wait_for_game_running(self, timeout: float = 10.0, poll_interval: float = 0.1) -> dict:
-        """Poll debug/get_status until the game is running or timeout."""
+        """Poll runtime/get_status until the game is running or timeout."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            result = self.call_tool("debug/get_status")
+            result = self.call_tool("runtime/get_status")
             sc = result.get("result", {}).get("structuredContent", {})
             if sc.get("state") == "running":
                 return result
@@ -532,18 +532,18 @@ class MCPClient:
         fully stop before relaunching.
         """
         # If a game is already running, stop it first.
-        status = self.call_tool("debug/get_status")
+        status = self.call_tool("runtime/get_status")
         state = status.get("result", {}).get("structuredContent", {}).get("state")
         if state == "running":
-            self.call_tool("debug/stop")
+            self.call_tool("runtime/stop")
             time.sleep(1.0)
 
         if scene:
-            self.call_tool("debug/run_scene", {"scene": scene})
+            self.call_tool("runtime/run_scene", {"scene": scene})
         else:
-            self.call_tool("debug/run_project")
+            self.call_tool("runtime/run_project")
         return self.wait_for_game_running(timeout=timeout)
 
     def stop_game(self) -> dict:
         """Stop the running game."""
-        return self.call_tool("debug/stop")
+        return self.call_tool("runtime/stop")

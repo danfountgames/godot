@@ -87,6 +87,45 @@ private:
 	// -- Tool Summary --
 	Tree *tool_summary_tree = nullptr;
 
+	// -- Test Results --
+	HBoxContainer *test_summary_bar = nullptr;
+	Label *test_title_label = nullptr;
+	Label *test_run_label = nullptr;
+	Label *test_passed_label = nullptr;
+	Label *test_failed_label = nullptr;
+	Label *test_errors_label = nullptr;
+	Label *test_skipped_label = nullptr;
+	Label *test_duration_label = nullptr;
+	Button *test_collapse_button = nullptr;
+
+	Tree *test_results_tree = nullptr;
+
+	HBoxContainer *test_history_bar = nullptr;
+	Button *test_prev_button = nullptr;
+	Button *test_next_button = nullptr;
+	Button *test_clear_history_button = nullptr;
+
+	// Test state.
+	uint64_t last_test_event_cursor = 0;
+	int current_test_run_number = 0;
+	int viewing_run_number = 0;
+	bool test_section_expanded = true;
+	bool is_test_running = false;
+	int running_test_passed = 0;
+	int running_test_failed = 0;
+	int running_test_errors = 0;
+	int running_test_skipped = 0;
+	int running_test_total = 0;
+
+	struct TestRunHistory {
+		int run_number = 0;
+		int total = 0, passed = 0, failed = 0, errors = 0, skipped = 0;
+		int duration_ms = 0;
+		Array file_results;
+	};
+	Vector<TestRunHistory> test_history;
+	static const int MAX_TEST_HISTORY = 10;
+
 	// -- State --
 	uint64_t last_slow_update = 0;
 	uint64_t last_event_cursor = 0;
@@ -137,6 +176,27 @@ private:
 	TreeItem *_add_log_entry(const MCPRequestEvent &p_event);
 	void _rebuild_log_from_buffer();
 	void _prune_log_rows();
+
+	void _build_test_section();
+	void _update_test_results();
+	void _clear_test_tree();
+	void _set_test_summary_running(int p_run_number);
+	void _set_test_summary_complete();
+	void _expand_test_section();
+	void _collapse_test_section();
+	void _add_or_update_test_method_row(const MCPTestEvent &p_event);
+	void _add_compile_error_row(const MCPTestEvent &p_event);
+	void _update_test_summary_counts();
+	void _finalize_test_run(const MCPTestEvent &p_event);
+	void _store_in_history(const MCPTestEvent &p_event);
+	void _rebuild_history_bar();
+	void _load_history_run(int p_run_number);
+	void _on_test_item_activated();
+	void _on_test_collapse_pressed();
+	void _on_test_prev_pressed();
+	void _on_test_next_pressed();
+	void _on_test_clear_history();
+	TreeItem *_find_file_row(const String &p_path);
 
 	void _notification(int p_what);
 

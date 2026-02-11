@@ -32,6 +32,8 @@
 
 #include "editor/debugger/editor_debugger_plugin.h"
 
+#include "editor/mcp_status_data.h"
+
 #include "core/os/mutex.h"
 #include "core/os/semaphore.h"
 #include "core/templates/safe_refcount.h"
@@ -169,6 +171,16 @@ private:
 	BreakState cached_break_state;
 	Semaphore break_state_ready;
 
+	// --- Test Runner State ---
+	struct TestRunState {
+		Array results; // Accumulated per-method result dictionaries.
+		bool complete = false;
+		int run_number = 0;
+	};
+	TestRunState test_run_state;
+	MCPTestEventBuffer test_event_buffer;
+	SafeNumeric<int> next_test_run_number;
+
 	// --- Internal Helpers ---
 	PendingRequest *_create_pending(const String &p_type);
 	Dictionary _wait_for_pending(PendingRequest *p_request, int p_timeout_msec = 10000);
@@ -207,7 +219,7 @@ public:
 
 	// Returns why the game last stopped. Values:
 	// "not_started" - no game session has ever been started
-	// "normal"      - game exited (debug/stop, user closed window, or get_tree().quit())
+	// "normal"      - game exited (runtime/stop, user closed window, or get_tree().quit())
 	// "timeout"     - launching timed out (15s without session connect, likely compile error)
 	String get_last_stop_reason() const;
 
@@ -261,6 +273,16 @@ public:
 
 	// --- Status panel queries (thread-safe) ---
 	int get_pending_request_count() const;
+
+	// --- Pending Request Access (called from tool handlers on MCP HTTP threads) ---
+	PendingRequest *create_pending(const String &p_type) { return _create_pending(p_type); }
+	Dictionary wait_for_pending(PendingRequest *p_request, int p_timeout_msec = 10000) { return _wait_for_pending(p_request, p_timeout_msec); }
+
+	// --- Test Runner (called from MCP HTTP threads and tool handlers) ---
+	void reset_test_run_state();
+	MCPTestEventBuffer *get_test_event_buffer() { return &test_event_buffer; }
+	int get_current_test_run_number() const { return test_run_state.run_number; }
+	void push_test_compile_error(const String &p_file, const Array &p_errors, int p_run_number);
 
 	MCPDebuggerBridge();
 	~MCPDebuggerBridge();

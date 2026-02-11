@@ -48,7 +48,7 @@
 void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 	ERR_FAIL_NULL(p_registry);
 
-	// debug/send_input
+	// runtime/input/send_input
 	{
 		Dictionary props;
 		props["action"] = make_prop("string",
@@ -62,10 +62,10 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("action");
 		p_registry->register_tool(
-				"debug/send_input", "Send Input Action",
+				"runtime/input/send_input", "Send Input Action",
 				"Send an input action to the running game. Action names are project-specific "
 				"and must exist in Input Map (use project/get_input_map to discover them). "
-				"These are NOT raw key names — use debug/send_key for raw keyboard input. "
+				"These are NOT raw key names — use runtime/input/send_key for raw keyboard input. "
 				"Actions prefixed 'ui_' are Godot built-ins (ui_accept, ui_cancel, etc). "
 				"Supports hold_frames for sustained input and strength for analog. "
 				"Game must be running.",
@@ -74,7 +74,7 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPAutomationTools::handle_send_input));
 	}
 
-	// debug/click_control
+	// runtime/input/click_control
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -82,7 +82,7 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/click_control", "Click UI Control",
+				"runtime/input/click_control", "Click UI Control",
 				"Simulate a mouse click on a UI Control node. Sends press+release at control "
 				"center. Works with Button, TextureButton, CheckBox, and any Control. "
 				"Game must be running.",
@@ -91,7 +91,7 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPAutomationTools::handle_click_control));
 	}
 
-	// debug/evaluate
+	// runtime/evaluate
 	{
 		Dictionary props;
 		props["expression"] = make_prop("string",
@@ -99,27 +99,27 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("expression");
 		p_registry->register_tool(
-				"debug/evaluate", "Evaluate Expression",
+				"runtime/evaluate", "Evaluate Expression",
 				"Evaluate a GDScript expression in the running game's SceneTree context. "
 				"SceneTree is the base instance, so get_root(), get_nodes_in_group(), "
 				"current_scene work directly. $ shorthand does NOT work -- use "
 				"get_root().get_node(\"Main/Player\") instead. No var declarations or "
 				"control flow. Rotation values are in RADIANS (PI/2 = 90 degrees). "
 				"2D uses Y-down coordinates (positive Y = down on screen). "
-				"print() output goes to debug/get_output.",
+				"print() output goes to runtime/get_output.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPAutomationTools::handle_evaluate));
 	}
 
-	// debug/wait_frames
+	// runtime/wait_frames
 	{
 		Dictionary props;
 		props["frames"] = make_prop("integer",
 				"Frames to wait (default: 1, max: 600). 60 frames = ~1 second at 60fps.");
 		Array required;
 		p_registry->register_tool(
-				"debug/wait_frames", "Wait Frames",
+				"runtime/wait_frames", "Wait Frames",
 				"Wait for N game frames using frame counting via process_frame signal "
 				"(NOT timers). Use between automation actions to let the game process changes. "
 				"Game must be running. Max 600 frames.",
@@ -128,12 +128,12 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPAutomationTools::handle_wait_frames));
 	}
 
-	// debug/get_screenshot
+	// runtime/get_screenshot
 	{
 		Dictionary props;
 		Array required;
 		p_registry->register_tool(
-				"debug/get_screenshot", "Get Screenshot",
+				"runtime/get_screenshot", "Get Screenshot",
 				"Capture the running game's viewport as a base64-encoded PNG image. "
 				"Useful for visual verification. Game must be running.",
 				make_schema(props, required),
@@ -162,9 +162,9 @@ Dictionary MCPAutomationTools::_require_game_running() {
 	if (!bridge->is_game_running()) {
 		return make_tool_error(
 				"No game is currently running.\n\n"
-				"If the game stopped unexpectedly, check debug/get_errors for runtime errors.\n"
-				"To start a game: debug/run_project (main scene) or debug/run_scene (specific scene).\n"
-				"To check status: debug/get_status (includes stop_reason when stopped).");
+				"If the game stopped unexpectedly, check runtime/get_errors for runtime errors.\n"
+				"To start a game: runtime/run_project (main scene) or runtime/run_scene (specific scene).\n"
+				"To check status: runtime/get_status (includes stop_reason when stopped).");
 	}
 	return Dictionary();
 }
@@ -277,7 +277,7 @@ Dictionary MCPAutomationTools::handle_click_control(const Dictionary &p_args) {
 				"Missing required parameter: node_path\n\n"
 				"Provide the scene tree path of a Control node.\n"
 				"Example: { \"node_path\": \"/root/Main/UI/StartButton\" }\n"
-				"Use debug/search_scene_tree to find Control nodes.");
+				"Use runtime/search_scene_tree to find Control nodes.");
 	}
 
 	// Validate node_path contains only safe characters (same rules as get_node_properties).
@@ -297,11 +297,11 @@ Dictionary MCPAutomationTools::handle_click_control(const Dictionary &p_args) {
 		// Provide contextual guidance based on the error.
 		String guidance;
 		if (String(error_msg).contains("not found")) {
-			guidance = "\n\nUse debug/search_scene_tree with name_pattern to find the correct path.";
+			guidance = "\n\nUse runtime/search_scene_tree with name_pattern to find the correct path.";
 		} else if (String(error_msg).contains("not a Control")) {
-			guidance = "\n\ndebug/click_control only works on UI Control nodes "
+			guidance = "\n\nruntime/input/click_control only works on UI Control nodes "
 					   "(Button, Label, etc.). For non-UI interaction, use "
-					   "debug/send_input with input actions.";
+					   "runtime/input/send_input with input actions.";
 		}
 
 		return make_tool_error(String(error_msg) + guidance);
@@ -386,7 +386,7 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 					   "  get_root().get_node(\"Main/Player\").position";
 		} else if (String(error_msg).contains("null instance")) {
 			guidance = "\n\nThe node path may be incorrect. "
-					   "Use debug/search_scene_tree to find the correct path.";
+					   "Use runtime/search_scene_tree to find the correct path.";
 		}
 
 		return make_tool_error(
@@ -438,7 +438,7 @@ Dictionary MCPAutomationTools::handle_wait_frames(const Dictionary &p_args) {
 		return make_tool_error(
 				"Wait failed: " + String(result.get("error", "Unknown error")) +
 				"\n\nThe game may have crashed or stopped during the wait.\n"
-				"Try debug/get_status to check game state.");
+				"Try runtime/get_status to check game state.");
 	}
 
 	String text = "Waited " + itos(frames) + " frames.";

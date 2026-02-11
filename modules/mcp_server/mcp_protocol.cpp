@@ -39,10 +39,13 @@
 #include "tools/mcp_automation_tools.h"
 #include "tools/mcp_breakpoint_tools.h"
 #include "tools/mcp_debug_tools.h"
+#include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
-#include "tools/mcp_gdscript_tools.h"
+#include "tools/mcp_editor_nav_tools.h"
 #include "tools/mcp_input_tools.h"
+#include "tools/mcp_scene_tools.h"
 #include "tools/mcp_signal_tools.h"
+#include "tools/mcp_testing_tools.h"
 #include "tools/mcp_ui_tools.h"
 
 #include "core/config/engine.h"
@@ -91,13 +94,16 @@ MCPProtocol::MCPProtocol() {
 
 	// Register all tools into the registry.
 	MCPEditorTools::register_tools(&tool_registry);
-	MCPGDScriptTools::register_tools(&tool_registry);
 	MCPDebugTools::register_tools(&tool_registry);
 	MCPAutomationTools::register_tools(&tool_registry);
 	MCPInputTools::register_tools(&tool_registry);
 	MCPUITools::register_tools(&tool_registry);
 	MCPBreakpointTools::register_tools(&tool_registry);
 	MCPSignalTools::register_tools(&tool_registry);
+	MCPTestingTools::register_tools(&tool_registry);
+	MCPDocTools::register_tools(&tool_registry);
+	MCPSceneTools::register_tools(&tool_registry);
+	MCPEditorNavTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
@@ -842,7 +848,7 @@ Dictionary MCPProtocol::handle_initialize(const Dictionary &p_params) {
 							 "project context, file operations, GDScript validation, game lifecycle, "
 							 "live inspection, game automation, and session summaries. "
 							 "All file paths use res:// format (Godot's virtual filesystem). "
-							 "Tools in debug/* require a running game (use debug/run_project first). "
+							 "Tools in runtime/* require a running game (use runtime/run_project first). "
 							 "Call tools/list to discover available tools.";
 
 	// Stash session_id in result; process_request() extracts and removes it.
@@ -1214,15 +1220,6 @@ void MCPProtocol::_register_game_resources() {
 	def.requires_game = true;
 	def.subscribable = true;
 	resource_registry.register_resource(def);
-
-	def.uri = "godot://game/performance";
-	def.name = "Performance Metrics";
-	def.description = "FPS, frame time, idle/physics time, memory usage, object counts";
-	def.mime_type = "application/json";
-	def.handler = callable_mp(this, &MCPProtocol::_read_game_performance);
-	def.requires_game = true;
-	def.subscribable = false; // Changes every frame, too noisy for subscriptions.
-	resource_registry.register_resource(def);
 }
 
 void MCPProtocol::_register_resource_templates() {
@@ -1239,7 +1236,7 @@ void MCPProtocol::_register_resource_templates() {
 	tmpl.uri_template = "godot://game/node/{node_id}/properties";
 	tmpl.name = "Node Properties";
 	tmpl.description = "Get all properties of a scene tree node by its object ID. "
-					   "The node_id comes from the scene tree resource or the debug/get_scene_tree tool. "
+					   "The node_id comes from the scene tree resource or the runtime/get_scene_tree tool. "
 					   "Requires a running game.";
 	tmpl.mime_type = "application/json";
 	tmpl.handler = callable_mp(this, &MCPProtocol::_read_node_properties_resource);
@@ -1493,7 +1490,7 @@ Dictionary MCPProtocol::_read_game_scene_tree() {
 
 	// Prefer cached tree for fast reads (non-blocking).
 	// The resource is for passive context. Clients that need a guaranteed
-	// fresh tree should use the debug/get_scene_tree tool instead.
+	// fresh tree should use the runtime/get_scene_tree tool instead.
 	Dictionary tree = debugger_bridge->get_cached_scene_tree();
 	if (tree.is_empty() || !tree.has("node_count")) {
 		// No cached tree -- request a fresh one (blocks up to 5s).
@@ -1547,18 +1544,6 @@ Dictionary MCPProtocol::_read_game_errors() {
 
 	Dictionary item;
 	item["text"] = JSON::stringify(result);
-	return item;
-}
-
-Dictionary MCPProtocol::_read_game_performance() {
-	ERR_FAIL_NULL_V(debugger_bridge, Dictionary());
-
-	// send_get_performance() is an async round-trip to the running game.
-	// It blocks up to 5s.
-	Dictionary perf = debugger_bridge->send_get_performance();
-
-	Dictionary item;
-	item["text"] = JSON::stringify(perf);
 	return item;
 }
 
@@ -1627,7 +1612,7 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 
 	if (!debugger_bridge || !debugger_bridge->is_game_running()) {
 		return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE,
-				"Game is not running. Start the game first with debug/run_project.");
+				"Game is not running. Start the game first with runtime/run_project.");
 	}
 
 	// Use send_evaluate() to get node properties via an expression.
@@ -1652,7 +1637,7 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 	Dictionary props;
 	props["object_id"] = node_id_str.to_int();
 	props["class"] = eval_result.get("value", "Unknown");
-	props["note"] = "Use debug/get_node_properties tool for full property inspection.";
+	props["note"] = "Use runtime/get_node_properties tool for full property inspection.";
 
 	Dictionary item;
 	item["text"] = JSON::stringify(props);
