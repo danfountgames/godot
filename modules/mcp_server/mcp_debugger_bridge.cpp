@@ -122,6 +122,10 @@ MCPDebuggerBridge::MCPDebuggerBridge() {
 	game_paused.clear();
 	active_session_id.set(-1);
 	next_test_run_number.set(0);
+	{
+		MutexLock lock(stop_reason_mutex);
+		last_stop_reason = "not_started";
+	}
 }
 
 MCPDebuggerBridge::~MCPDebuggerBridge() {
@@ -523,20 +527,28 @@ void MCPDebuggerBridge::_on_session_started() {
 
 void MCPDebuggerBridge::_on_session_stopped() {
 	// Determine stop reason BEFORE clearing state flags.
-	String reason;
-	if (game_launching.is_set() && !game_running.is_set()) {
-		reason = "timeout";
-	} else {
-		reason = "normal";
-	}
+	// If game_launching is still set, this stop is from a previous run being
+	// terminated as part of a re-launch -- don't overwrite the stop reason
+	// or clear the launching flag.
+	bool is_relaunch = game_launching.is_set() && game_running.is_set();
 
-	{
-		MutexLock lock(stop_reason_mutex);
-		last_stop_reason = reason;
+	if (!is_relaunch) {
+		String reason;
+		if (game_launching.is_set() && !game_running.is_set()) {
+			reason = "timeout";
+		} else {
+			reason = "normal";
+		}
+
+		{
+			MutexLock lock(stop_reason_mutex);
+			last_stop_reason = reason;
+		}
+
+		game_launching.clear();
 	}
 
 	game_running.clear();
-	game_launching.clear();
 	game_paused.clear();
 	{
 		MutexLock lock(break_state_mutex);
@@ -577,17 +589,26 @@ void MCPDebuggerBridge::_on_session_stopped() {
 	// Wake ALL pending requests with an error -- the game is gone.
 	_wake_all_pending("Game session ended");
 
-	print_verbose("[MCP] Debugger bridge: game session stopped (reason: " + reason + ").");
+	if (is_relaunch) {
+		print_verbose("[MCP] Debugger bridge: old session stopped (re-launching).");
+	} else {
+		String reason;
+		{
+			MutexLock lock(stop_reason_mutex);
+			reason = last_stop_reason;
+		}
+		print_verbose("[MCP] Debugger bridge: game session stopped (reason: " + reason + ").");
 
-	// Notify MCP clients that tool/resource lists have changed (debug tools unavailable).
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (protocol) {
-		protocol->notify_tools_changed();
-		protocol->notify_resources_list_changed();
-		protocol->send_log("info", "mcp.debug", "Game stopped (reason: " + reason + ")");
+		// Notify MCP clients that tool/resource lists have changed (debug tools unavailable).
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			protocol->notify_tools_changed();
+			protocol->notify_resources_list_changed();
+			protocol->send_log("info", "mcp.debug", "Game stopped (reason: " + reason + ")");
 
-		// Notify subscribers that game status changed.
-		protocol->get_resource_registry()->notify_changed("godot://game/status");
+			// Notify subscribers that game status changed.
+			protocol->get_resource_registry()->notify_changed("godot://game/status");
+		}
 	}
 }
 
