@@ -87,7 +87,7 @@ Dictionary MCPResourceRegistry::handle_read(const String &p_uri, bool p_game_run
 		if (def.requires_game && !p_game_running) {
 			return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE,
 					"Resource unavailable: " + p_uri +
-							" requires a running game. Use debug/run_project first.");
+							" requires a running game. Use runtime/run_project first.");
 		}
 
 		// Call the handler to produce content.

@@ -30,7 +30,6 @@ def test_r01_resources_list_with_and_without_game(client):
     assert "godot://game/scene-tree" not in uris
     assert "godot://game/output" not in uris
     assert "godot://game/errors" not in uris
-    assert "godot://game/performance" not in uris
 
     # -- Start game --
     client.start_game_and_wait()
@@ -43,7 +42,6 @@ def test_r01_resources_list_with_and_without_game(client):
         assert "godot://game/scene-tree" in uris
         assert "godot://game/output" in uris
         assert "godot://game/errors" in uris
-        assert "godot://game/performance" in uris
     finally:
         client.stop_game()
 

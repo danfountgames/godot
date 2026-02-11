@@ -33,6 +33,7 @@
 #include "core/os/mutex.h"
 #include "core/string/ustring.h"
 #include "core/templates/vector.h"
+#include "core/variant/array.h"
 
 // ---------------------------------------------------------------------------
 // MCPRequestEvent -- one captured request/response event for the status panel.
@@ -109,4 +110,67 @@ struct MCPToolStats {
 	uint64_t total_duration_usec = 0;
 	uint64_t last_call_time_usec = 0;
 	bool last_was_error = false;
+};
+
+// ---------------------------------------------------------------------------
+// MCPTestEvent -- a single test event for the status panel.
+// ---------------------------------------------------------------------------
+
+struct MCPTestEvent {
+	enum Type {
+		TEST_RUN_STARTED,
+		TEST_METHOD_RESULT,
+		TEST_FILE_COMPILE_ERROR,
+		TEST_RUN_COMPLETE,
+	};
+
+	uint64_t seq = 0;
+	Type type = TEST_METHOD_RESULT;
+	uint64_t timestamp_usec = 0;
+	int run_number = 0;
+
+	// TEST_METHOD_RESULT fields:
+	String file_path;
+	String method_name;
+	String status; // "passed", "failed", "error", "skipped", "timeout", "pending"
+	String message;
+	String error_file;
+	int error_line = 0;
+	int duration_ms = 0;
+
+	// TEST_FILE_COMPILE_ERROR fields:
+	Array compile_errors; // [{line, column, message}, ...]
+
+	// TEST_RUN_COMPLETE fields:
+	int total = 0;
+	int passed = 0;
+	int failed = 0;
+	int errors = 0;
+	int skipped = 0;
+	int total_duration_ms = 0;
+};
+
+// ---------------------------------------------------------------------------
+// MCPTestEventBuffer -- thread-safe ring buffer for test events.
+//
+// The bridge pushes events as test results arrive. The UI main thread reads
+// via read_since() using a cursor (sequence number) from the previous read.
+// ---------------------------------------------------------------------------
+
+class MCPTestEventBuffer {
+public:
+	static const int CAPACITY = 500;
+
+	MCPTestEventBuffer();
+	void push(const MCPTestEvent &p_event);
+	Vector<MCPTestEvent> read_since(uint64_t p_cursor, int p_limit = 100) const;
+	uint64_t latest_seq() const;
+	void clear();
+
+private:
+	Vector<MCPTestEvent> events;
+	uint64_t next_seq = 1;
+	int write_pos = 0;
+	int count = 0;
+	mutable Mutex mutex;
 };

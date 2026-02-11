@@ -96,10 +96,10 @@ class TestRapidGameStartStop:
     def _ensure_stopped(self, client: MCPClient):
         """Make sure the game is stopped."""
         try:
-            status_resp = client.call_tool("debug/get_status")
+            status_resp = client.call_tool("runtime/get_status")
             state = get_structured(status_resp).get("state", "stopped")
             if state != "stopped":
-                client.call_tool("debug/stop")
+                client.call_tool("runtime/stop")
                 time.sleep(1.0)
         except Exception:
             pass
@@ -115,7 +115,7 @@ class TestRapidGameStartStop:
         try:
             for cycle in range(self.NUM_CYCLES):
                 # Start the game.
-                resp = client.call_tool("debug/run_project")
+                resp = client.call_tool("runtime/run_project")
                 assert not is_error(resp), (
                     f"Cycle {cycle}: run_project returned error"
                 )
@@ -124,7 +124,7 @@ class TestRapidGameStartStop:
                 time.sleep(self.RUN_DURATION)
 
                 # Stop the game.
-                stop_resp = client.call_tool("debug/stop")
+                stop_resp = client.call_tool("runtime/stop")
                 # Stop may report an error if the game hasn't fully started yet;
                 # that is acceptable during rapid cycling.
 
@@ -139,7 +139,7 @@ class TestRapidGameStartStop:
 
             # Verify game reports stopped.
             time.sleep(1.0)
-            status_resp = client.call_tool("debug/get_status")
+            status_resp = client.call_tool("runtime/get_status")
             state = get_structured(status_resp).get("state", "stopped")
             assert state == "stopped", (
                 f"Expected state 'stopped' after all cycles, got '{state}'"
@@ -163,7 +163,7 @@ class TestOutputBufferUnderLoad:
         client = running_game
 
         # First read: get initial output and cursor.
-        resp1 = client.call_tool("debug/get_output")
+        resp1 = client.call_tool("runtime/get_output")
         assert not is_error(resp1), (
             f"First get_output returned error: {resp1}"
         )
@@ -181,7 +181,7 @@ class TestOutputBufferUnderLoad:
         time.sleep(1.0)
 
         # Second read with cursor from the first read.
-        resp2 = client.call_tool("debug/get_output", {"cursor": cursor1})
+        resp2 = client.call_tool("runtime/get_output", {"cursor": cursor1})
         assert not is_error(resp2), (
             f"Second get_output returned error: {resp2}"
         )

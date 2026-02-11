@@ -38,8 +38,10 @@
 
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/io/resource_loader.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
+#include "editor/editor_interface.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/gui/button.h"
 #include "scene/gui/check_box.h"
@@ -221,6 +223,12 @@ void MCPStatusPanel::_build_ui() {
 	// ── HSeparator ────────────────────────────────────────────────────
 	add_child(memnew(HSeparator));
 
+	// ── Test Results Section ──────────────────────────────────────────
+	_build_test_section();
+
+	// ── HSeparator ────────────────────────────────────────────────────
+	add_child(memnew(HSeparator));
+
 	// ── Row 2: Log Toolbar ────────────────────────────────────────────
 	HBoxContainer *log_toolbar = memnew(HBoxContainer);
 	log_toolbar->set_h_size_flags(SIZE_EXPAND_FILL);
@@ -342,8 +350,9 @@ void MCPStatusPanel::_notification(int p_what) {
 				protocol->set_panel_visible(is_visible_in_tree());
 			}
 
-			// Fast updates: request log (every frame).
+			// Fast updates: request log and test results (every frame).
 			_update_request_log();
+			_update_test_results();
 
 			// Slow updates: everything else (every 500ms).
 			if (now - last_slow_update > 500000) {
@@ -906,6 +915,797 @@ void MCPStatusPanel::_update_tool_summary() {
 			}
 		}
 	}
+}
+
+// =========================================================================
+// Test Results Section -- UI Construction
+// =========================================================================
+
+void MCPStatusPanel::_build_test_section() {
+	// ── Summary Bar ──────────────────────────────────────────────────
+	test_summary_bar = memnew(HBoxContainer);
+	test_summary_bar->set_h_size_flags(SIZE_EXPAND_FILL);
+	add_child(test_summary_bar);
+
+	test_title_label = memnew(Label);
+	test_title_label->set_text(TTR("Test Results"));
+	test_title_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+	test_summary_bar->add_child(test_title_label);
+
+	test_run_label = memnew(Label);
+	test_run_label->set_text(TTR("No test runs yet"));
+	test_run_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+	test_summary_bar->add_child(test_run_label);
+
+	test_passed_label = memnew(Label);
+	test_passed_label->add_theme_color_override("font_color", Color(0.4, 0.9, 0.4));
+	test_passed_label->set_visible(false);
+	test_summary_bar->add_child(test_passed_label);
+
+	test_failed_label = memnew(Label);
+	test_failed_label->add_theme_color_override("font_color", Color(0.9, 0.3, 0.3));
+	test_failed_label->set_visible(false);
+	test_summary_bar->add_child(test_failed_label);
+
+	test_errors_label = memnew(Label);
+	test_errors_label->add_theme_color_override("font_color", Color(0.9, 0.8, 0.3));
+	test_errors_label->set_visible(false);
+	test_summary_bar->add_child(test_errors_label);
+
+	test_skipped_label = memnew(Label);
+	test_skipped_label->add_theme_color_override("font_color", Color(0.6, 0.6, 0.6));
+	test_skipped_label->set_visible(false);
+	test_summary_bar->add_child(test_skipped_label);
+
+	test_duration_label = memnew(Label);
+	test_duration_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+	test_duration_label->set_visible(false);
+	test_summary_bar->add_child(test_duration_label);
+
+	// Spacer.
+	Control *test_spacer = memnew(Control);
+	test_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+	test_summary_bar->add_child(test_spacer);
+
+	test_collapse_button = memnew(Button);
+	test_collapse_button->set_text(String::utf8("\u25BC")); // ▼
+	test_collapse_button->set_flat(true);
+	test_collapse_button->connect("pressed", callable_mp(this, &MCPStatusPanel::_on_test_collapse_pressed));
+	test_summary_bar->add_child(test_collapse_button);
+
+	// ── Results Tree ─────────────────────────────────────────────────
+	test_results_tree = memnew(Tree);
+	test_results_tree->set_columns(4);
+	test_results_tree->set_column_titles_visible(true);
+	test_results_tree->set_column_title(0, TTR("Name"));
+	test_results_tree->set_column_title(1, TTR("Result"));
+	test_results_tree->set_column_title(2, TTR("Duration"));
+	test_results_tree->set_column_title(3, TTR("Message"));
+	test_results_tree->set_column_custom_minimum_width(0, 300 * EDSCALE);
+	test_results_tree->set_column_custom_minimum_width(1, 120 * EDSCALE);
+	test_results_tree->set_column_custom_minimum_width(2, 70 * EDSCALE);
+	test_results_tree->set_column_custom_minimum_width(3, 40 * EDSCALE);
+	test_results_tree->set_column_expand(0, true);
+	test_results_tree->set_column_expand(1, false);
+	test_results_tree->set_column_expand(2, false);
+	test_results_tree->set_column_expand(3, true);
+	test_results_tree->set_hide_root(true);
+	test_results_tree->set_custom_minimum_size(Size2(0, 150 * EDSCALE));
+	test_results_tree->connect("item_activated", callable_mp(this, &MCPStatusPanel::_on_test_item_activated));
+	add_child(test_results_tree);
+
+	// ── History Bar ──────────────────────────────────────────────────
+	test_history_bar = memnew(HBoxContainer);
+	test_history_bar->set_h_size_flags(SIZE_EXPAND_FILL);
+	test_history_bar->set_visible(false);
+	add_child(test_history_bar);
+
+	test_prev_button = memnew(Button);
+	test_prev_button->set_text(String::utf8("\u25C0")); // ◀
+	test_prev_button->set_flat(true);
+	test_prev_button->connect("pressed", callable_mp(this, &MCPStatusPanel::_on_test_prev_pressed));
+	test_history_bar->add_child(test_prev_button);
+
+	test_next_button = memnew(Button);
+	test_next_button->set_text(String::utf8("\u25B6")); // ▶
+	test_next_button->set_flat(true);
+	test_next_button->connect("pressed", callable_mp(this, &MCPStatusPanel::_on_test_next_pressed));
+	test_history_bar->add_child(test_next_button);
+
+	// Spacer.
+	Control *history_spacer = memnew(Control);
+	history_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+	test_history_bar->add_child(history_spacer);
+
+	test_clear_history_button = memnew(Button);
+	test_clear_history_button->set_text(TTR("Clear History"));
+	test_clear_history_button->connect("pressed", callable_mp(this, &MCPStatusPanel::_on_test_clear_history));
+	test_history_bar->add_child(test_clear_history_button);
+}
+
+// =========================================================================
+// Test Results -- Update Logic (fast path: every frame)
+// =========================================================================
+
+void MCPStatusPanel::_update_test_results() {
+	if (!debugger_bridge) {
+		return;
+	}
+
+	MCPTestEventBuffer *buffer = debugger_bridge->get_test_event_buffer();
+	if (!buffer) {
+		return;
+	}
+
+	Vector<MCPTestEvent> new_events = buffer->read_since(last_test_event_cursor, 100);
+
+	for (int i = 0; i < new_events.size(); i++) {
+		const MCPTestEvent &evt = new_events[i];
+		last_test_event_cursor = evt.seq;
+
+		switch (evt.type) {
+			case MCPTestEvent::TEST_RUN_STARTED: {
+				current_test_run_number = evt.run_number;
+				viewing_run_number = current_test_run_number;
+				_clear_test_tree();
+				_set_test_summary_running(evt.run_number);
+				if (!test_section_expanded) {
+					_expand_test_section();
+				}
+			} break;
+
+			case MCPTestEvent::TEST_METHOD_RESULT: {
+				if (evt.run_number != viewing_run_number) {
+					break;
+				}
+				_add_or_update_test_method_row(evt);
+				_update_test_summary_counts();
+			} break;
+
+			case MCPTestEvent::TEST_FILE_COMPILE_ERROR: {
+				if (evt.run_number != viewing_run_number) {
+					break;
+				}
+				_add_compile_error_row(evt);
+				_update_test_summary_counts();
+			} break;
+
+			case MCPTestEvent::TEST_RUN_COMPLETE: {
+				_finalize_test_run(evt);
+				_store_in_history(evt);
+				_rebuild_history_bar();
+			} break;
+		}
+	}
+
+	// Pulsing animation for run badge while tests are running.
+	if (is_test_running) {
+		float pulse = 0.5f + 0.5f * Math::sin(OS::get_singleton()->get_ticks_usec() / 300000.0f);
+		test_run_label->add_theme_color_override("font_color",
+				Color(0.9, 0.8, 0.3).lerp(Color(1, 1, 1), pulse));
+	}
+}
+
+void MCPStatusPanel::_clear_test_tree() {
+	test_results_tree->clear();
+	test_results_tree->create_item(); // Root item.
+	running_test_passed = 0;
+	running_test_failed = 0;
+	running_test_errors = 0;
+	running_test_skipped = 0;
+	running_test_total = 0;
+}
+
+void MCPStatusPanel::_set_test_summary_running(int p_run_number) {
+	is_test_running = true;
+
+	test_run_label->set_text(TTR("[Run #") + itos(p_run_number) + "]");
+	test_run_label->add_theme_color_override("font_color", Color(0.9, 0.8, 0.3));
+	test_run_label->set_visible(true);
+
+	test_passed_label->set_text(TTR("0 passed"));
+	test_passed_label->set_visible(true);
+
+	test_failed_label->set_visible(false);
+	test_errors_label->set_visible(false);
+	test_skipped_label->set_visible(false);
+	test_duration_label->set_visible(false);
+}
+
+void MCPStatusPanel::_set_test_summary_complete() {
+	is_test_running = false;
+	test_run_label->remove_theme_color_override("font_color");
+	test_run_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+}
+
+void MCPStatusPanel::_expand_test_section() {
+	test_section_expanded = true;
+	test_results_tree->set_visible(true);
+	test_history_bar->set_visible(test_history.size() > 0);
+	test_collapse_button->set_text(String::utf8("\u25BC")); // ▼
+}
+
+void MCPStatusPanel::_collapse_test_section() {
+	test_section_expanded = false;
+	test_results_tree->set_visible(false);
+	test_history_bar->set_visible(false);
+	test_collapse_button->set_text(String::utf8("\u25B6")); // ▶
+}
+
+// =========================================================================
+// Test Results -- Tree Row Management
+// =========================================================================
+
+TreeItem *MCPStatusPanel::_find_file_row(const String &p_path) {
+	TreeItem *root = test_results_tree->get_root();
+	if (!root) {
+		root = test_results_tree->create_item();
+	}
+
+	TreeItem *child = root->get_first_child();
+	while (child) {
+		Variant meta_v = child->get_metadata(0);
+		if (meta_v.get_type() == Variant::DICTIONARY) {
+			Dictionary meta = meta_v;
+			if (String(meta.get("file_path", "")) == p_path) {
+				return child;
+			}
+		}
+		child = child->get_next();
+	}
+
+	// Not found -- create a new file row.
+	TreeItem *file_row = test_results_tree->create_item(root);
+	file_row->set_text(0, p_path);
+
+	Dictionary meta;
+	meta["file_path"] = p_path;
+	meta["is_file_row"] = true;
+	meta["method_count"] = 0;
+	meta["passed_count"] = 0;
+	meta["failed_count"] = 0;
+	meta["error_count"] = 0;
+	meta["skipped_count"] = 0;
+	meta["total_duration_ms"] = 0;
+	file_row->set_metadata(0, meta);
+
+	return file_row;
+}
+
+void MCPStatusPanel::_add_or_update_test_method_row(const MCPTestEvent &p_event) {
+	TreeItem *file_row = _find_file_row(p_event.file_path);
+
+	// Create method child row.
+	TreeItem *method_row = test_results_tree->create_item(file_row);
+
+	// Determine icon and color based on status.
+	String icon;
+	Color row_color;
+	if (p_event.status == "passed") {
+		icon = String::utf8("\u2713"); // ✓
+		row_color = Color(0.4, 0.9, 0.4);
+	} else if (p_event.status == "failed") {
+		icon = String::utf8("\u2717"); // ✗
+		row_color = Color(0.9, 0.3, 0.3);
+	} else if (p_event.status == "error") {
+		icon = String::utf8("\u2717"); // ✗
+		row_color = Color(0.9, 0.8, 0.3);
+	} else if (p_event.status == "skipped" || p_event.status == "pending") {
+		icon = String::utf8("\u25CB"); // ○
+		row_color = Color(0.6, 0.6, 0.6);
+	} else if (p_event.status == "timeout") {
+		icon = String::utf8("\u23F1"); // ⏱
+		row_color = Color(0.9, 0.8, 0.3);
+	} else {
+		icon = "?";
+		row_color = Color(0.8, 0.8, 0.8);
+	}
+
+	// Column 0: icon + method name.
+	method_row->set_text(0, icon + " " + p_event.method_name);
+	method_row->set_custom_color(0, row_color);
+
+	// Column 1: empty (result summary lives on the file row).
+	method_row->set_text(1, "");
+
+	// Column 2: formatted duration.
+	if (p_event.duration_ms >= 1000) {
+		method_row->set_text(2, String::num((double)p_event.duration_ms / 1000.0, 2) + "s");
+	} else {
+		method_row->set_text(2, itos(p_event.duration_ms) + "ms");
+	}
+
+	// Column 3: assertion message (for failures/errors only).
+	if (p_event.status == "failed" || p_event.status == "error" || p_event.status == "timeout") {
+		method_row->set_text(3, p_event.message);
+		method_row->set_custom_color(3, row_color);
+	}
+
+	// Store metadata on the method row for double-click handling.
+	Dictionary method_meta;
+	method_meta["file_path"] = p_event.file_path;
+	method_meta["error_file"] = p_event.error_file;
+	method_meta["error_line"] = p_event.error_line;
+	method_meta["method_name"] = p_event.method_name;
+	method_meta["is_file_row"] = false;
+	method_row->set_metadata(0, method_meta);
+
+	// Update running counters.
+	running_test_total++;
+	if (p_event.status == "passed") {
+		running_test_passed++;
+	} else if (p_event.status == "failed") {
+		running_test_failed++;
+	} else if (p_event.status == "error" || p_event.status == "timeout") {
+		running_test_errors++;
+	} else if (p_event.status == "skipped" || p_event.status == "pending") {
+		running_test_skipped++;
+	}
+
+	// Update the parent file row's result summary.
+	Variant file_meta_v = file_row->get_metadata(0);
+	if (file_meta_v.get_type() == Variant::DICTIONARY) {
+		Dictionary file_meta = file_meta_v;
+		int method_count = (int)file_meta.get("method_count", 0) + 1;
+		int passed_count = (int)file_meta.get("passed_count", 0);
+		int failed_count = (int)file_meta.get("failed_count", 0);
+		int error_count = (int)file_meta.get("error_count", 0);
+		int skipped_count = (int)file_meta.get("skipped_count", 0);
+		int total_dur = (int)file_meta.get("total_duration_ms", 0) + p_event.duration_ms;
+
+		if (p_event.status == "passed") {
+			passed_count++;
+		} else if (p_event.status == "failed") {
+			failed_count++;
+		} else if (p_event.status == "error" || p_event.status == "timeout") {
+			error_count++;
+		} else if (p_event.status == "skipped" || p_event.status == "pending") {
+			skipped_count++;
+		}
+
+		file_meta["method_count"] = method_count;
+		file_meta["passed_count"] = passed_count;
+		file_meta["failed_count"] = failed_count;
+		file_meta["error_count"] = error_count;
+		file_meta["skipped_count"] = skipped_count;
+		file_meta["total_duration_ms"] = total_dur;
+		file_row->set_metadata(0, file_meta);
+
+		// Build result summary text for the file row.
+		String result_text = itos(passed_count) + "/" + itos(method_count) + " passed";
+		Color file_result_color = Color(0.4, 0.9, 0.4);
+
+		if (failed_count > 0) {
+			result_text += ", " + itos(failed_count) + " FAILED";
+			file_result_color = Color(0.9, 0.3, 0.3);
+		}
+		if (error_count > 0) {
+			result_text += ", " + itos(error_count) + " error" + (error_count > 1 ? "s" : "");
+			if (failed_count == 0) {
+				file_result_color = Color(0.9, 0.8, 0.3);
+			}
+		}
+
+		file_row->set_text(1, result_text);
+		file_row->set_custom_color(1, file_result_color);
+
+		// Duration for file row.
+		if (total_dur >= 1000) {
+			file_row->set_text(2, String::num((double)total_dur / 1000.0, 2) + "s");
+		} else {
+			file_row->set_text(2, itos(total_dur) + "ms");
+		}
+
+		// Tint file row background if any failures.
+		if (failed_count > 0 || error_count > 0) {
+			for (int col = 0; col < 4; col++) {
+				file_row->set_custom_bg_color(col, Color(0.15, 0.08, 0.08, 0.3));
+			}
+		}
+	}
+}
+
+void MCPStatusPanel::_add_compile_error_row(const MCPTestEvent &p_event) {
+	TreeItem *root = test_results_tree->get_root();
+	if (!root) {
+		root = test_results_tree->create_item();
+	}
+
+	// Create file row with compile error.
+	TreeItem *file_row = test_results_tree->create_item(root);
+	file_row->set_text(0, p_event.file_path);
+	file_row->set_custom_color(0, Color(0.9, 0.3, 0.3));
+	file_row->set_text(1, TTR("COMPILE ERROR"));
+	file_row->set_custom_color(1, Color(0.9, 0.3, 0.3));
+
+	Dictionary file_meta;
+	file_meta["file_path"] = p_event.file_path;
+	file_meta["is_file_row"] = true;
+	file_meta["is_compile_error"] = true;
+	file_row->set_metadata(0, file_meta);
+
+	// Tint background red.
+	for (int col = 0; col < 4; col++) {
+		file_row->set_custom_bg_color(col, Color(0.15, 0.08, 0.08, 0.3));
+	}
+
+	// Add child rows for each error.
+	for (int i = 0; i < p_event.compile_errors.size(); i++) {
+		Variant err_v = p_event.compile_errors[i];
+		if (err_v.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary err = err_v;
+		int line = err.get("line", 0);
+		int column = err.get("column", 0);
+		String message = err.get("message", "");
+
+		TreeItem *err_row = test_results_tree->create_item(file_row);
+		err_row->set_text(0, "Line " + itos(line) + ", Col " + itos(column) + ": " + message);
+		err_row->set_custom_color(0, Color(0.9, 0.3, 0.3));
+
+		Dictionary err_meta;
+		err_meta["file_path"] = p_event.file_path;
+		err_meta["error_file"] = p_event.file_path;
+		err_meta["error_line"] = line;
+		err_meta["is_file_row"] = false;
+		err_row->set_metadata(0, err_meta);
+	}
+
+	// Increment error counter.
+	running_test_errors++;
+}
+
+void MCPStatusPanel::_update_test_summary_counts() {
+	test_passed_label->set_text(itos(running_test_passed) + " passed");
+	test_passed_label->set_visible(true);
+
+	if (running_test_failed > 0) {
+		test_failed_label->set_text(itos(running_test_failed) + " failed");
+		test_failed_label->set_visible(true);
+	} else {
+		test_failed_label->set_visible(false);
+	}
+
+	if (running_test_errors > 0) {
+		test_errors_label->set_text(itos(running_test_errors) + " error" + (running_test_errors > 1 ? "s" : ""));
+		test_errors_label->set_visible(true);
+	} else {
+		test_errors_label->set_visible(false);
+	}
+
+	if (running_test_skipped > 0) {
+		test_skipped_label->set_text(itos(running_test_skipped) + " skipped");
+		test_skipped_label->set_visible(true);
+	} else {
+		test_skipped_label->set_visible(false);
+	}
+}
+
+void MCPStatusPanel::_finalize_test_run(const MCPTestEvent &p_event) {
+	is_test_running = false;
+
+	// Update run label to final state (no more pulsing).
+	test_run_label->remove_theme_color_override("font_color");
+	test_run_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+
+	// Show final duration.
+	if (p_event.total_duration_ms >= 1000) {
+		test_duration_label->set_text(String::num((double)p_event.total_duration_ms / 1000.0, 2) + "s");
+	} else {
+		test_duration_label->set_text(itos(p_event.total_duration_ms) + "ms");
+	}
+	test_duration_label->set_visible(true);
+
+	// Update final summary counts from the complete event.
+	running_test_passed = p_event.passed;
+	running_test_failed = p_event.failed;
+	running_test_errors = p_event.errors;
+	running_test_skipped = p_event.skipped;
+	running_test_total = p_event.total;
+	_update_test_summary_counts();
+}
+
+// =========================================================================
+// Test Results -- History Management
+// =========================================================================
+
+void MCPStatusPanel::_store_in_history(const MCPTestEvent &p_event) {
+	TestRunHistory entry;
+	entry.run_number = p_event.run_number;
+	entry.total = p_event.total;
+	entry.passed = p_event.passed;
+	entry.failed = p_event.failed;
+	entry.errors = p_event.errors;
+	entry.skipped = p_event.skipped;
+	entry.duration_ms = p_event.total_duration_ms;
+
+	// Capture current tree state as file_results for history replay.
+	TreeItem *root = test_results_tree->get_root();
+	if (root) {
+		Array file_results;
+		TreeItem *file_item = root->get_first_child();
+		while (file_item) {
+			Variant meta_v = file_item->get_metadata(0);
+			if (meta_v.get_type() == Variant::DICTIONARY) {
+				Dictionary file_data = meta_v;
+
+				// Capture children (method rows or error rows).
+				Array children_data;
+				TreeItem *child = file_item->get_first_child();
+				while (child) {
+					Dictionary child_data;
+					child_data["text_0"] = child->get_text(0);
+					child_data["text_1"] = child->get_text(1);
+					child_data["text_2"] = child->get_text(2);
+					child_data["text_3"] = child->get_text(3);
+					Variant child_meta_v = child->get_metadata(0);
+					if (child_meta_v.get_type() == Variant::DICTIONARY) {
+						child_data["meta"] = child_meta_v;
+					}
+					children_data.push_back(child_data);
+					child = child->get_next();
+				}
+
+				Dictionary stored;
+				stored["meta"] = file_data;
+				stored["text_0"] = file_item->get_text(0);
+				stored["text_1"] = file_item->get_text(1);
+				stored["text_2"] = file_item->get_text(2);
+				stored["children"] = children_data;
+				file_results.push_back(stored);
+			}
+			file_item = file_item->get_next();
+		}
+		entry.file_results = file_results;
+	}
+
+	test_history.push_back(entry);
+
+	// Evict oldest if over limit.
+	while (test_history.size() > MAX_TEST_HISTORY) {
+		test_history.remove_at(0);
+	}
+}
+
+void MCPStatusPanel::_rebuild_history_bar() {
+	if (test_history.size() == 0) {
+		test_history_bar->set_visible(false);
+		return;
+	}
+
+	test_history_bar->set_visible(test_section_expanded);
+
+	// Enable/disable prev/next buttons.
+	int viewing_idx = -1;
+	for (int i = 0; i < test_history.size(); i++) {
+		if (test_history[i].run_number == viewing_run_number) {
+			viewing_idx = i;
+			break;
+		}
+	}
+
+	test_prev_button->set_disabled(viewing_idx <= 0);
+	test_next_button->set_disabled(viewing_idx < 0 || viewing_idx >= test_history.size() - 1);
+}
+
+void MCPStatusPanel::_load_history_run(int p_run_number) {
+	// Find the history entry.
+	int idx = -1;
+	for (int i = 0; i < test_history.size(); i++) {
+		if (test_history[i].run_number == p_run_number) {
+			idx = i;
+			break;
+		}
+	}
+	if (idx < 0) {
+		return;
+	}
+
+	viewing_run_number = p_run_number;
+	const TestRunHistory &hist = test_history[idx];
+
+	// Clear and rebuild tree from stored history.
+	test_results_tree->clear();
+	TreeItem *root = test_results_tree->create_item();
+
+	for (int i = 0; i < hist.file_results.size(); i++) {
+		Variant entry_v = hist.file_results[i];
+		if (entry_v.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary entry = entry_v;
+
+		TreeItem *file_row = test_results_tree->create_item(root);
+		file_row->set_text(0, entry.get("text_0", ""));
+		file_row->set_text(1, entry.get("text_1", ""));
+		file_row->set_text(2, entry.get("text_2", ""));
+
+		Variant meta_v = entry.get("meta", Variant());
+		if (meta_v.get_type() == Variant::DICTIONARY) {
+			file_row->set_metadata(0, meta_v);
+
+			// Restore file row colors.
+			Dictionary meta = meta_v;
+			int failed_count = (int)meta.get("failed_count", 0);
+			int error_count = (int)meta.get("error_count", 0);
+			bool is_compile_error = (bool)meta.get("is_compile_error", false);
+
+			if (is_compile_error) {
+				file_row->set_custom_color(0, Color(0.9, 0.3, 0.3));
+				file_row->set_custom_color(1, Color(0.9, 0.3, 0.3));
+			}
+
+			if (failed_count > 0 || error_count > 0 || is_compile_error) {
+				for (int col = 0; col < 4; col++) {
+					file_row->set_custom_bg_color(col, Color(0.15, 0.08, 0.08, 0.3));
+				}
+				if (!is_compile_error) {
+					file_row->set_custom_color(1, (failed_count > 0) ? Color(0.9, 0.3, 0.3) : Color(0.9, 0.8, 0.3));
+				}
+			} else {
+				file_row->set_custom_color(1, Color(0.4, 0.9, 0.4));
+			}
+		}
+
+		// Rebuild children.
+		Array children = entry.get("children", Array());
+		for (int j = 0; j < children.size(); j++) {
+			Variant child_v = children[j];
+			if (child_v.get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary child_data = child_v;
+
+			TreeItem *child_row = test_results_tree->create_item(file_row);
+			child_row->set_text(0, child_data.get("text_0", ""));
+			child_row->set_text(1, child_data.get("text_1", ""));
+			child_row->set_text(2, child_data.get("text_2", ""));
+			child_row->set_text(3, child_data.get("text_3", ""));
+
+			Variant child_meta_v = child_data.get("meta", Variant());
+			if (child_meta_v.get_type() == Variant::DICTIONARY) {
+				child_row->set_metadata(0, child_meta_v);
+			}
+
+			// Restore method row colors based on icon prefix.
+			String text_0 = child_data.get("text_0", "");
+			if (text_0.begins_with(String::utf8("\u2713"))) {
+				child_row->set_custom_color(0, Color(0.4, 0.9, 0.4));
+			} else if (text_0.begins_with(String::utf8("\u2717"))) {
+				// Check if it's error (yellow) or failure (red) via message presence.
+				String text_3 = child_data.get("text_3", "");
+				if (!text_3.is_empty()) {
+					// Look at the metadata to determine error vs failure.
+					if (child_meta_v.get_type() == Variant::DICTIONARY) {
+						// Default to red for failed.
+						child_row->set_custom_color(0, Color(0.9, 0.3, 0.3));
+						child_row->set_custom_color(3, Color(0.9, 0.3, 0.3));
+					}
+				} else {
+					child_row->set_custom_color(0, Color(0.9, 0.3, 0.3));
+				}
+			} else if (text_0.begins_with(String::utf8("\u25CB"))) {
+				child_row->set_custom_color(0, Color(0.6, 0.6, 0.6));
+			} else if (text_0.begins_with(String::utf8("\u23F1"))) {
+				child_row->set_custom_color(0, Color(0.9, 0.8, 0.3));
+				child_row->set_custom_color(3, Color(0.9, 0.8, 0.3));
+			} else if (text_0.begins_with("Line ")) {
+				// Compile error child row.
+				child_row->set_custom_color(0, Color(0.9, 0.3, 0.3));
+			}
+		}
+	}
+
+	// Update summary bar for the loaded history run.
+	test_run_label->set_text(TTR("[Run #") + itos(p_run_number) + "]");
+	test_run_label->remove_theme_color_override("font_color");
+	test_run_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+
+	running_test_passed = hist.passed;
+	running_test_failed = hist.failed;
+	running_test_errors = hist.errors;
+	running_test_skipped = hist.skipped;
+	running_test_total = hist.total;
+	_update_test_summary_counts();
+
+	if (hist.duration_ms >= 1000) {
+		test_duration_label->set_text(String::num((double)hist.duration_ms / 1000.0, 2) + "s");
+	} else {
+		test_duration_label->set_text(itos(hist.duration_ms) + "ms");
+	}
+	test_duration_label->set_visible(true);
+
+	_rebuild_history_bar();
+}
+
+// =========================================================================
+// Test Results -- UI Callbacks
+// =========================================================================
+
+void MCPStatusPanel::_on_test_item_activated() {
+	TreeItem *selected = test_results_tree->get_selected();
+	if (!selected) {
+		return;
+	}
+
+	Variant meta_v = selected->get_metadata(0);
+	if (meta_v.get_type() != Variant::DICTIONARY) {
+		return;
+	}
+
+	Dictionary meta = meta_v;
+	String file = meta.get("error_file", "");
+	int line = meta.get("error_line", 0);
+
+	if (file.is_empty() || line <= 0) {
+		// Fallback to the test file itself.
+		file = meta.get("file_path", "");
+		line = 1;
+	}
+
+	if (!file.is_empty()) {
+		Ref<Script> script = ResourceLoader::load(file);
+		if (script.is_valid()) {
+			EditorInterface::get_singleton()->edit_script(script, line);
+		}
+	}
+}
+
+void MCPStatusPanel::_on_test_collapse_pressed() {
+	if (test_section_expanded) {
+		_collapse_test_section();
+	} else {
+		_expand_test_section();
+	}
+}
+
+void MCPStatusPanel::_on_test_prev_pressed() {
+	int viewing_idx = -1;
+	for (int i = 0; i < test_history.size(); i++) {
+		if (test_history[i].run_number == viewing_run_number) {
+			viewing_idx = i;
+			break;
+		}
+	}
+
+	if (viewing_idx > 0) {
+		_load_history_run(test_history[viewing_idx - 1].run_number);
+	}
+}
+
+void MCPStatusPanel::_on_test_next_pressed() {
+	int viewing_idx = -1;
+	for (int i = 0; i < test_history.size(); i++) {
+		if (test_history[i].run_number == viewing_run_number) {
+			viewing_idx = i;
+			break;
+		}
+	}
+
+	if (viewing_idx >= 0 && viewing_idx < test_history.size() - 1) {
+		_load_history_run(test_history[viewing_idx + 1].run_number);
+	}
+}
+
+void MCPStatusPanel::_on_test_clear_history() {
+	test_history.clear();
+	_clear_test_tree();
+	test_history_bar->set_visible(false);
+
+	test_run_label->set_text(TTR("No test runs yet"));
+	test_run_label->remove_theme_color_override("font_color");
+	test_run_label->add_theme_color_override("font_color", Color(0.7, 0.7, 0.7));
+
+	test_passed_label->set_visible(false);
+	test_failed_label->set_visible(false);
+	test_errors_label->set_visible(false);
+	test_skipped_label->set_visible(false);
+	test_duration_label->set_visible(false);
+
+	current_test_run_number = 0;
+	viewing_run_number = 0;
+	is_test_running = false;
 }
 
 // =========================================================================

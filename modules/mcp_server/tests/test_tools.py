@@ -294,7 +294,7 @@ class TestGDScriptTools:
 
 
 class TestGameLifecycle:
-    """Tests for debug/run_project, debug/run_scene, debug/get_status, debug/stop.
+    """Tests for runtime/run_project, runtime/run_scene, runtime/get_status, runtime/stop.
 
     This class manages game start/stop explicitly rather than using the
     running_game fixture, because it IS testing the lifecycle itself.
@@ -303,20 +303,20 @@ class TestGameLifecycle:
     def _ensure_stopped(self, client):
         """Make sure the game is stopped before/after a test."""
         try:
-            status_resp = client.call_tool("debug/get_status")
+            status_resp = client.call_tool("runtime/get_status")
             state = get_structured(status_resp).get("state", "stopped")
             if state != "stopped":
-                client.call_tool("debug/stop")
+                client.call_tool("runtime/stop")
                 time.sleep(1.0)
         except Exception:
             pass
 
     @pytest.mark.p0
     def test_e01_run_project(self, client):
-        """T-E01: debug/run_project launches the game."""
+        """T-E01: runtime/run_project launches the game."""
         self._ensure_stopped(client)
         try:
-            resp = client.call_tool("debug/run_project")
+            resp = client.call_tool("runtime/run_project")
             assert not is_error(resp), f"run_project returned error: {get_text(resp)}"
 
             sc = get_structured(resp)
@@ -331,12 +331,12 @@ class TestGameLifecycle:
 
     @pytest.mark.p0
     def test_e02_get_status_running(self, client):
-        """T-E02: debug/get_status reports 'running' after game starts."""
+        """T-E02: runtime/get_status reports 'running' after game starts."""
         self._ensure_stopped(client)
         try:
             client.start_game_and_wait()
 
-            resp = client.call_tool("debug/get_status")
+            resp = client.call_tool("runtime/get_status")
             assert not is_error(resp)
             sc = get_structured(resp)
             assert sc.get("state") == "running", (
@@ -347,10 +347,10 @@ class TestGameLifecycle:
 
     @pytest.mark.p1
     def test_e03_get_status_stopped(self, client):
-        """T-E03: debug/get_status reports 'stopped' when no game is running."""
+        """T-E03: runtime/get_status reports 'stopped' when no game is running."""
         self._ensure_stopped(client)
 
-        resp = client.call_tool("debug/get_status")
+        resp = client.call_tool("runtime/get_status")
         assert not is_error(resp)
         sc = get_structured(resp)
         assert sc.get("state") == "stopped", (
@@ -359,17 +359,17 @@ class TestGameLifecycle:
 
     @pytest.mark.p0
     def test_e04_stop(self, client):
-        """T-E04: debug/stop stops the running game."""
+        """T-E04: runtime/stop stops the running game."""
         self._ensure_stopped(client)
         try:
             client.start_game_and_wait()
 
-            resp = client.call_tool("debug/stop")
+            resp = client.call_tool("runtime/stop")
             assert not is_error(resp), f"stop returned error: {get_text(resp)}"
 
             # Give it a moment to shut down, then verify.
             time.sleep(1.0)
-            status_resp = client.call_tool("debug/get_status")
+            status_resp = client.call_tool("runtime/get_status")
             sc = get_structured(status_resp)
             assert sc.get("state") == "stopped", (
                 f"Expected 'stopped' after stop, got '{sc.get('state')}'"
@@ -379,11 +379,11 @@ class TestGameLifecycle:
 
     @pytest.mark.p1
     def test_e05_run_scene(self, client):
-        """T-E05: debug/run_scene launches a specific scene."""
+        """T-E05: runtime/run_scene launches a specific scene."""
         self._ensure_stopped(client)
         try:
             resp = client.call_tool(
-                "debug/run_scene",
+                "runtime/run_scene",
                 {"scene": "res://scenes/ui_test.tscn"},
             )
             assert not is_error(resp), f"run_scene returned error: {get_text(resp)}"
@@ -391,7 +391,7 @@ class TestGameLifecycle:
             # Wait for the game to reach running state.
             client.wait_for_game_running()
 
-            status_resp = client.call_tool("debug/get_status")
+            status_resp = client.call_tool("runtime/get_status")
             sc = get_structured(status_resp)
             assert sc.get("state") == "running"
         finally:
@@ -412,9 +412,9 @@ class TestLiveInspection:
 
     @pytest.mark.p0
     def test_f01_get_scene_tree(self, running_game):
-        """T-F01: debug/get_scene_tree returns the live scene tree."""
+        """T-F01: runtime/get_scene_tree returns the live scene tree."""
         client = running_game
-        resp = client.call_tool("debug/get_scene_tree")
+        resp = client.call_tool("runtime/get_scene_tree")
         assert not is_error(resp), f"get_scene_tree returned error: {get_text(resp)}"
 
         sc = get_structured(resp)
@@ -432,7 +432,7 @@ class TestLiveInspection:
 
     @pytest.mark.p1
     def test_f02_get_scene_tree_max_depth(self, running_game):
-        """T-F02: debug/get_scene_tree with max_depth=1 returns shallow tree.
+        """T-F02: runtime/get_scene_tree with max_depth=1 returns shallow tree.
 
         The node_count field always reports the FULL tree size.
         Truncation is reflected in the tree structure itself --
@@ -450,7 +450,7 @@ class TestLiveInspection:
             return count
 
         # Full tree for comparison.
-        full_resp = client.call_tool("debug/get_scene_tree")
+        full_resp = client.call_tool("runtime/get_scene_tree")
         full_sc = get_structured(full_resp)
         full_tree = full_sc.get("tree", {})
         full_tree_nodes = count_tree_nodes(full_tree)
@@ -458,7 +458,7 @@ class TestLiveInspection:
 
         # Shallow tree with max_depth=1 (root + immediate children only).
         shallow_resp = client.call_tool(
-            "debug/get_scene_tree",
+            "runtime/get_scene_tree",
             {"max_depth": 1},
         )
         assert not is_error(shallow_resp)
@@ -479,10 +479,10 @@ class TestLiveInspection:
 
     @pytest.mark.p1
     def test_f03_search_scene_tree_by_name(self, running_game):
-        """T-F03: debug/search_scene_tree finds nodes by name pattern."""
+        """T-F03: runtime/search_scene_tree finds nodes by name pattern."""
         client = running_game
         resp = client.call_tool(
-            "debug/search_scene_tree",
+            "runtime/search_scene_tree",
             {"name_pattern": "Player"},
         )
         assert not is_error(resp), f"search_scene_tree returned error: {get_text(resp)}"
@@ -493,10 +493,10 @@ class TestLiveInspection:
 
     @pytest.mark.p1
     def test_f04_search_scene_tree_by_type(self, running_game):
-        """T-F04: debug/search_scene_tree finds nodes by type."""
+        """T-F04: runtime/search_scene_tree finds nodes by type."""
         client = running_game
         resp = client.call_tool(
-            "debug/search_scene_tree",
+            "runtime/search_scene_tree",
             {"type": "Camera2D"},
         )
         assert not is_error(resp), f"search_scene_tree returned error: {get_text(resp)}"
@@ -507,12 +507,12 @@ class TestLiveInspection:
 
     @pytest.mark.p1
     def test_f05_get_node_properties(self, running_game):
-        """T-F05: debug/get_node_properties returns properties for a node."""
+        """T-F05: runtime/get_node_properties returns properties for a node."""
         client = running_game
 
         # First, find the Player node to get its path and/or object ID.
         search_resp = client.call_tool(
-            "debug/search_scene_tree",
+            "runtime/search_scene_tree",
             {"name_pattern": "Player"},
         )
         assert not is_error(search_resp)
@@ -528,20 +528,20 @@ class TestLiveInspection:
 
         if node_path:
             props_resp = client.call_tool(
-                "debug/get_node_properties",
+                "runtime/get_node_properties",
                 {"node_path": node_path},
             )
         else:
             assert object_id is not None, f"No node_path or object_id in search result: {first}"
             props_resp = client.call_tool(
-                "debug/get_node_properties",
+                "runtime/get_node_properties",
                 {"object_id": object_id},
             )
 
         # If the first attempt errored and we have the other param, try it.
         if is_error(props_resp) and node_path and object_id:
             props_resp = client.call_tool(
-                "debug/get_node_properties",
+                "runtime/get_node_properties",
                 {"object_id": object_id},
             )
 
@@ -563,9 +563,9 @@ class TestLiveInspection:
 
     @pytest.mark.p0
     def test_f06_get_output(self, running_game):
-        """T-F06: debug/get_output contains STARTUP_COMPLETE message."""
+        """T-F06: runtime/get_output contains STARTUP_COMPLETE message."""
         client = running_game
-        resp = client.call_tool("debug/get_output")
+        resp = client.call_tool("runtime/get_output")
         assert not is_error(resp), f"get_output returned error: {get_text(resp)}"
 
         sc = get_structured(resp)
@@ -579,11 +579,11 @@ class TestLiveInspection:
 
     @pytest.mark.p1
     def test_f07_get_output_cursor(self, running_game):
-        """T-F07: debug/get_output cursor pagination returns fewer lines."""
+        """T-F07: runtime/get_output cursor pagination returns fewer lines."""
         client = running_game
 
         # First call to get a cursor.
-        resp1 = client.call_tool("debug/get_output")
+        resp1 = client.call_tool("runtime/get_output")
         assert not is_error(resp1)
         sc1 = get_structured(resp1)
         cursor = sc1.get("cursor", sc1.get("next_cursor", None))
@@ -592,7 +592,7 @@ class TestLiveInspection:
             pytest.skip("Server did not return a cursor for output pagination")
 
         # Second call with cursor.
-        resp2 = client.call_tool("debug/get_output", {"cursor": cursor})
+        resp2 = client.call_tool("runtime/get_output", {"cursor": cursor})
         assert not is_error(resp2)
         sc2 = get_structured(resp2)
 
@@ -605,28 +605,15 @@ class TestLiveInspection:
 
     @pytest.mark.p1
     def test_f08_get_errors(self, running_game):
-        """T-F08: debug/get_errors reports no runtime errors in test project."""
+        """T-F08: runtime/get_errors reports no runtime errors in test project."""
         client = running_game
-        resp = client.call_tool("debug/get_errors")
+        resp = client.call_tool("runtime/get_errors")
         assert not is_error(resp), f"get_errors returned error: {get_text(resp)}"
 
         sc = get_structured(resp)
         error_count = sc.get("error_count", 0)
         assert error_count == 0, f"Expected 0 runtime errors, got {error_count}"
 
-    @pytest.mark.p1
-    def test_f09_get_performance(self, running_game):
-        """T-F09: debug/get_performance reports FPS and node count."""
-        client = running_game
-        resp = client.call_tool("debug/get_performance")
-        assert not is_error(resp), f"get_performance returned error: {get_text(resp)}"
-
-        sc = get_structured(resp)
-        fps = sc.get("fps", 0)
-        assert fps > 0, f"Expected fps > 0, got {fps}"
-
-        node_count = sc.get("node_count", 0)
-        assert node_count > 0, f"Expected node_count > 0, got {node_count}"
 
 
 # ===========================================================================
@@ -643,7 +630,7 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g01_send_input_valid(self, running_game):
-        """T-G01: debug/send_input sends a valid action.
+        """T-G01: runtime/input/send_input sends a valid action.
 
         Tries the project-defined 'jump' action first.  If the running game
         process does not have the project InputMap loaded, falls back to the
@@ -651,14 +638,14 @@ class TestAutomation:
         """
         client = running_game
         resp = client.call_tool(
-            "debug/send_input",
+            "runtime/input/send_input",
             {"action": "jump"},
         )
 
         if is_error(resp):
             # Fallback to a built-in action that is always available.
             resp = client.call_tool(
-                "debug/send_input",
+                "runtime/input/send_input",
                 {"action": "ui_accept"},
             )
 
@@ -669,20 +656,20 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g02_send_input_invalid(self, running_game):
-        """T-G02: debug/send_input rejects nonexistent action."""
+        """T-G02: runtime/input/send_input rejects nonexistent action."""
         client = running_game
         resp = client.call_tool(
-            "debug/send_input",
+            "runtime/input/send_input",
             {"action": "nonexistent_action_xyz"},
         )
         assert is_error(resp), "Nonexistent action should return error"
 
     @pytest.mark.p0
     def test_g05_evaluate_simple(self, running_game):
-        """T-G05: debug/evaluate evaluates simple expression."""
+        """T-G05: runtime/evaluate evaluates simple expression."""
         client = running_game
         resp = client.call_tool(
-            "debug/evaluate",
+            "runtime/evaluate",
             {"expression": "2+2"},
         )
         assert not is_error(resp), f"evaluate returned error: {get_text(resp)}"
@@ -694,10 +681,10 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g06_evaluate_node_access(self, running_game):
-        """T-G06: debug/evaluate accesses scene tree nodes."""
+        """T-G06: runtime/evaluate accesses scene tree nodes."""
         client = running_game
         resp = client.call_tool(
-            "debug/evaluate",
+            "runtime/evaluate",
             {"expression": "get_tree().root.get_child_count()"},
         )
         assert not is_error(resp), f"evaluate returned error: {get_text(resp)}"
@@ -707,10 +694,10 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g08_wait_frames(self, running_game):
-        """T-G08: debug/wait_frames waits for the requested number of frames."""
+        """T-G08: runtime/wait_frames waits for the requested number of frames."""
         client = running_game
         resp = client.call_tool(
-            "debug/wait_frames",
+            "runtime/wait_frames",
             {"frames": 5},
         )
         assert not is_error(resp), f"wait_frames returned error: {get_text(resp)}"
@@ -721,9 +708,9 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g09_get_screenshot(self, running_game):
-        """T-G09: debug/get_screenshot returns a PNG image."""
+        """T-G09: runtime/get_screenshot returns a PNG image."""
         client = running_game
-        resp = client.call_tool("debug/get_screenshot")
+        resp = client.call_tool("runtime/get_screenshot")
         assert not is_error(resp), f"get_screenshot returned error: {get_text(resp)}"
 
         # The response content should have an image item.
@@ -739,9 +726,9 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g10_get_session_summary_running(self, running_game):
-        """T-G10: debug/get_session_summary while game is running."""
+        """T-G10: runtime/get_session_summary while game is running."""
         client = running_game
-        resp = client.call_tool("debug/get_session_summary")
+        resp = client.call_tool("runtime/get_session_summary")
         assert not is_error(resp), (
             f"get_session_summary returned error: {get_text(resp)}"
         )
@@ -760,18 +747,18 @@ class TestAutomation:
 
     @pytest.mark.p1
     def test_g11_get_session_summary_stopped(self, client):
-        """T-G11: debug/get_session_summary when game is not running.
+        """T-G11: runtime/get_session_summary when game is not running.
 
         Uses the per-test client fixture (no running game).
         """
         # Ensure no game is running.
-        status_resp = client.call_tool("debug/get_status")
+        status_resp = client.call_tool("runtime/get_status")
         state = get_structured(status_resp).get("state", "stopped")
         if state != "stopped":
-            client.call_tool("debug/stop")
+            client.call_tool("runtime/stop")
             time.sleep(1.0)
 
-        resp = client.call_tool("debug/get_session_summary")
+        resp = client.call_tool("runtime/get_session_summary")
         assert not is_error(resp), (
             f"get_session_summary returned error: {get_text(resp)}"
         )

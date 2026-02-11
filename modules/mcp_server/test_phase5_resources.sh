@@ -149,7 +149,6 @@ assert_contains "T2f: game/status listed (always)" "$LIST_RESP" 'godot://game/st
 assert_not_contains "T2g: game/scene-tree NOT listed" "$LIST_RESP" 'godot://game/scene-tree'
 assert_not_contains "T2h: game/output NOT listed" "$LIST_RESP" 'godot://game/output'
 assert_not_contains "T2i: game/errors NOT listed" "$LIST_RESP" 'godot://game/errors'
-assert_not_contains "T2j: game/performance NOT listed" "$LIST_RESP" 'godot://game/performance'
 
 # ── Step 3: resources/read - project/info ──
 echo ""

@@ -85,12 +85,12 @@ def running_game(module_client):
     """Ensure the main project is running for the test module.
     Starts the game if needed and stops it after the module."""
     # Check current state first.
-    result = module_client.call_tool("debug/get_status")
+    result = module_client.call_tool("runtime/get_status")
     state = result.get("result", {}).get("structuredContent", {}).get("state")
     if state != "running":
-        module_client.call_tool("debug/run_project")
+        module_client.call_tool("runtime/run_project")
         for _ in range(100):  # Poll for up to 10 seconds.
-            result = module_client.call_tool("debug/get_status")
+            result = module_client.call_tool("runtime/get_status")
             state = result.get("result", {}).get("structuredContent", {}).get("state")
             if state == "running":
                 break
@@ -99,7 +99,7 @@ def running_game(module_client):
             pytest.fail("Game did not reach running state within 10 seconds")
     yield module_client
     try:
-        module_client.call_tool("debug/stop")
+        module_client.call_tool("runtime/stop")
         time.sleep(0.5)
     except Exception:
         pass

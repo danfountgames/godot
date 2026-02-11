@@ -4,16 +4,16 @@
 
 ### The Problem
 
-The existing `debug/get_scene_tree` tool returns the **full hierarchical tree** with every node's name, type, ID, scene file path, and children array. For a game with 500+ nodes, this produces a large JSON payload that:
+The existing `runtime/get_scene_tree` tool returns the **full hierarchical tree** with every node's name, type, ID, scene file path, and children array. For a game with 500+ nodes, this produces a large JSON payload that:
 
 1. Consumes significant tokens in the LLM's context window.
 2. Returns more data than needed when the LLM just wants to understand the scene's *structure*.
 3. Has no way to page through results -- it is all-or-nothing (with only a `max_depth` truncation knob).
-4. Cannot filter by type, group, visibility, or name pattern at fetch time -- the LLM must either search with `debug/search_scene_tree` (which returns flat matches without structural context) or download the entire tree and mentally filter.
+4. Cannot filter by type, group, visibility, or name pattern at fetch time -- the LLM must either search with `runtime/search_scene_tree` (which returns flat matches without structural context) or download the entire tree and mentally filter.
 
 ### The Solution
 
-A new **`debug/browse_scene_tree`** tool that acts as a lightweight scene tree navigator. Think of it as a "table of contents" for the scene tree:
+A new **`runtime/browse_scene_tree`** tool that acts as a lightweight scene tree navigator. Think of it as a "table of contents" for the scene tree:
 
 - **Minimal per-node data**: name, type, path, child count, and a few key indicator flags.
 - **Depth control**: browse N levels deep from any subtree root.
@@ -23,10 +23,10 @@ A new **`debug/browse_scene_tree`** tool that acts as a lightweight scene tree n
 
 The LLM's workflow becomes:
 
-1. Call `debug/browse_scene_tree` with depth 2 to get the top-level layout.
+1. Call `runtime/browse_scene_tree` with depth 2 to get the top-level layout.
 2. Identify an interesting subtree (e.g., `"/root/Main/World/Enemies"`).
-3. Call `debug/browse_scene_tree` again with `root_path` set to that subtree.
-4. Once a specific node is identified, call `debug/get_node_properties` for full details.
+3. Call `runtime/browse_scene_tree` again with `root_path` set to that subtree.
+4. Once a specific node is identified, call `runtime/get_node_properties` for full details.
 
 This two-phase approach keeps context window usage low while giving the LLM full navigational capability.
 
@@ -34,23 +34,23 @@ This two-phase approach keeps context window usage low while giving the LLM full
 
 | Existing Tool | What It Does | Limitation This Addresses |
 |---|---|---|
-| `debug/get_scene_tree` | Full tree dump with name/type/id/scene_file per node | Too verbose for broad navigation; no filtering; no pagination |
-| `debug/search_scene_tree` | Flat list of nodes matching name/type filters | No structural context (parent-child relationships); no subtree browsing |
-| `debug/get_node_properties` | All properties of a single node | Only works once you know the exact path |
-| `debug/get_session_summary` | Tree at depth 2 + output/errors/perf | Hardcoded depth; no filtering; bundled with unrelated data |
+| `runtime/get_scene_tree` | Full tree dump with name/type/id/scene_file per node | Too verbose for broad navigation; no filtering; no pagination |
+| `runtime/search_scene_tree` | Flat list of nodes matching name/type filters | No structural context (parent-child relationships); no subtree browsing |
+| `runtime/get_node_properties` | All properties of a single node | Only works once you know the exact path |
+| `runtime/get_session_summary` | Tree at depth 2 + output/errors/perf | Hardcoded depth; no filtering; bundled with unrelated data |
 
-The new `debug/browse_scene_tree` fills the gap between "dump everything" and "search for specific names."
+The new `runtime/browse_scene_tree` fills the gap between "dump everything" and "search for specific names."
 
 ---
 
 ## Proposed Tool
 
-### Tool Name: `debug/browse_scene_tree`
+### Tool Name: `runtime/browse_scene_tree`
 
 **Title:** Browse Scene Tree
 
 **Description:**
-> Browse the running game's scene tree with lightweight summary data. Returns minimal per-node information (name, type, child count, key indicators) -- ideal for understanding scene structure before drilling into specific nodes with debug/get_node_properties. Supports depth control, filtering, subtree browsing, and pagination for large scenes. Uses cached tree by default; set refresh: true to fetch fresh data.
+> Browse the running game's scene tree with lightweight summary data. Returns minimal per-node information (name, type, child count, key indicators) -- ideal for understanding scene structure before drilling into specific nodes with runtime/get_node_properties. Supports depth control, filtering, subtree browsing, and pagination for large scenes. Uses cached tree by default; set refresh: true to fetch fresh data.
 
 **Annotations:**
 - `readOnlyHint`: true
@@ -237,7 +237,7 @@ Page: 1/1 (all 3 children shown)
 **Request:**
 ```json
 {
-  "name": "debug/browse_scene_tree",
+  "name": "runtime/browse_scene_tree",
   "arguments": {}
 }
 ```
@@ -265,7 +265,7 @@ Page: showing children 0-2 of 3
 **Request:**
 ```json
 {
-  "name": "debug/browse_scene_tree",
+  "name": "runtime/browse_scene_tree",
   "arguments": {
     "root_path": "/root/Main/Enemies",
     "max_depth": 1
@@ -293,7 +293,7 @@ Page: showing children 0-44 of 45
 **Request:**
 ```json
 {
-  "name": "debug/browse_scene_tree",
+  "name": "runtime/browse_scene_tree",
   "arguments": {
     "root_path": "/root/Main/Enemies",
     "max_depth": 1,
@@ -322,7 +322,7 @@ Page: showing children 10-14 of 45 (35 more)
 **Request:**
 ```json
 {
-  "name": "debug/browse_scene_tree",
+  "name": "runtime/browse_scene_tree",
   "arguments": {
     "type_filter": "Button",
     "max_depth": -1,
@@ -358,7 +358,7 @@ root (Window) [1 matching subtree]
 **Request:**
 ```json
 {
-  "name": "debug/browse_scene_tree",
+  "name": "runtime/browse_scene_tree",
   "arguments": {
     "name_pattern": "*Player*",
     "include_indicators": false
@@ -388,22 +388,22 @@ Stats: Matching types: CharacterBody2D(1) Label(2)
 
 ### Recommended LLM Workflow
 
-1. **Start**: Call `debug/get_status` to confirm the game is running.
-2. **Orient**: Call `debug/browse_scene_tree` (default params) to get a depth-2 overview with stats.
-3. **Navigate**: Call `debug/browse_scene_tree` with `root_path` set to an interesting subtree, increasing `max_depth` as needed.
+1. **Start**: Call `runtime/get_status` to confirm the game is running.
+2. **Orient**: Call `runtime/browse_scene_tree` (default params) to get a depth-2 overview with stats.
+3. **Navigate**: Call `runtime/browse_scene_tree` with `root_path` set to an interesting subtree, increasing `max_depth` as needed.
 4. **Find**: If searching for specific nodes, use `type_filter` or `name_pattern` parameters.
-5. **Inspect**: Once a specific node path is identified, call `debug/get_node_properties` for full property details.
-6. **Act**: Use `debug/evaluate` to read/write specific properties, or `debug/click_control` for UI interaction.
+5. **Inspect**: Once a specific node path is identified, call `runtime/get_node_properties` for full property details.
+6. **Act**: Use `runtime/evaluate` to read/write specific properties, or `runtime/input/click_control` for UI interaction.
 
 ### Complementary Tool Usage
 
-- **`debug/browse_scene_tree`** replaces most uses of `debug/get_scene_tree` for initial orientation. The existing tool remains available for cases where the full hierarchical tree with IDs is needed (e.g., programmatic tree diffing).
-- **`debug/search_scene_tree`** remains useful for quick "find all nodes of type X" queries where structural context is not needed. `debug/browse_scene_tree` with a `type_filter` provides a structural alternative.
-- **`debug/get_session_summary`** continues to be the best single call for "what is happening right now" (status + tree + output + errors + perf in one round trip).
+- **`runtime/browse_scene_tree`** replaces most uses of `runtime/get_scene_tree` for initial orientation. The existing tool remains available for cases where the full hierarchical tree with IDs is needed (e.g., programmatic tree diffing).
+- **`runtime/search_scene_tree`** remains useful for quick "find all nodes of type X" queries where structural context is not needed. `runtime/browse_scene_tree` with a `type_filter` provides a structural alternative.
+- **`runtime/get_session_summary`** continues to be the best single call for "what is happening right now" (status + tree + output + errors + perf in one round trip).
 
 ### Caching Strategy
 
-The tool leverages the existing `cached_scene_tree` from `MCPDebuggerBridge`. The `refresh` parameter triggers a new `request_scene_tree()` round trip. This is identical to how `debug/search_scene_tree` works today, keeping the caching behavior consistent.
+The tool leverages the existing `cached_scene_tree` from `MCPDebuggerBridge`. The `refresh` parameter triggers a new `request_scene_tree()` round trip. This is identical to how `runtime/search_scene_tree` works today, keeping the caching behavior consistent.
 
 All indicator data (has_script, is_visible, group_count) and statistics are derived from the cached tree by evaluating the `view_flags` field that is already present in the flat scene tree data from the game's `SceneDebuggerTree::serialize()`. This means **no additional game round-trips are required** beyond the existing scene tree request.
 
@@ -435,7 +435,7 @@ If game-side changes are deferred, the tool can launch with a **degraded mode** 
 | `tools/mcp_debug_tools.h` | Add `handle_browse_scene_tree` static method; add private helper methods |
 | `tools/mcp_debug_tools.cpp` | Implement handler and registration; add helpers for browse-specific logic |
 | `mcp_debugger_bridge.h` | (Optional) Expose view_flags in hierarchical tree if not already accessible |
-| `mcp_tool_registry.cpp` | Add `"debug/browse_scene_tree"` to `is_long_running_tool` list |
+| `mcp_tool_registry.cpp` | Add `"runtime/browse_scene_tree"` to `is_long_running_tool` list |
 
 ### New Methods in MCPDebugTools
 
@@ -481,7 +481,7 @@ static String _browse_tree_to_text(const Dictionary &p_browse_node,
 ### Registration Code
 
 ```cpp
-// debug/browse_scene_tree
+// runtime/browse_scene_tree
 {
     Dictionary props;
     props["root_path"] = make_prop("string",
@@ -506,11 +506,11 @@ static String _browse_tree_to_text(const Dictionary &p_browse_node,
             "Fetch fresh tree from game (default: false, uses cache).");
     Array required;
     p_registry->register_tool(
-            "debug/browse_scene_tree", "Browse Scene Tree",
+            "runtime/browse_scene_tree", "Browse Scene Tree",
             "Browse the running game's scene tree with lightweight summary data. "
             "Returns minimal per-node info (name, type, path, child count, indicators) "
             "for understanding scene structure. Supports subtree browsing, depth control, "
-            "type/name filtering, and pagination. Use debug/get_node_properties for "
+            "type/name filtering, and pagination. Use runtime/get_node_properties for "
             "full details on specific nodes. Uses cached tree by default.",
             make_schema(props, required),
             make_annotations(/*readOnly=*/true, /*destructive=*/false,
@@ -570,7 +570,7 @@ Dictionary MCPDebugTools::handle_browse_scene_tree(const Dictionary &p_args) {
     Dictionary subtree = _find_subtree(full_tree, root_path);
     if (subtree.is_empty()) {
         return make_tool_error("Subtree not found: " + root_path +
-                "\n\nUse debug/browse_scene_tree with no root_path to see the full tree.");
+                "\n\nUse runtime/browse_scene_tree with no root_path to see the full tree.");
     }
 
     // 6. Apply filters if requested.
@@ -672,23 +672,23 @@ For `has_script` and `group_count`, either:
 ## Edge Cases and Error Handling
 
 ### 1. Game Not Running
-Return the standard `_require_game_running()` error with guidance to use `debug/run_project` or `debug/run_scene`.
+Return the standard `_require_game_running()` error with guidance to use `runtime/run_project` or `runtime/run_scene`.
 
 ### 2. Invalid `root_path`
 ```
 Error: Subtree not found: /root/NonExistent/Path
 
-Use debug/browse_scene_tree with no root_path to see the full tree,
-or debug/search_scene_tree to find a node by name.
+Use runtime/browse_scene_tree with no root_path to see the full tree,
+or runtime/search_scene_tree to find a node by name.
 ```
 
 ### 3. `root_path` Character Validation
-Apply the same safe-character validation used by `debug/get_node_properties`:
+Apply the same safe-character validation used by `runtime/get_node_properties`:
 - Allow: alphanumeric, `_`, `/`, `.`, `@`, `:`, `-`, space
 - Reject anything else with "Invalid root_path: contains disallowed character"
 
 ### 4. Empty Cached Tree
-If the cache is empty and `refresh` is false, automatically fetch a fresh tree (same behavior as `debug/search_scene_tree`). If the fetch also fails, return an error.
+If the cache is empty and `refresh` is false, automatically fetch a fresh tree (same behavior as `runtime/search_scene_tree`). If the fetch also fails, return an error.
 
 ### 5. Extremely Wide Nodes (1000+ Children)
 Pagination with `offset`/`limit` handles this. The default limit of 50 prevents runaway payloads. The `total_children` and `has_more` fields tell the LLM to paginate.
@@ -701,7 +701,7 @@ Return a valid response with an empty node tree and a clear message:
 ```
 No nodes matching type='NonExistentType' found under /root.
 
-Try debug/search_scene_tree to search by name, or call debug/browse_scene_tree
+Try runtime/search_scene_tree to search by name, or call runtime/browse_scene_tree
 without filters to see the full structure.
 ```
 
@@ -718,7 +718,7 @@ The existing `request_scene_tree()` mechanism handles one pending scene tree req
 When filters are active, pagination applies to the *filtered* children of the root node. The `total_children` count reflects the filtered count, not the unfiltered count. The unfiltered total is available in `stats.total_nodes`.
 
 ### 12. Type Inheritance
-`type_filter` matches the exact type name as reported by the debugger (e.g., `"CharacterBody2D"`). It does **not** match parent classes. This is consistent with `debug/search_scene_tree`. A future enhancement could add an `include_subtypes` flag.
+`type_filter` matches the exact type name as reported by the debugger (e.g., `"CharacterBody2D"`). It does **not** match parent classes. This is consistent with `runtime/search_scene_tree`. A future enhancement could add an `include_subtypes` flag.
 
 ---
 
@@ -730,9 +730,9 @@ A key goal is minimizing LLM context window consumption. Approximate per-node si
 
 | Format | Bytes per node (approx) |
 |---|---|
-| `debug/get_scene_tree` (existing) | ~120 bytes (name, type, id, scene_file, children structure) |
-| `debug/browse_scene_tree` (text) | ~70 bytes (compact text line) |
-| `debug/browse_scene_tree` (structured) | ~150 bytes (more fields, but shallower trees) |
+| `runtime/get_scene_tree` (existing) | ~120 bytes (name, type, id, scene_file, children structure) |
+| `runtime/browse_scene_tree` (text) | ~70 bytes (compact text line) |
+| `runtime/browse_scene_tree` (structured) | ~150 bytes (more fields, but shallower trees) |
 
 The real savings come from **depth limiting** and **pagination**:
 - A 500-node tree at depth 2 typically shows ~20-30 nodes instead of 500.
@@ -745,7 +745,7 @@ All operations are performed on the cached tree Dictionary (in-memory tree walki
 
 ### Why Not a Separate Tool File?
 
-The browse tool shares significant infrastructure with the existing debug tools: `_get_bridge()`, `_require_game_running()`, `_count_tree_nodes()`, the cached tree access pattern, and the text formatting style. Keeping it in `mcp_debug_tools.cpp` avoids duplicating these helpers and is consistent with how `debug/search_scene_tree` is already co-located with `debug/get_scene_tree`.
+The browse tool shares significant infrastructure with the existing debug tools: `_get_bridge()`, `_require_game_running()`, `_count_tree_nodes()`, the cached tree access pattern, and the text formatting style. Keeping it in `mcp_debug_tools.cpp` avoids duplicating these helpers and is consistent with how `runtime/search_scene_tree` is already co-located with `runtime/get_scene_tree`.
 
 If the debug tools file grows too large (it is currently ~1100 lines), the browse-specific helpers can be extracted to a separate internal file later.
 

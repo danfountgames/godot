@@ -42,8 +42,9 @@
 // Maximum HTTP request buffer size per client (4 MB).
 #define MCP_MAX_BUFFER_SIZE 4194304
 
-// Maximum number of concurrent MCP clients.
-#define MCP_MAX_CLIENTS 8
+// Maximum number of concurrent MCP clients (TCP connections).
+// Claude Code opens multiple SSE streams + HTTP connections per session.
+#define MCP_MAX_CLIENTS 32
 
 // ---------------------------------------------------------------------------
 // Default server configuration
