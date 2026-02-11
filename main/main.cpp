@@ -4532,6 +4532,27 @@ int Main::start() {
 			sml->set_quit_on_go_back(GLOBAL_GET("application/config/quit_on_go_back"));
 			String appname = GLOBAL_GET("application/config/name");
 			appname = TranslationServer::get_singleton()->translate(appname);
+
+			// Append git branch name if inside a git repository.
+			{
+				String git_head_path = ProjectSettings::get_singleton()->get_resource_path().path_join(".git/HEAD");
+				Ref<FileAccess> git_f = FileAccess::open(git_head_path, FileAccess::READ);
+				if (git_f.is_valid()) {
+					String head = git_f->get_line().strip_edges();
+					String branch;
+					if (head.begins_with("ref: refs/heads/")) {
+						branch = head.substr(16);
+					} else if (head.begins_with("ref: ")) {
+						branch = head.substr(5);
+					} else if (head.length() >= 7) {
+						branch = head.substr(0, 7);
+					}
+					if (!branch.is_empty()) {
+						appname = vformat("%s [%s]", appname, branch);
+					}
+				}
+			}
+
 #ifdef DEBUG_ENABLED
 			// Append a suffix to the window title to denote that the project is running
 			// from a debug build (including the editor). Since this results in lower performance,
