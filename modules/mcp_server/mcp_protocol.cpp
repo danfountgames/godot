@@ -299,11 +299,19 @@ void MCPProtocol::gc_stale_sessions() {
 			connections_to_remove.push_back(E.key);
 			continue;
 		}
-		// SSE streams are long-lived; they are only GC'd when their session expires.
+		// SSE streams are long-lived but still need cleanup:
+		// - Orphaned streams (session expired/terminated)
+		// - Stale streams (TCP went quiet for > 5 minutes, likely dead)
 		if (session->is_get_sse_stream()) {
 			if (!sessions.has(session->sse_session_id)) {
-				// Orphaned SSE stream -- session was terminated or expired.
 				connections_to_remove.push_back(E.key);
+			} else {
+				// Check if the underlying TCP connection is still alive.
+				StreamPeerTCP::Status tcp_status = session->connection->get_status();
+				if (tcp_status == StreamPeerTCP::STATUS_NONE ||
+						tcp_status == StreamPeerTCP::STATUS_ERROR) {
+					connections_to_remove.push_back(E.key);
+				}
 			}
 			continue;
 		}
@@ -337,7 +345,9 @@ void MCPProtocol::gc_stale_sessions() {
 
 void MCPProtocol::poll() {
 	// Accept new connections.
-	while (server->is_connection_available()) {
+	// Stop accepting when at capacity — leave pending connections in the OS
+	// TCP backlog so clients block instead of getting rapid accept-then-reset.
+	while (server->is_connection_available() && (int)clients.size() < max_clients) {
 		on_client_connected();
 	}
 
@@ -969,6 +979,22 @@ void MCPProtocol::handle_get_sse(int p_client_id, const String &p_origin) {
 						"GET /mcp requires Accept: text/event-stream"),
 				p_origin);
 		return;
+	}
+
+	// Close any existing GET SSE streams for this session before opening a new
+	// one.  Without this, reconnecting clients accumulate orphaned streams that
+	// hold client slots indefinitely (SSE streams are exempt from idle GC).
+	Vector<int> old_streams;
+	for (const KeyValue<int, Ref<MCPSession>> &E : clients) {
+		if (E.key != p_client_id && E.value.is_valid() &&
+				E.value->is_get_sse_stream() &&
+				E.value->sse_session_id == session_id_header) {
+			old_streams.push_back(E.key);
+		}
+	}
+	for (int i = 0; i < old_streams.size(); i++) {
+		print_verbose("[MCP] Closing superseded SSE stream (client " + itos(old_streams[i]) + ") for session: " + session_id_header.substr(0, 8) + "...");
+		on_client_disconnected(old_streams[i]);
 	}
 
 	// Begin the SSE stream. This sends the HTTP response headers and marks
