@@ -358,6 +358,28 @@ void EditorNode::_version_control_menu_option(int p_idx) {
 	}
 }
 
+String EditorNode::_get_git_branch() {
+	// Read .git/HEAD from the project root to determine the current branch.
+	// Supports both normal refs (ref: refs/heads/branch-name) and detached HEAD (raw SHA).
+	String project_root = ProjectSettings::get_singleton()->get_resource_path();
+	String git_head_path = project_root.path_join(".git").path_join("HEAD");
+
+	Ref<FileAccess> f = FileAccess::open(git_head_path, FileAccess::READ);
+	if (f.is_null()) {
+		return String();
+	}
+
+	String head = f->get_line().strip_edges();
+	if (head.begins_with("ref: refs/heads/")) {
+		return head.substr(16); // Strip "ref: refs/heads/".
+	} else if (head.begins_with("ref: ")) {
+		return head.substr(5); // Non-standard ref, show as-is.
+	} else if (head.length() >= 7) {
+		return head.substr(0, 7); // Detached HEAD — show short SHA.
+	}
+	return String();
+}
+
 void EditorNode::_update_title() {
 	const String appname = GLOBAL_GET("application/config/name");
 	String title = (appname.is_empty() ? TTR("Unnamed Project") : appname);
@@ -370,6 +392,13 @@ void EditorNode::_update_title() {
 		// Display the "modified" mark before anything else so that it can always be seen in the OS task bar.
 		title = vformat("(*) %s", title);
 	}
+
+	// Append the current git branch name if inside a git repository.
+	String git_branch = _get_git_branch();
+	if (!git_branch.is_empty()) {
+		title = vformat("%s [%s]", title, git_branch);
+	}
+
 	DisplayServer::get_singleton()->window_set_title(title + String(" - ") + GODOT_VERSION_NAME);
 	if (project_title) {
 		project_title->set_text(title);
