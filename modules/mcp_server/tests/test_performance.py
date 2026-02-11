@@ -104,23 +104,23 @@ class TestToolsListLatency:
 
 
 # ---------------------------------------------------------------------------
-# PERF-03: gdscript/check_errors Latency
+# PERF-03: testing/check_script Latency
 # ---------------------------------------------------------------------------
 
 class TestCheckErrorsLatency:
-    """PERF-03 -- Measure gdscript/check_errors latency on a valid script."""
+    """PERF-03 -- Measure testing/check_script latency on a valid script."""
 
     @pytest.mark.p2
     @pytest.mark.slow
     def test_check_errors_latency(self, module_client: MCPClient):
-        """PERF-03: Call gdscript/check_errors on valid.gd 100 times, assert p50 < 50ms."""
+        """PERF-03: Call testing/check_script on valid.gd 100 times, assert p50 < 50ms."""
         iterations = 100
         latencies_ns: list[int] = []
 
         for _ in range(iterations):
             start = time.perf_counter_ns()
             resp = module_client.call_tool(
-                "gdscript/check_errors",
+                "testing/check_script",
                 {"path": "res://scripts/valid.gd"},
             )
             end = time.perf_counter_ns()
@@ -135,14 +135,14 @@ class TestCheckErrorsLatency:
         minimum = latencies_ms[0]
         maximum = latencies_ms[-1]
 
-        print(f"\n  PERF-03: gdscript/check_errors latency ({iterations} iterations)")
+        print(f"\n  PERF-03: testing/check_script latency ({iterations} iterations)")
         print(f"    min:  {minimum:.2f} ms")
         print(f"    p50:  {p50:.2f} ms")
         print(f"    p95:  {p95:.2f} ms")
         print(f"    p99:  {p99:.2f} ms")
         print(f"    max:  {maximum:.2f} ms")
 
-        assert p50 < 50.0, f"p50 check_errors latency {p50:.2f}ms exceeds 50ms threshold"
+        assert p50 < 50.0, f"p50 check_script latency {p50:.2f}ms exceeds 50ms threshold"
 
 
 # ---------------------------------------------------------------------------

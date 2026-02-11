@@ -299,8 +299,8 @@ class TestConcurrentRequests:
     """EC-08 -- Two clients making simultaneous requests."""
 
     @pytest.mark.p1
-    def test_concurrent_project_get_info(self, mcp_server_available):
-        """EC-08: Two separate clients call project/get_info at the same time.
+    def test_concurrent_project_get_overview(self, mcp_server_available):
+        """EC-08: Two separate clients call project/get_overview at the same time.
         Both should receive valid responses."""
         results = [None, None]
         errors = [None, None]
@@ -309,7 +309,7 @@ class TestConcurrentRequests:
             c = MCPClient()
             try:
                 c.full_handshake()
-                resp = c.call_tool("project/get_info")
+                resp = c.call_tool("project/get_overview")
                 results[index] = resp
             except Exception as exc:
                 errors[index] = exc

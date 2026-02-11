@@ -199,7 +199,7 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 	// Checked when the client sends Accept: text/event-stream but does NOT
 	// provide a progressToken.
 	static const char *long_running_tools[] = {
-		"gdscript/check_all",
+		"testing/check_all_scripts",
 		"runtime/get_scene_tree",
 		"runtime/browse_scene_tree",
 		"runtime/evaluate",

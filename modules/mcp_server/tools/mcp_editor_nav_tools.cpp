@@ -92,7 +92,7 @@ void MCPEditorNavTools::register_tools(MCPToolRegistry *p_registry) {
 				"Open a GDScript file in the Script editor and optionally jump to a specific "
 				"line and column. If grab_focus is true (default), the editor switches to the "
 				"Script tab. The script must exist as a valid .gd file in the project. Use this "
-				"after gdscript/check_errors to navigate directly to reported error locations.",
+				"after testing/check_script to navigate directly to reported error locations.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPEditorNavTools::handle_focus_script));
@@ -250,7 +250,7 @@ Dictionary MCPEditorNavTools::handle_focus_script(const Dictionary &p_args) {
 	if (!FileAccess::exists(script_path)) {
 		return make_tool_error(vformat(
 				"Script file not found: %s\n\n"
-				"Use editor/list_files with extension 'gd' to find script files.",
+				"Use your native file tools to find .gd script files.",
 				script_path));
 	}
 
@@ -379,7 +379,7 @@ Dictionary MCPEditorNavTools::handle_open_scene(const Dictionary &p_args) {
 	if (!FileAccess::exists(path)) {
 		return make_tool_error(vformat(
 				"Scene file not found: %s\n\n"
-				"Use editor/list_files with extension 'tscn' to find scene files.",
+				"Use your native file tools to find .tscn scene files.",
 				path));
 	}
 

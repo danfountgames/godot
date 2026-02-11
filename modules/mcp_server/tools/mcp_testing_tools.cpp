@@ -483,8 +483,8 @@ void MCPTestingTools::register_tools(MCPToolRegistry *p_registry) {
 				"Run GDScript tests to verify code behavior. Write test files in res://tests/ "
 				"named test_*.gd with test_*() methods. Each method should test one behavior.\n\n"
 				"WORKFLOW:\n"
-				"1. Write your code (editor/write_file)\n"
-				"2. Write a test file (editor/write_file)\n"
+				"1. Write your code with native file tools, then call editor/scan_filesystem\n"
+				"2. Write a test file with native file tools, then call editor/scan_filesystem\n"
 				"3. Check for compile errors (testing/check_script)\n"
 				"4. Run the tests (testing/run)\n"
 				"5. Fix failures and repeat\n\n"
@@ -555,10 +555,11 @@ void MCPTestingTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool(
 				"testing/check_all_scripts",
 				"Check All GDScript Files",
-				"Validate every .gd file in the project for compile errors. Returns a per-file "
-				"summary showing which files have errors, which have warnings, and which are "
-				"clean. Useful for a project-wide health check after large changes. Can be slow "
-				"on projects with many scripts (>100 files). Optionally includes warnings.",
+				"Validate every .gd file in the project for compile errors. Returns summary "
+				"counts (total, errors, warnings, clean) plus details for up to 20 files with "
+				"issues (5 errors max per file). Clean files are counted but not listed. "
+				"Use testing/check_script on individual files for full error details. "
+				"Useful for a project-wide health check after large changes. Optionally includes warnings.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPTestingTools::handle_check_all_scripts),
@@ -928,11 +929,16 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 	gd_files.sort();
 
 	int total = gd_files.size();
+	// Only files with issues are included in the response to avoid
+	// overwhelming LLM context. Summary counts cover clean files.
+	static constexpr int MAX_DETAIL_FILES = 20;
+
 	Array file_results;
 	int files_with_errors = 0;
 	int files_with_warnings = 0;
 	int files_clean = 0;
 	String text;
+	int detail_files_emitted = 0;
 
 	for (int i = 0; i < total; i++) {
 		// Cooperative cancellation check.
@@ -951,27 +957,42 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 
 		if (errors.size() > 0) {
 			files_with_errors++;
-			text += vformat("=== %s (%d errors) ===\n", gd_files[i], errors.size());
-			for (int j = 0; j < errors.size(); j++) {
-				Dictionary e = errors[j];
-				text += vformat("  Line %d, Col %d: %s\n",
-						(int)e["line"], (int)e["column"], (String)e["message"]);
+			if (detail_files_emitted < MAX_DETAIL_FILES) {
+				text += vformat("=== %s (%d errors) ===\n", gd_files[i], errors.size());
+				// Cap errors per file to 5 to avoid huge output.
+				int err_limit = MIN(errors.size(), 5);
+				for (int j = 0; j < err_limit; j++) {
+					Dictionary e = errors[j];
+					text += vformat("  Line %d, Col %d: %s\n",
+							(int)e["line"], (int)e["column"], (String)e["message"]);
+				}
+				if (errors.size() > err_limit) {
+					text += vformat("  ... and %d more errors\n", errors.size() - err_limit);
+				}
+				file_results.push_back(result);
+				detail_files_emitted++;
 			}
 		} else if (warnings.size() > 0 && include_warnings) {
 			files_with_warnings++;
-			text += vformat("=== %s (%d warnings) ===\n", gd_files[i], warnings.size());
-			for (int j = 0; j < warnings.size(); j++) {
-				Dictionary w = warnings[j];
-				text += vformat("  Line %d: %s [%s]\n",
-						(int)w["line"], (String)w["message"], (String)w["code_name"]);
+			if (detail_files_emitted < MAX_DETAIL_FILES) {
+				text += vformat("=== %s (%d warnings) ===\n", gd_files[i], warnings.size());
+				int warn_limit = MIN(warnings.size(), 5);
+				for (int j = 0; j < warn_limit; j++) {
+					Dictionary w = warnings[j];
+					text += vformat("  Line %d: %s [%s]\n",
+							(int)w["line"], (String)w["message"], (String)w["code_name"]);
+				}
+				if (warnings.size() > warn_limit) {
+					text += vformat("  ... and %d more warnings\n", warnings.size() - warn_limit);
+				}
+				file_results.push_back(result);
+				detail_files_emitted++;
 			}
 		} else if (warnings.size() > 0) {
 			files_with_warnings++;
 		} else {
 			files_clean++;
 		}
-
-		file_results.push_back(result);
 	}
 
 	// Final progress (skip if cancelled -- don't send misleading 100% completion).
@@ -980,6 +1001,12 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 		p_ctx->report_progress(total, total, "Done");
 	}
 	int files_checked = files_with_errors + files_with_warnings + files_clean;
+
+	int total_issues = files_with_errors + (include_warnings ? files_with_warnings : 0);
+	if (total_issues > MAX_DETAIL_FILES) {
+		text += vformat("\n... %d more files with issues not shown (use testing/check_script on individual files)\n",
+				total_issues - MAX_DETAIL_FILES);
+	}
 
 	text += vformat("\nSummary: %d of %d files checked, %d with errors, %d with warnings, %d clean",
 			files_checked, total, files_with_errors, files_with_warnings, files_clean);
@@ -994,7 +1021,7 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 	structured["files_with_warnings"] = files_with_warnings;
 	structured["files_clean"] = files_clean;
 	structured["cancelled"] = was_cancelled;
-	structured["files"] = file_results;
+	structured["files"] = file_results; // Only files with issues, capped at MAX_DETAIL_FILES.
 
 	return make_tool_result(text, structured);
 }

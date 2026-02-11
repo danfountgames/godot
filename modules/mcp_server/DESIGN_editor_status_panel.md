@@ -131,7 +131,7 @@ The `SCsub` file must be updated to compile files from the `editor/` subdirector
 | +-- Tool Activity Summary -----------------------------------------------+|
 | | Tool Name              | Calls | Avg Time | Last Called   | Last Status ||
 | |------------------------|-------|----------|---------------|-------------||
-| | editor/read_file       |    12 |    18ms  | 14:32:01      | OK          ||
+| | editor/scan_filesystem |    12 |    18ms  | 14:32:01      | OK          ||
 | | runtime/get_scene_tree   |     5 |   340ms  | 14:31:55      | OK          ||
 | | gdscript/check         |     3 |    45ms  | 14:30:12      | OK          ||
 | | runtime/run_project      |     1 |   120ms  | 14:28:00      | OK          ||
@@ -526,7 +526,7 @@ metadata via `set_metadata()`.
 **Column 0 (Time):** Format `HH:MM:SS.d` (one decimal for sub-second precision).
 
 **Column 1 (Method):** The JSON-RPC method name. For `tools/call`, append the
-tool name in parentheses: `tools/call (editor/read_file)`.
+tool name in parentheses: `tools/call (editor/scan_filesystem)`.
 
 **Column 2 (Client):** First 8 hex chars of the MCP session ID.
 
@@ -556,7 +556,7 @@ re-filtering).
 
 | # | Column | Width | Content |
 |---|--------|-------|---------|
-| 0 | Tool Name | 200px | Full tool name, e.g. "editor/read_file" |
+| 0 | Tool Name | 200px | Full tool name, e.g. "editor/scan_filesystem" |
 | 1 | Calls | 60px | Call count, right-aligned |
 | 2 | Avg Time | 80px | Average response time in ms |
 | 3 | Last Called | 100px | HH:MM:SS timestamp |
