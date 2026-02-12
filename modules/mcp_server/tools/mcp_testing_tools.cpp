@@ -551,13 +551,16 @@ void MCPTestingTools::register_tools(MCPToolRegistry *p_registry) {
 		Dictionary props;
 		props["include_warnings"] = make_prop("boolean",
 				"Whether to include warnings in the output (default: false, only errors)");
+		props["page"] = make_prop("integer",
+				"Page number (1-based) for paginated results. Each page shows up to 10 files with issues. Default: 1");
 		Array required;
 		p_registry->register_tool(
 				"testing/check_all_scripts",
 				"Check All GDScript Files",
 				"Validate every .gd file in the project for compile errors. Returns summary "
-				"counts (total, errors, warnings, clean) plus details for up to 20 files with "
-				"issues (5 errors max per file). Clean files are counted but not listed. "
+				"counts (total, errors, warnings, clean) plus details for up to 10 files with "
+				"issues per page (5 errors max per file). Clean files are counted but not listed. "
+				"Use 'page' parameter to see more results. "
 				"Use testing/check_script on individual files for full error details. "
 				"Useful for a project-wide health check after large changes. Optionally includes warnings.",
 				make_schema(props, required),
@@ -910,6 +913,7 @@ Dictionary MCPTestingTools::handle_check_all_scripts(const Dictionary &p_args) {
 Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 		const Dictionary &p_args, ProgressContext *p_ctx) {
 	bool include_warnings = p_args.get("include_warnings", false);
+	int page = CLAMP((int)p_args.get("page", 1), 1, 1000);
 
 	// Find all .gd files in the project.
 	Vector<String> gd_files;
@@ -929,16 +933,19 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 	gd_files.sort();
 
 	int total = gd_files.size();
-	// Only files with issues are included in the response to avoid
-	// overwhelming LLM context. Summary counts cover clean files.
-	static constexpr int MAX_DETAIL_FILES = 20;
+	static constexpr int PAGE_SIZE = 10;
+	int page_start = (page - 1) * PAGE_SIZE; // How many issue-files to skip.
 
-	Array file_results;
+	// First pass: validate all files, collect summary counts and issue-files.
+	// We need to validate everything for accurate counts, but only emit
+	// details for the requested page.
+	Vector<Dictionary> all_issue_results;
+	Vector<String> all_issue_paths;
+	Vector<int> all_issue_error_counts;
+	Vector<int> all_issue_warning_counts;
 	int files_with_errors = 0;
 	int files_with_warnings = 0;
 	int files_clean = 0;
-	String text;
-	int detail_files_emitted = 0;
 
 	for (int i = 0; i < total; i++) {
 		// Cooperative cancellation check.
@@ -957,39 +964,18 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 
 		if (errors.size() > 0) {
 			files_with_errors++;
-			if (detail_files_emitted < MAX_DETAIL_FILES) {
-				text += vformat("=== %s (%d errors) ===\n", gd_files[i], errors.size());
-				// Cap errors per file to 5 to avoid huge output.
-				int err_limit = MIN(errors.size(), 5);
-				for (int j = 0; j < err_limit; j++) {
-					Dictionary e = errors[j];
-					text += vformat("  Line %d, Col %d: %s\n",
-							(int)e["line"], (int)e["column"], (String)e["message"]);
-				}
-				if (errors.size() > err_limit) {
-					text += vformat("  ... and %d more errors\n", errors.size() - err_limit);
-				}
-				file_results.push_back(result);
-				detail_files_emitted++;
-			}
-		} else if (warnings.size() > 0 && include_warnings) {
-			files_with_warnings++;
-			if (detail_files_emitted < MAX_DETAIL_FILES) {
-				text += vformat("=== %s (%d warnings) ===\n", gd_files[i], warnings.size());
-				int warn_limit = MIN(warnings.size(), 5);
-				for (int j = 0; j < warn_limit; j++) {
-					Dictionary w = warnings[j];
-					text += vformat("  Line %d: %s [%s]\n",
-							(int)w["line"], (String)w["message"], (String)w["code_name"]);
-				}
-				if (warnings.size() > warn_limit) {
-					text += vformat("  ... and %d more warnings\n", warnings.size() - warn_limit);
-				}
-				file_results.push_back(result);
-				detail_files_emitted++;
-			}
+			all_issue_results.push_back(result);
+			all_issue_paths.push_back(gd_files[i]);
+			all_issue_error_counts.push_back(errors.size());
+			all_issue_warning_counts.push_back(warnings.size());
 		} else if (warnings.size() > 0) {
 			files_with_warnings++;
+			if (include_warnings) {
+				all_issue_results.push_back(result);
+				all_issue_paths.push_back(gd_files[i]);
+				all_issue_error_counts.push_back(0);
+				all_issue_warning_counts.push_back(warnings.size());
+			}
 		} else {
 			files_clean++;
 		}
@@ -1001,15 +987,62 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 		p_ctx->report_progress(total, total, "Done");
 	}
 	int files_checked = files_with_errors + files_with_warnings + files_clean;
-
-	int total_issues = files_with_errors + (include_warnings ? files_with_warnings : 0);
-	if (total_issues > MAX_DETAIL_FILES) {
-		text += vformat("\n... %d more files with issues not shown (use testing/check_script on individual files)\n",
-				total_issues - MAX_DETAIL_FILES);
+	int total_issues = all_issue_results.size();
+	int total_pages = (total_issues + PAGE_SIZE - 1) / PAGE_SIZE;
+	if (total_pages == 0) {
+		total_pages = 1;
 	}
 
-	text += vformat("\nSummary: %d of %d files checked, %d with errors, %d with warnings, %d clean",
-			files_checked, total, files_with_errors, files_with_warnings, files_clean);
+	// Clamp page to valid range.
+	page = CLAMP(page, 1, total_pages);
+	page_start = (page - 1) * PAGE_SIZE;
+
+	// Build text and structured results for the requested page.
+	String text;
+	Array file_results;
+	int page_end = MIN(page_start + PAGE_SIZE, total_issues);
+
+	for (int i = page_start; i < page_end; i++) {
+		int err_count = all_issue_error_counts[i];
+		int warn_count = all_issue_warning_counts[i];
+		Dictionary result = all_issue_results[i];
+
+		if (err_count > 0) {
+			text += vformat("=== %s (%d errors) ===\n", all_issue_paths[i], err_count);
+			Array errors = result["errors"];
+			int err_limit = MIN(errors.size(), 5);
+			for (int j = 0; j < err_limit; j++) {
+				Dictionary e = errors[j];
+				text += vformat("  Line %d, Col %d: %s\n",
+						(int)e["line"], (int)e["column"], (String)e["message"]);
+			}
+			if (errors.size() > err_limit) {
+				text += vformat("  ... and %d more errors\n", errors.size() - err_limit);
+			}
+		} else {
+			text += vformat("=== %s (%d warnings) ===\n", all_issue_paths[i], warn_count);
+			Array warnings = result["warnings"];
+			int warn_limit = MIN(warnings.size(), 5);
+			for (int j = 0; j < warn_limit; j++) {
+				Dictionary w = warnings[j];
+				text += vformat("  Line %d: %s [%s]\n",
+						(int)w["line"], (String)w["message"], (String)w["code_name"]);
+			}
+			if (warnings.size() > warn_limit) {
+				text += vformat("  ... and %d more warnings\n", warnings.size() - warn_limit);
+			}
+		}
+		file_results.push_back(result);
+	}
+
+	// Pagination info.
+	if (total_pages > 1) {
+		text += vformat("\nPage %d of %d (%d files with issues total). Use page=%d to see more.\n",
+				page, total_pages, total_issues, MIN(page + 1, total_pages));
+	}
+
+	text += vformat("\nSummary: %d files checked, %d with errors, %d with warnings, %d clean",
+			files_checked, files_with_errors, files_with_warnings, files_clean);
 	if (was_cancelled) {
 		text += " (Cancelled by client)";
 	}
@@ -1021,7 +1054,9 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 	structured["files_with_warnings"] = files_with_warnings;
 	structured["files_clean"] = files_clean;
 	structured["cancelled"] = was_cancelled;
-	structured["files"] = file_results; // Only files with issues, capped at MAX_DETAIL_FILES.
+	structured["page"] = page;
+	structured["total_pages"] = total_pages;
+	structured["files"] = file_results;
 
 	return make_tool_result(text, structured);
 }

@@ -50,7 +50,7 @@ class MCPServerPlugin : public EditorPlugin {
 	GDCLASS(MCPServerPlugin, EditorPlugin)
 
 private:
-	MCPProtocol protocol;
+	MCPProtocol *protocol = nullptr;
 	Ref<MCPDebuggerBridge> debugger_bridge;
 
 	Thread thread;
@@ -105,7 +105,7 @@ public:
 	virtual String get_plugin_name() const override { return "AI"; }
 	virtual void make_visible(bool p_visible) override;
 
-	MCPProtocol *get_protocol() { return &protocol; }
+	MCPProtocol *get_protocol() { return protocol; }
 	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
 
 	// Called by the panel's Start/Stop button.
