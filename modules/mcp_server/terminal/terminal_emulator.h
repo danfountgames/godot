@@ -81,7 +81,6 @@ private:
 	};
 	Vector<ScrollbackLine> scrollback;
 	static const int MAX_SCROLLBACK = 2000;
-	int scroll_offset = 0; // 0 = at bottom, positive = scrolled up.
 
 	// libvterm callbacks.
 	static int _damage_cb(VTermRect rect, void *user);
@@ -133,11 +132,8 @@ public:
 	String get_title() const { return title; }
 
 	// Scrollback.
-	int get_scroll_offset() const { return scroll_offset; }
-	void scroll_up(int p_lines);
-	void scroll_down(int p_lines);
-	void scroll_to_bottom();
 	int get_scrollback_length() const { return scrollback.size(); }
+	Cell get_scrollback_cell(int p_scrollback_idx, int p_col) const;
 };
 
 #endif // MCP_TERMINAL_ENABLED

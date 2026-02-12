@@ -43,7 +43,6 @@
 
 TerminalWidget::TerminalWidget() {
 	set_focus_mode(FOCUS_ALL);
-	set_clip_contents(true);
 	set_mouse_filter(MOUSE_FILTER_STOP);
 	set_force_pass_scroll_events(false);
 }
@@ -78,11 +77,9 @@ void TerminalWidget::_notification(int p_what) {
 			}
 
 			_calculate_cell_size();
-			_recalculate_grid_size();
 
-			int grid_cols = MAX(1, (int)(get_size().x / cell_width));
-			int grid_rows = MAX(1, (int)(get_size().y / cell_height));
-			emulator.init(grid_rows, grid_cols);
+			// Initial emulator size — will be resized by update_pty_size() once the scroll container is sized.
+			emulator.init(24, 80);
 
 			set_process_internal(true);
 		} break;
@@ -93,6 +90,16 @@ void TerminalWidget::_notification(int p_what) {
 				_send_output_to_pty();
 				if (!pty.is_running()) {
 					running = false;
+				}
+			}
+
+			// Track scrollback growth and auto-scroll if stuck to bottom.
+			int sb_len = emulator.get_scrollback_length();
+			if (sb_len != last_scrollback_len) {
+				last_scrollback_len = sb_len;
+				update_minimum_size();
+				if (stick_to_bottom) {
+					callable_mp(this, &TerminalWidget::_do_scroll_to_bottom).call_deferred();
 				}
 			}
 
@@ -112,19 +119,6 @@ void TerminalWidget::_notification(int p_what) {
 		case NOTIFICATION_DRAW: {
 			_draw_terminal();
 		} break;
-
-		case NOTIFICATION_RESIZED: {
-			_recalculate_grid_size();
-
-			if (emulator.get_rows() > 0) {
-				int new_cols = MAX(1, (int)(get_size().x / cell_width));
-				int new_rows = MAX(1, (int)(get_size().y / cell_height));
-				emulator.set_size(new_rows, new_cols);
-				if (running) {
-					pty.resize(new_rows, new_cols);
-				}
-			}
-		} break;
 	}
 }
 
@@ -141,19 +135,6 @@ void TerminalWidget::_calculate_cell_size() {
 	}
 	if (cell_height <= 0) {
 		cell_height = 16;
-	}
-}
-
-void TerminalWidget::_recalculate_grid_size() {
-	if (cell_width <= 0 || cell_height <= 0) {
-		return;
-	}
-
-	int new_cols = MAX(1, (int)(get_size().x / cell_width));
-	int new_rows = MAX(1, (int)(get_size().y / cell_height));
-
-	if (new_rows != emulator.get_rows() || new_cols != emulator.get_cols()) {
-		// Sizes differ -- the NOTIFICATION_RESIZED handler will apply them.
 	}
 }
 
@@ -184,22 +165,33 @@ void TerminalWidget::_send_output_to_pty() {
 ///////////////////////////////////////////////////////////////////////////////
 
 void TerminalWidget::_draw_terminal() {
-	// Clear background.
 	Color default_bg(0.12f, 0.12f, 0.15f);
 	draw_rect(Rect2(Vector2(), get_size()), default_bg);
 
-	// Compute vertical offset to eliminate bottom whitespace gap.
-	// Push the fractional cell remainder to the top (under the toolbar).
-	int visible_rows = MAX(1, (int)(get_size().y / cell_height));
-	y_offset = get_size().y - (visible_rows * cell_height);
-
-	int rows = emulator.get_rows();
+	int sb_len = emulator.get_scrollback_length();
+	int screen_rows = emulator.get_rows();
+	int total_rows = sb_len + screen_rows;
 	int cols = emulator.get_cols();
 
-	for (int row = 0; row < rows; row++) {
+	// Determine visible row range for culling.
+	int vis_row_start = 0;
+	int vis_row_end = total_rows;
+	if (scroll_container) {
+		float scroll_y = scroll_container->get_v_scroll_bar()->get_value();
+		float viewport_h = scroll_container->get_size().y;
+		vis_row_start = MAX(0, (int)(scroll_y / cell_height));
+		vis_row_end = MIN(total_rows, (int)((scroll_y + viewport_h) / cell_height) + 1);
+	}
+
+	for (int r = vis_row_start; r < vis_row_end; r++) {
 		for (int col = 0; col < cols; col++) {
-			TerminalEmulator::Cell cell = emulator.get_cell(row, col);
-			_draw_cell(row, col, cell);
+			TerminalEmulator::Cell cell;
+			if (r < sb_len) {
+				cell = emulator.get_scrollback_cell(r, col);
+			} else {
+				cell = emulator.get_cell(r - sb_len, col);
+			}
+			_draw_cell(r, col, cell);
 		}
 	}
 
@@ -208,7 +200,7 @@ void TerminalWidget::_draw_terminal() {
 }
 
 void TerminalWidget::_draw_cell(int p_row, int p_col, const TerminalEmulator::Cell &p_cell) {
-	Vector2 pos(p_col * cell_width, p_row * cell_height + y_offset);
+	Vector2 pos(p_col * cell_width, p_row * cell_height);
 	Color default_bg(0.12f, 0.12f, 0.15f);
 
 	Color fg = _effective_fg(p_cell);
@@ -257,7 +249,8 @@ void TerminalWidget::_draw_cursor() {
 		return;
 	}
 
-	Vector2 pos(cs.col * cell_width, cs.row * cell_height + y_offset);
+	int sb_len = emulator.get_scrollback_length();
+	Vector2 pos(cs.col * cell_width, (sb_len + cs.row) * cell_height);
 	Color cursor_color(0.8f, 0.8f, 0.8f, 0.7f);
 
 	switch (cs.shape) {
@@ -297,23 +290,9 @@ Color TerminalWidget::_effective_bg(const TerminalEmulator::Cell &p_cell) const 
 ///////////////////////////////////////////////////////////////////////////////
 
 void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
-	// --- Mouse button events (scroll + selection) ---
+	// --- Mouse button events (selection) ---
 	Ref<InputEventMouseButton> mb = p_event;
 	if (mb.is_valid()) {
-		// Scroll wheel.
-		if (mb->is_pressed() && mb->get_button_index() == MouseButton::WHEEL_UP) {
-			emulator.scroll_up(3);
-			queue_redraw();
-			accept_event();
-			return;
-		}
-		if (mb->is_pressed() && mb->get_button_index() == MouseButton::WHEEL_DOWN) {
-			emulator.scroll_down(3);
-			queue_redraw();
-			accept_event();
-			return;
-		}
-
 		// Left click — start selection.
 		if (mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
 			grab_focus();
@@ -399,9 +378,10 @@ void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
 
 		_send_output_to_pty();
 
-		// Typing should scroll to bottom if scrolled up.
-		if (emulator.get_scroll_offset() > 0) {
-			emulator.scroll_to_bottom();
+		// Typing should re-stick and scroll to bottom.
+		if (!stick_to_bottom) {
+			stick_to_bottom = true;
+			_do_scroll_to_bottom();
 		}
 	}
 }
@@ -419,8 +399,9 @@ bool TerminalWidget::_is_modifier_key(Key p_keycode) const {
 ///////////////////////////////////////////////////////////////////////////////
 
 Vector2i TerminalWidget::_pixel_to_cell(Vector2 p_pos) const {
+	int total_rows = emulator.get_scrollback_length() + emulator.get_rows();
 	int col = CLAMP((int)(p_pos.x / cell_width), 0, emulator.get_cols() - 1);
-	int row = CLAMP((int)((p_pos.y - y_offset) / cell_height), 0, emulator.get_rows() - 1);
+	int row = CLAMP((int)(p_pos.y / cell_height), 0, total_rows - 1);
 	return Vector2i(row, col);
 }
 
@@ -459,6 +440,7 @@ String TerminalWidget::_get_selected_text() const {
 		SWAP(start, end);
 	}
 
+	int sb_len = emulator.get_scrollback_length();
 	String result;
 	for (int row = start.x; row <= end.x; row++) {
 		int col_begin = (row == start.x) ? start.y : 0;
@@ -466,7 +448,12 @@ String TerminalWidget::_get_selected_text() const {
 
 		String line;
 		for (int col = col_begin; col <= col_end; col++) {
-			TerminalEmulator::Cell cell = emulator.get_cell(row, col);
+			TerminalEmulator::Cell cell;
+			if (row < sb_len) {
+				cell = emulator.get_scrollback_cell(row, col);
+			} else {
+				cell = emulator.get_cell(row - sb_len, col);
+			}
 			if (!cell.text.is_empty()) {
 				line += cell.text;
 			} else {
@@ -474,7 +461,6 @@ String TerminalWidget::_get_selected_text() const {
 			}
 		}
 
-		// Trim trailing spaces from each line.
 		line = line.rstrip(" ");
 		result += line;
 
@@ -635,7 +621,54 @@ bool TerminalWidget::is_process_running() const {
 ///////////////////////////////////////////////////////////////////////////////
 
 Size2 TerminalWidget::get_minimum_size() const {
-	return Size2(cell_width * 40, cell_height * 10);
+	int total_rows = emulator.get_scrollback_length() + emulator.get_rows();
+	return Size2(cell_width * 40, total_rows * cell_height);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// ScrollContainer integration
+///////////////////////////////////////////////////////////////////////////////
+
+void TerminalWidget::set_scroll_container(ScrollContainer *p_sc) {
+	scroll_container = p_sc;
+}
+
+void TerminalWidget::scroll_to_bottom() {
+	stick_to_bottom = true;
+	_do_scroll_to_bottom();
+}
+
+void TerminalWidget::unstick_from_bottom() {
+	stick_to_bottom = false;
+}
+
+void TerminalWidget::_do_scroll_to_bottom() {
+	if (scroll_container) {
+		scroll_container->set_v_scroll(INT_MAX);
+	}
+}
+
+bool TerminalWidget::_is_at_bottom() const {
+	if (!scroll_container) {
+		return true;
+	}
+	ScrollBar *vbar = scroll_container->get_v_scroll_bar();
+	return vbar->get_value() >= vbar->get_max() - scroll_container->get_size().y - cell_height;
+}
+
+void TerminalWidget::update_pty_size() {
+	if (!scroll_container || cell_width <= 0 || cell_height <= 0) {
+		return;
+	}
+	int vis_rows = MAX(1, (int)(scroll_container->get_size().y / cell_height));
+	int vis_cols = MAX(1, (int)(scroll_container->get_size().x / cell_width));
+	if (vis_rows != emulator.get_rows() || vis_cols != emulator.get_cols()) {
+		emulator.set_size(vis_rows, vis_cols);
+		update_minimum_size();
+		if (running) {
+			pty.resize(vis_rows, vis_cols);
+		}
+	}
 }
 
 #endif // MCP_TERMINAL_ENABLED
