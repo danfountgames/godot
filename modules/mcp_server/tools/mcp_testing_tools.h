@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_testing_tools.h                                                   */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,87 +30,35 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#include "core/string/ustring.h"
+#include "core/templates/vector.h"
+#include "core/variant/array.h"
+#include "core/variant/dictionary.h"
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+class MCPToolRegistry;
+struct ProgressContext;
 
-class Button;
-class TabContainer;
-
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
-
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+class MCPTestingTools {
+public:
+	static void register_tools(MCPToolRegistry *p_registry);
 
 private:
-	MCPProtocol *protocol = nullptr;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+	// From MCPTestTools:
+	static Dictionary handle_run(const Dictionary &p_args);
+	static Dictionary handle_list(const Dictionary &p_args);
+	static class MCPDebuggerBridge *_get_bridge();
+	static Vector<String> _collect_test_files(const String &p_dir_path);
+	static Dictionary _validate_single_file_for_tests(const String &p_path);
+	static Vector<String> _extract_test_methods(const String &p_path);
+	static Dictionary _build_compile_error_response(const Array &p_compile_results, int p_run_number);
+	static Dictionary _build_test_results_response(const Dictionary &p_raw_result, bool p_verbose);
+	static void _copy_runner_files_to_project();
+	static void _cleanup_runner_files();
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
-
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
-
-#ifdef TOOLS_ENABLED
-	TabContainer *ai_tab_container = nullptr;
-	Button *panel_button = nullptr;
-	MCPStatusPanel *status_panel = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	Vector<AgentPanel *> agent_panels;
-	Control *new_tab_placeholder = nullptr;
-	int agent_counter = 0;
-
-	void _create_agent_tab();
-	void _on_tab_changed(int p_tab);
-	void _on_tab_close_pressed(int p_tab);
-	void _on_agent_title_changed(const String &p_title);
-	void _update_close_buttons();
-#endif
-#endif
-
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
-public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
-
-	MCPProtocol *get_protocol() { return protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	// From MCPGDScriptTools:
+	static Dictionary handle_check_script(const Dictionary &p_args);
+	static Dictionary handle_check_all_scripts(const Dictionary &p_args);
+	static Dictionary handle_check_all_scripts_with_progress(const Dictionary &p_args, ProgressContext *p_ctx);
+	static Dictionary _validate_single_file(const String &p_path);
+	static void _find_gd_files_recursive(const String &p_dir, Vector<String> &r_files);
 };

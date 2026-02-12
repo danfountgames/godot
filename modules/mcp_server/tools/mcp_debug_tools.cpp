@@ -50,48 +50,48 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 
 	// --- Category E: Game Lifecycle ---
 
-	// debug/run_project
+	// runtime/run_project
 	{
 		Dictionary props;
 		Array required;
 		p_registry->register_tool(
-				"debug/run_project", "Run Project",
+				"runtime/run_project", "Run Project",
 				"Launch the project's main scene in debug mode. If already running, stops first. "
-				"Returns immediately. Poll debug/get_status every 1-2s: 'launching' -> 'running' (ready) "
-				"or 'stopped' (failed, check debug/get_errors). Times out after 15s. "
-				"Tip: use debug/run_scene instead to test individual scenes in isolation.",
+				"Returns immediately. Poll runtime/get_status every 1-2s: 'launching' -> 'running' (ready) "
+				"or 'stopped' (failed, check runtime/get_errors). Times out after 15s. "
+				"Tip: use runtime/run_scene instead to test individual scenes in isolation.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDebugTools::handle_run_project));
 	}
 
-	// debug/run_scene
+	// runtime/run_scene
 	{
 		Dictionary props;
 		props["scene"] = make_prop("string",
 				"Scene file path in res:// format (e.g., res://scenes/level1.tscn). "
-				"Use editor/list_files with pattern '**/*.tscn' to discover available scenes.");
+				"Use your native file tools to discover available .tscn scenes.");
 		Array required;
 		required.push_back("scene");
 		p_registry->register_tool(
-				"debug/run_scene", "Run Scene",
+				"runtime/run_scene", "Run Scene",
 				"Launch a specific scene in debug mode for targeted testing. Prefer this over "
-				"debug/run_project when testing a single feature, UI screen, or component in "
+				"runtime/run_project when testing a single feature, UI screen, or component in "
 				"isolation — it's faster and produces cleaner debug output. Combine with "
-				"debug/set_breakpoint, debug/get_scene_tree, and debug/get_node_signals to "
+				"debug/set_breakpoint, runtime/get_scene_tree, and runtime/get_node_signals to "
 				"inspect behavior. If already running, stops first. "
-				"Returns immediately. Poll debug/get_status every 1-2s. Path must be .tscn in res:// format.",
+				"Returns immediately. Poll runtime/get_status every 1-2s. Path must be .tscn in res:// format.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDebugTools::handle_run_scene));
 	}
 
-	// debug/stop
+	// runtime/stop
 	{
 		Dictionary props;
 		Array required;
 		p_registry->register_tool(
-				"debug/stop", "Stop Running Game",
+				"runtime/stop", "Stop Running Game",
 				"Stop the currently running game. If no game is running, this is a no-op. "
 				"Output and error buffers are preserved after stopping.",
 				make_schema(props, required),
@@ -101,23 +101,23 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 
 	// --- Category F: Live Inspection ---
 
-	// debug/get_status
+	// runtime/get_status
 	{
 		Dictionary props;
 		Array required;
 		p_registry->register_tool(
-				"debug/get_status", "Get Game Status",
+				"runtime/get_status", "Get Game Status",
 				"Get the current state of the game session: stopped, launching, running, or paused. "
-				"IMPORTANT: after debug/run_project or debug/run_scene, the game is NOT ready "
+				"IMPORTANT: after runtime/run_project or runtime/run_scene, the game is NOT ready "
 				"immediately — you MUST poll this every 1-2s until state='running' before using "
-				"any debug/ inspection tools. When running/paused, includes uptime and frame count. "
+				"any runtime/ inspection tools. When running/paused, includes uptime and frame count. "
 				"When stopped, includes stop_reason ('not_started', 'normal', or 'timeout').",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDebugTools::handle_get_status));
 	}
 
-	// debug/get_output
+	// runtime/get_output
 	{
 		Dictionary props;
 		props["cursor"] = make_prop("integer",
@@ -126,7 +126,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"Max lines to return (default: 200, max: 1000)");
 		Array required;
 		p_registry->register_tool(
-				"debug/get_output", "Get Game Output",
+				"runtime/get_output", "Get Game Output",
 				"Get captured print/log output from the running game. Uses cursor-based pagination "
 				"so output is NEVER lost. First call returns latest output. Pass returned cursor "
 				"to get only new output.",
@@ -135,7 +135,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_get_output));
 	}
 
-	// debug/get_errors
+	// runtime/get_errors
 	{
 		Dictionary props;
 		props["cursor"] = make_prop("integer",
@@ -144,7 +144,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"Max errors to return (default: 50, max: 500)");
 		Array required;
 		p_registry->register_tool(
-				"debug/get_errors", "Get Runtime Errors",
+				"runtime/get_errors", "Get Runtime Errors",
 				"Get captured runtime errors from the running game. Uses cursor-based pagination. "
 				"Each error includes the message text and type.",
 				make_schema(props, required),
@@ -152,17 +152,17 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_get_errors));
 	}
 
-	// debug/get_scene_tree
+	// runtime/get_scene_tree
 	{
 		Dictionary props;
 		props["max_depth"] = make_prop("integer",
 				"Maximum tree depth (default: unlimited). Use 2-3 for overview.");
 		Array required;
 		p_registry->register_tool(
-				"debug/get_scene_tree", "Get Remote Scene Tree",
+				"runtime/get_scene_tree", "Get Remote Scene Tree",
 				"Get the full verbose scene tree from the running game. Returns hierarchical "
 				"view of all nodes with names, types, IDs, and scene files. "
-				"WARNING: This is expensive on large scenes. Prefer debug/browse_scene_tree "
+				"WARNING: This is expensive on large scenes. Prefer runtime/browse_scene_tree "
 				"for exploration (lightweight, paginated, filterable) and only use this when "
 				"you need complete node data. Game must be running. Async round-trip with 10s timeout.",
 				make_schema(props, required),
@@ -170,7 +170,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_get_scene_tree));
 	}
 
-	// debug/get_node_properties
+	// runtime/get_node_properties
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -180,7 +180,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/get_node_properties", "Get Node Properties",
+				"runtime/get_node_properties", "Get Node Properties",
 				"Get properties of a specific node in the running game. Returns property names, "
 				"types, and values via expression evaluation. Game must be running.",
 				make_schema(props, required),
@@ -188,15 +188,15 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_get_node_properties));
 	}
 
-	// debug/set_node_property
+	// runtime/set_node_property
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
 				"Absolute path to the node (e.g., '/root/Main/Player'). "
-				"Get paths from debug/browse_scene_tree or debug/search_scene_tree.");
+				"Get paths from runtime/browse_scene_tree or runtime/search_scene_tree.");
 		props["property"] = make_prop("string",
 				"Property name to set (e.g., 'position', 'visible', 'modulate', 'text'). "
-				"Use debug/get_node_properties to discover available properties and their types.");
+				"Use runtime/get_node_properties to discover available properties and their types.");
 		Dictionary value_prop;
 		value_prop["description"] = "The new value. Type must be compatible with the property: "
 				"numbers for int/float, strings for String, booleans for bool, "
@@ -212,12 +212,12 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		required.push_back("property");
 		required.push_back("value");
 		p_registry->register_tool(
-				"debug/set_node_property", "Set Node Property",
+				"runtime/set_node_property", "Set Node Property",
 				"Set a property on a node in the running game — the live 'edit CSS' equivalent "
 				"for Godot. Modify positions, visibility, colors, text, and any other property "
 				"without restarting. Returns old and new values for confirmation. Supports "
 				"field-level updates (e.g., just position.x) and auto-loads resource paths. "
-				"Use debug/get_node_properties to discover properties first. "
+				"Use runtime/get_node_properties to discover properties first. "
 				"Key Godot facts: 'position' is LOCAL (relative to parent), 'global_position' "
 				"is read-only — move nodes by setting 'position'. Rotation is in RADIANS "
 				"(1.5708 = 90 degrees). 2D Y-axis points DOWN (positive Y = lower on screen). "
@@ -228,7 +228,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_set_node_property));
 	}
 
-	// debug/search_scene_tree
+	// runtime/search_scene_tree
 	{
 		Dictionary props;
 		props["name_pattern"] = make_prop("string",
@@ -239,7 +239,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"Fetch fresh tree before searching (default: false)");
 		Array required;
 		p_registry->register_tool(
-				"debug/search_scene_tree", "Search Scene Tree",
+				"runtime/search_scene_tree", "Search Scene Tree",
 				"Search the running game's scene tree by node name pattern and/or type. "
 				"Returns matching nodes with full tree paths and IDs. Uses cached tree by default.",
 				make_schema(props, required),
@@ -247,7 +247,7 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_search_scene_tree));
 	}
 
-	// debug/browse_scene_tree
+	// runtime/browse_scene_tree
 	{
 		Dictionary props;
 		props["root_path"] = make_prop("string",
@@ -272,12 +272,12 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"Fetch fresh tree from game (default: false, uses cache).");
 		Array required;
 		p_registry->register_tool(
-				"debug/browse_scene_tree", "Browse Scene Tree",
+				"runtime/browse_scene_tree", "Browse Scene Tree",
 				"Preferred way to explore the running scene tree. Returns lightweight per-node "
 				"summaries (name, type, path, child count, script/group indicators) for quick "
 				"orientation. Supports subtree drilling, depth control, type/name filtering, "
 				"and pagination. Start here to understand scene structure, then use "
-				"debug/get_node_properties for details on specific nodes. "
+				"runtime/get_node_properties for details on specific nodes. "
 				"Node paths are absolute from '/root' (e.g., '/root/Main/Player'). "
 				"Node names are case-sensitive. Uses cached tree by default.",
 				make_schema(props, required),
@@ -286,30 +286,17 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPDebugTools::handle_browse_scene_tree));
 	}
 
-	// debug/get_performance
-	{
-		Dictionary props;
-		Array required;
-		p_registry->register_tool(
-				"debug/get_performance", "Get Performance Metrics",
-				"Get real-time performance metrics: FPS, frame time, memory, object/node/orphan counts. "
-				"Game must be running.",
-				make_schema(props, required),
-				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
-				callable_mp_static(&MCPDebugTools::handle_get_performance));
-	}
-
 	// --- Category H: Session Summary ---
 
-	// debug/get_session_summary
+	// runtime/get_session_summary
 	{
 		Dictionary props;
 		Array required;
 		p_registry->register_tool(
-				"debug/get_session_summary", "Get Session Summary",
-				"Comprehensive snapshot of current game session: status, scene tree (depth 2), "
-				"recent output (last 20 lines), recent errors (last 5), and performance metrics. "
-				"If game is not running, returns only status. Much more efficient than 5 separate calls.",
+				"runtime/get_session_summary", "Get Session Summary",
+				"Comprehensive snapshot of current game session: status, FPS, scene tree (depth 2), "
+				"recent output (last 20 lines), and recent errors (last 5). "
+				"If game is not running, returns only status. Much more efficient than 4 separate calls.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPDebugTools::handle_session_summary));
@@ -323,9 +310,14 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 MCPDebuggerBridge *MCPDebugTools::_get_bridge() {
 	MCPProtocol *protocol = MCPProtocol::get_singleton();
 	if (!protocol) {
+		WARN_PRINT("MCP: _get_bridge() failed — MCPProtocol singleton is null.");
 		return nullptr;
 	}
-	return protocol->get_debugger_bridge();
+	MCPDebuggerBridge *bridge = protocol->get_debugger_bridge();
+	if (!bridge) {
+		WARN_PRINT("MCP: _get_bridge() failed — debugger bridge pointer is null on protocol.");
+	}
+	return bridge;
 }
 
 Dictionary MCPDebugTools::_require_game_running() {
@@ -337,9 +329,9 @@ Dictionary MCPDebugTools::_require_game_running() {
 	if (!bridge->is_game_running()) {
 		return make_tool_error(
 				"No game is currently running.\n\n"
-				"If the game stopped unexpectedly, check debug/get_errors for runtime errors.\n"
-				"To start a game: debug/run_project (main scene) or debug/run_scene (specific scene).\n"
-				"To check status: debug/get_status (includes stop_reason when stopped).");
+				"If the game stopped unexpectedly, check runtime/get_errors for runtime errors.\n"
+				"To start a game: runtime/run_project (main scene) or runtime/run_scene (specific scene).\n"
+				"To check status: runtime/get_status (includes stop_reason when stopped).");
 	}
 	// Return empty dict to signal "OK, proceed"
 	return Dictionary();
@@ -358,14 +350,17 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 		return make_tool_error(
 				"No main scene is configured for this project.\n\n"
 				"Set the main scene in Project Settings > Application > Run > Main Scene,\n"
-				"or use debug/run_scene to launch a specific scene.");
+				"or use runtime/run_scene to launch a specific scene.");
 	}
 
 	// Set launching state before queuing the play action.
 	MCPDebuggerBridge *bridge = _get_bridge();
-	if (bridge) {
-		bridge->set_game_launching();
+	if (!bridge) {
+		return make_tool_error(
+				"Internal error: debugger bridge not available.\n"
+				"The MCP server may not be fully initialized yet. Try again in a moment.");
 	}
+	bridge->set_game_launching();
 
 	// Dispatch to main thread. EditorRunBar::play_main_scene() must run
 	// on the main thread because it modifies editor UI state.
@@ -376,7 +371,7 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 
 	// Build response.
 	String text = "Project launch queued. Main scene: " + main_scene + "\n"
-														  "Use debug/get_status to check when the game is running.";
+														  "Use runtime/get_status to check when the game is running.";
 
 	Dictionary structured;
 	structured["status"] = "launching";
@@ -392,7 +387,7 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 		return make_tool_error(
 				"Missing required parameter: scene\n\n"
 				"Provide a .tscn file path in res:// format.\n"
-				"Example: debug/run_scene { \"scene\": \"res://scenes/level1.tscn\" }");
+				"Example: runtime/run_scene { \"scene\": \"res://scenes/level1.tscn\" }");
 	}
 
 	// Validate path format.
@@ -415,15 +410,18 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 	if (!FileAccess::exists(scene)) {
 		return make_tool_error(vformat(
 				"Scene file not found: %s\n\n"
-				"Use editor/list_files to find available .tscn files.",
+				"Use your native file tools to find available .tscn files.",
 				scene));
 	}
 
 	// Set launching state before queuing the play action.
 	MCPDebuggerBridge *bridge = _get_bridge();
-	if (bridge) {
-		bridge->set_game_launching();
+	if (!bridge) {
+		return make_tool_error(
+				"Internal error: debugger bridge not available.\n"
+				"The MCP server may not be fully initialized yet. Try again in a moment.");
 	}
+	bridge->set_game_launching();
 
 	// Dispatch to main thread.
 	callable_mp(EditorRunBar::get_singleton(),
@@ -432,7 +430,7 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 			.call_deferred();
 
 	String text = "Scene launch queued: " + scene + "\n"
-												"Use debug/get_status to check when the game is running.";
+												"Use runtime/get_status to check when the game is running.";
 
 	Dictionary structured;
 	structured["status"] = "launching";
@@ -461,6 +459,13 @@ Dictionary MCPDebugTools::handle_stop(const Dictionary &p_args) {
 
 Dictionary MCPDebugTools::handle_get_status(const Dictionary &p_args) {
 	MCPDebuggerBridge *bridge = _get_bridge();
+
+	if (!bridge) {
+		Dictionary structured;
+		structured["state"] = "error";
+		structured["error"] = "debugger bridge not available";
+		return make_tool_result("Game Status: error\nDebugger bridge not available. The MCP server may not be fully initialized.", structured);
+	}
 
 	// State machine: stopped -> launching -> running -> paused -> stopped
 	String state = "stopped";
@@ -663,8 +668,8 @@ Dictionary MCPDebugTools::handle_get_scene_tree(const Dictionary &p_args) {
 		return make_tool_error(
 				"Failed to get scene tree: " + error_msg + "\n\n"
 																"The game may have crashed or is unresponsive.\n"
-																"Try debug/get_status to check game state, "
-																"or debug/get_errors for runtime errors.");
+																"Try runtime/get_status to check game state, "
+																"or runtime/get_errors for runtime errors.");
 	}
 
 	Dictionary tree = result.get("tree", Dictionary());
@@ -701,7 +706,7 @@ Dictionary MCPDebugTools::handle_get_node_properties(const Dictionary &p_args) {
 		return make_tool_error(
 				"Missing required parameter: node_path\n\n"
 				"Provide the scene tree path of a node.\n"
-				"Get paths from debug/get_scene_tree or debug/search_scene_tree results.");
+				"Get paths from runtime/get_scene_tree or runtime/search_scene_tree results.");
 	}
 
 	// Validate node_path contains only safe characters to prevent expression injection.
@@ -729,7 +734,7 @@ Dictionary MCPDebugTools::handle_get_node_properties(const Dictionary &p_args) {
 
 		String guidance;
 		if (error_msg.contains("null instance") || error_msg.contains("not found")) {
-			guidance = "\n\nUse debug/search_scene_tree to find the correct path.";
+			guidance = "\n\nUse runtime/search_scene_tree to find the correct path.";
 		}
 
 		return make_tool_error(
@@ -902,13 +907,13 @@ Dictionary MCPDebugTools::handle_set_node_property(const Dictionary &p_args) {
 		return make_tool_error(
 				"Missing required parameter: node_path\n\n"
 				"Provide the scene tree path of a node.\n"
-				"Get paths from debug/browse_scene_tree or debug/search_scene_tree.");
+				"Get paths from runtime/browse_scene_tree or runtime/search_scene_tree.");
 	}
 	if (property.is_empty()) {
 		return make_tool_error(
 				"Missing required parameter: property\n\n"
 				"Provide the property name to set.\n"
-				"Use debug/get_node_properties to discover available properties.");
+				"Use runtime/get_node_properties to discover available properties.");
 	}
 
 	// Validate node_path characters (same sanitization as get_node_properties).
@@ -955,8 +960,8 @@ Dictionary MCPDebugTools::handle_set_node_property(const Dictionary &p_args) {
 		String error_msg = result.get("error", "Unknown error");
 		String guidance;
 		if (error_msg.contains("not found")) {
-			guidance = "\n\nUse debug/search_scene_tree to find the correct path, "
-					"or debug/get_node_properties to see available properties.";
+			guidance = "\n\nUse runtime/search_scene_tree to find the correct path, "
+					"or runtime/get_node_properties to see available properties.";
 		}
 		return make_tool_error("Failed to set property: " + error_msg + guidance);
 	}
@@ -1147,15 +1152,15 @@ Dictionary MCPDebugTools::handle_browse_scene_tree(const Dictionary &p_args) {
 	if (full_tree.is_empty()) {
 		return make_tool_error(
 				"Scene tree is empty. The game may not have initialized yet.\n\n"
-				"Try debug/get_status to check game state.");
+				"Try runtime/get_status to check game state.");
 	}
 
 	// 6. Navigate to the requested subtree root.
 	Dictionary subtree = _find_subtree(full_tree, root_path);
 	if (subtree.is_empty()) {
 		return make_tool_error("Subtree not found: " + root_path +
-				"\n\nUse debug/browse_scene_tree with no root_path to see the full tree, "
-				"or debug/search_scene_tree to find a node by name.");
+				"\n\nUse runtime/browse_scene_tree with no root_path to see the full tree, "
+				"or runtime/search_scene_tree to find a node by name.");
 	}
 
 	// 7. Apply filters if requested.
@@ -1177,7 +1182,7 @@ Dictionary MCPDebugTools::handle_browse_scene_tree(const Dictionary &p_args) {
 			}
 
 			String text = "No nodes matching " + filter_desc + " found under " + root_path + ".\n\n"
-						  "Try debug/search_scene_tree to search by name, or call debug/browse_scene_tree "
+						  "Try runtime/search_scene_tree to search by name, or call runtime/browse_scene_tree "
 						  "without filters to see the full structure.";
 
 			Dictionary structured;
@@ -1640,75 +1645,6 @@ String MCPDebugTools::_browse_node_to_text(const Dictionary &p_node,
 	return line;
 }
 
-Dictionary MCPDebugTools::handle_get_performance(const Dictionary &p_args) {
-	Dictionary guard = _require_game_running();
-	if (!guard.is_empty()) {
-		return guard;
-	}
-
-	MCPDebuggerBridge *bridge = _get_bridge();
-	Dictionary result = bridge->send_get_performance();
-
-	if (!(bool)result.get("success", false)) {
-		return make_tool_error(
-				"Failed to get performance metrics: " +
-				String(result.get("error", "Unknown error")));
-	}
-
-	// Extract values from bridge result.
-	// The bridge populates: fps, frame_time, physics_frame_time, memory,
-	// object_count, node_count, orphan_count.
-	double fps = result.get("fps", 0.0);
-	double frame_time = result.get("frame_time", 0.0);
-	double physics_frame_time = result.get("physics_frame_time", 0.0);
-	int64_t memory = result.get("memory", 0);
-	int object_count = result.get("object_count", 0);
-	int node_count = result.get("node_count", 0);
-	int orphan_count = result.get("orphan_count", 0);
-
-	// Placeholder fields -- not yet provided by the bridge, always 0.
-	// TODO: Wire these up when the game-side profiler exposes them.
-	int64_t dynamic_memory = 0;
-	int resource_count = 0;
-
-	// Format memory to MB.
-	double memory_mb = (double)memory / (1024.0 * 1024.0);
-	double dynamic_mb = (double)dynamic_memory / (1024.0 * 1024.0);
-
-	String text = "Performance Metrics:\n"
-				  "  FPS: " +
-			String::num(fps, 1) + "\n"
-								  "  Frame Time: " +
-			String::num(frame_time * 1000.0, 1) + "ms\n"
-												   "  Physics Frame Time: " +
-			String::num(physics_frame_time * 1000.0, 1) + "ms\n"
-														   "  Memory: " +
-			String::num(memory_mb, 1) + " MB\n"
-										"  Dynamic Memory: " +
-			String::num(dynamic_mb, 1) + " MB\n"
-										 "  Object Count: " +
-			itos(object_count) + "\n"
-								 "  Node Count: " +
-			itos(node_count) + "\n"
-							   "  Orphan Nodes: " +
-			itos(orphan_count) + "\n"
-								 "  Resource Count: " +
-			itos(resource_count);
-
-	Dictionary structured;
-	structured["fps"] = fps;
-	structured["frame_time_msec"] = frame_time * 1000.0;
-	structured["physics_frame_time_msec"] = physics_frame_time * 1000.0;
-	structured["memory_bytes"] = memory;
-	structured["dynamic_memory_bytes"] = dynamic_memory; // Placeholder (always 0).
-	structured["object_count"] = object_count;
-	structured["node_count"] = node_count;
-	structured["orphan_node_count"] = orphan_count;
-	structured["resource_count"] = resource_count; // Placeholder (always 0).
-
-	return make_tool_result(text, structured);
-}
-
 // ============================================================================
 // Category H: Session Summary
 // ============================================================================
@@ -1726,8 +1662,8 @@ Dictionary MCPDebugTools::handle_session_summary(const Dictionary &p_args) {
 		String text = "=== SESSION SUMMARY ===\n\n"
 					  "Status: stopped\n"
 					  "No game is currently running.\n\n"
-					  "Use debug/run_project to launch the main scene, "
-					  "or debug/run_scene to launch a specific scene.\n\n"
+					  "Use runtime/run_project to launch the main scene, "
+					  "or runtime/run_scene to launch a specific scene.\n\n"
 					  "=== END SUMMARY ===";
 
 		Dictionary structured;

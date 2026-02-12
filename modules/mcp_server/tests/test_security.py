@@ -43,26 +43,6 @@ class TestPathTraversal:
     """SEC-01: Basic path traversal variants must be rejected."""
 
     @pytest.mark.parametrize("path", TRAVERSAL_PATHS_BASIC)
-    def test_read_file_rejects_traversal(self, client, path):
-        """editor/read_file must reject every traversal path."""
-        response = client.call_tool("editor/read_file", {"path": path})
-        assert is_error(response), (
-            f"editor/read_file should reject path {path!r} but did not "
-            f"return an error: {response}"
-        )
-
-    @pytest.mark.parametrize("path", TRAVERSAL_PATHS_BASIC)
-    def test_write_file_rejects_traversal(self, client, path):
-        """editor/write_file must reject every traversal path."""
-        response = client.call_tool(
-            "editor/write_file", {"path": path, "content": "malicious"}
-        )
-        assert is_error(response), (
-            f"editor/write_file should reject path {path!r} but did not "
-            f"return an error: {response}"
-        )
-
-    @pytest.mark.parametrize("path", TRAVERSAL_PATHS_BASIC)
     def test_resource_read_rejects_traversal(self, client, path):
         """godot://file/ resource reads must reject traversal paths.
 
@@ -93,17 +73,6 @@ class TestPathTraversal:
 class TestPathTraversalExotic:
     """SEC-01b: Exotic path traversal variants (null bytes, URL encoding,
     internal directories) require additional server-side hardening."""
-
-    @pytest.mark.parametrize("path", TRAVERSAL_PATHS_EXOTIC)
-    def test_write_file_rejects_traversal(self, client, path):
-        """editor/write_file should reject exotic traversal paths."""
-        response = client.call_tool(
-            "editor/write_file", {"path": path, "content": "malicious"}
-        )
-        assert is_error(response), (
-            f"editor/write_file should reject path {path!r} but did not "
-            f"return an error: {response}"
-        )
 
     @pytest.mark.parametrize("path", TRAVERSAL_PATHS_EXOTIC)
     def test_resource_read_rejects_traversal(self, client, path):
@@ -431,9 +400,9 @@ class TestExpressionSandbox:
 
     @pytest.mark.parametrize("expression", DANGEROUS_EXPRESSIONS)
     def test_dangerous_expression_rejected(self, client, expression):
-        """debug/evaluate must reject or error on dangerous expressions."""
+        """runtime/evaluate must reject or error on dangerous expressions."""
         response = client.call_tool(
-            "debug/evaluate", {"expression": expression}
+            "runtime/evaluate", {"expression": expression}
         )
         # The server may report the error as an MCP isError flag, as a
         # JSON-RPC error, or return a result whose text makes it clear the

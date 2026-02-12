@@ -58,9 +58,9 @@ Dictionary MCPSignalTools::_require_game_running() {
 	if (!bridge->is_game_running()) {
 		return make_tool_error(
 				"No game is currently running.\n\n"
-				"If the game stopped unexpectedly, check debug/get_errors for runtime errors.\n"
-				"To start a game: debug/run_project (main scene) or debug/run_scene (specific scene).\n"
-				"To check status: debug/get_status (includes stop_reason when stopped).");
+				"If the game stopped unexpectedly, check runtime/get_errors for runtime errors.\n"
+				"To start a game: runtime/run_project (main scene) or runtime/run_scene (specific scene).\n"
+				"To check status: runtime/get_status (includes stop_reason when stopped).");
 	}
 	return Dictionary();
 }
@@ -72,7 +72,7 @@ Dictionary MCPSignalTools::_require_game_running() {
 void MCPSignalTools::register_tools(MCPToolRegistry *p_registry) {
 	ERR_FAIL_NULL(p_registry);
 
-	// ---- debug/get_node_signals ----
+	// ---- runtime/get_node_signals ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -88,7 +88,7 @@ void MCPSignalTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("node_path");
 		p_registry->register_tool(
-				"debug/get_node_signals", "Get Node Signals",
+				"runtime/get_node_signals", "Get Node Signals",
 				"Get signals on a runtime node with argument definitions and "
 				"connection info. Shows signal names, parameter types, source "
 				"(script/class/user), and all connected methods with flags.",
@@ -97,7 +97,7 @@ void MCPSignalTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPSignalTools::handle_get_node_signals));
 	}
 
-	// ---- debug/emit_signal ----
+	// ---- runtime/emit_signal ----
 	{
 		Dictionary props;
 		props["node_path"] = make_prop("string",
@@ -115,9 +115,9 @@ void MCPSignalTools::register_tools(MCPToolRegistry *p_registry) {
 		required.push_back("node_path");
 		required.push_back("signal_name");
 		p_registry->register_tool(
-				"debug/emit_signal", "Emit Signal",
+				"runtime/emit_signal", "Emit Signal",
 				"Emit a signal on a runtime node, triggering all connected "
-				"methods. Use debug/get_node_signals first to discover available "
+				"methods. Use runtime/get_node_signals first to discover available "
 				"signals and their expected arguments.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),

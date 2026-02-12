@@ -162,7 +162,7 @@ void MCPInputTools::_ensure_lookup_tables() {
 void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 	ERR_FAIL_NULL(p_registry);
 
-	// debug/send_key
+	// runtime/input/send_key
 	{
 		Dictionary props;
 		props["key"] = make_prop("string",
@@ -179,7 +179,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("key");
 		p_registry->register_tool(
-				"debug/send_key", "Send Key Input",
+				"runtime/input/send_key", "Send Key Input",
 				"Send a keyboard key event to the running game. Supports modifier combos "
 				"(Ctrl+Shift+S), hold duration, and all Godot Key enum names. Use for games "
 				"that bind raw keys rather than input actions. Game must be running.",
@@ -188,7 +188,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPInputTools::handle_send_key));
 	}
 
-	// debug/send_joypad
+	// runtime/input/send_joypad
 	{
 		Dictionary props;
 		props["type"] = make_prop("string",
@@ -213,7 +213,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("type");
 		p_registry->register_tool(
-				"debug/send_joypad", "Send Joypad Input",
+				"runtime/input/send_joypad", "Send Joypad Input",
 				"Send a gamepad button press or analog axis value to the running game. "
 				"Supports all standard gamepad buttons and axes. No physical controller "
 				"required. Game must be running.",
@@ -222,7 +222,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPInputTools::handle_send_joypad));
 	}
 
-	// debug/type_text
+	// runtime/input/type_text
 	{
 		Dictionary props;
 		props["text"] = make_prop("string",
@@ -232,7 +232,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("text");
 		p_registry->register_tool(
-				"debug/type_text", "Type Text",
+				"runtime/input/type_text", "Type Text",
 				"Type a string of characters into the running game. Each character is sent "
 				"as an InputEventKey press+release pair with proper Unicode handling. Useful "
 				"for filling LineEdit and TextEdit controls. Game must be running.",
@@ -241,7 +241,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPInputTools::handle_type_text));
 	}
 
-	// debug/send_input_sequence
+	// runtime/input/send_input_sequence
 	{
 		Dictionary props;
 		// steps is an array of objects -- represented as array type in the schema.
@@ -258,7 +258,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		required.push_back("steps");
 		p_registry->register_tool(
-				"debug/send_input_sequence", "Send Input Sequence",
+				"runtime/input/send_input_sequence", "Send Input Sequence",
 				"Execute a timed sequence of input steps atomically on the game side. "
 				"Each step can be a key press, action, joypad event, or a wait. Holds and "
 				"waits run correctly with frame-level precision. Max 50 steps, 1800 total "
@@ -268,14 +268,14 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPInputTools::handle_send_input_sequence));
 	}
 
-	// debug/get_held_inputs
+	// runtime/input/get_held_inputs
 	{
 		Dictionary props;
 		props["release_all"] = make_prop("boolean",
 				"If true, release all currently held inputs before returning. Default: false.");
 		Array required;
 		p_registry->register_tool(
-				"debug/get_held_inputs", "Get Held Inputs",
+				"runtime/input/get_held_inputs", "Get Held Inputs",
 				"Query the current held-input state on the game side. Shows all keys, "
 				"actions, joypad buttons and axes currently held by MCP input injection. "
 				"Set release_all=true for emergency reset. Game must be running.",
@@ -305,9 +305,9 @@ Dictionary MCPInputTools::_require_game_running() {
 	if (!bridge->is_game_running()) {
 		return make_tool_error(
 				"No game is currently running.\n\n"
-				"If the game stopped unexpectedly, check debug/get_errors for runtime errors.\n"
-				"To start a game: debug/run_project (main scene) or debug/run_scene (specific scene).\n"
-				"To check status: debug/get_status (includes stop_reason when stopped).");
+				"If the game stopped unexpectedly, check runtime/get_errors for runtime errors.\n"
+				"To start a game: runtime/run_project (main scene) or runtime/run_scene (specific scene).\n"
+				"To check status: runtime/get_status (includes stop_reason when stopped).");
 	}
 	return Dictionary();
 }
@@ -364,7 +364,7 @@ String MCPInputTools::_get_valid_axis_names_hint() {
 }
 
 // ============================================================================
-// Tool Handler: debug/send_key
+// Tool Handler: runtime/input/send_key
 // ============================================================================
 
 Dictionary MCPInputTools::handle_send_key(const Dictionary &p_args) {
@@ -459,7 +459,7 @@ Dictionary MCPInputTools::handle_send_key(const Dictionary &p_args) {
 }
 
 // ============================================================================
-// Tool Handler: debug/send_joypad
+// Tool Handler: runtime/input/send_joypad
 // ============================================================================
 
 Dictionary MCPInputTools::handle_send_joypad(const Dictionary &p_args) {
@@ -582,7 +582,7 @@ Dictionary MCPInputTools::handle_send_joypad(const Dictionary &p_args) {
 }
 
 // ============================================================================
-// Tool Handler: debug/type_text
+// Tool Handler: runtime/input/type_text
 // ============================================================================
 
 Dictionary MCPInputTools::handle_type_text(const Dictionary &p_args) {
@@ -638,7 +638,7 @@ Dictionary MCPInputTools::handle_type_text(const Dictionary &p_args) {
 }
 
 // ============================================================================
-// Tool Handler: debug/send_input_sequence
+// Tool Handler: runtime/input/send_input_sequence
 // ============================================================================
 
 Dictionary MCPInputTools::handle_send_input_sequence(const Dictionary &p_args) {
@@ -781,7 +781,7 @@ Dictionary MCPInputTools::handle_send_input_sequence(const Dictionary &p_args) {
 }
 
 // ============================================================================
-// Tool Handler: debug/get_held_inputs
+// Tool Handler: runtime/input/get_held_inputs
 // ============================================================================
 
 Dictionary MCPInputTools::handle_get_held_inputs(const Dictionary &p_args) {

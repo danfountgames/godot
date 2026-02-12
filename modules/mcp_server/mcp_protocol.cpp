@@ -39,10 +39,13 @@
 #include "tools/mcp_automation_tools.h"
 #include "tools/mcp_breakpoint_tools.h"
 #include "tools/mcp_debug_tools.h"
+#include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
-#include "tools/mcp_gdscript_tools.h"
+#include "tools/mcp_editor_nav_tools.h"
 #include "tools/mcp_input_tools.h"
+#include "tools/mcp_scene_tools.h"
 #include "tools/mcp_signal_tools.h"
+#include "tools/mcp_testing_tools.h"
 #include "tools/mcp_ui_tools.h"
 
 #include "core/config/engine.h"
@@ -91,13 +94,16 @@ MCPProtocol::MCPProtocol() {
 
 	// Register all tools into the registry.
 	MCPEditorTools::register_tools(&tool_registry);
-	MCPGDScriptTools::register_tools(&tool_registry);
 	MCPDebugTools::register_tools(&tool_registry);
 	MCPAutomationTools::register_tools(&tool_registry);
 	MCPInputTools::register_tools(&tool_registry);
 	MCPUITools::register_tools(&tool_registry);
 	MCPBreakpointTools::register_tools(&tool_registry);
 	MCPSignalTools::register_tools(&tool_registry);
+	MCPTestingTools::register_tools(&tool_registry);
+	MCPDocTools::register_tools(&tool_registry);
+	MCPSceneTools::register_tools(&tool_registry);
+	MCPEditorNavTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
@@ -293,11 +299,19 @@ void MCPProtocol::gc_stale_sessions() {
 			connections_to_remove.push_back(E.key);
 			continue;
 		}
-		// SSE streams are long-lived; they are only GC'd when their session expires.
+		// SSE streams are long-lived but still need cleanup:
+		// - Orphaned streams (session expired/terminated)
+		// - Stale streams (TCP went quiet for > 5 minutes, likely dead)
 		if (session->is_get_sse_stream()) {
 			if (!sessions.has(session->sse_session_id)) {
-				// Orphaned SSE stream -- session was terminated or expired.
 				connections_to_remove.push_back(E.key);
+			} else {
+				// Check if the underlying TCP connection is still alive.
+				StreamPeerTCP::Status tcp_status = session->connection->get_status();
+				if (tcp_status == StreamPeerTCP::STATUS_NONE ||
+						tcp_status == StreamPeerTCP::STATUS_ERROR) {
+					connections_to_remove.push_back(E.key);
+				}
 			}
 			continue;
 		}
@@ -331,7 +345,9 @@ void MCPProtocol::gc_stale_sessions() {
 
 void MCPProtocol::poll() {
 	// Accept new connections.
-	while (server->is_connection_available()) {
+	// Stop accepting when at capacity — leave pending connections in the OS
+	// TCP backlog so clients block instead of getting rapid accept-then-reset.
+	while (server->is_connection_available() && (int)clients.size() < max_clients) {
 		on_client_connected();
 	}
 
@@ -398,6 +414,12 @@ void MCPProtocol::poll() {
 		// Send queued responses.
 		err = session->send_data();
 		if (err != OK && err != ERR_BUSY) {
+			to_disconnect.push_back(client_id);
+			continue;
+		}
+		// Close the connection immediately after draining the response queue
+		// when Connection: close was sent (standard POST responses).
+		if (err == OK && session->close_after_send) {
 			to_disconnect.push_back(client_id);
 			continue;
 		}
@@ -842,7 +864,7 @@ Dictionary MCPProtocol::handle_initialize(const Dictionary &p_params) {
 							 "project context, file operations, GDScript validation, game lifecycle, "
 							 "live inspection, game automation, and session summaries. "
 							 "All file paths use res:// format (Godot's virtual filesystem). "
-							 "Tools in debug/* require a running game (use debug/run_project first). "
+							 "Tools in runtime/* require a running game (use runtime/run_project first). "
 							 "Call tools/list to discover available tools.";
 
 	// Stash session_id in result; process_request() extracts and removes it.
@@ -963,6 +985,22 @@ void MCPProtocol::handle_get_sse(int p_client_id, const String &p_origin) {
 						"GET /mcp requires Accept: text/event-stream"),
 				p_origin);
 		return;
+	}
+
+	// Close any existing GET SSE streams for this session before opening a new
+	// one.  Without this, reconnecting clients accumulate orphaned streams that
+	// hold client slots indefinitely (SSE streams are exempt from idle GC).
+	Vector<int> old_streams;
+	for (const KeyValue<int, Ref<MCPSession>> &E : clients) {
+		if (E.key != p_client_id && E.value.is_valid() &&
+				E.value->is_get_sse_stream() &&
+				E.value->sse_session_id == session_id_header) {
+			old_streams.push_back(E.key);
+		}
+	}
+	for (int i = 0; i < old_streams.size(); i++) {
+		print_verbose("[MCP] Closing superseded SSE stream (client " + itos(old_streams[i]) + ") for session: " + session_id_header.substr(0, 8) + "...");
+		on_client_disconnected(old_streams[i]);
 	}
 
 	// Begin the SSE stream. This sends the HTTP response headers and marks
@@ -1214,15 +1252,6 @@ void MCPProtocol::_register_game_resources() {
 	def.requires_game = true;
 	def.subscribable = true;
 	resource_registry.register_resource(def);
-
-	def.uri = "godot://game/performance";
-	def.name = "Performance Metrics";
-	def.description = "FPS, frame time, idle/physics time, memory usage, object counts";
-	def.mime_type = "application/json";
-	def.handler = callable_mp(this, &MCPProtocol::_read_game_performance);
-	def.requires_game = true;
-	def.subscribable = false; // Changes every frame, too noisy for subscriptions.
-	resource_registry.register_resource(def);
 }
 
 void MCPProtocol::_register_resource_templates() {
@@ -1239,7 +1268,7 @@ void MCPProtocol::_register_resource_templates() {
 	tmpl.uri_template = "godot://game/node/{node_id}/properties";
 	tmpl.name = "Node Properties";
 	tmpl.description = "Get all properties of a scene tree node by its object ID. "
-					   "The node_id comes from the scene tree resource or the debug/get_scene_tree tool. "
+					   "The node_id comes from the scene tree resource or the runtime/get_scene_tree tool. "
 					   "Requires a running game.";
 	tmpl.mime_type = "application/json";
 	tmpl.handler = callable_mp(this, &MCPProtocol::_read_node_properties_resource);
@@ -1493,7 +1522,7 @@ Dictionary MCPProtocol::_read_game_scene_tree() {
 
 	// Prefer cached tree for fast reads (non-blocking).
 	// The resource is for passive context. Clients that need a guaranteed
-	// fresh tree should use the debug/get_scene_tree tool instead.
+	// fresh tree should use the runtime/get_scene_tree tool instead.
 	Dictionary tree = debugger_bridge->get_cached_scene_tree();
 	if (tree.is_empty() || !tree.has("node_count")) {
 		// No cached tree -- request a fresh one (blocks up to 5s).
@@ -1547,18 +1576,6 @@ Dictionary MCPProtocol::_read_game_errors() {
 
 	Dictionary item;
 	item["text"] = JSON::stringify(result);
-	return item;
-}
-
-Dictionary MCPProtocol::_read_game_performance() {
-	ERR_FAIL_NULL_V(debugger_bridge, Dictionary());
-
-	// send_get_performance() is an async round-trip to the running game.
-	// It blocks up to 5s.
-	Dictionary perf = debugger_bridge->send_get_performance();
-
-	Dictionary item;
-	item["text"] = JSON::stringify(perf);
 	return item;
 }
 
@@ -1627,7 +1644,7 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 
 	if (!debugger_bridge || !debugger_bridge->is_game_running()) {
 		return make_resource_error(MCP_ERROR_RESOURCE_UNAVAILABLE,
-				"Game is not running. Start the game first with debug/run_project.");
+				"Game is not running. Start the game first with runtime/run_project.");
 	}
 
 	// Use send_evaluate() to get node properties via an expression.
@@ -1652,7 +1669,7 @@ Dictionary MCPProtocol::_read_node_properties_resource(const Dictionary &p_param
 	Dictionary props;
 	props["object_id"] = node_id_str.to_int();
 	props["class"] = eval_result.get("value", "Unknown");
-	props["note"] = "Use debug/get_node_properties tool for full property inspection.";
+	props["note"] = "Use runtime/get_node_properties tool for full property inspection.";
 
 	Dictionary item;
 	item["text"] = JSON::stringify(props);

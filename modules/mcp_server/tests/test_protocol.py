@@ -78,8 +78,8 @@ class TestSessionLifecycle:
         tools = tools_resp["result"]["tools"]
         assert isinstance(tools, list) and len(tools) > 0
 
-        # Step 4 -- tools/call project/get_info -> has text content.
-        call_resp = raw_client.call_tool("project/get_info")
+        # Step 4 -- tools/call project/get_overview -> has text content.
+        call_resp = raw_client.call_tool("project/get_overview")
         text = get_text(call_resp)
         assert len(text) > 0 or get_structured(call_resp)
 

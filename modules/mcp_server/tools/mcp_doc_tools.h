@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_doc_tools.h                                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,87 +30,36 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#include "core/doc_data.h"
+#include "core/string/ustring.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/vector.h"
+#include "core/variant/array.h"
+#include "core/variant/dictionary.h"
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+class MCPToolRegistry;
 
-class Button;
-class TabContainer;
-
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
-
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+class MCPDocTools {
+public:
+	static void register_tools(MCPToolRegistry *p_registry);
 
 private:
-	MCPProtocol *protocol = nullptr;
-	Ref<MCPDebuggerBridge> debugger_bridge;
+	// Tool handlers.
+	static Dictionary handle_search_classes(const Dictionary &p_args);
+	static Dictionary handle_get_class(const Dictionary &p_args);
+	static Dictionary handle_search_methods(const Dictionary &p_args);
+	static Dictionary handle_get_method(const Dictionary &p_args);
+	static Dictionary handle_get_property(const Dictionary &p_args);
 
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
-
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
-
-#ifdef TOOLS_ENABLED
-	TabContainer *ai_tab_container = nullptr;
-	Button *panel_button = nullptr;
-	MCPStatusPanel *status_panel = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	Vector<AgentPanel *> agent_panels;
-	Control *new_tab_placeholder = nullptr;
-	int agent_counter = 0;
-
-	void _create_agent_tab();
-	void _on_tab_changed(int p_tab);
-	void _on_tab_close_pressed(int p_tab);
-	void _on_agent_title_changed(const String &p_title);
-	void _update_close_buttons();
-#endif
-#endif
-
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
-public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
-
-	MCPProtocol *get_protocol() { return protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	// Helpers.
+	static String _bbcode_to_text(const String &p_bbcode);
+	static String _format_method_sig(const DocData::MethodDoc &p_method);
+	static String _format_property_sig(const DocData::PropertyDoc &p_prop);
+	static int _score_class(const DocData::ClassDoc &p_class, const Vector<String> &p_terms);
+	static int _score_method(const DocData::MethodDoc &p_method, const Vector<String> &p_terms);
+	static bool _all_terms_match(const String &p_haystack, const Vector<String> &p_terms);
+	static String _get_inheritance_chain(const String &p_class_name);
+	static bool _class_matches_category(const DocData::ClassDoc &p_class, const String &p_category);
+	static String _build_class_summary(const DocData::ClassDoc &p_class);
+	static String _build_class_full(const DocData::ClassDoc &p_class, const String &p_sections, bool p_include_inherited);
 };

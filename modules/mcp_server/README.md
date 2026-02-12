@@ -1,21 +1,21 @@
 # Godot MCP Server
 
-A built-in [Model Context Protocol](https://modelcontextprotocol.io) server for Godot Engine 4.6. It lets LLM coding agents read and write project files, run and debug games, inspect the live scene tree, evaluate expressions, take screenshots, and automate UI — all through a standard protocol that works with any MCP client.
+A built-in [Model Context Protocol](https://modelcontextprotocol.io) server for Godot Engine 4.6. It lets LLM coding agents run and debug games, inspect the live scene tree, evaluate expressions, take screenshots, and automate UI — all through a standard protocol that works with any MCP client.
 
 The server starts automatically when the editor opens. No external process or plugin required.
 
 ## What It Can Do
 
-**27 tools** across four categories:
+**71 tools** across multiple categories:
 
 | Category | Tools | Examples |
 |----------|-------|---------|
-| **Project & Editor** | 9 | Read/write files, list directory trees, scan filesystem, get/resolve UIDs |
+| **Project & Editor** | 6 | Project overview, scan filesystem, reimport, get/resolve UIDs |
 | **GDScript** | 2 | Check a single file for errors, check all project scripts |
-| **Debug & Inspection** | 11 | Run/stop project, get scene tree, inspect node properties, read output/errors, performance counters |
+| **Debug & Inspection** | 10 | Run/stop project, get scene tree, inspect node properties, read output/errors, session summary |
 | **Automation** | 5 | Send input events, click UI controls, evaluate expressions at runtime, wait N frames, take screenshots |
 
-**11 resources** via `godot://` URIs:
+**10 resources** via `godot://` URIs:
 
 | URI | Content |
 |-----|---------|
@@ -27,7 +27,6 @@ The server starts automatically when the editor opens. No external process or pl
 | `godot://game/scene-tree` | Live scene tree (requires running game) |
 | `godot://game/output` | stdout/print output |
 | `godot://game/errors` | Runtime errors and warnings |
-| `godot://game/performance` | FPS, draw calls, memory, physics |
 | `godot://file/{path}` | Read any project file by path |
 | `godot://game/node/{node_id}/properties` | All properties of a scene node |
 
@@ -169,7 +168,7 @@ Configurable via **Editor > Editor Settings > Network > MCP Server**:
 - **Bearer token auth** — random 256-bit token generated per editor session
 - **CORS** — rejects non-localhost origins, never sends `Access-Control-Allow-Origin: *`
 - **Path sandboxing** — all file operations confined to `res://`, blocks `..` traversal, null bytes, URL-encoded bypasses, and `.godot/` internal directories
-- **Expression denylist** — `debug/evaluate` blocks `OS.execute`, `FileAccess.open`, `DirAccess.open`, etc.
+- **Expression denylist** — `runtime/evaluate` blocks `OS.execute`, `FileAccess.open`, `DirAccess.open`, etc.
 - **DNS rebinding protection** — validates Host header against localhost allowlist
 
 ## Running the Tests

@@ -2,20 +2,20 @@
 
 ## 1. Overview and Rationale
 
-The existing MCP automation tooling provides `debug/send_input` for action-based input injection. While functional for simple presses, it has significant limitations:
+The existing MCP automation tooling provides `runtime/input/send_input` for action-based input injection. While functional for simple presses, it has significant limitations:
 
 - **No raw keyboard input.** Many games bind keys directly (e.g., via `_input()` or `_unhandled_input()`) without defining named actions. Testing these requires injecting `InputEventKey` events.
 - **No gamepad/joystick support.** There is no way to simulate analog stick movement, trigger presses, or gamepad button input -- critical for testing controller-driven games.
 - **No key combos.** Modifier combinations like Ctrl+S, Shift+Click, or multi-key chords cannot be expressed.
 - **No text entry.** Typing into `LineEdit` or `TextEdit` controls requires sending character-by-character key events with proper Unicode handling.
-- **No input sequences.** Complex automation scenarios (e.g., "hold right for 500ms, then press jump") require multiple tool calls with manual `debug/wait_frames` interleaving. A sequence primitive would allow expressing these as a single atomic operation.
+- **No input sequences.** Complex automation scenarios (e.g., "hold right for 500ms, then press jump") require multiple tool calls with manual `runtime/wait_frames` interleaving. A sequence primitive would allow expressing these as a single atomic operation.
 - **No state visibility.** There is no way to query what inputs are currently held, or to perform an emergency reset of all held inputs.
 
 This design introduces a suite of five MCP tools that comprehensively cover keyboard, gamepad, action, text, and sequence-based input simulation, plus state management and safety mechanisms.
 
 ### Design Principles
 
-1. **Complement, don't replace.** The existing `debug/send_input` tool remains unchanged. The new tools are additive.
+1. **Complement, don't replace.** The existing `runtime/input/send_input` tool remains unchanged. The new tools are additive.
 2. **Follow established patterns.** All tools use the same registration, handler, bridge, and game-side message patterns as the existing automation tools.
 3. **LLM-friendly parameter design.** String-based key/button names (not integer keycodes), sensible defaults, and rich error messages with suggestions.
 4. **Safety first.** Automatic hold expiry, a global release-all mechanism, and held-state tracking prevent stuck inputs.
@@ -29,17 +29,17 @@ This design introduces a suite of five MCP tools that comprehensively cover keyb
 
 | Tool Name | Purpose |
 |---|---|
-| `debug/send_key` | Press/release/hold a keyboard key with optional modifiers |
-| `debug/send_joypad` | Press/release gamepad buttons or set analog axis values |
-| `debug/type_text` | Type a string of characters into the running game |
-| `debug/send_input_sequence` | Execute a timed sequence of input steps atomically |
-| `debug/get_held_inputs` | Query currently held inputs and optionally release all |
+| `runtime/input/send_key` | Press/release/hold a keyboard key with optional modifiers |
+| `runtime/input/send_joypad` | Press/release gamepad buttons or set analog axis values |
+| `runtime/input/type_text` | Type a string of characters into the running game |
+| `runtime/input/send_input_sequence` | Execute a timed sequence of input steps atomically |
+| `runtime/input/get_held_inputs` | Query currently held inputs and optionally release all |
 
 ---
 
 ## 3. Tool Schemas
 
-### 3.1 `debug/send_key`
+### 3.1 `runtime/input/send_key`
 
 Send a keyboard key event to the running game. Supports modifier keys, hold duration, and physical/logical key specification.
 
@@ -95,7 +95,7 @@ Send a keyboard key event to the running game. Supports modifier keys, hold dura
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/send_key",
+    "name": "runtime/input/send_key",
     "arguments": {
       "key": "space",
       "pressed": true,
@@ -115,7 +115,7 @@ Key 'space' pressed with modifiers [shift] (hold: 30 frames)
 **Registration (C++):**
 
 ```cpp
-// debug/send_key
+// runtime/input/send_key
 {
     Dictionary props;
     props["key"] = make_prop("string",
@@ -132,7 +132,7 @@ Key 'space' pressed with modifiers [shift] (hold: 30 frames)
     Array required;
     required.push_back("key");
     p_registry->register_tool(
-            "debug/send_key", "Send Key Input",
+            "runtime/input/send_key", "Send Key Input",
             "Send a keyboard key event to the running game. Supports modifier combos "
             "(Ctrl+Shift+S), hold duration, and all Godot Key enum names. Use for games "
             "that bind raw keys rather than input actions. Game must be running.",
@@ -144,7 +144,7 @@ Key 'space' pressed with modifiers [shift] (hold: 30 frames)
 
 ---
 
-### 3.2 `debug/send_joypad`
+### 3.2 `runtime/input/send_joypad`
 
 Send a gamepad button press or analog axis value to the running game.
 
@@ -208,7 +208,7 @@ Send a gamepad button press or analog axis value to the running game.
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/send_joypad",
+    "name": "runtime/input/send_joypad",
     "arguments": {
       "type": "axis",
       "axis": "left_x",
@@ -231,7 +231,7 @@ Joypad axis 'left_x' set to 1.0 on device 0 (hold: 60 frames)
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/send_joypad",
+    "name": "runtime/input/send_joypad",
     "arguments": {
       "type": "button",
       "button": "a",
@@ -250,7 +250,7 @@ Joypad button 'a' pressed on device 0 (hold: 5 frames)
 
 ---
 
-### 3.3 `debug/type_text`
+### 3.3 `runtime/input/type_text`
 
 Type a string of characters into the running game. Each character is sent as an `InputEventKey` press+release pair with the appropriate Unicode value. Useful for filling `LineEdit` and `TextEdit` controls.
 
@@ -290,7 +290,7 @@ Type a string of characters into the running game. Each character is sent as an 
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/type_text",
+    "name": "runtime/input/type_text",
     "arguments": {
       "text": "Hello World",
       "interval_frames": 2
@@ -307,7 +307,7 @@ Typed 11 characters: "Hello World" (interval: 2 frames between chars)
 
 ---
 
-### 3.4 `debug/send_input_sequence`
+### 3.4 `runtime/input/send_input_sequence`
 
 Execute a sequence of input steps with precise frame-based timing. Each step can be a key press, action, joypad event, or a wait. The entire sequence executes atomically on the game side.
 
@@ -392,7 +392,7 @@ Execute a sequence of input steps with precise frame-based timing. Each step can
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/send_input_sequence",
+    "name": "runtime/input/send_input_sequence",
     "arguments": {
       "steps": [
         { "type": "key", "key": "right", "pressed": true },
@@ -423,7 +423,7 @@ Sequence completed: 4 steps executed over ~30 frames.
 
 ---
 
-### 3.5 `debug/get_held_inputs`
+### 3.5 `runtime/input/get_held_inputs`
 
 Query the current held-input state on the game side, and optionally release all held inputs.
 
@@ -468,7 +468,7 @@ Query the current held-input state on the game side, and optionally release all 
 {
   "method": "tools/call",
   "params": {
-    "name": "debug/get_held_inputs",
+    "name": "runtime/input/get_held_inputs",
     "arguments": {
       "release_all": true
     }
@@ -493,7 +493,7 @@ This section describes how MCP tool parameters map to Godot's `InputEvent` subcl
 
 ### 4.1 Key Names to Keycodes
 
-The `key` parameter in `debug/send_key` accepts string names that map to Godot's `Key` enum values. The game-side handler performs a case-insensitive lookup.
+The `key` parameter in `runtime/input/send_key` accepts string names that map to Godot's `Key` enum values. The game-side handler performs a case-insensitive lookup.
 
 | MCP Key Name | Godot Key Enum | Keycode |
 |---|---|---|
@@ -532,7 +532,7 @@ echo: false             ->  echo = false
                             unicode = 0 (set from keycode for printable chars)
 ```
 
-For `debug/type_text`, each character is sent as:
+For `runtime/input/type_text`, each character is sent as:
 ```
 InputEventKey {
     keycode = <inferred from char, or KEY_NONE>
@@ -972,7 +972,7 @@ Every input injected by MCP with `hold_frames > 0` or `hold_frames == 0` (indefi
 - When `frames_held >= auto_release_at`, the corresponding release event is injected and the entry is removed.
 
 **Manual release (hold_frames == 0):**
-- The input stays held until an explicit release call (`pressed: false`) or `debug/get_held_inputs` with `release_all: true`.
+- The input stays held until an explicit release call (`pressed: false`) or `runtime/input/get_held_inputs` with `release_all: true`.
 
 ### 7.2 Maximum Hold Duration
 
@@ -990,7 +990,7 @@ When a new game session starts, the editor-side bridge resets its state. The gam
 
 ### 7.4 Release-All Mechanism
 
-`debug/get_held_inputs` with `release_all: true` iterates `_mcp_held_inputs` and injects the appropriate release event for each entry:
+`runtime/input/get_held_inputs` with `release_all: true` iterates `_mcp_held_inputs` and injects the appropriate release event for each entry:
 - Keys: `InputEventKey` with `pressed = false`.
 - Actions: `InputEventAction` with `pressed = false`.
 - Joypad buttons: `InputEventJoypadButton` with `pressed = false`.
@@ -1048,7 +1048,7 @@ Similarly, if the game stops mid-sequence, the bridge's `_wake_all_pending` mech
 
 ### 9.1 Game Not Running
 
-All five tools call `_require_game_running()` first. If the game is not running, they return the standard guidance message directing the user to `debug/run_project` or `debug/run_scene`.
+All five tools call `_require_game_running()` first. If the game is not running, they return the standard guidance message directing the user to `runtime/run_project` or `runtime/run_scene`.
 
 ### 9.2 Unknown Key/Button/Axis Names
 
@@ -1088,16 +1088,16 @@ MOD_META  = 8
 
 The game-side handler sets the corresponding `InputEventKey` modifier properties. Modifiers in the `modifiers` array that are also physical keys (e.g., sending `key: "a"` with `modifiers: ["shift"]`) do NOT inject separate key events for the modifier keys. The modifier state is set on the `InputEventKey` directly. This mirrors how Godot's own input system works: `InputEventKey.shift_pressed` is a property of the key event, not a separate event.
 
-If the user wants to actually press/hold the Shift key itself (e.g., for a game that checks `Input.is_key_pressed(KEY_SHIFT)`), they should send `debug/send_key` with `key: "shift"` separately.
+If the user wants to actually press/hold the Shift key itself (e.g., for a game that checks `Input.is_key_pressed(KEY_SHIFT)`), they should send `runtime/input/send_key` with `key: "shift"` separately.
 
 ### 9.5 Text with Special Characters
 
-`debug/type_text` handles:
+`runtime/input/type_text` handles:
 - **Printable ASCII** (a-z, 0-9, symbols): Sent as `InputEventKey` with appropriate `keycode` and `unicode`.
 - **Unicode** (e.g., accented characters, CJK): Sent with `keycode = KEY_NONE` and `unicode = <codepoint>`. Godot's `LineEdit`/`TextEdit` accept input via the Unicode field.
 - **Newline** (`\n`): Sent as `KEY_ENTER`.
 - **Tab** (`\t`): Sent as `KEY_TAB`.
-- **Backspace** (not in text, but can be typed via `debug/send_key`).
+- **Backspace** (not in text, but can be typed via `runtime/input/send_key`).
 
 Maximum text length: 1000 characters per call.
 
@@ -1126,7 +1126,7 @@ Note: MCP input simulation does not require a physical joypad to be connected. G
 
 ### 9.10 Echo/Repeat Events
 
-`debug/send_key` supports an `echo` parameter for generating key repeat events. This is useful for simulating held-key repeat behavior (e.g., scrolling through a list). The game's `_input()` handler can distinguish between initial presses (`echo == false`) and repeats (`echo == true`).
+`runtime/input/send_key` supports an `echo` parameter for generating key repeat events. This is useful for simulating held-key repeat behavior (e.g., scrolling through a list). The game's `_input()` handler can distinguish between initial presses (`echo == false`) and repeats (`echo == true`).
 
 ---
 

@@ -63,6 +63,9 @@ MCPServerPlugin::MCPServerPlugin() {
 	_EDITOR_DEF("network/mcp_server/max_clients", MCP_MAX_CLIENTS);
 	_EDITOR_DEF("network/mcp_server/session_timeout_sec", MCP_DEFAULT_SESSION_TIMEOUT_SEC);
 
+	// Heap-allocate the protocol (Object-derived, must use memnew).
+	protocol = memnew(MCPProtocol);
+
 	// Create and register the debugger bridge plugin.
 	debugger_bridge.instantiate();
 	if (EditorDebuggerNode::get_singleton()) {
@@ -70,7 +73,7 @@ MCPServerPlugin::MCPServerPlugin() {
 	}
 
 	// Give the protocol a pointer to the bridge for tool handlers to use.
-	protocol.set_debugger_bridge(debugger_bridge.ptr());
+	protocol->set_debugger_bridge(debugger_bridge.ptr());
 
 #ifdef TOOLS_ENABLED
 	// Create a single "AI" bottom panel with tabs for Agent and MCP Status.
@@ -89,7 +92,7 @@ MCPServerPlugin::MCPServerPlugin() {
 #endif
 
 	status_panel = memnew(MCPStatusPanel);
-	status_panel->set_protocol(&protocol);
+	status_panel->set_protocol(protocol);
 	status_panel->set_debugger_bridge(debugger_bridge.ptr());
 	status_panel->set_server_plugin(this);
 	status_panel->set_name("MCP Status");
@@ -124,6 +127,11 @@ MCPServerPlugin::~MCPServerPlugin() {
 	if (debugger_bridge.is_valid() && EditorDebuggerNode::get_singleton()) {
 		EditorDebuggerNode::get_singleton()->remove_debugger_plugin(debugger_bridge);
 		debugger_bridge.unref();
+	}
+
+	if (protocol) {
+		memdelete(protocol);
+		protocol = nullptr;
 	}
 }
 
@@ -300,7 +308,7 @@ void MCPServerPlugin::_notification(int p_what) {
 
 			// If running without a thread, poll on the main thread.
 			if (started && !use_thread) {
-				protocol.poll();
+				protocol->poll();
 			}
 		} break;
 
@@ -325,8 +333,8 @@ void MCPServerPlugin::_notification(int p_what) {
 					stop();
 					start();
 				} else {
-					protocol.set_max_clients(new_max_clients);
-					protocol.set_session_timeout(new_session_timeout);
+					protocol->set_max_clients(new_max_clients);
+					protocol->set_session_timeout(new_session_timeout);
 				}
 			}
 		} break;
@@ -342,7 +350,7 @@ void MCPServerPlugin::thread_main(void *p_userdata) {
 
 	MCPServerPlugin *self = static_cast<MCPServerPlugin *>(p_userdata);
 	while (self->thread_running.is_set()) {
-		self->protocol.poll();
+		self->protocol->poll();
 		OS::get_singleton()->delay_usec(50000); // 50ms -> ~20 Hz
 	}
 }
@@ -362,8 +370,8 @@ void MCPServerPlugin::start() {
 	int max_clients = (int)_EDITOR_GET("network/mcp_server/max_clients");
 	int session_timeout = (int)_EDITOR_GET("network/mcp_server/session_timeout_sec");
 
-	protocol.set_max_clients(max_clients);
-	protocol.set_session_timeout(session_timeout);
+	protocol->set_max_clients(max_clients);
+	protocol->set_session_timeout(session_timeout);
 
 	// Generate a random bearer token for authentication (32 hex chars = 16 bytes).
 	{
@@ -381,14 +389,14 @@ void MCPServerPlugin::start() {
 		for (int i = 0; i < 16; i++) {
 			auth_token += String::num_int64(token_bytes[i], 16).lpad(2, "0");
 		}
-		protocol.set_auth_token(auth_token);
+		protocol->set_auth_token(auth_token);
 	}
 
 	int preferred_port = port;
-	Error err = protocol.start(port, IPAddress(host));
+	Error err = protocol->start(port, IPAddress(host));
 	if (err != OK) {
 		for (int try_port = preferred_port + 1; try_port <= preferred_port + MCP_PORT_RANGE; try_port++) {
-			err = protocol.start(try_port, IPAddress(host));
+			err = protocol->start(try_port, IPAddress(host));
 			if (err == OK) {
 				port = try_port;
 				break;
@@ -425,7 +433,7 @@ void MCPServerPlugin::stop() {
 		thread.wait_to_finish();
 	}
 
-	protocol.stop();
+	protocol->stop();
 	started = false;
 
 	delete_discovery_file();

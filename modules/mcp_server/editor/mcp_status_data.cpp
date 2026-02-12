@@ -30,6 +30,8 @@
 
 #include "mcp_status_data.h"
 
+#include "core/os/os.h"
+
 // =========================================================================
 // MCPEventBuffer Implementation
 // =========================================================================
@@ -86,6 +88,69 @@ uint64_t MCPEventBuffer::latest_seq() const {
 }
 
 void MCPEventBuffer::clear() {
+	MutexLock lock(mutex);
+	write_pos = 0;
+	count = 0;
+	next_seq = 1;
+}
+
+// =========================================================================
+// MCPTestEventBuffer Implementation
+// =========================================================================
+
+MCPTestEventBuffer::MCPTestEventBuffer() {
+	events.resize(CAPACITY);
+}
+
+void MCPTestEventBuffer::push(const MCPTestEvent &p_event) {
+	MutexLock lock(mutex);
+
+	MCPTestEvent &entry = events.write[write_pos];
+	entry = p_event;
+	entry.seq = next_seq++;
+	entry.timestamp_usec = OS::get_singleton()->get_ticks_usec();
+
+	write_pos = (write_pos + 1) % CAPACITY;
+	if (count < CAPACITY) {
+		count++;
+	}
+}
+
+Vector<MCPTestEvent> MCPTestEventBuffer::read_since(uint64_t p_cursor, int p_limit) const {
+	MutexLock lock(mutex);
+
+	Vector<MCPTestEvent> result;
+
+	if (count == 0) {
+		return result;
+	}
+
+	// Find the oldest entry's position.
+	int oldest_pos = (count < CAPACITY) ? 0 : write_pos;
+
+	// Scan entries from oldest to newest, collecting those with seq > p_cursor.
+	int collected = 0;
+	for (int i = 0; i < count && collected < p_limit; i++) {
+		int idx = (oldest_pos + i) % CAPACITY;
+		const MCPTestEvent &entry = events[idx];
+		if (entry.seq > p_cursor) {
+			result.push_back(entry);
+			collected++;
+		}
+	}
+
+	return result;
+}
+
+uint64_t MCPTestEventBuffer::latest_seq() const {
+	MutexLock lock(mutex);
+	if (next_seq <= 1) {
+		return 0;
+	}
+	return next_seq - 1;
+}
+
+void MCPTestEventBuffer::clear() {
 	MutexLock lock(mutex);
 	write_pos = 0;
 	count = 0;

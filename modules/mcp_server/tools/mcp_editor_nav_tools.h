@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_editor_nav_tools.h                                                */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,87 +30,22 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#include "core/string/ustring.h"
+#include "core/variant/dictionary.h"
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+class MCPToolRegistry;
 
-class Button;
-class TabContainer;
-
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
-
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
+class MCPEditorNavTools {
+public:
+	// Register all 5 editor navigation tools into the registry.
+	static void register_tools(MCPToolRegistry *p_registry);
 
 private:
-	MCPProtocol *protocol = nullptr;
-	Ref<MCPDebuggerBridge> debugger_bridge;
-
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
-
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
-
-#ifdef TOOLS_ENABLED
-	TabContainer *ai_tab_container = nullptr;
-	Button *panel_button = nullptr;
-	MCPStatusPanel *status_panel = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	Vector<AgentPanel *> agent_panels;
-	Control *new_tab_placeholder = nullptr;
-	int agent_counter = 0;
-
-	void _create_agent_tab();
-	void _on_tab_changed(int p_tab);
-	void _on_tab_close_pressed(int p_tab);
-	void _on_agent_title_changed(const String &p_title);
-	void _update_close_buttons();
-#endif
-#endif
-
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
-public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
-
-	MCPProtocol *get_protocol() { return protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	// Tool handlers -- each takes a Dictionary of arguments and returns
+	// an MCP tool result Dictionary.
+	static Dictionary handle_focus_node(const Dictionary &p_args);
+	static Dictionary handle_focus_script(const Dictionary &p_args);
+	static Dictionary handle_switch_tab(const Dictionary &p_args);
+	static Dictionary handle_open_scene(const Dictionary &p_args);
+	static Dictionary handle_get_open_scenes(const Dictionary &p_args);
 };

@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_gdscript_tools.h                                                  */
+/*  mcp_scene_tools.h                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,32 +30,40 @@
 
 #pragma once
 
+#include "core/object/class_db.h"
 #include "core/string/ustring.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/vector.h"
+#include "core/variant/array.h"
 #include "core/variant/dictionary.h"
 
 class MCPToolRegistry;
-struct ProgressContext;
+class Node;
 
-class MCPGDScriptTools {
+class MCPSceneTools {
 public:
-	// Register both GDScript validation tools.
 	static void register_tools(MCPToolRegistry *p_registry);
 
-	// Tool handlers.
-	static Dictionary handle_check_errors(const Dictionary &p_args);
-	static Dictionary handle_check_all(const Dictionary &p_args);
-
-	// Progress-aware variant of check_all. Reports per-file progress via
-	// ProgressContext and supports cooperative cancellation.
-	static Dictionary handle_check_all_with_progress(const Dictionary &p_args,
-			ProgressContext *p_ctx);
-
 private:
-	// Validate a single GDScript file. Returns a Dictionary with
-	// path, valid, errors[], warnings[].
-	static Dictionary _validate_single_file(const String &p_path);
+	// Tool handlers.
+	static Dictionary handle_browse_tree(const Dictionary &p_args);
+	static Dictionary handle_set_property(const Dictionary &p_args);
+	static Dictionary handle_add_node(const Dictionary &p_args);
+	static Dictionary handle_remove_node(const Dictionary &p_args);
+	static Dictionary handle_rename_node(const Dictionary &p_args);
+	static Dictionary handle_move_node(const Dictionary &p_args);
+	static Dictionary handle_duplicate_node(const Dictionary &p_args);
+	static Dictionary handle_instance_scene(const Dictionary &p_args);
+	static Dictionary handle_connect_signal(const Dictionary &p_args);
+	static Dictionary handle_disconnect_signal(const Dictionary &p_args);
+	static Dictionary handle_attach_script(const Dictionary &p_args);
+	static Dictionary handle_save(const Dictionary &p_args);
 
-	// Recursively find all .gd files in a directory.
-	static void _find_gd_files_recursive(const String &p_dir, Vector<String> &r_files);
+	// Helpers.
+	static void _format_tree_recursive(Node *p_node, String &r_text, Dictionary &r_structured,
+			const String &p_prefix, bool p_is_last, int p_depth, int p_max_depth);
+	static Dictionary _build_node_detail(Node *p_node, const String &p_categories, bool p_include_defaults);
+	static Variant _coerce_json_to_variant(const Variant &p_json_value, Variant::Type p_target_type);
+	static Node *_get_scene_root();
+	static Node *_find_node(const String &p_path);
 };

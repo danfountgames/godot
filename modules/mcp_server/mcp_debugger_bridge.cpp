@@ -121,6 +121,11 @@ MCPDebuggerBridge::MCPDebuggerBridge() {
 	game_launching.clear();
 	game_paused.clear();
 	active_session_id.set(-1);
+	next_test_run_number.set(0);
+	{
+		MutexLock lock(stop_reason_mutex);
+		last_stop_reason = "not_started";
+	}
 }
 
 MCPDebuggerBridge::~MCPDebuggerBridge() {
@@ -373,6 +378,98 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- test_method_result ---
+	if (sub_msg == "test_method_result") {
+		ERR_FAIL_COND_V(p_data.size() < 8, false);
+
+		String file = p_data[0];
+		String method = p_data[1];
+		String status = p_data[2];
+		String message = p_data[3];
+		String error_file = p_data[4];
+		int error_line = p_data[5];
+		int duration_ms = p_data[6];
+		Array output = p_data[7];
+
+		// Build result dictionary and accumulate.
+		Dictionary result;
+		result["file"] = file;
+		result["method"] = method;
+		result["status"] = status;
+		result["message"] = message;
+		result["error_file"] = error_file;
+		result["error_line"] = error_line;
+		result["duration_ms"] = duration_ms;
+		result["output"] = output;
+
+		{
+			MutexLock lock(request_mutex);
+			test_run_state.results.push_back(result);
+		}
+
+		// Push event to the test event buffer for the status panel.
+		MCPTestEvent evt;
+		evt.type = MCPTestEvent::TEST_METHOD_RESULT;
+		evt.run_number = test_run_state.run_number;
+		evt.file_path = file;
+		evt.method_name = method;
+		evt.status = status;
+		evt.message = message;
+		evt.error_file = error_file;
+		evt.error_line = error_line;
+		evt.duration_ms = duration_ms;
+		test_event_buffer.push(evt);
+
+		return true;
+	}
+
+	// --- test_complete ---
+	if (sub_msg == "test_complete") {
+		ERR_FAIL_COND_V(p_data.size() < 6, false);
+
+		int total = p_data[0];
+		int passed = p_data[1];
+		int failed = p_data[2];
+		int errors = p_data[3];
+		int skipped = p_data[4];
+		int duration_ms = p_data[5];
+
+		// Build the final result dictionary.
+		Dictionary result;
+		Dictionary summary;
+		summary["total"] = total;
+		summary["passed"] = passed;
+		summary["failed"] = failed;
+		summary["errors"] = errors;
+		summary["skipped"] = skipped;
+		summary["duration_ms"] = duration_ms;
+		result["summary"] = summary;
+		result["success"] = true;
+
+		{
+			MutexLock lock(request_mutex);
+			result["results"] = test_run_state.results;
+			test_run_state.complete = true;
+		}
+
+		// Push completion event to the test event buffer.
+		MCPTestEvent evt;
+		evt.type = MCPTestEvent::TEST_RUN_COMPLETE;
+		evt.run_number = test_run_state.run_number;
+		evt.total = total;
+		evt.passed = passed;
+		evt.failed = failed;
+		evt.errors = errors;
+		evt.skipped = skipped;
+		evt.total_duration_ms = duration_ms;
+		test_event_buffer.push(evt);
+
+		// Wake the waiting tool handler.
+		_complete_pending("test_run", result);
+
+		return true;
+	}
+
 	// --- heartbeat ---
 	// Game-side heartbeat: sent every 60 frames with the current frame count.
 	if (sub_msg == "heartbeat") {
@@ -430,20 +527,28 @@ void MCPDebuggerBridge::_on_session_started() {
 
 void MCPDebuggerBridge::_on_session_stopped() {
 	// Determine stop reason BEFORE clearing state flags.
-	String reason;
-	if (game_launching.is_set() && !game_running.is_set()) {
-		reason = "timeout";
-	} else {
-		reason = "normal";
-	}
+	// If game_launching is still set, this stop is from a previous run being
+	// terminated as part of a re-launch -- don't overwrite the stop reason
+	// or clear the launching flag.
+	bool is_relaunch = game_launching.is_set() && game_running.is_set();
 
-	{
-		MutexLock lock(stop_reason_mutex);
-		last_stop_reason = reason;
+	if (!is_relaunch) {
+		String reason;
+		if (game_launching.is_set() && !game_running.is_set()) {
+			reason = "timeout";
+		} else {
+			reason = "normal";
+		}
+
+		{
+			MutexLock lock(stop_reason_mutex);
+			last_stop_reason = reason;
+		}
+
+		game_launching.clear();
 	}
 
 	game_running.clear();
-	game_launching.clear();
 	game_paused.clear();
 	{
 		MutexLock lock(break_state_mutex);
@@ -452,20 +557,58 @@ void MCPDebuggerBridge::_on_session_stopped() {
 	break_state_ready.post(); // Wake anyone waiting for break state.
 	active_session_id.set(-1);
 
+	// If there is an active test run that did not complete, finalize it with
+	// partial results and a game_crashed flag so the tool handler gets something useful.
+	if (test_run_state.run_number > 0 && !test_run_state.complete) {
+		Dictionary result;
+		Dictionary summary;
+		summary["total"] = 0;
+		summary["passed"] = 0;
+		summary["failed"] = 0;
+		summary["errors"] = 0;
+		summary["skipped"] = 0;
+		summary["duration_ms"] = 0;
+		result["summary"] = summary;
+		result["success"] = false;
+		result["game_crashed"] = true;
+
+		{
+			MutexLock lock(request_mutex);
+			result["results"] = test_run_state.results;
+		}
+
+		// Push a completion event so the status panel can update.
+		MCPTestEvent evt;
+		evt.type = MCPTestEvent::TEST_RUN_COMPLETE;
+		evt.run_number = test_run_state.run_number;
+		test_event_buffer.push(evt);
+
+		_complete_pending("test_run", result);
+	}
+
 	// Wake ALL pending requests with an error -- the game is gone.
 	_wake_all_pending("Game session ended");
 
-	print_verbose("[MCP] Debugger bridge: game session stopped (reason: " + reason + ").");
+	if (is_relaunch) {
+		print_verbose("[MCP] Debugger bridge: old session stopped (re-launching).");
+	} else {
+		String reason;
+		{
+			MutexLock lock(stop_reason_mutex);
+			reason = last_stop_reason;
+		}
+		print_verbose("[MCP] Debugger bridge: game session stopped (reason: " + reason + ").");
 
-	// Notify MCP clients that tool/resource lists have changed (debug tools unavailable).
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (protocol) {
-		protocol->notify_tools_changed();
-		protocol->notify_resources_list_changed();
-		protocol->send_log("info", "mcp.debug", "Game stopped (reason: " + reason + ")");
+		// Notify MCP clients that tool/resource lists have changed (debug tools unavailable).
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			protocol->notify_tools_changed();
+			protocol->notify_resources_list_changed();
+			protocol->send_log("info", "mcp.debug", "Game stopped (reason: " + reason + ")");
 
-		// Notify subscribers that game status changed.
-		protocol->get_resource_registry()->notify_changed("godot://game/status");
+			// Notify subscribers that game status changed.
+			protocol->get_resource_registry()->notify_changed("godot://game/status");
+		}
 	}
 }
 
@@ -1132,6 +1275,33 @@ void MCPDebuggerBridge::_do_get_breakpoints(const String &p_request_id) {
 int MCPDebuggerBridge::get_pending_request_count() const {
 	MutexLock lock(request_mutex);
 	return pending_requests.size();
+}
+
+// ------------------------------------------------------------------------
+// Test Runner
+// ------------------------------------------------------------------------
+
+void MCPDebuggerBridge::reset_test_run_state() {
+	MutexLock lock(request_mutex);
+
+	test_run_state.results.clear();
+	test_run_state.complete = false;
+	test_run_state.run_number = next_test_run_number.increment();
+
+	// Push a TEST_RUN_STARTED event so the status panel knows a new run began.
+	MCPTestEvent evt;
+	evt.type = MCPTestEvent::TEST_RUN_STARTED;
+	evt.run_number = test_run_state.run_number;
+	test_event_buffer.push(evt);
+}
+
+void MCPDebuggerBridge::push_test_compile_error(const String &p_file, const Array &p_errors, int p_run_number) {
+	MCPTestEvent evt;
+	evt.type = MCPTestEvent::TEST_FILE_COMPILE_ERROR;
+	evt.run_number = p_run_number;
+	evt.file_path = p_file;
+	evt.compile_errors = p_errors;
+	test_event_buffer.push(evt);
 }
 
 // ------------------------------------------------------------------------

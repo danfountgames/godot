@@ -198,9 +198,9 @@ class TestGameCrashDuringRequest:
 
         # Step 3: Attempt to get the scene tree (game no longer running).
         client.reconnect()
-        resp = client.call_tool("debug/get_scene_tree")
+        resp = client.call_tool("runtime/get_scene_tree")
         # The response may be an error (game not running) -- that is fine.
-        assert resp is not None, "No response received from debug/get_scene_tree"
+        assert resp is not None, "No response received from runtime/get_scene_tree"
 
         # Step 4: Verify the server is still alive.
         client.reconnect()
@@ -299,8 +299,8 @@ class TestConcurrentRequests:
     """EC-08 -- Two clients making simultaneous requests."""
 
     @pytest.mark.p1
-    def test_concurrent_project_get_info(self, mcp_server_available):
-        """EC-08: Two separate clients call project/get_info at the same time.
+    def test_concurrent_project_get_overview(self, mcp_server_available):
+        """EC-08: Two separate clients call project/get_overview at the same time.
         Both should receive valid responses."""
         results = [None, None]
         errors = [None, None]
@@ -309,7 +309,7 @@ class TestConcurrentRequests:
             c = MCPClient()
             try:
                 c.full_handshake()
-                resp = c.call_tool("project/get_info")
+                resp = c.call_tool("project/get_overview")
                 results[index] = resp
             except Exception as exc:
                 errors[index] = exc
@@ -360,9 +360,9 @@ class TestOutputRingBuffer:
         client.start_game_and_wait()
 
         try:
-            # Step 2: First call to debug/get_output with no cursor.
+            # Step 2: First call to runtime/get_output with no cursor.
             client.reconnect()
-            resp1 = client.call_tool("debug/get_output")
+            resp1 = client.call_tool("runtime/get_output")
             result1 = resp1.get("result", {})
             sc1 = result1.get("structuredContent", {})
 
@@ -378,7 +378,7 @@ class TestOutputRingBuffer:
 
             # Step 3: Second call with the cursor from step 2.
             client.reconnect()
-            resp2 = client.call_tool("debug/get_output", {"cursor": cursor1})
+            resp2 = client.call_tool("runtime/get_output", {"cursor": cursor1})
             result2 = resp2.get("result", {})
             sc2 = result2.get("structuredContent", {})
 
