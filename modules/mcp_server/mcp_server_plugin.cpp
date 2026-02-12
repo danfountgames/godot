@@ -46,6 +46,7 @@
 #include "core/string/print_string.h"
 #include "core/version.h"
 #include "editor/debugger/editor_debugger_node.h"
+#include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/file_system/editor_paths.h"
 #include "editor/settings/editor_settings.h"
@@ -73,7 +74,7 @@ MCPServerPlugin::MCPServerPlugin() {
 	protocol.set_debugger_bridge(debugger_bridge.ptr());
 
 #ifdef TOOLS_ENABLED
-	// Create a single "AI" bottom panel with tabs for Agent and MCP Status.
+	// Create the "AI" main screen with tabs for Agent and MCP Status.
 	ai_tab_container = memnew(TabContainer);
 	ai_tab_container->set_v_size_flags(Control::SIZE_EXPAND_FILL);
 	ai_tab_container->set_h_size_flags(Control::SIZE_EXPAND_FILL);
@@ -95,7 +96,10 @@ MCPServerPlugin::MCPServerPlugin() {
 	status_panel->set_name("MCP Status");
 	ai_tab_container->add_child(status_panel);
 
-	panel_button = add_control_to_bottom_panel(ai_tab_container, "AI");
+	// Add as a main screen plugin (top row alongside 2D, 3D, Script).
+	EditorNode::get_singleton()->get_editor_main_screen()->get_control()->add_child(ai_tab_container);
+	ai_tab_container->set_anchors_and_offsets_preset(Control::PRESET_FULL_RECT);
+	ai_tab_container->hide();
 #endif
 
 	set_process_internal(true);
@@ -108,7 +112,9 @@ MCPServerPlugin::~MCPServerPlugin() {
 
 #ifdef TOOLS_ENABLED
 	if (ai_tab_container) {
-		remove_control_from_bottom_panel(ai_tab_container);
+		if (ai_tab_container->get_parent()) {
+			ai_tab_container->get_parent()->remove_child(ai_tab_container);
+		}
 		memdelete(ai_tab_container);
 		ai_tab_container = nullptr;
 		// Children (agent_panels, status_panel, new_tab_placeholder) are freed by the TabContainer.
@@ -270,6 +276,20 @@ void MCPServerPlugin::_update_close_buttons() {
 }
 
 #endif // MCP_TERMINAL_ENABLED
+
+// ---------------------------------------------------------------------------
+// Main Screen Plugin
+// ---------------------------------------------------------------------------
+
+void MCPServerPlugin::make_visible(bool p_visible) {
+	if (ai_tab_container) {
+		if (p_visible) {
+			ai_tab_container->show();
+		} else {
+			ai_tab_container->hide();
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Binding

@@ -37,7 +37,6 @@
 #include "core/templates/safe_refcount.h"
 #include "editor/plugins/editor_plugin.h"
 
-class Button;
 class TabContainer;
 
 #ifdef TOOLS_ENABLED
@@ -66,7 +65,6 @@ private:
 
 #ifdef TOOLS_ENABLED
 	TabContainer *ai_tab_container = nullptr;
-	Button *panel_button = nullptr;
 	MCPStatusPanel *status_panel = nullptr;
 #ifdef MCP_TERMINAL_ENABLED
 	Vector<AgentPanel *> agent_panels;
@@ -101,6 +99,11 @@ protected:
 public:
 	MCPServerPlugin();
 	~MCPServerPlugin();
+
+	// Main screen plugin overrides.
+	bool has_main_screen() const override { return true; }
+	virtual String get_plugin_name() const override { return "AI"; }
+	virtual void make_visible(bool p_visible) override;
 
 	MCPProtocol *get_protocol() { return &protocol; }
 	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
