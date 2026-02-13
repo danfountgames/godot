@@ -111,6 +111,7 @@ private:
 	mutable Mutex stop_reason_mutex;
 	String last_stop_reason = "not_started"; // Why the game last stopped. Guarded by stop_reason_mutex.
 	SafeNumeric<int> active_session_id; // Initialized to -1 in constructor.
+	SafeFlag suspend_on_start; // If set, send suspend immediately when session starts.
 
 	// --- Ring Buffers ---
 	OutputRingBuffer output_buffer;
@@ -224,7 +225,9 @@ public:
 	String get_last_stop_reason() const;
 
 	// Called by debug tool handlers BEFORE call_deferred to EditorRunBar.
-	void set_game_launching();
+	// If p_suspend_on_start is true, the game will be immediately suspended
+	// when the debugger session connects.
+	void set_game_launching(bool p_suspend_on_start = false);
 
 	// --- Output/Error Access (thread-safe, called from MCP HTTP threads) ---
 	Vector<OutputEntry> get_output_since(uint64_t p_cursor, int p_limit = 200) const;
@@ -266,6 +269,16 @@ public:
 	// --- Breakpoint Management (deferred to main thread) ---
 	Dictionary get_all_breakpoints(int p_timeout_msec = 5000);
 	void _do_get_breakpoints(const String &p_request_id);
+
+	// --- Time Control (fire-and-forget, called from MCP HTTP threads) ---
+	// These send scene: messages via call_deferred and return immediately.
+	void send_set_time_scale(double p_scale);
+	void send_suspend(bool p_enabled);
+	void send_next_frame();
+	void send_advance_frames(int p_count, bool p_instant);
+	void send_set_debug_pause_enabled(bool p_enabled);
+	void send_set_debug_pause_tag_enabled(const String &p_tag, bool p_enabled);
+	void send_clear_debug_pause_hits();
 
 	// --- Cached Scene Tree (thread-safe) ---
 	Dictionary get_cached_scene_tree() const;

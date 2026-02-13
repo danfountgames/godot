@@ -53,12 +53,18 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 	// runtime/run_project
 	{
 		Dictionary props;
+		props["suspended"] = make_prop("boolean",
+				"If true, the game starts in a suspended (paused) state. The game launches, "
+				"connects to the debugger, and immediately pauses before any frames advance. "
+				"Use runtime/time/resume or runtime/time/next_frame to control execution. "
+				"Default: false (game starts running normally).");
 		Array required;
 		p_registry->register_tool(
 				"runtime/run_project", "Run Project",
 				"Launch the project's main scene in debug mode. If already running, stops first. "
 				"Returns immediately. Poll runtime/get_status every 1-2s: 'launching' -> 'running' (ready) "
 				"or 'stopped' (failed, check runtime/get_errors). Times out after 15s. "
+				"Set suspended=true to start paused for frame-by-frame debugging from the very first frame. "
 				"Tip: use runtime/run_scene instead to test individual scenes in isolation.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
@@ -71,6 +77,11 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 		props["scene"] = make_prop("string",
 				"Scene file path in res:// format (e.g., res://scenes/level1.tscn). "
 				"Use your native file tools to discover available .tscn scenes.");
+		props["suspended"] = make_prop("boolean",
+				"If true, the game starts in a suspended (paused) state. The game launches, "
+				"connects to the debugger, and immediately pauses before any frames advance. "
+				"Use runtime/time/resume or runtime/time/next_frame to control execution. "
+				"Default: false (game starts running normally).");
 		Array required;
 		required.push_back("scene");
 		p_registry->register_tool(
@@ -80,7 +91,8 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"isolation — it's faster and produces cleaner debug output. Combine with "
 				"debug/set_breakpoint, runtime/get_scene_tree, and runtime/get_node_signals to "
 				"inspect behavior. If already running, stops first. "
-				"Returns immediately. Poll runtime/get_status every 1-2s. Path must be .tscn in res:// format.",
+				"Returns immediately. Poll runtime/get_status every 1-2s. Path must be .tscn in res:// format. "
+				"Set suspended=true to start paused for frame-by-frame debugging from the very first frame.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDebugTools::handle_run_scene));
@@ -353,6 +365,8 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 				"or use runtime/run_scene to launch a specific scene.");
 	}
 
+	bool suspended = (bool)p_args.get("suspended", false);
+
 	// Set launching state before queuing the play action.
 	MCPDebuggerBridge *bridge = _get_bridge();
 	if (!bridge) {
@@ -360,7 +374,7 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 				"Internal error: debugger bridge not available.\n"
 				"The MCP server may not be fully initialized yet. Try again in a moment.");
 	}
-	bridge->set_game_launching();
+	bridge->set_game_launching(suspended);
 
 	// Dispatch to main thread. EditorRunBar::play_main_scene() must run
 	// on the main thread because it modifies editor UI state.
@@ -370,12 +384,16 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 			.call_deferred();
 
 	// Build response.
-	String text = "Project launch queued. Main scene: " + main_scene + "\n"
-														  "Use runtime/get_status to check when the game is running.";
+	String text = "Project launch queued. Main scene: " + main_scene + "\n";
+	if (suspended) {
+		text += "Game will start SUSPENDED. Use runtime/time/resume or runtime/time/next_frame to advance.\n";
+	}
+	text += "Use runtime/get_status to check when the game is running.";
 
 	Dictionary structured;
 	structured["status"] = "launching";
 	structured["main_scene"] = main_scene;
+	structured["suspended"] = suspended;
 
 	return make_tool_result(text, structured);
 }
@@ -414,6 +432,8 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 				scene));
 	}
 
+	bool suspended = (bool)p_args.get("suspended", false);
+
 	// Set launching state before queuing the play action.
 	MCPDebuggerBridge *bridge = _get_bridge();
 	if (!bridge) {
@@ -421,7 +441,7 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 				"Internal error: debugger bridge not available.\n"
 				"The MCP server may not be fully initialized yet. Try again in a moment.");
 	}
-	bridge->set_game_launching();
+	bridge->set_game_launching(suspended);
 
 	// Dispatch to main thread.
 	callable_mp(EditorRunBar::get_singleton(),
@@ -429,12 +449,16 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 			.bind(scene, Vector<String>())
 			.call_deferred();
 
-	String text = "Scene launch queued: " + scene + "\n"
-												"Use runtime/get_status to check when the game is running.";
+	String text = "Scene launch queued: " + scene + "\n";
+	if (suspended) {
+		text += "Game will start SUSPENDED. Use runtime/time/resume or runtime/time/next_frame to advance.\n";
+	}
+	text += "Use runtime/get_status to check when the game is running.";
 
 	Dictionary structured;
 	structured["status"] = "launching";
 	structured["scene"] = scene;
+	structured["suspended"] = suspended;
 
 	return make_tool_result(text, structured);
 }

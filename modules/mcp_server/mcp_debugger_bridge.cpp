@@ -511,7 +511,22 @@ void MCPDebuggerBridge::_on_session_started() {
 		browse_tree_timestamp = 0;
 	}
 
-	print_verbose("[MCP] Debugger bridge: game session started.");
+	// If suspend-on-start was requested, send the suspend message immediately
+	// so the game pauses at the earliest possible moment after connecting.
+	if (suspend_on_start.is_set()) {
+		suspend_on_start.clear();
+		int sid = active_session_id.get();
+		Ref<EditorDebuggerSession> session = get_session(sid >= 0 ? sid : 0);
+		if (session.is_valid()) {
+			Array suspend_data;
+			suspend_data.push_back(true);
+			session->send_message("scene:suspend_changed", suspend_data);
+		}
+		game_paused.set();
+		print_verbose("[MCP] Debugger bridge: game session started (suspended on start).");
+	} else {
+		print_verbose("[MCP] Debugger bridge: game session started.");
+	}
 
 	// Notify MCP clients that tool/resource lists have changed (debug tools now available).
 	MCPProtocol *protocol = MCPProtocol::get_singleton();
@@ -673,9 +688,14 @@ String MCPDebuggerBridge::get_last_stop_reason() const {
 	return last_stop_reason;
 }
 
-void MCPDebuggerBridge::set_game_launching() {
+void MCPDebuggerBridge::set_game_launching(bool p_suspend_on_start) {
 	game_launching.set();
 	game_launch_time_msec.set(Time::get_singleton()->get_ticks_msec());
+	if (p_suspend_on_start) {
+		suspend_on_start.set();
+	} else {
+		suspend_on_start.clear();
+	}
 }
 
 // ------------------------------------------------------------------------
@@ -1029,6 +1049,61 @@ Dictionary MCPDebuggerBridge::send_set_node_property(const String &p_node_path,
 
 #undef MCP_BRIDGE_CHECK_RUNNING
 #undef MCP_BRIDGE_SEND_OR_FAIL
+
+// ------------------------------------------------------------------------
+// Time Control (fire-and-forget, called from MCP HTTP threads)
+// ------------------------------------------------------------------------
+
+// Helper: send a message to the game via call_deferred (fire-and-forget).
+// Returns silently if no active session.
+#define MCP_BRIDGE_FIRE_AND_FORGET(p_message, p_data)                                                           \
+	int _sid = active_session_id.get();                                                                         \
+	Ref<EditorDebuggerSession> session = get_session(_sid >= 0 ? _sid : 0);                                     \
+	if (session.is_valid()) {                                                                                   \
+		callable_mp(session.ptr(), &EditorDebuggerSession::send_message).call_deferred(p_message, p_data);      \
+	}
+
+void MCPDebuggerBridge::send_set_time_scale(double p_scale) {
+	Array data;
+	data.push_back(p_scale);
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:speed_changed", data);
+}
+
+void MCPDebuggerBridge::send_suspend(bool p_enabled) {
+	Array data;
+	data.push_back(p_enabled);
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:suspend_changed", data);
+}
+
+void MCPDebuggerBridge::send_next_frame() {
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:next_frame", Array());
+}
+
+void MCPDebuggerBridge::send_advance_frames(int p_count, bool p_instant) {
+	Array data;
+	data.push_back(p_count);
+	data.push_back(p_instant);
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:advance_frames", data);
+}
+
+void MCPDebuggerBridge::send_set_debug_pause_enabled(bool p_enabled) {
+	Array data;
+	data.push_back(p_enabled);
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:set_debug_pause_enabled", data);
+}
+
+void MCPDebuggerBridge::send_set_debug_pause_tag_enabled(const String &p_tag, bool p_enabled) {
+	Array data;
+	data.push_back(p_tag);
+	data.push_back(p_enabled);
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:set_debug_pause_tag_enabled", data);
+}
+
+void MCPDebuggerBridge::send_clear_debug_pause_hits() {
+	MCP_BRIDGE_FIRE_AND_FORGET("scene:clear_debug_pause_hits", Array());
+}
+
+#undef MCP_BRIDGE_FIRE_AND_FORGET
 
 // ------------------------------------------------------------------------
 // Cached Scene Tree

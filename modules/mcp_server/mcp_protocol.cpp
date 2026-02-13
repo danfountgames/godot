@@ -46,6 +46,7 @@
 #include "tools/mcp_scene_tools.h"
 #include "tools/mcp_signal_tools.h"
 #include "tools/mcp_testing_tools.h"
+#include "tools/mcp_timing_tools.h"
 #include "tools/mcp_ui_tools.h"
 
 #include "core/config/engine.h"
@@ -103,6 +104,7 @@ MCPProtocol::MCPProtocol() {
 	MCPTestingTools::register_tools(&tool_registry);
 	MCPDocTools::register_tools(&tool_registry);
 	MCPSceneTools::register_tools(&tool_registry);
+	MCPTimingTools::register_tools(&tool_registry);
 	MCPEditorNavTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
