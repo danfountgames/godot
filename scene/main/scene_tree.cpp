@@ -31,12 +31,15 @@
 #include "scene_tree.h"
 
 #include "core/config/project_settings.h"
+#include "core/debugger/engine_debugger.h"
 #include "core/input/input.h"
 #include "core/io/image_loader.h"
 #include "core/io/resource_loader.h"
 #include "core/object/message_queue.h"
+#include "core/object/script_language.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
+#include "core/os/thread.h"
 #include "core/profiling/profiling.h"
 #include "node.h"
 #include "scene/animation/tween.h"
@@ -1148,6 +1151,118 @@ bool SceneTree::is_suspended() const {
 	return suspended;
 }
 
+#ifdef DEBUG_ENABLED
+bool SceneTree::_debug_pause_enabled = false;
+HashMap<String, bool> SceneTree::_debug_pause_tag_enabled;
+HashMap<String, int> SceneTree::_debug_pause_hit_counts;
+
+void SceneTree::_do_debug_pause(const String &p_tag) {
+	if (!_debug_pause_enabled) {
+		return;
+	}
+	if (!EngineDebugger::is_active()) {
+		return;
+	}
+
+	// Check per-tag filtering.
+	if (!p_tag.is_empty()) {
+		HashMap<String, bool>::ConstIterator it = _debug_pause_tag_enabled.find(p_tag);
+		if (it && !it->value) {
+			return; // Tag explicitly disabled.
+		}
+	}
+
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || tree->is_suspended()) {
+		return;
+	}
+
+	// Thread safety: defer to main thread if needed.
+	if (!Thread::is_main_thread()) {
+		callable_mp_static(&SceneTree::_do_debug_pause).call_deferred(p_tag);
+		return;
+	}
+
+	// Increment hit count.
+	String key = p_tag.is_empty() ? String("(untagged)") : p_tag;
+	if (_debug_pause_hit_counts.has(key)) {
+		_debug_pause_hit_counts[key]++;
+	} else {
+		_debug_pause_hit_counts[key] = 1;
+	}
+
+	// Suspend the game.
+	tree->set_suspend(true);
+
+	// Notify editor with tag, hit count, and source location.
+	Array args;
+	args.append(p_tag);
+	args.append(_debug_pause_hit_counts[key]);
+
+	// Get call stack for source location display.
+	for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+		Vector<ScriptLanguage::StackInfo> si = ScriptServer::get_language(i)->debug_get_current_stack_info();
+		if (si.size() > 0) {
+			args.append(si[0].file);
+			args.append(si[0].line);
+			args.append(si[0].func);
+			break;
+		}
+	}
+
+	EngineDebugger::get_singleton()->send_message("game_view:debug_pause_hit", args);
+}
+
+void SceneTree::debug_pause(const String &p_tag) {
+	_do_debug_pause(p_tag);
+}
+
+void SceneTree::debug_pause_if(bool p_condition, const String &p_tag) {
+	if (!p_condition) {
+		return;
+	}
+	_do_debug_pause(p_tag);
+}
+
+void SceneTree::debug_pause_after(int p_hit_count, const String &p_tag) {
+	if (!_debug_pause_enabled) {
+		return;
+	}
+	if (!EngineDebugger::is_active()) {
+		return;
+	}
+
+	String key = p_tag.is_empty() ? String("(untagged)") : p_tag;
+	int current;
+	if (_debug_pause_hit_counts.has(key)) {
+		current = _debug_pause_hit_counts[key] + 1;
+	} else {
+		current = 1;
+	}
+	_debug_pause_hit_counts[key] = current;
+
+	if (current >= p_hit_count) {
+		_do_debug_pause(p_tag);
+	}
+}
+
+void SceneTree::set_debug_pause_enabled(bool p_enabled) {
+	_debug_pause_enabled = p_enabled;
+}
+
+bool SceneTree::is_debug_pause_enabled() {
+	return _debug_pause_enabled;
+}
+
+void SceneTree::set_debug_pause_tag_enabled(const String &p_tag, bool p_enabled) {
+	_debug_pause_tag_enabled[p_tag] = p_enabled;
+}
+
+void SceneTree::clear_debug_pause_hit_counts() {
+	_debug_pause_hit_counts.clear();
+}
+#endif
+
 void SceneTree::_process_group(ProcessGroup *p_group, bool p_physics) {
 	// When reading this function, keep in mind that this code must work in a way where
 	// if any node is removed, this needs to continue working.
@@ -1885,6 +2000,10 @@ void SceneTree::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_pause", "enable"), &SceneTree::set_pause);
 	ClassDB::bind_method(D_METHOD("is_paused"), &SceneTree::is_paused);
+
+	ClassDB::bind_static_method("SceneTree", D_METHOD("debug_pause", "tag"), &SceneTree::debug_pause, DEFVAL(""));
+	ClassDB::bind_static_method("SceneTree", D_METHOD("debug_pause_if", "condition", "tag"), &SceneTree::debug_pause_if, DEFVAL(""));
+	ClassDB::bind_static_method("SceneTree", D_METHOD("debug_pause_after", "hit_count", "tag"), &SceneTree::debug_pause_after, DEFVAL(""));
 
 	ClassDB::bind_method(D_METHOD("create_timer", "time_sec", "process_always", "process_in_physics", "ignore_time_scale"), &SceneTree::create_timer, DEFVAL(true), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("create_tween"), &SceneTree::create_tween);

@@ -30,6 +30,7 @@
 
 #include "scene_debugger.h"
 
+#include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/debugger/debugger_marshalls.h"
 #include "core/debugger/engine_debugger.h"
@@ -49,6 +50,7 @@
 #include "scene/resources/packed_scene.h"
 #include "scene/theme/theme_db.h"
 #include "servers/audio/audio_server.h"
+#include "servers/rendering/rendering_server.h"
 
 #ifndef PHYSICS_2D_DISABLED
 #include "scene/2d/physics/collision_object_2d.h"
@@ -516,6 +518,7 @@ Error SceneDebugger::_msg_rq_screenshot(const Array &p_args) {
 // endregion
 
 HashMap<String, SceneDebugger::ParseMessageFunc> SceneDebugger::message_handlers;
+int SceneDebugger::_frames_remaining = 0;
 
 Error SceneDebugger::parse_message(void *p_user, const String &p_msg, const Array &p_args, bool &r_captured) {
 	ERR_FAIL_NULL_V(SceneTree::get_singleton(), ERR_UNCONFIGURED);
@@ -552,6 +555,10 @@ void SceneDebugger::_init_message_handlers() {
 	message_handlers["clear_selection"] = _msg_clear_selection;
 	message_handlers["suspend_changed"] = _msg_suspend_changed;
 	message_handlers["next_frame"] = _msg_next_frame;
+	message_handlers["advance_frames"] = _msg_advance_frames;
+	message_handlers["set_debug_pause_enabled"] = _msg_set_debug_pause_enabled;
+	message_handlers["set_debug_pause_tag_enabled"] = _msg_set_debug_pause_tag_enabled;
+	message_handlers["clear_debug_pause_hits"] = _msg_clear_debug_pause_hits;
 	message_handlers["speed_changed"] = _msg_speed_changed;
 	message_handlers["debug_mute_audio"] = _msg_debug_mute_audio;
 	message_handlers["override_cameras"] = _msg_override_cameras;
@@ -708,6 +715,93 @@ void SceneDebugger::_next_frame() {
 
 	scene_tree->set_suspend(false);
 	RenderingServer::get_singleton()->connect("frame_post_draw", callable_mp(scene_tree, &SceneTree::set_suspend).bind(true), Object::CONNECT_ONE_SHOT);
+}
+
+void SceneDebugger::_advance_n_frames_natural(int p_count) {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	if (!scene_tree->is_suspended()) {
+		return;
+	}
+
+	_frames_remaining = p_count;
+	_step_one_natural();
+}
+
+void SceneDebugger::_step_one_natural() {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+
+	// If tree was re-suspended (e.g., by debug_pause), abort remaining frames.
+	if (scene_tree->is_suspended() && _frames_remaining < 0) {
+		_frames_remaining = 0;
+		return;
+	}
+
+	_frames_remaining--;
+	scene_tree->set_suspend(false);
+
+	if (_frames_remaining > 0) {
+		RenderingServer::get_singleton()->connect(SNAME("frame_post_draw"),
+				callable_mp_static(&SceneDebugger::_step_one_natural),
+				Object::CONNECT_ONE_SHOT);
+	} else {
+		// Last frame - re-suspend after render.
+		RenderingServer::get_singleton()->connect(SNAME("frame_post_draw"),
+				callable_mp(scene_tree, &SceneTree::set_suspend).bind(true),
+				Object::CONNECT_ONE_SHOT);
+	}
+}
+
+void SceneDebugger::_advance_n_frames_instant(int p_count) {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	if (!scene_tree->is_suspended()) {
+		return;
+	}
+
+	double delta = 1.0 / Engine::get_singleton()->get_physics_ticks_per_second();
+
+	scene_tree->set_suspend(false);
+
+	for (int i = 0; i < p_count; i++) {
+		scene_tree->physics_process(delta);
+		scene_tree->process(delta);
+
+		// If a debug_pause() fired during processing, stop early.
+		if (scene_tree->is_suspended()) {
+			return;
+		}
+	}
+
+	scene_tree->set_suspend(true);
+}
+
+Error SceneDebugger::_msg_advance_frames(const Array &p_args) {
+	ERR_FAIL_COND_V(p_args.size() < 2, ERR_INVALID_DATA);
+	int count = p_args[0];
+	bool instant = p_args[1];
+
+	if (instant) {
+		_advance_n_frames_instant(count);
+	} else {
+		_advance_n_frames_natural(count);
+	}
+	return OK;
+}
+
+Error SceneDebugger::_msg_set_debug_pause_enabled(const Array &p_args) {
+	ERR_FAIL_COND_V(p_args.is_empty(), ERR_INVALID_DATA);
+	SceneTree::set_debug_pause_enabled(p_args[0]);
+	return OK;
+}
+
+Error SceneDebugger::_msg_set_debug_pause_tag_enabled(const Array &p_args) {
+	ERR_FAIL_COND_V(p_args.size() < 2, ERR_INVALID_DATA);
+	SceneTree::set_debug_pause_tag_enabled(p_args[0], p_args[1]);
+	return OK;
+}
+
+Error SceneDebugger::_msg_clear_debug_pause_hits(const Array &p_args) {
+	SceneTree::clear_debug_pause_hit_counts();
+	return OK;
 }
 
 void SceneDebugger::add_to_cache(const String &p_filename, Node *p_node) {

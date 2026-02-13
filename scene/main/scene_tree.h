@@ -146,6 +146,14 @@ private:
 	bool paused = false;
 	bool suspended = false;
 
+#ifdef DEBUG_ENABLED
+	// Debug pause (code breakpoint) state.
+	static bool _debug_pause_enabled;
+	static HashMap<String, bool> _debug_pause_tag_enabled;
+	static HashMap<String, int> _debug_pause_hit_counts;
+	static void _do_debug_pause(const String &p_tag);
+#endif
+
 	HashMap<StringName, Group> group_map;
 	bool _quit = false;
 
@@ -366,6 +374,20 @@ public:
 	bool is_paused() const;
 	void set_suspend(bool p_enabled);
 	bool is_suspended() const;
+
+#ifdef DEBUG_ENABLED
+	static void debug_pause(const String &p_tag = "");
+	static void debug_pause_if(bool p_condition, const String &p_tag = "");
+	static void debug_pause_after(int p_hit_count, const String &p_tag = "");
+	static void set_debug_pause_enabled(bool p_enabled);
+	static bool is_debug_pause_enabled();
+	static void set_debug_pause_tag_enabled(const String &p_tag, bool p_enabled);
+	static void clear_debug_pause_hit_counts();
+#else
+	static void debug_pause(const String &p_tag = "") {}
+	static void debug_pause_if(bool p_condition, const String &p_tag = "") {}
+	static void debug_pause_after(int p_hit_count, const String &p_tag = "") {}
+#endif
 
 #ifdef DEBUG_ENABLED
 	void set_debug_collisions_hint(bool p_enabled);

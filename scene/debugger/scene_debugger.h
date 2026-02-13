@@ -72,6 +72,10 @@ private:
 	static void _set_object_property(ObjectID p_id, const String &p_property, const Variant &p_value, const String &p_field = "");
 	static void _send_object_ids(const Vector<ObjectID> &p_ids, bool p_update_selection);
 	static void _next_frame();
+	static void _advance_n_frames_natural(int p_count);
+	static void _step_one_natural();
+	static int _frames_remaining;
+	static void _advance_n_frames_instant(int p_count);
 
 	/// Message handler function for parse_message.
 	typedef Error (*ParseMessageFunc)(const Array &p_args);
@@ -89,6 +93,10 @@ private:
 	static Error _msg_clear_selection(const Array &p_args);
 	static Error _msg_suspend_changed(const Array &p_args);
 	static Error _msg_next_frame(const Array &p_args);
+	static Error _msg_advance_frames(const Array &p_args);
+	static Error _msg_set_debug_pause_enabled(const Array &p_args);
+	static Error _msg_set_debug_pause_tag_enabled(const Array &p_args);
+	static Error _msg_clear_debug_pause_hits(const Array &p_args);
 	static Error _msg_speed_changed(const Array &p_args);
 	static Error _msg_debug_mute_audio(const Array &p_args);
 	static Error _msg_override_cameras(const Array &p_args);
