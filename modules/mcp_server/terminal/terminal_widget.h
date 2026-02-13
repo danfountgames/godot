@@ -67,6 +67,7 @@ private:
 	ScrollContainer *scroll_container = nullptr;
 	int last_scrollback_len = 0;
 	bool stick_to_bottom = true;
+	bool programmatic_scroll = false;
 
 	// Read buffer for PTY polling.
 	static const int READ_BUFFER_SIZE = 65536;
@@ -119,6 +120,7 @@ public:
 	void set_scroll_container(ScrollContainer *p_sc);
 	void scroll_to_bottom();
 	void unstick_from_bottom();
+	bool is_programmatic_scroll() const { return programmatic_scroll; }
 	void update_pty_size();
 
 	virtual Size2 get_minimum_size() const override;

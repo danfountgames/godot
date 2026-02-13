@@ -93,14 +93,23 @@ void TerminalWidget::_notification(int p_what) {
 				}
 			}
 
-			// Track scrollback growth and auto-scroll if stuck to bottom.
+			// Track scrollback growth for minimum size updates.
 			int sb_len = emulator.get_scrollback_length();
 			if (sb_len != last_scrollback_len) {
 				last_scrollback_len = sb_len;
 				update_minimum_size();
 				if (stick_to_bottom) {
+					// Deferred scroll catches post-layout size changes.
 					callable_mp(this, &TerminalWidget::_do_scroll_to_bottom).call_deferred();
 				}
+			}
+
+			// Every frame: push scroll to bottom when stuck.
+			// Cheap no-op when already there; catches content updates,
+			// layout shifts, and resize changes that the scrollback
+			// check above can't cover.
+			if (stick_to_bottom) {
+				_do_scroll_to_bottom();
 			}
 
 			// Update cursor blink.
@@ -644,7 +653,9 @@ void TerminalWidget::unstick_from_bottom() {
 
 void TerminalWidget::_do_scroll_to_bottom() {
 	if (scroll_container) {
+		programmatic_scroll = true;
 		scroll_container->set_v_scroll(INT_MAX);
+		programmatic_scroll = false;
 	}
 }
 

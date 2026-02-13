@@ -222,7 +222,9 @@ void AgentPanel::_on_scroll_changed(double p_value) {
 	ScrollBar *vbar = scroll_container->get_v_scroll_bar();
 	bool at_bottom = vbar->get_value() >= vbar->get_max() - scroll_container->get_size().y - 1;
 	to_bottom_button->set_visible(!at_bottom);
-	if (!at_bottom) {
+
+	// Only unstick on genuine user scrolling, not our own programmatic scrolls.
+	if (!at_bottom && !terminal->is_programmatic_scroll()) {
 		terminal->unstick_from_bottom();
 	}
 }
