@@ -308,16 +308,11 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 // ============================================================================
 
 MCPDebuggerBridge *MCPDebugTools::_get_bridge() {
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (!protocol) {
-		WARN_PRINT("MCP: _get_bridge() failed — MCPProtocol singleton is null.");
-		return nullptr;
+	MCPDebuggerBridge *b = MCPDebuggerBridge::get_singleton();
+	if (!b) {
+		WARN_PRINT("[MCP] MCPDebugTools::_get_bridge() — singleton is null!");
 	}
-	MCPDebuggerBridge *bridge = protocol->get_debugger_bridge();
-	if (!bridge) {
-		WARN_PRINT("MCP: _get_bridge() failed — debugger bridge pointer is null on protocol.");
-	}
-	return bridge;
+	return b;
 }
 
 Dictionary MCPDebugTools::_require_game_running() {
