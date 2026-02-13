@@ -575,11 +575,7 @@ void MCPTestingTools::register_tools(MCPToolRegistry *p_registry) {
 // ============================================================================
 
 MCPDebuggerBridge *MCPTestingTools::_get_bridge() {
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (!protocol) {
-		return nullptr;
-	}
-	return protocol->get_debugger_bridge();
+	return MCPDebuggerBridge::get_singleton();
 }
 
 // ============================================================================
