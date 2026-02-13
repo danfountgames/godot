@@ -284,6 +284,11 @@ public:
 	int get_current_test_run_number() const { return test_run_state.run_number; }
 	void push_test_compile_error(const String &p_file, const Array &p_errors, int p_run_number);
 
+	static MCPDebuggerBridge *get_singleton() { return singleton; }
+
 	MCPDebuggerBridge();
 	~MCPDebuggerBridge();
+
+private:
+	static MCPDebuggerBridge *singleton;
 };

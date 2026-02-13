@@ -43,11 +43,7 @@
 // ============================================================================
 
 MCPDebuggerBridge *MCPSignalTools::_get_bridge() {
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (!protocol) {
-		return nullptr;
-	}
-	return protocol->get_debugger_bridge();
+	return MCPDebuggerBridge::get_singleton();
 }
 
 Dictionary MCPSignalTools::_require_game_running() {
