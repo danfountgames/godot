@@ -58,6 +58,15 @@ Wraps MoltenVK framework substitution in the iOS export plugin behind
 export plugin no longer references MoltenVK at all instead of substituting an
 empty path, which previously caused warnings.
 
+### PR 5 — Git branch name in window title (`feature/git-branch-title`)
+
+3 files, +96
+
+Shows the current git branch name in both the editor and debug game window
+titles as `[branch-name]`. Supports normal repos, detached HEAD (shows short
+SHA), and git worktrees (reads the `gitdir:` pointer from the `.git` file to
+find the actual HEAD).
+
 ---
 
 ## Branch structure
@@ -69,21 +78,28 @@ empty path, which previously caused warnings.
 ├── feature/scroll-container-directional-drag  ← PR-ready, single commit
 ├── feature/basebutton-deadzone         ← PR-ready, single commit
 ├── feature/ios-metal-cleanup           ← PR-ready, single commit
+├── feature/git-branch-title            ← PR-ready
 │
-├── verify/all-prs-combined             ← all 4 features merged, no branding
+├── feature/mcp-server                  ← MCP protocol, debugger bridge, tools
+├── feature/mcp-agent-terminal          ← embedded terminal + multi-tab AI panel
+│
+├── verify/all-prs-combined             ← upstream PRs merged, no branding
 │                                         (compile verification only)
 │
-└── fi-build                            ← all 4 features merged + FI branding
+└── fi-build                            ← everything merged + FI branding
                                           (this branch — production use)
 ```
 
-**`feature/*`** branches each contain a single commit on top of `4.6-stable`.
-They are designed to be submitted as upstream PRs independently.
+**`feature/*`** branches each contain focused changes on top of `4.6-stable`.
+The first four are designed to be submitted as upstream PRs independently.
 
-**`verify/all-prs-combined`** merges all four feature branches with no other
-changes. Exists purely to verify the patches compile and don't conflict.
+**`feature/mcp-server`** and **`feature/mcp-agent-terminal`** are FI-specific
+modules (MCP server for LLM integration, embedded terminal for Claude Code).
 
-**`fi-build`** (this branch) is `verify/all-prs-combined` plus FI branding and
+**`verify/all-prs-combined`** merges upstream-submittable feature branches with
+no other changes. Exists purely to verify the patches compile and don't conflict.
+
+**`fi-build`** (this branch) merges all feature branches plus FI branding and
 build tooling. This is the branch you check out to build and ship with.
 
 ---
