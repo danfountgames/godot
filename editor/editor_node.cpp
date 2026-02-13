@@ -361,8 +361,31 @@ void EditorNode::_version_control_menu_option(int p_idx) {
 String EditorNode::_get_git_branch() {
 	// Read .git/HEAD from the project root to determine the current branch.
 	// Supports both normal refs (ref: refs/heads/branch-name) and detached HEAD (raw SHA).
+	// Also supports git worktrees where .git is a file containing "gitdir: <path>".
 	String project_root = ProjectSettings::get_singleton()->get_resource_path();
-	String git_head_path = project_root.path_join(".git").path_join("HEAD");
+	String git_path = project_root.path_join(".git");
+	String git_head_path;
+
+	if (DirAccess::dir_exists_absolute(git_path)) {
+		// Normal repo: .git is a directory.
+		git_head_path = git_path.path_join("HEAD");
+	} else {
+		// Worktree: .git is a file containing "gitdir: <path>".
+		Ref<FileAccess> gf = FileAccess::open(git_path, FileAccess::READ);
+		if (gf.is_null()) {
+			return String();
+		}
+		String gitdir_line = gf->get_line().strip_edges();
+		if (gitdir_line.begins_with("gitdir: ")) {
+			String gitdir = gitdir_line.substr(8);
+			if (gitdir.is_relative_path()) {
+				gitdir = project_root.path_join(gitdir);
+			}
+			git_head_path = gitdir.path_join("HEAD");
+		} else {
+			return String();
+		}
+	}
 
 	Ref<FileAccess> f = FileAccess::open(git_head_path, FileAccess::READ);
 	if (f.is_null()) {

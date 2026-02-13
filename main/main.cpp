@@ -4534,21 +4534,43 @@ int Main::start() {
 			appname = TranslationServer::get_singleton()->translate(appname);
 
 			// Append git branch name if inside a git repository.
+			// Supports worktrees where .git is a file containing "gitdir: <path>".
 			{
-				String git_head_path = ProjectSettings::get_singleton()->get_resource_path().path_join(".git/HEAD");
-				Ref<FileAccess> git_f = FileAccess::open(git_head_path, FileAccess::READ);
-				if (git_f.is_valid()) {
-					String head = git_f->get_line().strip_edges();
-					String branch;
-					if (head.begins_with("ref: refs/heads/")) {
-						branch = head.substr(16);
-					} else if (head.begins_with("ref: ")) {
-						branch = head.substr(5);
-					} else if (head.length() >= 7) {
-						branch = head.substr(0, 7);
+				String project_root = ProjectSettings::get_singleton()->get_resource_path();
+				String git_path = project_root.path_join(".git");
+				String git_head_path;
+
+				if (DirAccess::dir_exists_absolute(git_path)) {
+					git_head_path = git_path.path_join("HEAD");
+				} else {
+					Ref<FileAccess> gf = FileAccess::open(git_path, FileAccess::READ);
+					if (gf.is_valid()) {
+						String gitdir_line = gf->get_line().strip_edges();
+						if (gitdir_line.begins_with("gitdir: ")) {
+							String gitdir = gitdir_line.substr(8);
+							if (gitdir.is_relative_path()) {
+								gitdir = project_root.path_join(gitdir);
+							}
+							git_head_path = gitdir.path_join("HEAD");
+						}
 					}
-					if (!branch.is_empty()) {
-						appname = vformat("%s [%s]", appname, branch);
+				}
+
+				if (!git_head_path.is_empty()) {
+					Ref<FileAccess> git_f = FileAccess::open(git_head_path, FileAccess::READ);
+					if (git_f.is_valid()) {
+						String head = git_f->get_line().strip_edges();
+						String branch;
+						if (head.begins_with("ref: refs/heads/")) {
+							branch = head.substr(16);
+						} else if (head.begins_with("ref: ")) {
+							branch = head.substr(5);
+						} else if (head.length() >= 7) {
+							branch = head.substr(0, 7);
+						}
+						if (!branch.is_empty()) {
+							appname = vformat("%s [%s]", appname, branch);
+						}
 					}
 				}
 			}
