@@ -42,7 +42,6 @@
 #include "tools/mcp_debug_tools.h"
 #include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
-#include "tools/mcp_editor_nav_tools.h"
 #include "tools/mcp_export_tools.h"
 #include "tools/mcp_input_tools.h"
 #include "tools/mcp_memory_tools.h"
@@ -108,7 +107,6 @@ MCPProtocol::MCPProtocol() {
 	MCPDocTools::register_tools(&tool_registry);
 	MCPSceneTools::register_tools(&tool_registry);
 	MCPTimingTools::register_tools(&tool_registry);
-	MCPEditorNavTools::register_tools(&tool_registry);
 	MCPExportTools::register_tools(&tool_registry);
 	MCPMemoryTools::register_tools(&tool_registry);
 	MCPAnalysisTools::register_tools(&tool_registry);
