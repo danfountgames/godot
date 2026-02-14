@@ -43,10 +43,6 @@ public:
 private:
 	// Tool handlers -- each takes a Dictionary of arguments and returns
 	// an MCP tool result Dictionary.
-	static Dictionary handle_focus_node(const Dictionary &p_args);
-	static Dictionary handle_focus_script(const Dictionary &p_args);
-	static Dictionary handle_switch_tab(const Dictionary &p_args);
-	static Dictionary handle_open_scene(const Dictionary &p_args);
 	static Dictionary handle_get_open_scenes(const Dictionary &p_args);
 	static Dictionary handle_get_open_scripts(const Dictionary &p_args);
 };
