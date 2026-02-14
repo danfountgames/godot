@@ -38,7 +38,7 @@ class MCPToolRegistry;
 
 class MCPEditorTools {
 public:
-	// Register all 6 editor/project tools into the registry.
+	// Register all editor/project tools into the registry.
 	static void register_tools(MCPToolRegistry *p_registry);
 
 	// Tool handlers -- each takes a Dictionary of arguments and returns
@@ -49,9 +49,21 @@ public:
 	static Dictionary handle_scan_filesystem(const Dictionary &p_args);
 	static Dictionary handle_get_uid(const Dictionary &p_args);
 	static Dictionary handle_resolve_uid(const Dictionary &p_args);
+	static Dictionary handle_execute_script(const Dictionary &p_args);
+	static Dictionary handle_get_editor_screenshot(const Dictionary &p_args);
 
 private:
 	// Helper: recursively list files from a DirAccess.
 	static void _list_files_recursive(const String &p_dir,
 			const String &p_extension, Vector<String> &r_files);
+
+	// Helper: clean up the MCP temp directory.
+	static void _cleanup_mcp_temp();
+
+	// Main-thread deferred helpers for thread-safe tool execution.
+	// These are called via call_deferred when the tool handler runs on
+	// the poll thread (threaded mode). They store results in the static
+	// _deferred_result and post _deferred_semaphore when complete.
+	static void _do_execute_script_main(const String &p_full_script);
+	static void _do_get_screenshot_main();
 };

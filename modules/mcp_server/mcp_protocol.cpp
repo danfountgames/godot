@@ -36,13 +36,16 @@
 #include "mcp_progress.h"
 #include "mcp_tool_registry.h"
 #include "mcp_types.h"
+#include "tools/mcp_analysis_tools.h"
 #include "tools/mcp_automation_tools.h"
 #include "tools/mcp_breakpoint_tools.h"
 #include "tools/mcp_debug_tools.h"
 #include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
 #include "tools/mcp_editor_nav_tools.h"
+#include "tools/mcp_export_tools.h"
 #include "tools/mcp_input_tools.h"
+#include "tools/mcp_memory_tools.h"
 #include "tools/mcp_scene_tools.h"
 #include "tools/mcp_signal_tools.h"
 #include "tools/mcp_testing_tools.h"
@@ -106,6 +109,9 @@ MCPProtocol::MCPProtocol() {
 	MCPSceneTools::register_tools(&tool_registry);
 	MCPTimingTools::register_tools(&tool_registry);
 	MCPEditorNavTools::register_tools(&tool_registry);
+	MCPExportTools::register_tools(&tool_registry);
+	MCPMemoryTools::register_tools(&tool_registry);
+	MCPAnalysisTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",

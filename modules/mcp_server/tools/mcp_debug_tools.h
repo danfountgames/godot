@@ -65,6 +65,9 @@ public:
 	// --- Category H: Session Summary ---
 	static Dictionary handle_session_summary(const Dictionary &p_args);
 
+	// --- Buffer Management ---
+	static Dictionary handle_clear_output(const Dictionary &p_args);
+
 private:
 	// Helper: get the MCPDebuggerBridge pointer, or return nullptr.
 	static class MCPDebuggerBridge *_get_bridge();

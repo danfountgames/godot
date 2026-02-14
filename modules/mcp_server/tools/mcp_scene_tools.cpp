@@ -37,6 +37,7 @@
 #include "core/object/class_db.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "scene/gui/control.h"
 #include "scene/main/node.h"
 #include "scene/resources/packed_scene.h"
 
@@ -1614,6 +1615,119 @@ Dictionary MCPSceneTools::handle_save(const Dictionary &p_args) {
 }
 
 // ============================================================================
+// Anchor Preset Lookup Table
+// ============================================================================
+
+// Vector4 = (anchor_left, anchor_top, anchor_right, anchor_bottom)
+static HashMap<String, Vector4> _build_anchor_presets() {
+	HashMap<String, Vector4> presets;
+	presets["top_left"] = Vector4(0, 0, 0, 0);
+	presets["top_right"] = Vector4(1, 0, 1, 0);
+	presets["bottom_left"] = Vector4(0, 1, 0, 1);
+	presets["bottom_right"] = Vector4(1, 1, 1, 1);
+	presets["center"] = Vector4(0.5, 0.5, 0.5, 0.5);
+	presets["center_left"] = Vector4(0, 0.5, 0, 0.5);
+	presets["center_right"] = Vector4(1, 0.5, 1, 0.5);
+	presets["center_top"] = Vector4(0.5, 0, 0.5, 0);
+	presets["center_bottom"] = Vector4(0.5, 1, 0.5, 1);
+	presets["left_wide"] = Vector4(0, 0, 0, 1);
+	presets["right_wide"] = Vector4(1, 0, 1, 1);
+	presets["top_wide"] = Vector4(0, 0, 1, 0);
+	presets["bottom_wide"] = Vector4(0, 1, 1, 1);
+	presets["full_rect"] = Vector4(0, 0, 1, 1);
+	presets["vcenter_wide"] = Vector4(0.5, 0, 0.5, 1);
+	presets["hcenter_wide"] = Vector4(0, 0.5, 1, 0.5);
+	return presets;
+}
+
+static const HashMap<String, Vector4> &_get_anchor_presets() {
+	static HashMap<String, Vector4> presets = _build_anchor_presets();
+	return presets;
+}
+
+// ============================================================================
+// Tool: scene/set_anchor_preset
+// ============================================================================
+
+Dictionary MCPSceneTools::handle_set_anchor_preset(const Dictionary &p_args) {
+	String node_path = String(p_args.get("node_path", "")).strip_edges();
+	String preset = ((String)p_args.get("preset", "")).strip_edges().to_lower();
+
+	if (node_path.is_empty()) {
+		return make_tool_error("Missing required parameter: node_path");
+	}
+	if (preset.is_empty()) {
+		return make_tool_error("Missing required parameter: preset");
+	}
+
+	const HashMap<String, Vector4> &presets = _get_anchor_presets();
+	if (!presets.has(preset)) {
+		return make_tool_error(
+				"Unknown anchor preset: '" + preset + "'\n\n"
+				"Available presets: top_left, top_right, bottom_left, bottom_right, "
+				"center, center_left, center_right, center_top, center_bottom, "
+				"left_wide, right_wide, top_wide, bottom_wide, full_rect, "
+				"vcenter_wide, hcenter_wide");
+	}
+
+	Vector4 anchors = presets[preset];
+
+	// Get scene root and find node.
+	Node *root = _get_scene_root();
+	if (!root) {
+		return make_tool_error("No scene is currently open in the editor.");
+	}
+
+	Node *node = _find_node(node_path);
+	if (!node) {
+		return make_tool_error(vformat(
+				"Node not found: '%s'\n\n"
+				"Path must be relative to the scene root ('%s'). "
+				"Use scene/browse_tree to discover valid node paths.",
+				node_path, String(root->get_name())));
+	}
+
+	Control *control = Object::cast_to<Control>(node);
+	if (!control) {
+		return make_tool_error(vformat(
+				"Node is not a Control: '%s' (type: %s)\n\n"
+				"Anchor presets can only be applied to Control-derived nodes.",
+				node_path, node->get_class()));
+	}
+
+	// Use UndoRedo for editor-undoable operation.
+	EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+	if (!undo_redo) {
+		return make_tool_error("EditorUndoRedoManager not available.");
+	}
+
+	undo_redo->create_action("Set Anchor Preset: " + preset);
+	undo_redo->add_do_property(control, "anchor_left", anchors.x);
+	undo_redo->add_do_property(control, "anchor_top", anchors.y);
+	undo_redo->add_do_property(control, "anchor_right", anchors.z);
+	undo_redo->add_do_property(control, "anchor_bottom", anchors.w);
+	undo_redo->add_undo_property(control, "anchor_left", control->get_anchor(SIDE_LEFT));
+	undo_redo->add_undo_property(control, "anchor_top", control->get_anchor(SIDE_TOP));
+	undo_redo->add_undo_property(control, "anchor_right", control->get_anchor(SIDE_RIGHT));
+	undo_redo->add_undo_property(control, "anchor_bottom", control->get_anchor(SIDE_BOTTOM));
+	undo_redo->commit_action();
+
+	String text = "Set anchor preset '" + preset + "' on " + node_path + "\n"
+			"Anchors: left=" + String::num(anchors.x) + " top=" + String::num(anchors.y) +
+			" right=" + String::num(anchors.z) + " bottom=" + String::num(anchors.w);
+
+	Dictionary structured;
+	structured["node_path"] = node_path;
+	structured["preset"] = preset;
+	structured["anchor_left"] = anchors.x;
+	structured["anchor_top"] = anchors.y;
+	structured["anchor_right"] = anchors.z;
+	structured["anchor_bottom"] = anchors.w;
+
+	return make_tool_result(text, structured);
+}
+
+// ============================================================================
 // Tool Registration
 // ============================================================================
 
@@ -1911,5 +2025,28 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPSceneTools::handle_save));
+	}
+
+	// ---- scene/set_anchor_preset ----
+	{
+		Dictionary props;
+		props["node_path"] = make_prop("string", "Path to the Control node relative to the scene root.");
+		props["preset"] = make_prop("string",
+				"Anchor preset name: top_left, top_right, bottom_left, bottom_right, "
+				"center, center_left, center_right, center_top, center_bottom, "
+				"left_wide, right_wide, top_wide, bottom_wide, full_rect, "
+				"vcenter_wide, hcenter_wide");
+		Array required;
+		required.push_back("node_path");
+		required.push_back("preset");
+		p_registry->register_tool(
+				"scene/set_anchor_preset", "Set Anchor Preset",
+				"Set the anchor of a Control node using a named preset. Presets set "
+				"all four anchor values (left, top, right, bottom) at once. Commonly "
+				"used presets: 'full_rect' (fills parent), 'center' (centered point), "
+				"'top_wide' (top edge, full width). Uses undo/redo.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
+				callable_mp_static(&MCPSceneTools::handle_set_anchor_preset));
 	}
 }

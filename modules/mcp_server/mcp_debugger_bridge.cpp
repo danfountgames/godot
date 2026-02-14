@@ -107,9 +107,13 @@ uint64_t OutputRingBuffer::latest_seq() const {
 
 void OutputRingBuffer::clear() {
 	MutexLock lock(mutex);
+	entries.clear();
+	entries.resize(CAPACITY);
 	write_pos = 0;
 	count = 0;
-	next_seq = 1;
+	// Keep next_seq monotonic -- don't reset! This way cursors held by
+	// clients become "expired" gracefully and won't see stale data.
+	// next_seq stays at its current value.
 }
 
 // ========================================================================
@@ -716,6 +720,14 @@ uint64_t MCPDebuggerBridge::get_output_latest_seq() const {
 
 uint64_t MCPDebuggerBridge::get_error_latest_seq() const {
 	return error_buffer.latest_seq();
+}
+
+void MCPDebuggerBridge::clear_output_buffer() {
+	output_buffer.clear();
+}
+
+void MCPDebuggerBridge::clear_error_buffer() {
+	error_buffer.clear();
 }
 
 // ------------------------------------------------------------------------

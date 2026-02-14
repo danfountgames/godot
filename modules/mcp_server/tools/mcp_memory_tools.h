@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_scene_tools.h                                                     */
+/*  mcp_memory_tools.h                                                    */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,41 +30,46 @@
 
 #pragma once
 
-#include "core/object/class_db.h"
 #include "core/string/ustring.h"
 #include "core/templates/hash_map.h"
-#include "core/templates/vector.h"
-#include "core/variant/array.h"
 #include "core/variant/dictionary.h"
 
 class MCPToolRegistry;
-class Node;
 
-class MCPSceneTools {
+class MCPMemoryTools {
 public:
+	// Register all 7 memory profiling tools into the registry.
 	static void register_tools(MCPToolRegistry *p_registry);
 
-private:
-	// Tool handlers.
-	static Dictionary handle_browse_tree(const Dictionary &p_args);
-	static Dictionary handle_set_property(const Dictionary &p_args);
-	static Dictionary handle_add_node(const Dictionary &p_args);
-	static Dictionary handle_remove_node(const Dictionary &p_args);
-	static Dictionary handle_rename_node(const Dictionary &p_args);
-	static Dictionary handle_move_node(const Dictionary &p_args);
-	static Dictionary handle_duplicate_node(const Dictionary &p_args);
-	static Dictionary handle_instance_scene(const Dictionary &p_args);
-	static Dictionary handle_connect_signal(const Dictionary &p_args);
-	static Dictionary handle_disconnect_signal(const Dictionary &p_args);
-	static Dictionary handle_attach_script(const Dictionary &p_args);
-	static Dictionary handle_save(const Dictionary &p_args);
-	static Dictionary handle_set_anchor_preset(const Dictionary &p_args);
+	// Tool handlers -- each takes a Dictionary of arguments and returns
+	// an MCP tool result Dictionary.
+	static Dictionary handle_get_stats(const Dictionary &p_args);
+	static Dictionary handle_get_orphans(const Dictionary &p_args);
+	static Dictionary handle_take_snapshot(const Dictionary &p_args);
+	static Dictionary handle_diff(const Dictionary &p_args);
+	static Dictionary handle_track_trend(const Dictionary &p_args);
+	static Dictionary handle_detect_leaks(const Dictionary &p_args);
+	static Dictionary handle_class_breakdown(const Dictionary &p_args);
 
-	// Helpers.
-	static void _format_tree_recursive(Node *p_node, String &r_text, Dictionary &r_structured,
-			const String &p_prefix, bool p_is_last, int p_depth, int p_max_depth);
-	static Dictionary _build_node_detail(Node *p_node, const String &p_categories, bool p_include_defaults);
-	static Variant _coerce_json_to_variant(const Variant &p_json_value, Variant::Type p_target_type);
-	static Node *_get_scene_root();
-	static Node *_find_node(const String &p_path);
+private:
+	// Helper: get the MCPDebuggerBridge pointer, or return nullptr.
+	static class MCPDebuggerBridge *_get_bridge();
+
+	// Helper: check game is running, return error dict if not.
+	// Returns empty Dictionary if game IS running (meaning: proceed).
+	static Dictionary _require_game_running();
+
+	// Snapshot storage: in-memory snapshots keyed by label.
+	static HashMap<String, Dictionary> snapshot_store;
+
+	// Helper: collect a performance snapshot (reusable across tools).
+	// Returns a Dictionary with all performance counters, or an error dict.
+	static Dictionary _collect_snapshot();
+
+	// Helper: compute diff between two snapshot Dictionaries.
+	// Returns a structured diff with deltas and warnings.
+	static Dictionary _compute_diff(const Dictionary &p_snapshot_a, const Dictionary &p_snapshot_b);
+
+	// Helper: generate automated warnings from a diff.
+	static Array _generate_warnings(const Dictionary &p_diff);
 };

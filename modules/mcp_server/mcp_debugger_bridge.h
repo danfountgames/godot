@@ -234,6 +234,8 @@ public:
 	Vector<OutputEntry> get_errors_since(uint64_t p_cursor, int p_limit = 200) const;
 	uint64_t get_output_latest_seq() const;
 	uint64_t get_error_latest_seq() const;
+	void clear_output_buffer();
+	void clear_error_buffer();
 
 	// --- Async Request Methods (block calling thread, called from MCP HTTP threads) ---
 	Dictionary request_scene_tree(int p_timeout_msec = 10000);

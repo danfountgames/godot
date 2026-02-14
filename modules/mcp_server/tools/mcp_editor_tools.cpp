@@ -37,12 +37,41 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/crypto/crypto_core.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_uid.h"
+#include "core/os/semaphore.h"
+#include "core/os/thread.h"
 #include "core/variant/variant.h"
+#include "editor/editor_node.h"
 #include "editor/file_system/editor_file_system.h"
+#include "editor/script/editor_script.h"
+#include "scene/main/viewport.h"
+#include "scene/main/window.h"
+
+// ============================================================================
+// Deferred Execution Infrastructure
+// ============================================================================
+//
+// MCP tool handlers may run on a background poll thread (when use_thread=true
+// in editor settings). Certain operations (GDScript execution, viewport
+// capture) require the main thread. These statics provide a simple hand-off:
+//
+//   1. Poll thread stores args, then call_deferred() the _do_*_main helper.
+//   2. Poll thread blocks on _deferred_semaphore.wait().
+//   3. Main thread executes the helper, stores result in _deferred_result,
+//      posts the semaphore.
+//   4. Poll thread wakes up and returns _deferred_result.
+//
+// This is safe because the poll thread processes requests one at a time,
+// so only one deferred operation can be in flight at once.
+// When use_thread=false, the handler already runs on the main thread and
+// calls the implementation directly (no semaphore/deferred).
+
+static Semaphore _deferred_semaphore;
+static Dictionary _deferred_result;
 
 // ============================================================================
 // Tool Registration
@@ -161,6 +190,45 @@ void MCPEditorTools::register_tools(MCPToolRegistry *p_registry) {
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPEditorTools::handle_resolve_uid));
+	}
+
+	// ---- editor/execute_script ----
+	{
+		Dictionary props;
+		props["code"] = make_prop("string",
+				"GDScript code to execute as a @tool script in the editor. "
+				"Has access to EditorInterface, the edited scene, and all editor APIs. "
+				"The code runs in the editor process, NOT in the running game. "
+				"Use runtime/evaluate for game-side evaluation.");
+		Array required;
+		required.push_back("code");
+		p_registry->register_tool(
+				"editor/execute_script", "Execute Editor Script",
+				"Run a GDScript code snippet in the editor context. The script runs as a "
+				"@tool script with full access to EditorInterface, EditorFileSystem, the "
+				"scene tree, and all editor APIs. Use this for batch operations, custom "
+				"import logic, or anything that needs editor-side access.\n\n"
+				"SAFETY: The code runs with full editor permissions. Avoid destructive "
+				"operations without confirmation.\n\n"
+				"Example: 'var ei = EditorInterface.get_singleton()\\n"
+				"print(ei.get_edited_scene_root().get_children())'",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/true, /*idempotent=*/false),
+				callable_mp_static(&MCPEditorTools::handle_execute_script));
+	}
+
+	// ---- editor/get_screenshot ----
+	{
+		Dictionary props;
+		Array required;
+		p_registry->register_tool(
+				"editor/get_screenshot", "Get Editor Screenshot",
+				"Capture the Godot editor window as a PNG image. Shows the current state "
+				"of the editor including open panels, scene tree, inspector, and any "
+				"visible errors. Use runtime/get_screenshot for the running game viewport.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPEditorTools::handle_get_editor_screenshot));
 	}
 }
 
@@ -642,5 +710,232 @@ Dictionary MCPEditorTools::handle_resolve_uid(const Dictionary &p_args) {
 	structured["path"] = resolved_path;
 
 	return make_tool_result(text, structured);
+}
+
+// ============================================================================
+// Helper: _cleanup_mcp_temp
+// ============================================================================
+
+void MCPEditorTools::_cleanup_mcp_temp() {
+	String temp_dir = "res://addons/mcp_temp";
+	Ref<DirAccess> da = DirAccess::open(temp_dir);
+	if (da.is_valid()) {
+		da->list_dir_begin();
+		String item = da->get_next();
+		while (!item.is_empty()) {
+			if (!da->current_is_dir()) {
+				da->remove(item);
+			}
+			item = da->get_next();
+		}
+		da->list_dir_end();
+	}
+	// Try to remove the directory itself (will only succeed if empty).
+	Ref<DirAccess> parent = DirAccess::open("res://addons");
+	if (parent.is_valid()) {
+		parent->remove("mcp_temp");
+	}
+}
+
+// ============================================================================
+// Tool: editor/execute_script
+// ============================================================================
+
+// Deferred wrapper: called on main thread via call_deferred.
+// Runs the implementation, stores result, and posts the semaphore so the
+// blocked poll thread can continue.
+void MCPEditorTools::_do_execute_script_main(const String &p_full_script) {
+	// Write to temporary file.
+	String temp_path = "res://addons/mcp_temp/editor_script.gd";
+	{
+		Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+		if (da.is_valid()) {
+			da->make_dir_recursive("res://addons/mcp_temp");
+		}
+	}
+	{
+		Ref<FileAccess> fa = FileAccess::open(temp_path, FileAccess::WRITE);
+		if (fa.is_null()) {
+			_deferred_result = make_tool_error("Failed to write temp script file.");
+			_deferred_semaphore.post();
+			return;
+		}
+		fa->store_string(p_full_script);
+	}
+
+	// Load and execute.
+	Ref<Script> script = ResourceLoader::load(temp_path, "GDScript", ResourceFormatLoader::CACHE_MODE_IGNORE);
+	if (script.is_null()) {
+		_cleanup_mcp_temp();
+		_deferred_result = make_tool_error(
+				"Failed to load editor script. Check for syntax errors.\n\n"
+				"Script contents:\n" + p_full_script);
+		_deferred_semaphore.post();
+		return;
+	}
+
+	// Instantiate EditorScript and set its script.
+	Ref<EditorScript> es;
+	es.instantiate();
+	es->set_script(script);
+
+	// Run the script. This calls the virtual _run() method via GDScript.
+	es->run();
+
+	// Cleanup.
+	_cleanup_mcp_temp();
+
+	int code_lines = p_full_script.split("\n").size() - 4; // Subtract wrapper lines.
+	Dictionary structured;
+	structured["executed"] = true;
+	structured["code_lines"] = code_lines;
+
+	_deferred_result = make_tool_result("Editor script executed successfully.", structured);
+	_deferred_semaphore.post();
+}
+
+Dictionary MCPEditorTools::handle_execute_script(const Dictionary &p_args) {
+	String code = p_args.get("code", "");
+	if (code.is_empty()) {
+		return make_tool_error("Missing required parameter: code");
+	}
+
+	// Wrap the code in an EditorScript class.
+	String full_script = "@tool\nextends EditorScript\n\nfunc _run():\n";
+
+	// Indent user code.
+	Vector<String> lines = code.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		full_script += "\t" + lines[i] + "\n";
+	}
+
+	if (Thread::is_main_thread()) {
+		// Non-threaded mode: handler is already on the main thread.
+		// Call the deferred helper directly -- it will post the semaphore,
+		// which we immediately consume so it doesn't leak.
+		_do_execute_script_main(full_script);
+		_deferred_semaphore.wait(); // Consume the post() from above.
+		return _deferred_result;
+	}
+
+	// Threaded mode: defer to main thread and wait.
+	// GDScript execution and EditorScript::run() require the main thread
+	// for safe access to the scene tree, editor UI, and GDScript VM state.
+	callable_mp_static(&MCPEditorTools::_do_execute_script_main)
+			.call_deferred(full_script);
+	_deferred_semaphore.wait();
+	return _deferred_result;
+}
+
+// ============================================================================
+// Tool: editor/get_screenshot
+// ============================================================================
+
+// Main-thread implementation: captures viewport, encodes as base64 PNG.
+// Stores result in _deferred_result and posts _deferred_semaphore.
+void MCPEditorTools::_do_get_screenshot_main() {
+	// Get the editor's main window.
+	EditorNode *editor_node = EditorNode::get_singleton();
+	if (!editor_node) {
+		_deferred_result = make_tool_error("EditorNode not available.");
+		_deferred_semaphore.post();
+		return;
+	}
+
+	Window *main_window = editor_node->get_window();
+	if (!main_window) {
+		_deferred_result = make_tool_error("Editor window not available.");
+		_deferred_semaphore.post();
+		return;
+	}
+
+	Viewport *vp = main_window->get_viewport();
+	if (!vp) {
+		_deferred_result = make_tool_error("Editor viewport not available.");
+		_deferred_semaphore.post();
+		return;
+	}
+
+	// Capture the viewport texture.
+	Ref<ViewportTexture> tex = vp->get_texture();
+	if (tex.is_null()) {
+		_deferred_result = make_tool_error("Failed to get editor viewport texture.");
+		_deferred_semaphore.post();
+		return;
+	}
+
+	Ref<Image> img = tex->get_image();
+	if (img.is_null() || img->is_empty()) {
+		_deferred_result = make_tool_error(
+				"Failed to capture editor screenshot.\n\n"
+				"The viewport image may not be ready. Try again in a moment.");
+		_deferred_semaphore.post();
+		return;
+	}
+
+	// Encode as PNG.
+	PackedByteArray png_data = img->save_png_to_buffer();
+	if (png_data.is_empty()) {
+		_deferred_result = make_tool_error("Failed to encode editor screenshot as PNG.");
+		_deferred_semaphore.post();
+		return;
+	}
+
+	// Encode as base64.
+	String base64 = CryptoCore::b64_encode_str(png_data.ptr(), png_data.size());
+
+	int width = img->get_width();
+	int height = img->get_height();
+	int data_size = png_data.size();
+	double size_kb = (double)data_size / 1024.0;
+
+	// Build response with both text and image content blocks.
+	Dictionary text_content;
+	text_content["type"] = "text";
+	text_content["text"] = "Editor screenshot captured (" +
+			itos(width) + "x" + itos(height) + ", " +
+			String::num(size_kb, 1) + " KB PNG)";
+
+	Dictionary image_content;
+	image_content["type"] = "image";
+	image_content["data"] = base64;
+	image_content["mimeType"] = "image/png";
+
+	Array content;
+	content.push_back(text_content);
+	content.push_back(image_content);
+
+	Dictionary structured;
+	structured["width"] = width;
+	structured["height"] = height;
+	structured["format"] = "png";
+	structured["size_bytes"] = data_size;
+
+	Dictionary response;
+	response["content"] = content;
+	response["structuredContent"] = structured;
+
+	_deferred_result = response;
+	_deferred_semaphore.post();
+}
+
+Dictionary MCPEditorTools::handle_get_editor_screenshot(const Dictionary &p_args) {
+	if (Thread::is_main_thread()) {
+		// Non-threaded mode: handler is already on the main thread.
+		// Call the deferred helper directly -- it will post the semaphore,
+		// which we immediately consume so it doesn't leak.
+		_do_get_screenshot_main();
+		_deferred_semaphore.wait(); // Consume the post() from above.
+		return _deferred_result;
+	}
+
+	// Threaded mode: defer viewport capture to main thread and wait.
+	// Viewport texture readback (RS::texture_2d_get) and window/viewport
+	// access are safest on the main thread where the rendering state is
+	// consistent.
+	callable_mp_static(&MCPEditorTools::_do_get_screenshot_main)
+			.call_deferred();
+	_deferred_semaphore.wait();
+	return _deferred_result;
 }
 

@@ -37,7 +37,7 @@ class MCPToolRegistry;
 
 class MCPEditorNavTools {
 public:
-	// Register all 5 editor navigation tools into the registry.
+	// Register all editor navigation tools into the registry.
 	static void register_tools(MCPToolRegistry *p_registry);
 
 private:
@@ -48,4 +48,5 @@ private:
 	static Dictionary handle_switch_tab(const Dictionary &p_args);
 	static Dictionary handle_open_scene(const Dictionary &p_args);
 	static Dictionary handle_get_open_scenes(const Dictionary &p_args);
+	static Dictionary handle_get_open_scripts(const Dictionary &p_args);
 };

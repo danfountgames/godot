@@ -313,6 +313,25 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPDebugTools::handle_session_summary));
 	}
+
+	// --- Buffer Management ---
+
+	// runtime/clear_output
+	{
+		Dictionary props;
+		props["target"] = make_prop("string",
+				"What to clear: 'output', 'errors', or 'all' (default: 'all')");
+		Array required;
+		p_registry->register_tool(
+				"runtime/clear_output", "Clear Output",
+				"Clear the output and/or error buffers. Use before performing an action "
+				"to establish a clean baseline, then check runtime/get_output to see only "
+				"the new output. Does not affect the running game — only clears the MCP "
+				"server's captured buffer.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
+				callable_mp_static(&MCPDebugTools::handle_clear_output));
+	}
 }
 
 // ============================================================================
@@ -1667,6 +1686,32 @@ String MCPDebugTools::_browse_node_to_text(const Dictionary &p_node,
 	}
 
 	return line;
+}
+
+// ============================================================================
+// Buffer Management
+// ============================================================================
+
+Dictionary MCPDebugTools::handle_clear_output(const Dictionary &p_args) {
+	MCPDebuggerBridge *bridge = _get_bridge();
+	ERR_FAIL_NULL_V(bridge, make_tool_error("Debugger bridge not available."));
+
+	String target = ((String)p_args.get("target", "all")).to_lower();
+
+	if (target != "output" && target != "errors" && target != "all") {
+		return make_tool_error(
+				"Invalid target: '" + target + "'\n\n"
+				"Valid values: 'output', 'errors', 'all'");
+	}
+
+	if (target == "output" || target == "all") {
+		bridge->clear_output_buffer();
+	}
+	if (target == "errors" || target == "all") {
+		bridge->clear_error_buffer();
+	}
+
+	return make_tool_result("Cleared " + target + " buffer(s).");
 }
 
 // ============================================================================
