@@ -46,6 +46,7 @@
 #include "tools/mcp_input_tools.h"
 #include "tools/mcp_memory_tools.h"
 #include "tools/mcp_scene_tools.h"
+#include "tools/mcp_shader_tools.h"
 #include "tools/mcp_signal_tools.h"
 #include "tools/mcp_testing_tools.h"
 #include "tools/mcp_timing_tools.h"
@@ -110,6 +111,7 @@ MCPProtocol::MCPProtocol() {
 	MCPExportTools::register_tools(&tool_registry);
 	MCPMemoryTools::register_tools(&tool_registry);
 	MCPAnalysisTools::register_tools(&tool_registry);
+	MCPShaderTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
