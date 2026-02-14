@@ -39,6 +39,17 @@
 #include "scene/theme/theme_db.h"
 #include "servers/rendering/rendering_server.h"
 
+const DebugConsoleRenderer::QuickCommand DebugConsoleRenderer::quick_commands[QUICK_COMMAND_COUNT] = {
+	{ "help", "help" },
+	{ "ls", "ls" },
+	{ "list", "list" },
+	{ "pause", "pause" },
+	{ "resume", "resume" },
+	{ "clear", "clear" },
+	{ "ui pages", "ui pages" },
+	{ "ui where", "ui where" },
+};
+
 DebugConsoleRenderer::DebugConsoleRenderer() {
 }
 
@@ -68,6 +79,15 @@ DebugConsoleRenderer::~DebugConsoleRenderer() {
 	}
 	if (canvas_item_watches.is_valid()) {
 		rs->free_rid(canvas_item_watches);
+	}
+	if (canvas_item_quick_buttons.is_valid()) {
+		rs->free_rid(canvas_item_quick_buttons);
+	}
+	if (canvas_item_history_pills.is_valid()) {
+		rs->free_rid(canvas_item_history_pills);
+	}
+	if (canvas_item_popup.is_valid()) {
+		rs->free_rid(canvas_item_popup);
 	}
 }
 
@@ -114,6 +134,15 @@ void DebugConsoleRenderer::_ensure_initialized() {
 	canvas_item_watches = rs->canvas_item_create();
 	rs->canvas_item_set_parent(canvas_item_watches, canvas);
 
+	canvas_item_quick_buttons = rs->canvas_item_create();
+	rs->canvas_item_set_parent(canvas_item_quick_buttons, canvas);
+
+	canvas_item_history_pills = rs->canvas_item_create();
+	rs->canvas_item_set_parent(canvas_item_history_pills, canvas);
+
+	canvas_item_popup = rs->canvas_item_create();
+	rs->canvas_item_set_parent(canvas_item_popup, canvas);
+
 	_initialized = true;
 }
 
@@ -139,6 +168,30 @@ float DebugConsoleRenderer::_get_text_width(const String &p_text, int p_font_siz
 	return font->get_string_size(p_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x;
 }
 
+void DebugConsoleRenderer::_draw_pill(RID p_canvas_item, const Rect2 &p_rect,
+		const Color &p_bg_color, const String &p_text,
+		const Color &p_text_color, int p_font_size) {
+	_draw_rect(p_canvas_item, p_rect, p_bg_color);
+
+	int size = (p_font_size > 0) ? p_font_size : font_size;
+	float text_y = p_rect.position.y + p_rect.size.y - 7.0f;
+	float text_x = p_rect.position.x + pill_padding_h;
+	_draw_text(p_canvas_item, Vector2(text_x, text_y), p_text, p_text_color, size);
+}
+
+DebugConsoleRenderer::HitAction DebugConsoleRenderer::hit_test(
+		const Vector2 &p_position, int &r_payload) const {
+	// Iterate in reverse so elements drawn on top are tested first.
+	for (int i = _hit_rects.size() - 1; i >= 0; i--) {
+		if (_hit_rects[i].rect.has_point(p_position)) {
+			r_payload = _hit_rects[i].payload;
+			return _hit_rects[i].action;
+		}
+	}
+	r_payload = 0;
+	return HitAction::NONE;
+}
+
 // =============================================================================
 // Main draw
 // =============================================================================
@@ -151,12 +204,15 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 
 	RenderingServer *rs = RenderingServer::get_singleton();
 
-	// Clear all canvas items.
+	// Clear all canvas items and hit-test rects.
 	rs->canvas_item_clear(canvas_item_bg);
 	rs->canvas_item_clear(canvas_item_text);
 	rs->canvas_item_clear(canvas_item_input);
 	rs->canvas_item_clear(canvas_item_autocomplete);
 	rs->canvas_item_clear(canvas_item_status);
+	rs->canvas_item_clear(canvas_item_quick_buttons);
+	rs->canvas_item_clear(canvas_item_history_pills);
+	_hit_rects.clear();
 
 	float progress = p_console->get_open_progress();
 	if (progress <= 0.001f) {
@@ -166,6 +222,8 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		rs->canvas_item_set_visible(canvas_item_input, false);
 		rs->canvas_item_set_visible(canvas_item_autocomplete, false);
 		rs->canvas_item_set_visible(canvas_item_status, false);
+		rs->canvas_item_set_visible(canvas_item_quick_buttons, false);
+		rs->canvas_item_set_visible(canvas_item_history_pills, false);
 		return;
 	}
 
@@ -174,6 +232,8 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 	rs->canvas_item_set_visible(canvas_item_input, true);
 	rs->canvas_item_set_visible(canvas_item_autocomplete, true);
 	rs->canvas_item_set_visible(canvas_item_status, true);
+	rs->canvas_item_set_visible(canvas_item_quick_buttons, true);
+	rs->canvas_item_set_visible(canvas_item_history_pills, true);
 
 	// Get screen size.
 	Window *root = SceneTree::get_singleton()->get_root();
@@ -188,6 +248,13 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		return;
 	}
 	line_height = font->get_height(font_size) + 2.0f;
+
+	// --- Determine which pill rows are active ---
+	bool show_autocomplete_chips = p_console->is_completion_visible() &&
+			!p_console->get_completions().is_empty();
+	Vector<String> recent_history = p_console->get_recent_history(MAX_HISTORY_PILLS);
+	bool show_history_pills = !recent_history.is_empty();
+	bool show_quick_buttons = true; // Always show.
 
 	// --- Background ---
 	Rect2 bg_rect(0, y_offset, screen_size.x, console_height);
@@ -221,14 +288,62 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 			Vector2(margin, status_y + status_height - 6.0f),
 			status_text, status_text_color, font_size - 2);
 
+	// --- Filter buttons (right side of status bar) ---
+	{
+		float filter_x = screen_size.x - margin;
+		int filter_font = font_size - 2;
+		const char *filter_labels[] = { "ERR", "WARN", "INFO" };
+		bool filter_states[] = { p_console->is_filter_error(), p_console->is_filter_warning(), p_console->is_filter_info() };
+		Color filter_colors[] = { popup_error_color, popup_warning_color, popup_info_color };
+		HitAction filter_actions[] = { HitAction::FILTER_ERROR, HitAction::FILTER_WARNING, HitAction::FILTER_INFO };
+
+		for (int i = 0; i < 3; i++) {
+			String label = filter_labels[i];
+			float tw = _get_text_width(label, filter_font);
+			float btn_w = tw + 12.0f;
+			filter_x -= btn_w + 4.0f;
+
+			Rect2 btn_rect(filter_x, status_y + 2.0f, btn_w, status_height - 4.0f);
+			Color bg = filter_states[i] ? filter_active_color : filter_inactive_color;
+			_draw_rect(canvas_item_status, btn_rect, bg);
+			_draw_text(canvas_item_status,
+					Vector2(filter_x + 6.0f, status_y + status_height - 6.0f),
+					label, filter_states[i] ? filter_colors[i] : Color(0.4, 0.4, 0.4), filter_font);
+
+			HitRect hr;
+			hr.rect = btn_rect;
+			hr.action = filter_actions[i];
+			hr.payload = 0;
+			_hit_rects.push_back(hr);
+		}
+
+		// Snap-to-bottom button (only when scrolled up).
+		if (!p_console->is_auto_scroll()) {
+			filter_x -= 4.0f;
+			String snap_label = String::utf8("\u2193 BTM");
+			float snap_w = _get_text_width(snap_label, filter_font) + 12.0f;
+			filter_x -= snap_w;
+
+			Rect2 snap_rect(filter_x, status_y + 2.0f, snap_w, status_height - 4.0f);
+			_draw_rect(canvas_item_status, snap_rect, Color(0.15, 0.25, 0.15, 1.0));
+			_draw_text(canvas_item_status,
+					Vector2(filter_x + 6.0f, status_y + status_height - 6.0f),
+					snap_label, Color(0.5, 1.0, 0.5), filter_font);
+
+			HitRect hr;
+			hr.rect = snap_rect;
+			hr.action = HitAction::SNAP_TO_BOTTOM;
+			hr.payload = 0;
+			_hit_rects.push_back(hr);
+		}
+	}
+
 	// --- Input field (above status bar) ---
 	float input_y = status_y - input_height;
 	Rect2 input_rect(0, input_y, screen_size.x, input_height);
 	_draw_rect(canvas_item_input, input_rect, input_bg_color);
 
 	// Input prompt and text — show cwd as prompt.
-	// Shorten the cwd: if it starts with "/root", display from the child.
-	// /root → ~    /root/Level → ~/Level    /root/Level/Player → ~/Level/Player
 	String cwd = p_console->get_cwd();
 	String prompt_path;
 	if (cwd == "/root") {
@@ -239,7 +354,6 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		prompt_path = cwd;
 	}
 	String prompt = prompt_path + "> ";
-	String full_input = prompt + p_console->get_input_text();
 
 	// Draw cwd part in a dimmer color, then the ">" and input in the normal color.
 	_draw_text(canvas_item_input,
@@ -258,8 +372,125 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		_draw_rect(canvas_item_input, cursor_rect, cursor_color);
 	}
 
-	// --- Output text (above input field) ---
-	float output_y_end = input_y;
+	// --- Pill rows (stacked above input field, building from bottom up) ---
+	float current_pill_y = input_y; // Start from top of input field.
+
+	// Quick command buttons (always visible, bottom pill row).
+	if (show_quick_buttons) {
+		current_pill_y -= pill_row_height;
+		float x = margin;
+
+		_draw_rect(canvas_item_quick_buttons,
+				Rect2(0, current_pill_y, screen_size.x, pill_row_height),
+				Color(0.06, 0.06, 0.09, 0.8));
+
+		for (int i = 0; i < QUICK_COMMAND_COUNT; i++) {
+			String label = quick_commands[i].label;
+			float text_w = _get_text_width(label, font_size - 1);
+			float pill_w = text_w + pill_padding_h * 2;
+
+			if (x + pill_w > screen_size.x - margin) {
+				break;
+			}
+
+			Rect2 pill_rect(x, current_pill_y + (pill_row_height - pill_height) / 2.0f,
+					pill_w, pill_height);
+			_draw_pill(canvas_item_quick_buttons, pill_rect,
+					pill_quick_bg_color, label, pill_quick_text_color, font_size - 1);
+
+			HitRect hr;
+			hr.rect = pill_rect;
+			hr.action = HitAction::QUICK_COMMAND;
+			hr.payload = i;
+			_hit_rects.push_back(hr);
+
+			x += pill_w + pill_gap;
+		}
+	}
+
+	// History pills (recent commands, above quick buttons).
+	if (show_history_pills) {
+		current_pill_y -= pill_row_height;
+		float x = margin;
+
+		_draw_rect(canvas_item_history_pills,
+				Rect2(0, current_pill_y, screen_size.x, pill_row_height),
+				Color(0.07, 0.06, 0.04, 0.8));
+
+		// "Recent:" label.
+		_draw_text(canvas_item_history_pills,
+				Vector2(x, current_pill_y + pill_row_height - 10.0f),
+				"Recent:", Color(0.4, 0.4, 0.45), font_size - 2);
+		x += _get_text_width("Recent:", font_size - 2) + 8.0f;
+
+		for (int i = 0; i < recent_history.size(); i++) {
+			String label = recent_history[i];
+			if (label.length() > 20) {
+				label = label.left(18) + "..";
+			}
+			float text_w = _get_text_width(label, font_size - 1);
+			float pill_w = text_w + pill_padding_h * 2;
+
+			if (x + pill_w > screen_size.x - margin) {
+				break;
+			}
+
+			Rect2 pill_rect(x, current_pill_y + (pill_row_height - pill_height) / 2.0f,
+					pill_w, pill_height);
+			_draw_pill(canvas_item_history_pills, pill_rect,
+					pill_history_bg_color, label, pill_history_text_color, font_size - 1);
+
+			HitRect hr;
+			hr.rect = pill_rect;
+			hr.action = HitAction::HISTORY_PILL;
+			hr.payload = i;
+			_hit_rects.push_back(hr);
+
+			x += pill_w + pill_gap;
+		}
+	}
+
+	// Autocomplete chips (above history, only when completions are visible).
+	if (show_autocomplete_chips) {
+		current_pill_y -= pill_row_height;
+		float x = margin;
+
+		const auto &completions = p_console->get_completions();
+
+		_draw_rect(canvas_item_autocomplete,
+				Rect2(0, current_pill_y, screen_size.x, pill_row_height),
+				Color(0.05, 0.08, 0.06, 0.8));
+
+		for (int i = 0; i < completions.size(); i++) {
+			String label = completions[i]->name;
+			float text_w = _get_text_width(label, font_size - 1);
+			float pill_w = text_w + pill_padding_h * 2;
+
+			if (x + pill_w > screen_size.x - margin) {
+				break;
+			}
+
+			Color bg = (i == p_console->get_completion_selected())
+					? autocomplete_selected_color
+					: pill_autocomplete_bg_color;
+
+			Rect2 pill_rect(x, current_pill_y + (pill_row_height - pill_height) / 2.0f,
+					pill_w, pill_height);
+			_draw_pill(canvas_item_autocomplete, pill_rect, bg, label,
+					pill_autocomplete_text_color, font_size - 1);
+
+			HitRect hr;
+			hr.rect = pill_rect;
+			hr.action = HitAction::AUTOCOMPLETE_SELECT;
+			hr.payload = i;
+			_hit_rects.push_back(hr);
+
+			x += pill_w + pill_gap;
+		}
+	}
+
+	// --- Output text (above pill rows) ---
+	float output_y_end = current_pill_y;
 	float output_y_start = y_offset;
 	float output_height = output_y_end - output_y_start;
 	int visible_lines = (int)(output_height / line_height);
@@ -267,16 +498,29 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 	int total_entries = p_console->get_output_count();
 	int scroll = p_console->get_scroll_offset();
 
-	// Draw from bottom up.
-	for (int i = 0; i < visible_lines && i < total_entries; i++) {
-		int entry_idx = total_entries - 1 - i - scroll;
+	// Draw from bottom up, skipping filtered entries.
+	int drawn = 0;
+	int skipped_for_scroll = 0;
+	for (int raw_i = 0; raw_i < total_entries; raw_i++) {
+		int entry_idx = total_entries - 1 - raw_i;
 		if (entry_idx < 0) {
 			break;
 		}
 
 		const DebugConsole::OutputEntry &entry = p_console->get_output_entry(entry_idx);
-		float text_y = output_y_end - (i + 1) * line_height + line_height - 4.0f;
 
+		// Apply log type filter.
+		if (!p_console->passes_filter(entry)) {
+			continue;
+		}
+
+		// Apply scroll offset (skip entries for scrolling).
+		if (skipped_for_scroll < scroll) {
+			skipped_for_scroll++;
+			continue;
+		}
+
+		float text_y = output_y_end - (drawn + 1) * line_height + line_height - 4.0f;
 		if (text_y < output_y_start) {
 			break;
 		}
@@ -284,61 +528,75 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		_draw_text(canvas_item_text,
 				Vector2(margin, text_y),
 				entry.text, entry.color);
-	}
+		drawn++;
 
-	// --- Autocomplete popup ---
-	if (p_console->is_completion_visible() && !p_console->get_completions().is_empty()) {
-		const auto &completions = p_console->get_completions();
-		int count = completions.size();
-		float popup_height = count * line_height + 8.0f;
-		float popup_y = input_y - popup_height;
-		float popup_width = 0.0f;
-
-		// Calculate max width.
-		for (int i = 0; i < count; i++) {
-			float w = _get_text_width(completions[i]->name + "  " + completions[i]->type_label + "  " + completions[i]->description);
-			popup_width = MAX(popup_width, w);
-		}
-		popup_width = MIN(popup_width + margin * 4, screen_size.x - margin * 2);
-
-		Rect2 popup_rect(margin, popup_y, popup_width, popup_height);
-		_draw_rect(canvas_item_autocomplete, popup_rect, autocomplete_bg_color);
-
-		for (int i = 0; i < count; i++) {
-			float entry_y = popup_y + i * line_height;
-
-			// Highlight selected.
-			if (i == p_console->get_completion_selected()) {
-				_draw_rect(canvas_item_autocomplete,
-						Rect2(margin, entry_y, popup_width, line_height),
-						autocomplete_selected_color);
-			}
-
-			// Type label.
-			float text_x = margin + 4.0f;
-			_draw_text(canvas_item_autocomplete,
-					Vector2(text_x, entry_y + line_height - 4.0f),
-					completions[i]->type_label,
-					completions[i]->type_color, font_size - 2);
-			text_x += _get_text_width(completions[i]->type_label, font_size - 2) + 8.0f;
-
-			// Name.
-			_draw_text(canvas_item_autocomplete,
-					Vector2(text_x, entry_y + line_height - 4.0f),
-					completions[i]->name,
-					Color(1, 1, 1));
-			text_x += _get_text_width(completions[i]->name) + 12.0f;
-
-			// Description.
-			_draw_text(canvas_item_autocomplete,
-					Vector2(text_x, entry_y + line_height - 4.0f),
-					completions[i]->description,
-					Color(0.5, 0.5, 0.6), font_size - 2);
+		if (drawn >= visible_lines) {
+			break;
 		}
 	}
 
 	// Draw watches on top.
 	draw_watches(p_console);
+}
+
+// =============================================================================
+// Mini-badge popup (drawn when console is closed)
+// =============================================================================
+
+void DebugConsoleRenderer::draw_popup(DebugConsole *p_console) {
+	_ensure_initialized();
+	if (!_initialized) {
+		return;
+	}
+
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->canvas_item_clear(canvas_item_popup);
+
+	if (!p_console->is_popup_visible()) {
+		rs->canvas_item_set_visible(canvas_item_popup, false);
+		_popup_rect = Rect2();
+		return;
+	}
+
+	rs->canvas_item_set_visible(canvas_item_popup, true);
+
+	Vector2 pos = p_console->get_popup_pos();
+	_popup_rect = Rect2(pos.x, pos.y, popup_width, popup_height);
+
+	// Background.
+	_draw_rect(canvas_item_popup, _popup_rect, popup_bg_color);
+
+	// Thin top border colored by severity.
+	int errs = p_console->get_popup_error_count();
+	int warns = p_console->get_popup_warning_count();
+	Color border_color = popup_info_color;
+	if (errs > 0) {
+		border_color = popup_error_color;
+	} else if (warns > 0) {
+		border_color = popup_warning_color;
+	}
+	_draw_rect(canvas_item_popup, Rect2(pos.x, pos.y, popup_width, 3.0f), border_color);
+
+	// Log count badges: I:n W:n E:n
+	float text_y = pos.y + popup_height - 8.0f;
+	float tx = pos.x + 8.0f;
+	int pfont = font_size - 2;
+
+	int infos = p_console->get_popup_info_count();
+	String info_str = vformat("I:%d", infos);
+	_draw_text(canvas_item_popup, Vector2(tx, text_y), info_str, popup_info_color, pfont);
+	tx += _get_text_width(info_str, pfont) + 10.0f;
+
+	String warn_str = vformat("W:%d", warns);
+	_draw_text(canvas_item_popup, Vector2(tx, text_y), warn_str, popup_warning_color, pfont);
+	tx += _get_text_width(warn_str, pfont) + 10.0f;
+
+	String err_str = vformat("E:%d", errs);
+	_draw_text(canvas_item_popup, Vector2(tx, text_y), err_str, popup_error_color, pfont);
+}
+
+bool DebugConsoleRenderer::popup_hit_test(const Vector2 &p_position) const {
+	return _popup_rect.size.x > 0 && _popup_rect.has_point(p_position);
 }
 
 // =============================================================================

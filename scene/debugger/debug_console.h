@@ -102,6 +102,24 @@ private:
 	int _touch_count = 0;
 	Vector2 _swipe_start;
 	bool _swipe_tracking = false;
+	static const int SWIPE_FINGER_COUNT = 2; // Two-finger swipe down to open.
+
+	// === Mini-badge popup (visible when console is closed) ===
+	bool _popup_visible = true; // Show popup when console closes.
+	Vector2 _popup_pos; // Anchored position (screen coords).
+	bool _popup_initialized = false;
+	bool _popup_dragging = false;
+	Vector2 _popup_drag_offset;
+	int _popup_new_info = 0;
+	int _popup_new_warning = 0;
+	int _popup_new_error = 0;
+	void _reset_popup_counts();
+	void _snap_popup_to_edge(const Size2 &p_screen_size);
+
+	// === Log type filter ===
+	bool _filter_info = true;
+	bool _filter_warning = true;
+	bool _filter_error = true;
 
 	// === Toggle key ===
 	Key _toggle_key = Key::QUOTELEFT; // Backtick `
@@ -196,6 +214,37 @@ public:
 
 	// Renderer access.
 	DebugConsoleRenderer *get_renderer() const { return _renderer; }
+
+	// History access for renderer (returns the last N entries, most recent first).
+	Vector<String> get_recent_history(int p_max = 6) const;
+
+	// Actions triggered by tapping mobile UI elements.
+	void select_completion(int p_index);
+	void execute_quick_command(int p_index);
+	void execute_history_pill(int p_index);
+
+	// Mini-badge popup state (for renderer).
+	bool is_popup_visible() const { return _popup_visible && !_open; }
+	Vector2 get_popup_pos() const { return _popup_pos; }
+	int get_popup_info_count() const { return _popup_new_info; }
+	int get_popup_warning_count() const { return _popup_new_warning; }
+	int get_popup_error_count() const { return _popup_new_error; }
+	void popup_tapped(); // Opens console and resets counts.
+	void popup_drag(const Vector2 &p_pos);
+	void popup_end_drag();
+
+	// Log filter state (for renderer).
+	bool is_filter_info() const { return _filter_info; }
+	bool is_filter_warning() const { return _filter_warning; }
+	bool is_filter_error() const { return _filter_error; }
+	void toggle_filter_info();
+	void toggle_filter_warning();
+	void toggle_filter_error();
+	bool passes_filter(const OutputEntry &p_entry) const;
+
+	// Scroll state.
+	bool is_auto_scroll() const { return _auto_scroll; }
+	void snap_to_bottom();
 
 	DebugConsole();
 	~DebugConsole();

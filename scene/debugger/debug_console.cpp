@@ -119,12 +119,55 @@ void DebugConsole::poll(double p_delta) {
 		}
 	}
 
-	// Skip all processing if fully closed.
+	// Initialize popup position on first frame.
+	if (!_popup_initialized && _renderer) {
+		Window *root = SceneTree::get_singleton() ? SceneTree::get_singleton()->get_root() : nullptr;
+		if (root) {
+			Size2 ss = root->get_size();
+			_popup_pos = Vector2(ss.x - 124.0f, 4.0f); // Top-right corner.
+			_popup_initialized = true;
+		}
+	}
+
+	// Sync console log from the semantic registry (always, even when closed).
+	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+	if (reg) {
+		int total = reg->get_console_log_count();
+		while (_last_console_log_sync < total) {
+			const auto &entry = reg->get_console_log_entry(_last_console_log_sync);
+			Color color;
+			switch (entry.type) {
+				case 1:
+					color = Color(1.0, 0.9, 0.3); // Warning: yellow.
+					if (!_open) {
+						_popup_new_warning++;
+					}
+					break;
+				case 2:
+					color = Color(1.0, 0.3, 0.3); // Error: red.
+					if (!_open) {
+						_popup_new_error++;
+					}
+					break;
+				default:
+					color = Color(0.7, 0.9, 1.0); // Info: light blue.
+					if (!_open) {
+						_popup_new_info++;
+					}
+					break;
+			}
+			_push_output(entry.message, color);
+			_last_console_log_sync++;
+		}
+	}
+
+	// Skip main processing if fully closed.
 	if (_open_progress <= 0.0f && !_open) {
-		// Still update watches (they display even when console is closed).
+		// Still update watches and draw popup.
 		_update_watches();
 		if (_renderer) {
 			_renderer->draw_watches(this);
+			_renderer->draw_popup(this);
 		}
 		return;
 	}
@@ -138,29 +181,6 @@ void DebugConsole::poll(double p_delta) {
 
 	// Rebuild autocomplete if needed.
 	_autocomplete.rebuild_if_dirty();
-
-	// Sync console log from the semantic registry.
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (reg) {
-		int total = reg->get_console_log_count();
-		while (_last_console_log_sync < total) {
-			const auto &entry = reg->get_console_log_entry(_last_console_log_sync);
-			Color color;
-			switch (entry.type) {
-				case 1:
-					color = Color(1.0, 0.9, 0.3); // Warning: yellow.
-					break;
-				case 2:
-					color = Color(1.0, 0.3, 0.3); // Error: red.
-					break;
-				default:
-					color = Color(0.7, 0.9, 1.0); // Info: light blue.
-					break;
-			}
-			_push_output(entry.message, color);
-			_last_console_log_sync++;
-		}
-	}
 
 	// Update watches.
 	_update_watches();
@@ -185,12 +205,12 @@ bool DebugConsole::handle_input(const Ref<InputEvent> &p_event) {
 		}
 	}
 
-	// --- Mobile gesture: three-finger swipe down ---
+	// --- Mobile gesture: two-finger swipe down to open ---
 	Ref<InputEventScreenTouch> touch_event = p_event;
 	if (touch_event.is_valid()) {
 		if (touch_event->is_pressed()) {
 			_touch_count++;
-			if (_touch_count >= 3 && !_open) {
+			if (_touch_count >= SWIPE_FINGER_COUNT && !_open) {
 				_swipe_start = touch_event->get_position();
 				_swipe_tracking = true;
 			}
@@ -201,7 +221,7 @@ bool DebugConsole::handle_input(const Ref<InputEvent> &p_event) {
 	}
 
 	Ref<InputEventScreenDrag> drag_event = p_event;
-	if (drag_event.is_valid() && _swipe_tracking && _touch_count >= 3) {
+	if (drag_event.is_valid() && _swipe_tracking && _touch_count >= SWIPE_FINGER_COUNT) {
 		float dy = drag_event->get_position().y - _swipe_start.y;
 		if (dy > 50.0f) { // 50 pixels threshold.
 			set_open(true);
@@ -209,9 +229,103 @@ bool DebugConsole::handle_input(const Ref<InputEvent> &p_event) {
 		}
 	}
 
+	// --- Popup interaction (when console is closed) ---
+	if (!_open && _popup_visible && _renderer) {
+		// Handle popup dragging.
+		if (drag_event.is_valid() && _popup_dragging) {
+			popup_drag(drag_event->get_position());
+			return true;
+		}
+
+		// Touch on popup.
+		if (touch_event.is_valid()) {
+			if (touch_event->is_pressed() && _touch_count == 1) {
+				if (_renderer->popup_hit_test(touch_event->get_position())) {
+					_popup_drag_offset = touch_event->get_position() - _popup_pos;
+					_popup_dragging = true;
+					return true;
+				}
+			} else if (!touch_event->is_pressed() && _popup_dragging) {
+				// Check if it was a tap (barely moved) vs a drag.
+				Vector2 delta = touch_event->get_position() - (_popup_pos + _popup_drag_offset);
+				if (delta.length() < 10.0f) {
+					_popup_dragging = false;
+					popup_tapped();
+				} else {
+					popup_end_drag();
+				}
+				return true;
+			}
+		}
+
+		// Mouse click on popup.
+		Ref<InputEventMouseButton> popup_click = p_event;
+		if (popup_click.is_valid() && popup_click->is_pressed() &&
+				popup_click->get_button_index() == MouseButton::LEFT) {
+			if (_renderer->popup_hit_test(popup_click->get_position())) {
+				popup_tapped();
+				return true;
+			}
+		}
+	}
+
 	// If console is closed, don't consume any more input.
 	if (!_open) {
 		return false;
+	}
+
+	// --- Touch/click hit-testing for tappable pills ---
+	if (_renderer) {
+		Vector2 tap_pos;
+		bool is_tap = false;
+
+		// Touch release = tap (single finger only).
+		if (touch_event.is_valid() && !touch_event->is_pressed() && _touch_count == 0) {
+			tap_pos = touch_event->get_position();
+			is_tap = true;
+		}
+
+		// Mouse left-click = tap.
+		Ref<InputEventMouseButton> mouse_click = p_event;
+		if (mouse_click.is_valid() && mouse_click->is_pressed() &&
+				mouse_click->get_button_index() == MouseButton::LEFT) {
+			tap_pos = mouse_click->get_position();
+			is_tap = true;
+		}
+
+		if (is_tap) {
+			int payload = 0;
+			DebugConsoleRenderer::HitAction action = _renderer->hit_test(tap_pos, payload);
+
+			switch (action) {
+				case DebugConsoleRenderer::HitAction::AUTOCOMPLETE_SELECT:
+					select_completion(payload);
+					return true;
+				case DebugConsoleRenderer::HitAction::QUICK_COMMAND:
+					execute_quick_command(payload);
+					return true;
+				case DebugConsoleRenderer::HitAction::HISTORY_PILL:
+					execute_history_pill(payload);
+					return true;
+				case DebugConsoleRenderer::HitAction::FILTER_INFO:
+					toggle_filter_info();
+					return true;
+				case DebugConsoleRenderer::HitAction::FILTER_WARNING:
+					toggle_filter_warning();
+					return true;
+				case DebugConsoleRenderer::HitAction::FILTER_ERROR:
+					toggle_filter_error();
+					return true;
+				case DebugConsoleRenderer::HitAction::SNAP_TO_BOTTOM:
+					snap_to_bottom();
+					return true;
+				case DebugConsoleRenderer::HitAction::POPUP_TAP:
+					popup_tapped();
+					return true;
+				case DebugConsoleRenderer::HitAction::NONE:
+					break;
+			}
+		}
 	}
 
 	// --- Key input when console is open ---
@@ -376,11 +490,147 @@ void DebugConsole::set_open(bool p_open) {
 		_cursor_visible = true;
 		_cursor_blink_timer = 0.0f;
 		_completion_visible = false;
+		_reset_popup_counts();
 	}
 }
 
 void DebugConsole::toggle() {
 	set_open(!_open);
+}
+
+// =============================================================================
+// Mobile UI action methods
+// =============================================================================
+
+Vector<String> DebugConsole::get_recent_history(int p_max) const {
+	Vector<String> result;
+	int count = MIN(p_max, _history.size());
+	for (int i = 0; i < count; i++) {
+		// Most recent first.
+		result.push_back(_history[_history.size() - 1 - i]);
+	}
+	return result;
+}
+
+void DebugConsole::select_completion(int p_index) {
+	if (p_index >= 0 && p_index < _current_completions.size()) {
+		_input_text = _current_completions[p_index]->name + " ";
+		_cursor_pos = _input_text.length();
+		_completion_visible = false;
+		_update_completions();
+	}
+}
+
+void DebugConsole::execute_quick_command(int p_index) {
+	if (p_index < 0 || p_index >= DebugConsoleRenderer::QUICK_COMMAND_COUNT) {
+		return;
+	}
+
+	String cmd = DebugConsoleRenderer::quick_commands[p_index].command;
+	_push_output("> " + cmd, Color(0.8, 0.8, 0.8));
+	String result = _execute_command_string(cmd);
+	if (!result.is_empty()) {
+		_push_output(result, Color(0.4, 1.0, 0.4));
+	}
+
+	// Add to history (avoid duplicating the most recent entry).
+	if (_history.is_empty() || _history[_history.size() - 1] != cmd) {
+		if (_history.size() >= HISTORY_CAPACITY) {
+			_history.remove_at(0);
+		}
+		_history.push_back(cmd);
+	}
+	_history_pos = -1;
+}
+
+void DebugConsole::execute_history_pill(int p_index) {
+	Vector<String> recent = get_recent_history(DebugConsoleRenderer::MAX_HISTORY_PILLS);
+	if (p_index < 0 || p_index >= recent.size()) {
+		return;
+	}
+
+	String cmd = recent[p_index];
+	_input_text = cmd;
+	_cursor_pos = _input_text.length();
+	_execute_input();
+}
+
+// =============================================================================
+// Mini-badge popup
+// =============================================================================
+
+void DebugConsole::_reset_popup_counts() {
+	_popup_new_info = 0;
+	_popup_new_warning = 0;
+	_popup_new_error = 0;
+}
+
+void DebugConsole::_snap_popup_to_edge(const Size2 &p_screen_size) {
+	// Snap the popup to the nearest horizontal edge.
+	float center_x = _popup_pos.x + 60.0f; // Half popup width.
+	if (center_x < p_screen_size.x * 0.5f) {
+		_popup_pos.x = 4.0f; // Snap left.
+	} else {
+		_popup_pos.x = p_screen_size.x - 124.0f; // Snap right.
+	}
+	// Clamp vertical.
+	_popup_pos.y = CLAMP(_popup_pos.y, 4.0f, p_screen_size.y - 36.0f);
+}
+
+void DebugConsole::popup_tapped() {
+	set_open(true);
+}
+
+void DebugConsole::popup_drag(const Vector2 &p_pos) {
+	_popup_dragging = true;
+	_popup_pos = p_pos - _popup_drag_offset;
+}
+
+void DebugConsole::popup_end_drag() {
+	if (_popup_dragging) {
+		_popup_dragging = false;
+		Window *root = SceneTree::get_singleton()->get_root();
+		if (root) {
+			_snap_popup_to_edge(root->get_size());
+		}
+	}
+}
+
+// =============================================================================
+// Log type filters
+// =============================================================================
+
+void DebugConsole::toggle_filter_info() {
+	_filter_info = !_filter_info;
+}
+
+void DebugConsole::toggle_filter_warning() {
+	_filter_warning = !_filter_warning;
+}
+
+void DebugConsole::toggle_filter_error() {
+	_filter_error = !_filter_error;
+}
+
+bool DebugConsole::passes_filter(const OutputEntry &p_entry) const {
+	// Yellow-ish = warning, Red-ish = error. Everything else = info/normal.
+	// We use the color channels to classify. This avoids needing a separate type field.
+	if (p_entry.color.r > 0.8 && p_entry.color.g < 0.5) {
+		return _filter_error; // Red.
+	}
+	if (p_entry.color.r > 0.8 && p_entry.color.g > 0.7 && p_entry.color.b < 0.5) {
+		return _filter_warning; // Yellow.
+	}
+	return _filter_info; // Everything else.
+}
+
+// =============================================================================
+// Scroll snap
+// =============================================================================
+
+void DebugConsole::snap_to_bottom() {
+	_scroll_offset = 0;
+	_auto_scroll = true;
 }
 
 // =============================================================================
