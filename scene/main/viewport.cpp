@@ -45,6 +45,7 @@
 #include "scene/resources/mesh.h"
 #include "scene/resources/text_line.h"
 #include "scene/resources/world_2d.h"
+#include "scene/debugger/debug_console.h"
 #include "servers/audio/audio_server.h"
 #include "servers/rendering/rendering_server_globals.h"
 
@@ -3465,6 +3466,14 @@ void Viewport::push_input(RequiredParam<InputEvent> rp_event, bool p_local_coord
 	ERR_MAIN_THREAD_GUARD;
 	ERR_FAIL_COND(!is_inside_tree());
 	EXTRACT_PARAM_OR_FAIL(p_event, rp_event);
+
+#ifdef DEBUG_ENABLED
+	// Debug console intercepts input before the scene tree.
+	// Only intercept on the root viewport to avoid firing once per subviewport.
+	if (this == get_tree()->get_root() && DebugConsole::get_singleton() && DebugConsole::get_singleton()->handle_input(p_event)) {
+		return; // Consumed by debug console.
+	}
+#endif
 
 	if (disable_input || disable_input_override) {
 		return;
