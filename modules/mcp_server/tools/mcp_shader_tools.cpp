@@ -56,10 +56,10 @@ void MCPShaderTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool(
 				"shader/find",
 				"Find Shaders",
-				"Scan the project for all .gdshader files. Returns each shader's path, "
-				"shader_type (spatial, canvas_item, particles, sky, fog), line count, "
-				"uniform count, and render modes used. Results are grouped by shader type "
-				"for easy overview.",
+				"Scan the project for all .gdshader and .gdshaderinc files. Returns each "
+				"shader's path, shader_type (spatial, canvas_item, particles, sky, fog), "
+				"line count, uniform count, varying count, and render modes used. Results "
+				"are grouped by shader type for easy overview.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPShaderTools::handle_find_shaders));
@@ -80,11 +80,15 @@ void MCPShaderTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool(
 				"shader/get_builtins",
 				"Get Shader Built-ins",
-				"Query the engine's shader language database for built-in variables, "
-				"render modes, and stage functions available for a given shader type. "
-				"Returns the real data that powers the shader editor's code completion — "
-				"variable names, GLSL types, whether each is read-only, and all valid "
-				"render modes. Use this instead of guessing shader built-in names.",
+				"Query the engine's shading language database for built-in variables, "
+				"render modes, and stage-specific functions available for a given shader "
+				"type. Returns the real data that powers the shader editor's code "
+				"completion: variable names, types, whether each is read-only or writable, "
+				"and all valid render modes. For spatial shaders this includes surface "
+				"outputs (ALBEDO, METALLIC, ROUGHNESS, EMISSION, etc.), vertex inputs "
+				"(VERTEX, NORMAL, UV, etc.), and lighting variables. Note: Godot uses its "
+				"own shading language (not raw GLSL) — use this tool to get the correct "
+				"built-in names instead of guessing.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPShaderTools::handle_get_builtins));
@@ -99,14 +103,40 @@ void MCPShaderTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		p_registry->register_tool(
 				"shader/get_functions",
-				"Get Shader Functions",
-				"List all built-in GLSL functions available in Godot shaders. Returns "
-				"the complete set of function names from the engine's shader compiler. "
-				"Use the optional filter parameter to search for specific functions "
-				"(e.g., filter='texture' to find all texture sampling functions).",
+				"Get Shader Built-in Functions",
+				"List all built-in functions available in Godot's shading language. While "
+				"based on GLSL ES 3.0, Godot's shading language has its own set of "
+				"supported functions. This returns the complete set from the engine's "
+				"shader compiler, categorized by type (texture sampling, trigonometric, "
+				"geometric, etc.). Use the optional filter to search for specific "
+				"functions (e.g., filter='texture' for texture sampling functions).",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPShaderTools::handle_get_functions));
+	}
+
+	// ---- shader/get_language_ref ----
+	{
+		Dictionary props;
+		props["topic"] = make_prop("string",
+				"The reference topic to query. Valid values: 'types' (all data types), "
+				"'uniform_hints' (all uniform hint qualifiers), 'texture_filters' "
+				"(sampler filter modes), 'texture_repeat' (sampler repeat modes), "
+				"'keywords' (all shader language keywords), 'all' (everything). "
+				"Default: 'all'.");
+		Array required;
+		p_registry->register_tool(
+				"shader/get_language_ref",
+				"Get Shading Language Reference",
+				"Return Godot shading language reference data queried directly from the "
+				"engine's shader compiler. Covers data types (float, vec2, vec3, vec4, "
+				"mat4, sampler2D, etc.), uniform hint qualifiers (source_color, "
+				"hint_range, hint_screen_texture, hint_normal, etc.), texture filter "
+				"and repeat modes, and all language keywords. This is the authoritative "
+				"reference — it matches exactly what the shader compiler accepts.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
+				callable_mp_static(&MCPShaderTools::handle_get_language_ref));
 	}
 }
 
@@ -138,7 +168,7 @@ void MCPShaderTools::_find_shader_files(const String &p_dir, Vector<String> &r_f
 			}
 		} else {
 			String ext = item.get_extension().to_lower();
-			if (ext == "gdshader" || ext == "shader") {
+			if (ext == "gdshader" || ext == "shader" || ext == "gdshaderinc") {
 				r_files.push_back(full_path);
 			}
 		}
@@ -210,10 +240,19 @@ Dictionary MCPShaderTools::handle_find_shaders(const Dictionary &p_args) {
 		String content = fa->get_as_utf8_string();
 		fa->close();
 
+		// Determine file kind.
+		String ext = path.get_extension().to_lower();
+		bool is_include = (ext == "gdshaderinc");
+
 		// Extract shader_type using the engine's own parser.
-		String shader_type = ShaderLanguage::get_shader_type(content);
-		if (shader_type.is_empty()) {
-			shader_type = "unknown";
+		String shader_type;
+		if (is_include) {
+			shader_type = "include";
+		} else {
+			shader_type = ShaderLanguage::get_shader_type(content);
+			if (shader_type.is_empty()) {
+				shader_type = "unknown";
+			}
 		}
 
 		// Count lines.
@@ -221,14 +260,19 @@ Dictionary MCPShaderTools::handle_find_shaders(const Dictionary &p_args) {
 		int line_count = lines.size();
 		total_lines += line_count;
 
-		// Count uniforms and collect render modes.
+		// Count uniforms, varyings, and collect render modes.
 		int uniform_count = 0;
+		int varying_count = 0;
 		String render_modes_str;
 
 		for (const String &line : lines) {
 			String trimmed = line.strip_edges();
 			if (trimmed.begins_with("uniform ")) {
 				uniform_count++;
+			} else if (trimmed.begins_with("varying ") ||
+					trimmed.begins_with("flat ") ||
+					trimmed.begins_with("smooth ")) {
+				varying_count++;
 			} else if (trimmed.begins_with("render_mode ")) {
 				// Extract render mode list.
 				int semi = trimmed.find(";");
@@ -243,6 +287,9 @@ Dictionary MCPShaderTools::handle_find_shaders(const Dictionary &p_args) {
 		entry["shader_type"] = shader_type;
 		entry["lines"] = line_count;
 		entry["uniforms"] = uniform_count;
+		if (varying_count > 0) {
+			entry["varyings"] = varying_count;
+		}
 		if (!render_modes_str.is_empty()) {
 			entry["render_modes"] = render_modes_str;
 		}
@@ -265,6 +312,9 @@ Dictionary MCPShaderTools::handle_find_shaders(const Dictionary &p_args) {
 			Dictionary s = kv.value[i];
 			text += vformat("  %s  [%d lines, %d uniforms",
 					String(s["path"]), (int)s["lines"], (int)s["uniforms"]);
+			if (s.has("varyings")) {
+				text += vformat(", %d varyings", (int)s["varyings"]);
+			}
 			if (s.has("render_modes")) {
 				text += vformat(", render_mode %s", String(s["render_modes"]));
 			}
@@ -322,7 +372,9 @@ Dictionary MCPShaderTools::handle_get_builtins(const Dictionary &p_args) {
 
 	// ---- Built-in variables by stage ----
 
-	text = vformat("Shader built-ins for '%s':\n", shader_type);
+	text = vformat("Godot shading language built-ins for shader_type %s:\n", shader_type);
+	text += "(Godot uses its own shading language, not raw GLSL. These are the "
+			"exact built-in names the shader compiler accepts.)\n";
 
 	Dictionary stages_dict;
 
@@ -345,10 +397,14 @@ Dictionary MCPShaderTools::handle_get_builtins(const Dictionary &p_args) {
 		}
 		var_names.sort();
 
-		text += vformat("\n--- %s ---\n", stage_name);
+		text += vformat("\n--- %s ---", stage_name);
+		if (fi.main_function) {
+			text += vformat(" (void %s() entry point)", stage_name);
+		}
+		text += "\n";
 
 		if (fi.can_discard) {
-			text += "  (supports discard)\n";
+			text += "  (supports 'discard' statement)\n";
 		}
 
 		for (const String &var_name : var_names) {
@@ -395,7 +451,7 @@ Dictionary MCPShaderTools::handle_get_builtins(const Dictionary &p_args) {
 			func_dict["parameters"] = params_array;
 			stage_funcs_array.push_back(func_dict);
 
-			text += vformat("  %s %s(%s)\n", ret_type, func_name, params);
+			text += vformat("  %s %s(%s)  [stage function]\n", ret_type, func_name, params);
 		}
 
 		Dictionary stage_dict;
@@ -415,6 +471,7 @@ Dictionary MCPShaderTools::handle_get_builtins(const Dictionary &p_args) {
 
 	if (stage_filter.is_empty()) {
 		text += "\n--- render modes ---\n";
+		text += "(Use as: render_mode mode1, mode2, ...;)\n";
 
 		Array modes_array;
 		for (const ShaderLanguage::ModeInfo &mi : modes) {
@@ -447,7 +504,7 @@ Dictionary MCPShaderTools::handle_get_builtins(const Dictionary &p_args) {
 
 		// Stencil modes (Godot 4.6+).
 		if (!stencil_modes.is_empty()) {
-			text += "\n--- stencil modes ---\n";
+			text += "\n--- stencil modes (Godot 4.6+) ---\n";
 
 			Array stencil_array;
 			for (const ShaderLanguage::ModeInfo &mi : stencil_modes) {
@@ -503,8 +560,7 @@ Dictionary MCPShaderTools::handle_get_functions(const Dictionary &p_args) {
 	}
 	sorted.sort();
 
-	// Categorize functions by prefix/type for better readability.
-	// We do a simple grouping based on common GLSL function categories.
+	// Categorize functions for better readability.
 	HashMap<String, Vector<String>> categories;
 
 	for (const String &f : sorted) {
@@ -538,8 +594,8 @@ Dictionary MCPShaderTools::handle_get_functions(const Dictionary &p_args) {
 			cat = "Vector Relational";
 		} else if (f.begins_with("pack") || f.begins_with("unpack")) {
 			cat = "Packing";
-		} else if (f.begins_with("bitfield") || f.begins_with("bitCount") ||
-				f.begins_with("findLSB") || f.begins_with("findMSB") ||
+		} else if (f.begins_with("bitfield") || f == "bitCount" ||
+				f == "findLSB" || f == "findMSB" ||
 				f == "uaddCarry" || f == "usubBorrow" || f == "umulExtended" ||
 				f == "imulExtended") {
 			cat = "Bitwise / Integer";
@@ -563,9 +619,10 @@ Dictionary MCPShaderTools::handle_get_functions(const Dictionary &p_args) {
 	// Build text output.
 	String text;
 	if (!filter.is_empty()) {
-		text = vformat("Built-in shader functions matching '%s' (%d):\n\n", filter, sorted.size());
+		text = vformat("Godot shading language built-in functions matching '%s' (%d):\n\n", filter, sorted.size());
 	} else {
-		text = vformat("All built-in shader functions (%d):\n\n", sorted.size());
+		text = vformat("All Godot shading language built-in functions (%d):\n", sorted.size());
+		text += "(Based on GLSL ES 3.0 with Godot-specific additions.)\n\n";
 	}
 
 	// Sort category names for consistent output.
@@ -603,6 +660,254 @@ Dictionary MCPShaderTools::handle_get_functions(const Dictionary &p_args) {
 	structured["count"] = sorted.size();
 	if (!filter.is_empty()) {
 		structured["filter"] = filter;
+	}
+
+	return make_tool_result(text, structured);
+}
+
+// ============================================================================
+// Tool 4: shader/get_language_ref
+// ============================================================================
+
+Dictionary MCPShaderTools::handle_get_language_ref(const Dictionary &p_args) {
+	String topic = p_args.get("topic", "all");
+	if (topic.is_empty()) {
+		topic = "all";
+	}
+
+	bool want_types = (topic == "types" || topic == "all");
+	bool want_hints = (topic == "uniform_hints" || topic == "all");
+	bool want_filters = (topic == "texture_filters" || topic == "all");
+	bool want_repeat = (topic == "texture_repeat" || topic == "all");
+	bool want_keywords = (topic == "keywords" || topic == "all");
+
+	if (!want_types && !want_hints && !want_filters && !want_repeat && !want_keywords) {
+		return make_tool_error(
+				"Invalid topic: '" + topic + "'\n\n"
+				"Valid values: types, uniform_hints, texture_filters, "
+				"texture_repeat, keywords, all");
+	}
+
+	String text = "Godot Shading Language Reference\n";
+	text += "(Godot uses its own shading language based on GLSL ES 3.0, "
+			"with significant differences. This is the authoritative reference "
+			"from the shader compiler.)\n";
+	Dictionary structured;
+
+	// ---- Data types ----
+	if (want_types) {
+		text += "\n== Data Types ==\n";
+		text += "(Use these in uniform, varying, and variable declarations.)\n";
+
+		Array types_array;
+
+		// Iterate all data types from the enum.
+		for (int i = 0; i < ShaderLanguage::TYPE_MAX; i++) {
+			ShaderLanguage::DataType dt = (ShaderLanguage::DataType)i;
+			if (dt == ShaderLanguage::TYPE_VOID || dt == ShaderLanguage::TYPE_STRUCT) {
+				continue; // Skip void and struct (struct is user-defined).
+			}
+
+			String name = ShaderLanguage::get_datatype_name(dt);
+
+			Dictionary type_dict;
+			type_dict["name"] = name;
+			type_dict["is_sampler"] = ShaderLanguage::is_sampler_type(dt);
+			type_dict["is_scalar"] = ShaderLanguage::is_scalar_type(dt);
+			type_dict["is_float"] = ShaderLanguage::is_float_type(dt);
+
+			types_array.push_back(type_dict);
+
+			String flags;
+			if (ShaderLanguage::is_sampler_type(dt)) {
+				flags += " [sampler]";
+			}
+			if (ShaderLanguage::is_scalar_type(dt)) {
+				flags += " [scalar]";
+			}
+
+			text += vformat("  %s%s\n", name, flags);
+		}
+
+		structured["types"] = types_array;
+	}
+
+	// ---- Uniform hints ----
+	if (want_hints) {
+		text += "\n== Uniform Hints ==\n";
+		text += "(Use after the type in a uniform declaration, e.g.: "
+				"uniform float speed : hint_range(0, 100);)\n";
+
+		Array hints_array;
+
+		// Iterate all hint values from the enum.
+		for (int i = 0; i < ShaderLanguage::ShaderNode::Uniform::HINT_MAX; i++) {
+			ShaderLanguage::ShaderNode::Uniform::Hint hint =
+					(ShaderLanguage::ShaderNode::Uniform::Hint)i;
+			if (hint == ShaderLanguage::ShaderNode::Uniform::HINT_NONE) {
+				continue;
+			}
+
+			String hint_name = ShaderLanguage::get_uniform_hint_name(hint);
+			if (hint_name.is_empty()) {
+				continue;
+			}
+
+			Dictionary hint_dict;
+			hint_dict["name"] = hint_name;
+
+			// Add usage notes for hints that take parameters.
+			String usage;
+			switch (hint) {
+				case ShaderLanguage::ShaderNode::Uniform::HINT_RANGE:
+					usage = "hint_range(min, max[, step])";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ENUM:
+					usage = "hint_enum(\"Label1\", \"Label2\", ...)";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_SOURCE_COLOR:
+					usage = "source_color — marks a vec4/vec3 as sRGB color";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_SCREEN_TEXTURE:
+					usage = "hint_screen_texture — access the screen backbuffer";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_NORMAL_ROUGHNESS_TEXTURE:
+					usage = "hint_normal_roughness_texture — access the normal/roughness buffer";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_DEPTH_TEXTURE:
+					usage = "hint_depth_texture — access the depth buffer";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_NORMAL:
+					usage = "hint_normal — marks texture as normal map";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_DEFAULT_BLACK:
+					usage = "hint_default_black — sampler defaults to black";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_DEFAULT_WHITE:
+					usage = "hint_default_white — sampler defaults to white";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_DEFAULT_TRANSPARENT:
+					usage = "hint_default_transparent — sampler defaults to transparent";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ANISOTROPY:
+					usage = "hint_anisotropy — anisotropy flowmap texture";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ROUGHNESS_NORMAL:
+					usage = "hint_roughness_normal — roughness derived from normal map";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ROUGHNESS_R:
+					usage = "hint_roughness_r — roughness from red channel";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ROUGHNESS_G:
+					usage = "hint_roughness_g — roughness from green channel";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ROUGHNESS_B:
+					usage = "hint_roughness_b — roughness from blue channel";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ROUGHNESS_A:
+					usage = "hint_roughness_a — roughness from alpha channel";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_ROUGHNESS_GRAY:
+					usage = "hint_roughness_gray — roughness from grayscale";
+					break;
+				case ShaderLanguage::ShaderNode::Uniform::HINT_COLOR_CONVERSION_DISABLED:
+					usage = "color_conversion_disabled — disable sRGB conversion";
+					break;
+				default:
+					break;
+			}
+
+			if (!usage.is_empty()) {
+				hint_dict["usage"] = usage;
+				text += vformat("  %s\n", usage);
+			} else {
+				text += vformat("  %s\n", hint_name);
+			}
+
+			hints_array.push_back(hint_dict);
+		}
+
+		structured["uniform_hints"] = hints_array;
+	}
+
+	// ---- Texture filter modes ----
+	if (want_filters) {
+		text += "\n== Texture Filter Modes ==\n";
+		text += "(Use on sampler uniforms, e.g.: "
+				"uniform sampler2D tex : filter_nearest;)\n";
+
+		Array filters_array;
+
+		// The valid texture filter values (skip FILTER_DEFAULT which is
+		// the internal default, not a user-facing keyword).
+		const ShaderLanguage::TextureFilter filter_values[] = {
+			ShaderLanguage::FILTER_NEAREST,
+			ShaderLanguage::FILTER_LINEAR,
+			ShaderLanguage::FILTER_NEAREST_MIPMAP,
+			ShaderLanguage::FILTER_LINEAR_MIPMAP,
+			ShaderLanguage::FILTER_NEAREST_MIPMAP_ANISOTROPIC,
+			ShaderLanguage::FILTER_LINEAR_MIPMAP_ANISOTROPIC,
+		};
+
+		for (ShaderLanguage::TextureFilter tf : filter_values) {
+			String name = ShaderLanguage::get_texture_filter_name(tf);
+			if (!name.is_empty()) {
+				Dictionary fd;
+				fd["name"] = name;
+				filters_array.push_back(fd);
+				text += vformat("  %s\n", name);
+			}
+		}
+
+		structured["texture_filters"] = filters_array;
+	}
+
+	// ---- Texture repeat modes ----
+	if (want_repeat) {
+		text += "\n== Texture Repeat Modes ==\n";
+		text += "(Use on sampler uniforms, e.g.: "
+				"uniform sampler2D tex : repeat_enable;)\n";
+
+		Array repeat_array;
+
+		const ShaderLanguage::TextureRepeat repeat_values[] = {
+			ShaderLanguage::REPEAT_DISABLE,
+			ShaderLanguage::REPEAT_ENABLE,
+		};
+
+		for (ShaderLanguage::TextureRepeat tr : repeat_values) {
+			String name = ShaderLanguage::get_texture_repeat_name(tr);
+			if (!name.is_empty()) {
+				Dictionary rd;
+				rd["name"] = name;
+				repeat_array.push_back(rd);
+				text += vformat("  %s\n", name);
+			}
+		}
+
+		structured["texture_repeat"] = repeat_array;
+	}
+
+	// ---- Keywords ----
+	if (want_keywords) {
+		text += "\n== Shader Language Keywords ==\n";
+
+		List<String> kw_list;
+		ShaderLanguage::get_keyword_list(&kw_list);
+
+		Vector<String> kw_sorted;
+		for (const String &kw : kw_list) {
+			kw_sorted.push_back(kw);
+		}
+		kw_sorted.sort();
+
+		Array kw_array;
+		for (const String &kw : kw_sorted) {
+			kw_array.push_back(kw);
+			text += vformat("  %s\n", kw);
+		}
+
+		structured["keywords"] = kw_array;
 	}
 
 	return make_tool_result(text, structured);

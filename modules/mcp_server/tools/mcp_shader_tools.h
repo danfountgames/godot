@@ -43,6 +43,7 @@ private:
 	static Dictionary handle_find_shaders(const Dictionary &p_args);
 	static Dictionary handle_get_builtins(const Dictionary &p_args);
 	static Dictionary handle_get_functions(const Dictionary &p_args);
+	static Dictionary handle_get_language_ref(const Dictionary &p_args);
 
 	// Helpers.
 	static void _find_shader_files(const String &p_dir, Vector<String> &r_files);
