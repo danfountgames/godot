@@ -1465,4 +1465,427 @@ void MCPDocTools::register_tools(MCPToolRegistry *p_registry) {
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPDocTools::handle_get_property));
 	}
+
+	// ---- doc/get_online_docs ----
+	{
+		Dictionary props;
+		props["topic"] = make_prop("string",
+				"The documentation topic to look up. Examples: 'spatial_shader', "
+				"'canvas_item_shader', 'particle_shader', 'sky_shader', 'fog_shader', "
+				"'shading_language', 'shader_functions', 'shader_preprocessor', "
+				"'gdscript', 'signals', 'groups', 'input_handling', 'physics', "
+				"'navigation', 'animation', 'audio', 'networking', 'exporting', "
+				"'2d', '3d', 'xr', 'compute_shaders', 'visual_shaders', 'tween', "
+				"'scene_tree'. Use 'search' with a query to find the right topic.");
+		props["query"] = make_prop("string",
+				"Search query to find relevant doc pages (e.g., 'shader uniform hints', "
+				"'collision layers', 'custom resources'). Returns matching pages with URLs.");
+		Array required;
+
+		p_registry->register_tool("doc/get_online_docs",
+				"Get Online Documentation URLs",
+				"Look up Godot " GODOT_VERSION_BRANCH " online documentation pages by topic or "
+				"search query. Returns URLs to the official Godot documentation at "
+				"docs.godotengine.org, plus raw RST source URLs from GitHub that can be "
+				"fetched directly for full content.\n"
+				"\n"
+				"The built-in class reference (doc/get_class, doc/search_classes) covers "
+				"the GDScript API, but the online docs cover tutorials, guides, and "
+				"language references that aren't in the class DB — especially:\n"
+				"- Shading language reference (spatial, canvas_item, particle, sky, fog shaders)\n"
+				"- GDScript language features (lambdas, annotations, typed arrays)\n"
+				"- Engine concepts (scene tree, signals, groups, physics, navigation)\n"
+				"- Best practices, style guides, and optimization guides\n"
+				"\n"
+				"To read the full content: fetch the raw_url (GitHub RST source) which is "
+				"plain text and easy to parse.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
+				callable_mp_static(&MCPDocTools::handle_get_online_docs));
+	}
+}
+
+// ============================================================================
+// Tool: doc/get_online_docs
+// ============================================================================
+
+// Documentation page entry: topic keyword, RST path relative to godot-docs
+// repo root, human-readable title, brief description.
+struct DocPageEntry {
+	const char *topic;
+	const char *rst_path;
+	const char *title;
+	const char *description;
+	const char *tags; // Space-separated search tags.
+};
+
+// Comprehensive map of Godot documentation pages.
+// RST paths are relative to: https://raw.githubusercontent.com/godotengine/godot-docs/master/
+// HTML pages are at: https://docs.godotengine.org/en/stable/
+static const DocPageEntry DOC_PAGES[] = {
+	// ---- Shader Reference ----
+	{ "shading_language",
+			"tutorials/shaders/shader_reference/shading_language.rst",
+			"Shading Language",
+			"Complete reference for Godot's shading language: data types, operators, "
+			"flow control, uniforms, varyings, built-in variables overview.",
+			"shader glsl type uniform varying struct array" },
+	{ "shader_functions",
+			"tutorials/shaders/shader_reference/shader_functions.rst",
+			"Shader Built-in Functions",
+			"All built-in functions available in the shading language with full "
+			"signatures: math, texture sampling, geometric, type conversion, etc.",
+			"shader function texture sample sin cos mix step smoothstep" },
+	{ "shader_preprocessor",
+			"tutorials/shaders/shader_reference/shader_preprocessor.rst",
+			"Shader Preprocessor",
+			"Preprocessor directives: #define, #include, #ifdef, #ifndef, #if, "
+			"#elif, #else, #endif, #undef, #pragma.",
+			"shader preprocessor define include ifdef macro" },
+	{ "spatial_shader",
+			"tutorials/shaders/shader_reference/spatial_shader.rst",
+			"Spatial Shader Reference",
+			"Complete reference for spatial (3D) shaders: vertex, fragment, and "
+			"light stages. Built-in variables (VERTEX, NORMAL, ALBEDO, METALLIC, "
+			"ROUGHNESS, EMISSION, etc.), render modes, and stencil modes.",
+			"shader spatial 3d vertex fragment light albedo metallic roughness emission normal" },
+	{ "canvas_item_shader",
+			"tutorials/shaders/shader_reference/canvas_item_shader.rst",
+			"CanvasItem Shader Reference",
+			"Complete reference for canvas_item (2D) shaders: vertex, fragment, "
+			"and light stages. Built-ins (VERTEX, UV, COLOR, TEXTURE, "
+			"SCREEN_TEXTURE, etc.) and render modes.",
+			"shader canvas_item 2d sprite texture color screen" },
+	{ "particle_shader",
+			"tutorials/shaders/shader_reference/particle_shader.rst",
+			"Particle Shader Reference",
+			"Complete reference for particle shaders: start and process stages. "
+			"Built-ins (VELOCITY, TRANSFORM, COLOR, LIFETIME, etc.) and render modes.",
+			"shader particle velocity lifetime transform emission" },
+	{ "sky_shader",
+			"tutorials/shaders/shader_reference/sky_shader.rst",
+			"Sky Shader Reference",
+			"Complete reference for sky shaders. Built-ins (AT_CUBEMAP_PASS, "
+			"EYEDIR, SKY_COORDS, etc.) and render modes.",
+			"shader sky cubemap environment background" },
+	{ "fog_shader",
+			"tutorials/shaders/shader_reference/fog_shader.rst",
+			"Fog Shader Reference",
+			"Complete reference for volumetric fog shaders. Built-ins (WORLD_POSITION, "
+			"ALBEDO, DENSITY, EMISSION, etc.).",
+			"shader fog volumetric density" },
+
+	// ---- Shader Tutorials ----
+	{ "introduction_to_shaders",
+			"tutorials/shaders/introduction_to_shaders.rst",
+			"Introduction to Shaders",
+			"Overview of what shaders are, how they work in Godot, and when to use them.",
+			"shader introduction overview basics" },
+	{ "visual_shaders",
+			"tutorials/shaders/visual_shaders.rst",
+			"Visual Shaders",
+			"Guide to using the visual (node-based) shader editor.",
+			"shader visual node graph editor" },
+	{ "compute_shaders",
+			"tutorials/shaders/compute_shaders.rst",
+			"Compute Shaders",
+			"Guide to using compute shaders via the RenderingDevice API.",
+			"shader compute gpu rendering_device" },
+	{ "screen_reading_shaders",
+			"tutorials/shaders/screen-reading_shaders.rst",
+			"Screen-Reading Shaders",
+			"How to read the screen texture, depth buffer, and normal/roughness "
+			"buffer in shaders. Covers hint_screen_texture, hint_depth_texture.",
+			"shader screen texture depth buffer backbuffer" },
+	{ "converting_glsl",
+			"tutorials/shaders/converting_glsl_to_godot_shaders.rst",
+			"Converting GLSL to Godot Shaders",
+			"Guide for converting GLSL shaders to Godot's shading language.",
+			"shader glsl convert port migration" },
+	{ "shaders_style_guide",
+			"tutorials/shaders/shaders_style_guide.rst",
+			"Shader Style Guide",
+			"Coding conventions and best practices for Godot shaders.",
+			"shader style convention naming" },
+	{ "custom_postprocessing",
+			"tutorials/shaders/custom_postprocessing.rst",
+			"Custom Post-Processing",
+			"How to create custom post-processing effects with shaders.",
+			"shader postprocessing post-processing effect fullscreen" },
+	{ "advanced_postprocessing",
+			"tutorials/shaders/advanced_postprocessing.rst",
+			"Advanced Post-Processing",
+			"Advanced post-processing techniques including multi-pass effects.",
+			"shader postprocessing advanced multipass" },
+
+	// ---- GDScript ----
+	{ "gdscript",
+			"tutorials/scripting/gdscript/gdscript_basics.rst",
+			"GDScript Basics",
+			"Complete GDScript language reference: variables, functions, classes, "
+			"signals, annotations, static typing, lambdas, coroutines.",
+			"gdscript language basics variable function class signal annotation" },
+	{ "gdscript_style_guide",
+			"tutorials/scripting/gdscript/gdscript_style_guide.rst",
+			"GDScript Style Guide",
+			"Official coding conventions for GDScript.",
+			"gdscript style convention naming format" },
+	{ "gdscript_exports",
+			"tutorials/scripting/gdscript/gdscript_exports.rst",
+			"GDScript Exports",
+			"Complete reference for @export annotations: types, ranges, enums, "
+			"resources, node paths, flags, categories.",
+			"gdscript export annotation inspector property" },
+	{ "gdscript_documentation_comments",
+			"tutorials/scripting/gdscript/gdscript_documentation_comments.rst",
+			"GDScript Documentation Comments",
+			"How to write documentation comments for classes, methods, and properties.",
+			"gdscript documentation comment doc" },
+	{ "static_typing",
+			"tutorials/scripting/gdscript/static_typing.rst",
+			"Static Typing in GDScript",
+			"Guide to using static typing for better performance and tooling.",
+			"gdscript type typing static annotation" },
+
+	// ---- Core Concepts ----
+	{ "signals",
+			"getting_started/step_by_step/signals.rst",
+			"Signals",
+			"How to use signals for communication between nodes.",
+			"signal connect emit event callback observer" },
+	{ "groups",
+			"tutorials/scripting/groups.rst",
+			"Groups",
+			"How to use groups to organize and batch-process nodes.",
+			"group tag category batch" },
+	{ "scene_tree",
+			"tutorials/scripting/scene_tree.rst",
+			"Scene Tree",
+			"How the scene tree works, tree processing order, pause mode.",
+			"scene tree node process order pause" },
+	{ "autoloads",
+			"tutorials/scripting/singletons_autoload.rst",
+			"Singletons (Autoloads)",
+			"How to create global singletons using autoloads.",
+			"autoload singleton global" },
+	{ "input_handling",
+			"tutorials/inputs/index.rst",
+			"Input Handling",
+			"Input events, action mapping, mouse/keyboard/gamepad handling.",
+			"input event action key mouse gamepad controller" },
+	{ "physics",
+			"tutorials/physics/index.rst",
+			"Physics",
+			"Physics engines, collision detection, rigid bodies, areas, raycasts.",
+			"physics collision body rigid static kinematic area raycast" },
+	{ "navigation",
+			"tutorials/navigation/index.rst",
+			"Navigation",
+			"Navigation meshes, agents, obstacle avoidance, pathfinding.",
+			"navigation navmesh agent pathfinding obstacle" },
+	{ "animation",
+			"tutorials/animation/index.rst",
+			"Animation",
+			"Animation players, tweens, blending, state machines.",
+			"animation tween blend state machine timeline" },
+	{ "audio",
+			"tutorials/audio/index.rst",
+			"Audio",
+			"Audio buses, streams, effects, spatial audio.",
+			"audio sound music bus stream effect spatial" },
+	{ "networking",
+			"tutorials/networking/index.rst",
+			"Networking",
+			"HTTP requests, multiplayer, RPCs, networking APIs.",
+			"network multiplayer http rpc server client" },
+	{ "resources",
+			"tutorials/scripting/resources.rst",
+			"Resources",
+			"How resources work: loading, saving, creating custom resources.",
+			"resource load save custom tres" },
+
+	// ---- Rendering ----
+	{ "2d_rendering",
+			"tutorials/2d/index.rst",
+			"2D Rendering",
+			"2D rendering: canvas, sprites, tilemaps, lights, particles.",
+			"2d sprite tilemap canvas light particle" },
+	{ "3d_rendering",
+			"tutorials/3d/index.rst",
+			"3D Rendering",
+			"3D rendering: meshes, materials, lights, environments, GI.",
+			"3d mesh material light environment global illumination" },
+	{ "environment",
+			"tutorials/environment/index.rst",
+			"Environment and Post-Processing",
+			"WorldEnvironment, Tonemap, SSAO, SSR, SDFGI, fog, glow.",
+			"environment tonemap ssao ssr sdfgi fog glow" },
+
+	// ---- Export / Platform ----
+	{ "exporting",
+			"tutorials/export/index.rst",
+			"Exporting",
+			"Exporting projects for various platforms.",
+			"export platform build android ios web windows linux" },
+
+	// ---- Best Practices ----
+	{ "best_practices",
+			"tutorials/best_practices/index.rst",
+			"Best Practices",
+			"Design patterns, node organization, scene composition.",
+			"best practice pattern design architecture" },
+	{ "optimization",
+			"tutorials/performance/index.rst",
+			"Performance Optimization",
+			"CPU, GPU, and memory optimization techniques.",
+			"performance optimization cpu gpu memory fps" },
+
+	// ---- XR ----
+	{ "xr",
+			"tutorials/xr/index.rst",
+			"XR / VR / AR",
+			"OpenXR, VR, AR, head-mounted displays, controllers.",
+			"xr vr ar openxr headset controller" },
+
+	// End sentinel.
+	{ nullptr, nullptr, nullptr, nullptr, nullptr },
+};
+
+static const char *DOCS_BASE_URL = "https://docs.godotengine.org/en/stable/";
+static const char *RAW_GITHUB_BASE = "https://raw.githubusercontent.com/godotengine/godot-docs/master/";
+
+Dictionary MCPDocTools::handle_get_online_docs(const Dictionary &p_args) {
+	String topic = p_args.get("topic", "");
+	String query = p_args.get("query", "");
+
+	if (topic.is_empty() && query.is_empty()) {
+		// List all available topics.
+		String text = "Available documentation topics:\n\n";
+		Array topics_array;
+
+		const DocPageEntry *entry = DOC_PAGES;
+		while (entry->topic) {
+			text += vformat("  %-30s  %s\n", entry->topic, entry->title);
+
+			Dictionary td;
+			td["topic"] = String(entry->topic);
+			td["title"] = String(entry->title);
+			td["description"] = String(entry->description);
+			topics_array.push_back(td);
+			entry++;
+		}
+
+		text += "\nUse topic='<name>' for specific page, or query='<search>' to search.";
+
+		Dictionary structured;
+		structured["topics"] = topics_array;
+		structured["count"] = topics_array.size();
+
+		return make_tool_result(text, structured);
+	}
+
+	// ---- Search mode ----
+	if (!query.is_empty()) {
+		Vector<String> terms = query.to_lower().split(" ", false);
+		Array results;
+		String text = vformat("Documentation pages matching '%s':\n\n", query);
+
+		const DocPageEntry *entry = DOC_PAGES;
+		while (entry->topic) {
+			// Score: check how many terms match the tags, title, or description.
+			String haystack = String(entry->topic) + " " +
+					String(entry->title).to_lower() + " " +
+					String(entry->description).to_lower() + " " +
+					String(entry->tags);
+
+			int score = 0;
+			for (const String &term : terms) {
+				if (haystack.find(term) != -1) {
+					score++;
+				}
+			}
+
+			if (score > 0) {
+				// Build URLs.
+				String rst_path = String(entry->rst_path);
+				String html_path = rst_path.replace(".rst", ".html");
+				String web_url = String(DOCS_BASE_URL) + html_path;
+				String raw_url = String(RAW_GITHUB_BASE) + rst_path;
+
+				Dictionary rd;
+				rd["topic"] = String(entry->topic);
+				rd["title"] = String(entry->title);
+				rd["description"] = String(entry->description);
+				rd["web_url"] = web_url;
+				rd["raw_url"] = raw_url;
+				rd["score"] = score;
+				results.push_back(rd);
+
+				text += vformat("  %s\n    %s\n    URL: %s\n    Raw: %s\n\n",
+						String(entry->title),
+						String(entry->description),
+						web_url, raw_url);
+			}
+			entry++;
+		}
+
+		// Sort by score descending.
+		// Simple bubble sort since the array is small.
+		for (int i = 0; i < results.size(); i++) {
+			for (int j = i + 1; j < results.size(); j++) {
+				if ((int)Dictionary(results[j])["score"] > (int)Dictionary(results[i])["score"]) {
+					Variant tmp = results[i];
+					results[i] = results[j];
+					results[j] = tmp;
+				}
+			}
+		}
+
+		if (results.is_empty()) {
+			text = vformat("No documentation pages found matching '%s'.\n\n"
+						   "Try broader terms, or use topic='' with no arguments to list all topics.",
+					query);
+		}
+
+		Dictionary structured;
+		structured["results"] = results;
+		structured["count"] = results.size();
+		structured["query"] = query;
+
+		return make_tool_result(text, structured);
+	}
+
+	// ---- Direct topic lookup ----
+	String topic_lower = topic.to_lower();
+
+	const DocPageEntry *entry = DOC_PAGES;
+	while (entry->topic) {
+		if (topic_lower == String(entry->topic)) {
+			// Build URLs.
+			String rst_path = String(entry->rst_path);
+			String html_path = rst_path.replace(".rst", ".html");
+			String web_url = String(DOCS_BASE_URL) + html_path;
+			String raw_url = String(RAW_GITHUB_BASE) + rst_path;
+
+			String text = vformat("%s\n%s\n\n"
+								  "Web URL:  %s\n"
+								  "Raw RST:  %s\n\n"
+								  "To read the full documentation, fetch the Raw RST URL above. "
+								  "It returns plain-text RST which is easy to read directly.",
+					entry->title, entry->description, web_url, raw_url);
+
+			Dictionary structured;
+			structured["topic"] = String(entry->topic);
+			structured["title"] = String(entry->title);
+			structured["description"] = String(entry->description);
+			structured["web_url"] = web_url;
+			structured["raw_url"] = raw_url;
+
+			return make_tool_result(text, structured);
+		}
+		entry++;
+	}
+
+	// Topic not found -- do a fuzzy search.
+	return handle_get_online_docs(Dictionary({ { "query", topic } }));
 }

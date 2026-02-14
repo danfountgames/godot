@@ -50,6 +50,7 @@ private:
 	static Dictionary handle_search_methods(const Dictionary &p_args);
 	static Dictionary handle_get_method(const Dictionary &p_args);
 	static Dictionary handle_get_property(const Dictionary &p_args);
+	static Dictionary handle_get_online_docs(const Dictionary &p_args);
 
 	// Helpers.
 	static String _bbcode_to_text(const String &p_bbcode);
