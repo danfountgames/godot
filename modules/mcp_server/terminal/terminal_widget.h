@@ -36,6 +36,7 @@
 #include "pty_manager.h"
 
 #include "scene/gui/control.h"
+#include "scene/gui/scroll_container.h"
 #include "scene/resources/font.h"
 
 class TerminalWidget : public Control {
@@ -56,13 +57,24 @@ private:
 	float cursor_blink_timer = 0.0f;
 	bool cursor_visible_blink = true;
 
+	// Selection state.
+	bool selecting = false;
+	Vector2i sel_start; // (row, col) in grid coordinates.
+	Vector2i sel_end;
+	bool has_selection = false;
+
+	// ScrollContainer integration.
+	ScrollContainer *scroll_container = nullptr;
+	int last_scrollback_len = 0;
+	bool stick_to_bottom = true;
+	bool programmatic_scroll = false;
+
 	// Read buffer for PTY polling.
 	static const int READ_BUFFER_SIZE = 65536;
 	uint8_t read_buffer[READ_BUFFER_SIZE];
 
 	// Methods.
 	void _calculate_cell_size();
-	void _recalculate_grid_size();
 	void _poll_pty();
 	void _send_output_to_pty();
 	void _draw_terminal();
@@ -71,8 +83,18 @@ private:
 	Color _effective_fg(const TerminalEmulator::Cell &p_cell) const;
 	Color _effective_bg(const TerminalEmulator::Cell &p_cell) const;
 
+	// Selection helpers.
+	Vector2i _pixel_to_cell(Vector2 p_pos) const;
+	String _get_selected_text() const;
+	bool _is_cell_selected(int p_row, int p_col) const;
+
+	// Scroll helpers.
+	bool _is_at_bottom() const;
+	void _do_scroll_to_bottom();
+
 	void _notification(int p_what);
 	virtual void gui_input(const Ref<InputEvent> &p_event) override;
+	bool _is_modifier_key(Key p_keycode) const;
 
 	// Keyboard mapping.
 	VTermKey _godot_key_to_vterm(Key p_key) const;
@@ -94,6 +116,12 @@ public:
 	// Access to sub-components.
 	TerminalEmulator *get_emulator() { return &emulator; }
 	PTYManager *get_pty() { return &pty; }
+
+	void set_scroll_container(ScrollContainer *p_sc);
+	void scroll_to_bottom();
+	void unstick_from_bottom();
+	bool is_programmatic_scroll() const { return programmatic_scroll; }
+	void update_pty_size();
 
 	virtual Size2 get_minimum_size() const override;
 

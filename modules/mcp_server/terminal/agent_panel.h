@@ -35,7 +35,7 @@
 #include "scene/gui/box_container.h"
 
 class Button;
-class Label;
+class ScrollContainer;
 class TerminalWidget;
 class MCPServerPlugin;
 
@@ -46,18 +46,20 @@ private:
 	MCPServerPlugin *server_plugin = nullptr;
 	TerminalWidget *terminal = nullptr;
 
-	// Toolbar widgets.
-	Button *launch_button = nullptr;
-	Button *stop_button = nullptr;
-	Button *clear_button = nullptr;
-	Label *status_label = nullptr;
+	// ScrollContainer + "To Bottom" button.
+	Control *terminal_container = nullptr;
+	ScrollContainer *scroll_container = nullptr;
+	Button *to_bottom_button = nullptr;
+
+	// Title tracking.
+	String current_title;
 
 	bool claude_running = false;
 
 	void _build_ui();
-	void _on_launch_pressed();
-	void _on_stop_pressed();
-	void _on_clear_pressed();
+	void _on_to_bottom_pressed();
+	void _on_scroll_changed(double p_value);
+	void _on_scroll_container_resized();
 	void _update_status();
 
 	String _find_claude_binary() const;
@@ -74,6 +76,9 @@ protected:
 
 public:
 	void set_server_plugin(MCPServerPlugin *p_plugin) { server_plugin = p_plugin; }
+	String get_current_title() const { return current_title; }
+	void launch();
+	void stop();
 
 	AgentPanel();
 	~AgentPanel();

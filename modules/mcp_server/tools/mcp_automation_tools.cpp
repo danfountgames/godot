@@ -144,8 +144,13 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 		Array required;
 		p_registry->register_tool(
 				"runtime/get_screenshot", "Get Screenshot",
-				"Capture the running game's viewport as a base64-encoded PNG image. "
-				"Useful for visual verification. Game must be running.",
+				"IMPORTANT: Screenshots are expensive and rarely needed. In almost all cases, "
+				"you should use runtime/get_scene_tree or runtime/get_node_properties instead "
+				"to inspect game state programmatically — this is faster, cheaper, and gives you "
+				"structured data you can actually reason about. Only use screenshots when you "
+				"specifically need to verify VISUAL appearance (rendering, layout, animations) "
+				"that cannot be determined from the scene tree. "
+				"Captures the running game's viewport as a base64-encoded PNG image. Game must be running.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPAutomationTools::handle_get_screenshot));
@@ -157,11 +162,7 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 // ============================================================================
 
 MCPDebuggerBridge *MCPAutomationTools::_get_bridge() {
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (!protocol) {
-		return nullptr;
-	}
-	return protocol->get_debugger_bridge();
+	return MCPDebuggerBridge::get_singleton();
 }
 
 Dictionary MCPAutomationTools::_require_game_running() {

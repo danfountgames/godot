@@ -290,11 +290,7 @@ void MCPInputTools::register_tools(MCPToolRegistry *p_registry) {
 // ============================================================================
 
 MCPDebuggerBridge *MCPInputTools::_get_bridge() {
-	MCPProtocol *protocol = MCPProtocol::get_singleton();
-	if (!protocol) {
-		return nullptr;
-	}
-	return protocol->get_debugger_bridge();
+	return MCPDebuggerBridge::get_singleton();
 }
 
 Dictionary MCPInputTools::_require_game_running() {

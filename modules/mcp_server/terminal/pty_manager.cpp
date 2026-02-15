@@ -41,6 +41,9 @@
 #include <pty.h>
 #endif
 
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -48,6 +51,8 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+
+extern char **environ;
 
 PTYManager::PTYManager() {
 }
@@ -131,8 +136,12 @@ bool PTYManager::fork_and_exec(const String &p_command, const Vector<String> &p_
 		}
 		envp.write[env_idx] = nullptr;
 
-		// Set environ manually (macOS doesn't have execvpe).
+		// Set environ for the child process.
+#if defined(__APPLE__)
+		*_NSGetEnviron() = envp.ptrw();
+#else
 		environ = envp.ptrw();
+#endif
 
 		execvp(cmd_utf8.get_data(), argv.ptrw());
 

@@ -120,7 +120,11 @@ void OutputRingBuffer::clear() {
 // MCPDebuggerBridge Implementation
 // ========================================================================
 
+MCPDebuggerBridge *MCPDebuggerBridge::singleton = nullptr;
+
 MCPDebuggerBridge::MCPDebuggerBridge() {
+	singleton = this;
+	print_line("[MCP] MCPDebuggerBridge created, singleton set to " + itos((uint64_t)this));
 	game_running.clear();
 	game_launching.clear();
 	game_paused.clear();
@@ -133,6 +137,8 @@ MCPDebuggerBridge::MCPDebuggerBridge() {
 }
 
 MCPDebuggerBridge::~MCPDebuggerBridge() {
+	print_line("[MCP] MCPDebuggerBridge destroyed, clearing singleton (was " + itos((uint64_t)singleton) + ")");
+	singleton = nullptr;
 	_wake_all_pending("Bridge destroyed");
 }
 

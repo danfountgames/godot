@@ -159,41 +159,17 @@ TerminalEmulator::Cell TerminalEmulator::get_cell(int p_row, int p_col) const {
 	VTermScreenCell vcell;
 	memset(&vcell, 0, sizeof(vcell));
 
-	// Determine whether we are reading from scrollback or the live screen.
-	int scrollback_row = scroll_offset - p_row - 1;
-	if (scroll_offset > 0 && scrollback_row >= 0 && scrollback_row < scrollback.size()) {
-		// Reading from the scrollback buffer.
-		const ScrollbackLine &line = scrollback[scrollback.size() - 1 - scrollback_row];
-		if (p_col < line.cells.size()) {
-			vcell = line.cells[p_col];
-		} else {
-			// Past the stored width -- return a blank cell with default colors.
-			cell.fg = Color(0.9f, 0.9f, 0.9f);
-			cell.bg = Color(0.12f, 0.12f, 0.15f);
-			return cell;
-		}
-	} else {
-		// Reading from the live screen.
-		int screen_row = p_row - scroll_offset;
-		if (screen_row < 0 || screen_row >= rows) {
-			cell.fg = Color(0.9f, 0.9f, 0.9f);
-			cell.bg = Color(0.12f, 0.12f, 0.15f);
-			return cell;
-		}
-		VTermPos pos;
-		pos.row = screen_row;
-		pos.col = p_col;
-		vterm_screen_get_cell(vterm_screen, pos, &vcell);
-	}
+	VTermPos pos;
+	pos.row = p_row;
+	pos.col = p_col;
+	vterm_screen_get_cell(vterm_screen, pos, &vcell);
 
 	// Build the text string from the uint32_t chars array.
 	if (vcell.chars[0] != 0) {
-		// Count how many codepoints are in this cell.
 		int count = 0;
 		while (count < VTERM_MAX_CHARS_PER_CELL && vcell.chars[count] != 0) {
 			count++;
 		}
-		// Build a String from the codepoints.
 		cell.text = String();
 		for (int i = 0; i < count; i++) {
 			char32_t c = (char32_t)vcell.chars[i];
@@ -206,6 +182,46 @@ TerminalEmulator::Cell TerminalEmulator::get_cell(int p_row, int p_col) const {
 	cell.bg = _vterm_color_to_godot(vcell.bg);
 
 	// Attributes.
+	cell.bold = vcell.attrs.bold != 0;
+	cell.italic = vcell.attrs.italic != 0;
+	cell.underline = vcell.attrs.underline != 0;
+	cell.reverse = vcell.attrs.reverse != 0;
+	cell.strike = vcell.attrs.strike != 0;
+	cell.width = vcell.width;
+
+	return cell;
+}
+
+TerminalEmulator::Cell TerminalEmulator::get_scrollback_cell(int p_scrollback_idx, int p_col) const {
+	Cell cell;
+	cell.fg = Color(0.9f, 0.9f, 0.9f);
+	cell.bg = Color(0.12f, 0.12f, 0.15f);
+
+	if (p_scrollback_idx < 0 || p_scrollback_idx >= scrollback.size()) {
+		return cell;
+	}
+
+	const ScrollbackLine &line = scrollback[p_scrollback_idx];
+	if (p_col < 0 || p_col >= line.cells.size()) {
+		return cell;
+	}
+
+	const VTermScreenCell &vcell = line.cells[p_col];
+
+	if (vcell.chars[0] != 0) {
+		int count = 0;
+		while (count < VTERM_MAX_CHARS_PER_CELL && vcell.chars[count] != 0) {
+			count++;
+		}
+		cell.text = String();
+		for (int i = 0; i < count; i++) {
+			char32_t c = (char32_t)vcell.chars[i];
+			cell.text += String::chr(c);
+		}
+	}
+
+	cell.fg = _vterm_color_to_godot(vcell.fg);
+	cell.bg = _vterm_color_to_godot(vcell.bg);
 	cell.bold = vcell.attrs.bold != 0;
 	cell.italic = vcell.attrs.italic != 0;
 	cell.underline = vcell.attrs.underline != 0;
@@ -300,37 +316,6 @@ Color TerminalEmulator::_index_to_color(int idx) {
 }
 
 // ---------------------------------------------------------------------------
-// Scrollback
-// ---------------------------------------------------------------------------
-
-void TerminalEmulator::scroll_up(int p_lines) {
-	if (p_lines <= 0) {
-		return;
-	}
-	scroll_offset += p_lines;
-	if (scroll_offset > scrollback.size()) {
-		scroll_offset = scrollback.size();
-	}
-	dirty = true;
-}
-
-void TerminalEmulator::scroll_down(int p_lines) {
-	if (p_lines <= 0) {
-		return;
-	}
-	scroll_offset -= p_lines;
-	if (scroll_offset < 0) {
-		scroll_offset = 0;
-	}
-	dirty = true;
-}
-
-void TerminalEmulator::scroll_to_bottom() {
-	scroll_offset = 0;
-	dirty = true;
-}
-
-// ---------------------------------------------------------------------------
 // libvterm Callbacks
 // ---------------------------------------------------------------------------
 
@@ -363,8 +348,7 @@ int TerminalEmulator::_settermprop_cb(VTermProp prop, VTermValue *val, void *use
 			self->title = String::utf8(val->string.str, val->string.len);
 		} break;
 		case VTERM_PROP_ALTSCREEN: {
-			// When entering/leaving alt screen, reset scroll position.
-			self->scroll_to_bottom();
+			// Alt screen change — dirty flag is set below.
 		} break;
 		default:
 			break;
@@ -420,11 +404,6 @@ int TerminalEmulator::_sb_popline_cb(int popped_cols, VTermScreenCell *cells, vo
 	}
 
 	self->scrollback.remove_at(self->scrollback.size() - 1);
-
-	// Adjust scroll offset if needed.
-	if (self->scroll_offset > self->scrollback.size()) {
-		self->scroll_offset = self->scrollback.size();
-	}
 
 	return 1;
 }

@@ -37,7 +37,7 @@
 #include "core/templates/safe_refcount.h"
 #include "editor/plugins/editor_plugin.h"
 
-class Button;
+class TabContainer;
 
 #ifdef TOOLS_ENABLED
 class MCPStatusPanel;
@@ -50,7 +50,7 @@ class MCPServerPlugin : public EditorPlugin {
 	GDCLASS(MCPServerPlugin, EditorPlugin)
 
 private:
-	MCPProtocol protocol;
+	MCPProtocol *protocol = nullptr;
 	Ref<MCPDebuggerBridge> debugger_bridge;
 
 	Thread thread;
@@ -64,11 +64,18 @@ private:
 	String auth_token;
 
 #ifdef TOOLS_ENABLED
+	TabContainer *ai_tab_container = nullptr;
 	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
 #ifdef MCP_TERMINAL_ENABLED
-	AgentPanel *agent_panel = nullptr;
-	Button *agent_panel_button = nullptr;
+	Vector<AgentPanel *> agent_panels;
+	Control *new_tab_placeholder = nullptr;
+	int agent_counter = 0;
+
+	void _create_agent_tab();
+	void _on_tab_changed(int p_tab);
+	void _on_tab_close_pressed(int p_tab);
+	void _on_agent_title_changed(const String &p_title);
+	void _update_close_buttons();
 #endif
 #endif
 
@@ -93,7 +100,12 @@ public:
 	MCPServerPlugin();
 	~MCPServerPlugin();
 
-	MCPProtocol *get_protocol() { return &protocol; }
+	// Main screen plugin overrides.
+	bool has_main_screen() const override { return true; }
+	virtual String get_plugin_name() const override { return "AI"; }
+	virtual void make_visible(bool p_visible) override;
+
+	MCPProtocol *get_protocol() { return protocol; }
 	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
 
 	// Called by the panel's Start/Stop button.

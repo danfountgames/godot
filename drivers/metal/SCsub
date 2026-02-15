@@ -40,8 +40,9 @@ if "-std=gnu++17" in env_metal["CXXFLAGS"]:
     env_metal["CXXFLAGS"].remove("-std=gnu++17")
 env_metal.Append(CXXFLAGS=["-std=gnu++20"])
 
-# Enable module support
-env_metal.Append(CCFLAGS=["-fmodules", "-fcxx-modules"])
+# Note: -fmodules/-fcxx-modules removed — CUPS headers break Clang module
+# compilation (QuartzCore -> CoreVideo -> ApplicationServices -> CUPS).
+# The Metal driver only uses #import, not @import, so modules aren't needed.
 
 # Driver source files
 
