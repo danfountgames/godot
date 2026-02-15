@@ -169,7 +169,72 @@ String AgentPanel::_build_system_prompt() const {
 	p += "at runtime via debug/evaluate: JSON.stringify(Debug.get_manifest()).\n\n";
 	p += "Two specialized subagents are available:\n";
 	p += "  godot-builder      — instruments GDScript with semantic debug content\n";
-	p += "  godot-game-player  — launches, tests, and debugs the running game\n";
+	p += "  godot-game-player  — launches, tests, and debugs the running game\n\n";
+
+	// ── Godot architecture — scene-first (universal context for all agents) ──
+	p += "## Godot architecture — scenes first, code second\n";
+	p += "Godot is SCENE-DRIVEN. Always prefer scenes (.tscn) and editor-exposed properties ";
+	p += "over building node trees or complex structures in code.\n\n";
+
+	p += "**@export is king.** Every tunable value should be @export so it appears in the Inspector. ";
+	p += "The user (and auto_expose) can see and tweak it without touching code. ";
+	p += "Use typed hints for better Inspector UX:\n";
+	p += "  @export var speed: float = 300.0              # plain field\n";
+	p += "  @export_range(0, 1000, 10) var health: int = 100  # slider with step\n";
+	p += "  @export_enum(\"Easy\", \"Normal\", \"Hard\") var difficulty: int = 1\n";
+	p += "  @export_file(\"*.tscn\") var next_level: String  # file picker\n";
+	p += "  @export_node_path(\"CharacterBody2D\") var player_path: NodePath\n";
+	p += "  @export var enemy_scene: PackedScene           # drag-drop scene reference\n";
+	p += "  @export_group(\"Combat\")                        # inspector section header\n";
+	p += "  @export var damage: float = 10.0\n";
+	p += "  @export var attack_range: float = 50.0\n";
+	p += "  @export_group(\"Movement\")\n";
+	p += "  @export var move_speed: float = 200.0\n";
+	p += "  @export_category(\"Debug\")                      # bold category divider\n";
+	p += "  @export var show_hitboxes: bool = false\n\n";
+
+	p += "**Create scenes, not code trees.** When adding new functionality:\n";
+	p += "  - Create a .tscn scene with the node structure needed\n";
+	p += "  - Attach a script with @export properties for configuration\n";
+	p += "  - Instance it in the parent scene (scene/instance_scene) or via preload()\n";
+	p += "  - Let the user arrange, configure, and connect signals in the editor\n";
+	p += "  Example: don't write 50 lines of add_child()/set_position() in code.\n";
+	p += "  Instead: create enemy.tscn with all child nodes, export its properties, instance it.\n\n";
+
+	p += "**Scene composition pattern:**\n";
+	p += "```gdscript\n";
+	p += "# GOOD — scene-driven, user-configurable:\n";
+	p += "@export var enemy_scene: PackedScene  # user drags enemy.tscn here in Inspector\n";
+	p += "func spawn():\n";
+	p += "    var e = enemy_scene.instantiate()\n";
+	p += "    add_child(e)\n\n";
+	p += "# BAD — hardcoded, no user control:\n";
+	p += "func spawn():\n";
+	p += "    var e = CharacterBody2D.new()\n";
+	p += "    var sprite = Sprite2D.new()\n";
+	p += "    e.add_child(sprite)  # building tree in code = fragile, non-visual\n";
+	p += "```\n\n";
+
+	p += "**Resources (.tres) for data.** Game data that users tweak belongs in Resource files:\n";
+	p += "  class_name WeaponStats extends Resource\n";
+	p += "  @export var damage: float = 10.0\n";
+	p += "  @export var fire_rate: float = 0.5\n";
+	p += "  @export var projectile: PackedScene\n";
+	p += "Then reference from scripts: @export var stats: WeaponStats\n";
+	p += "This keeps data editable in the Inspector without opening code.\n\n";
+
+	p += "**Groups for cross-cutting concerns.** Tag nodes with groups (\"enemies\", \"interactable\", ";
+	p += "\"save_target\") instead of managing arrays in code. Use add_to_group() or set in editor.\n";
+	p += "Query: get_tree().get_nodes_in_group(\"enemies\")\n\n";
+
+	p += "**Signals over direct calls.** Prefer signal connections (editor or connect()) over ";
+	p += "direct method calls for decoupled communication. The editor signal panel lets users ";
+	p += "wire connections visually.\n\n";
+
+	p += "**When you build, build for the editor.** Your output should be things the user can ";
+	p += "see, drag, configure, and connect in the Godot editor — not invisible code structures. ";
+	p += "If you're creating something new, make it a scene. If you're exposing a value, make it @export. ";
+	p += "If you're adding behavior, make it composable (small node, attach to anything).\n";
 	p += "</godot_context>\n";
 	return p;
 }
@@ -203,71 +268,6 @@ String AgentPanel::_build_agents_json() const {
 		p += "Your job is to make every interesting part of a game visible, tunable, and controllable ";
 		p += "from the debug console and MCP tools — without changing how the game plays. ";
 		p += "All Debug calls are no-ops in release builds. No #ifdef needed. Zero performance cost.\n\n";
-
-		// ── Godot architecture — scene-first ──
-		p += "## Godot architecture — scenes first, code second\n";
-		p += "Godot is SCENE-DRIVEN. Always prefer scenes (.tscn) and editor-exposed properties ";
-		p += "over building node trees or complex structures in code.\n\n";
-
-		p += "**@export is king.** Every tunable value should be @export so it appears in the Inspector. ";
-		p += "The user (and auto_expose) can see and tweak it without touching code. ";
-		p += "Use typed hints for better Inspector UX:\n";
-		p += "  @export var speed: float = 300.0              # plain field\n";
-		p += "  @export_range(0, 1000, 10) var health: int = 100  # slider with step\n";
-		p += "  @export_enum(\"Easy\", \"Normal\", \"Hard\") var difficulty: int = 1\n";
-		p += "  @export_file(\"*.tscn\") var next_level: String  # file picker\n";
-		p += "  @export_node_path(\"CharacterBody2D\") var player_path: NodePath\n";
-		p += "  @export var enemy_scene: PackedScene           # drag-drop scene reference\n";
-		p += "  @export_group(\"Combat\")                        # inspector section header\n";
-		p += "  @export var damage: float = 10.0\n";
-		p += "  @export var attack_range: float = 50.0\n";
-		p += "  @export_group(\"Movement\")\n";
-		p += "  @export var move_speed: float = 200.0\n";
-		p += "  @export_category(\"Debug\")                      # bold category divider\n";
-		p += "  @export var show_hitboxes: bool = false\n\n";
-
-		p += "**Create scenes, not code trees.** When adding new functionality:\n";
-		p += "  - Create a .tscn scene with the node structure needed\n";
-		p += "  - Attach a script with @export properties for configuration\n";
-		p += "  - Instance it in the parent scene (scene/instance_scene) or via preload()\n";
-		p += "  - Let the user arrange, configure, and connect signals in the editor\n";
-		p += "  Example: don't write 50 lines of add_child()/set_position() in code.\n";
-		p += "  Instead: create enemy.tscn with all child nodes, export its properties, instance it.\n\n";
-
-		p += "**Scene composition pattern:**\n";
-		p += "```gdscript\n";
-		p += "# GOOD — scene-driven, user-configurable:\n";
-		p += "@export var enemy_scene: PackedScene  # user drags enemy.tscn here in Inspector\n";
-		p += "func spawn():\n";
-		p += "    var e = enemy_scene.instantiate()\n";
-		p += "    add_child(e)\n\n";
-		p += "# BAD — hardcoded, no user control:\n";
-		p += "func spawn():\n";
-		p += "    var e = CharacterBody2D.new()\n";
-		p += "    var sprite = Sprite2D.new()\n";
-		p += "    e.add_child(sprite)  # building tree in code = fragile, non-visual\n";
-		p += "```\n\n";
-
-		p += "**Resources (.tres) for data.** Game data that users tweak belongs in Resource files:\n";
-		p += "  class_name WeaponStats extends Resource\n";
-		p += "  @export var damage: float = 10.0\n";
-		p += "  @export var fire_rate: float = 0.5\n";
-		p += "  @export var projectile: PackedScene\n";
-		p += "Then reference from scripts: @export var stats: WeaponStats\n";
-		p += "This keeps data editable in the Inspector without opening code.\n\n";
-
-		p += "**Groups for cross-cutting concerns.** Tag nodes with groups (\"enemies\", \"interactable\", ";
-		p += "\"save_target\") instead of managing arrays in code. Use add_to_group() or set in editor.\n";
-		p += "Query: get_tree().get_nodes_in_group(\"enemies\")\n\n";
-
-		p += "**Signals over direct calls.** Prefer signal connections (editor or connect()) over ";
-		p += "direct method calls for decoupled communication. The editor signal panel lets users ";
-		p += "wire connections visually.\n\n";
-
-		p += "**When you build, build for the editor.** Your output should be things the user can ";
-		p += "see, drag, configure, and connect in the Godot editor — not invisible code structures. ";
-		p += "If you're creating something new, make it a scene. If you're exposing a value, make it @export. ";
-		p += "If you're adding behavior, make it composable (small node, attach to anything).\n\n";
 
 		// ── auto_expose — the power tool ──
 		p += "## auto_expose — always start here\n";
