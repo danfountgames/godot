@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  agent_panel.h                                                         */
+/*  mcp_help_tool.h                                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,53 +30,16 @@
 
 #pragma once
 
-#ifdef MCP_TERMINAL_ENABLED
+#include "core/string/ustring.h"
+#include "core/variant/dictionary.h"
 
-#include "scene/gui/box_container.h"
+class MCPToolRegistry;
 
-class Button;
-class Label;
-class TerminalWidget;
-class MCPServerPlugin;
-
-class AgentPanel : public VBoxContainer {
-	GDCLASS(AgentPanel, VBoxContainer)
-
-private:
-	MCPServerPlugin *server_plugin = nullptr;
-	TerminalWidget *terminal = nullptr;
-
-	// Toolbar widgets.
-	Button *launch_button = nullptr;
-	Button *stop_button = nullptr;
-	Button *clear_button = nullptr;
-	Label *status_label = nullptr;
-
-	bool claude_running = false;
-
-	void _build_ui();
-	void _on_launch_pressed();
-	void _on_stop_pressed();
-	void _on_clear_pressed();
-	void _update_status();
-
-	String _find_claude_binary() const;
-	String _build_mcp_config_json() const;
-	String _build_system_prompt() const;
-	String _build_agents_json() const;
-	Vector<String> _build_claude_args() const;
-	Vector<String> _build_claude_env() const;
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
+class MCPHelpTool {
 public:
-	void set_server_plugin(MCPServerPlugin *p_plugin) { server_plugin = p_plugin; }
+	// Register the help tool into the registry.
+	static void register_tools(MCPToolRegistry *p_registry);
 
-	AgentPanel();
-	~AgentPanel();
+	// Tool handler: returns a categorized summary of all available tools.
+	static Dictionary handle_help(const Dictionary &p_args);
 };
-
-#endif // MCP_TERMINAL_ENABLED
