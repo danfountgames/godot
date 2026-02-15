@@ -123,8 +123,17 @@ void OutputRingBuffer::clear() {
 MCPDebuggerBridge *MCPDebuggerBridge::singleton = nullptr;
 
 MCPDebuggerBridge::MCPDebuggerBridge() {
-	singleton = this;
-	print_line("[MCP] MCPDebuggerBridge created, singleton set to " + itos((uint64_t)this));
+	if (singleton != nullptr) {
+		// Another bridge already exists — don't overwrite the singleton.
+		// This can happen if the editor plugin is instantiated more than once
+		// during startup (e.g. add_by_type + saved plugin state).
+		print_line("[MCP] MCPDebuggerBridge: another instance already exists at " +
+				itos((uint64_t)singleton) + ", this=" + itos((uint64_t)this) +
+				" will NOT overwrite singleton.");
+	} else {
+		singleton = this;
+		print_line("[MCP] MCPDebuggerBridge created, singleton set to " + itos((uint64_t)this));
+	}
 	game_running.clear();
 	game_launching.clear();
 	game_paused.clear();
@@ -137,9 +146,14 @@ MCPDebuggerBridge::MCPDebuggerBridge() {
 }
 
 MCPDebuggerBridge::~MCPDebuggerBridge() {
-	print_line("[MCP] MCPDebuggerBridge destroyed, clearing singleton (was " + itos((uint64_t)singleton) + ")");
-	singleton = nullptr;
-	_wake_all_pending("Bridge destroyed");
+	if (singleton == this) {
+		print_line("[MCP] MCPDebuggerBridge destroyed, clearing singleton (was " + itos((uint64_t)singleton) + ")");
+		singleton = nullptr;
+		_wake_all_pending("Bridge destroyed");
+	} else {
+		print_line("[MCP] MCPDebuggerBridge non-singleton instance destroyed at " + itos((uint64_t)this) +
+				" (singleton is " + itos((uint64_t)singleton) + ")");
+	}
 }
 
 void MCPDebuggerBridge::_bind_methods() {
@@ -292,6 +306,10 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		Dictionary result;
 		result["success"] = true;
 		result["base64_png"] = p_data[0];
+		if (p_data.size() >= 3) {
+			result["width"] = (int)p_data[1];
+			result["height"] = (int)p_data[2];
+		}
 		_complete_pending("screenshot", result);
 		return true;
 	}

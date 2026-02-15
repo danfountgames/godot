@@ -203,6 +203,7 @@ public:
 	void set_custom_property_info(const PropertyInfo &p_info);
 	const HashMap<StringName, PropertyInfo> &get_custom_property_info() const;
 	uint64_t get_last_saved_time() { return last_save_time; }
+	void set_last_saved_time(uint64_t p_time) { last_save_time = p_time; }
 
 	List<String> get_input_presets() const { return input_presets; }
 

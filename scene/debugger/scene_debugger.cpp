@@ -3524,7 +3524,10 @@ void SceneDebugger::_mcp_held_inputs_tick() {
 		held.frames_held++;
 
 		bool should_release = false;
-		if (held.auto_release_at >= 0 && held.frames_held >= held.auto_release_at) {
+		// Use > instead of >= to fix off-by-one: hold_frames=N should hold
+		// for N full frames. The counter starts at 0 and is incremented before
+		// the check, so >= would release after N-1 frames of actual holding.
+		if (held.auto_release_at >= 0 && held.frames_held > held.auto_release_at) {
 			should_release = true;
 		}
 		if (held.frames_held >= SAFETY_CEILING) {
@@ -4104,12 +4107,17 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 
 		img->clear_mipmaps();
 
+		int width = img->get_width();
+		int height = img->get_height();
+
 		// Encode as PNG and convert to base64.
 		PackedByteArray png_data = img->save_png_to_buffer();
 		String base64 = CryptoCore::b64_encode_str(png_data.ptr(), png_data.size());
 
 		Array result;
 		result.push_back(base64);
+		result.push_back(width);
+		result.push_back(height);
 		EngineDebugger::get_singleton()->send_message("mcp:screenshot_result", result);
 		return OK;
 	}

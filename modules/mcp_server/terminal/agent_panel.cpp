@@ -1439,12 +1439,21 @@ String AgentPanel::_build_agents_json() const {
 
 		// ── Tool priority ──
 		p += "## MCP tool priority (when inspecting state)\n";
+		p += "**CRITICAL: ALWAYS inspect the scene tree BEFORE taking a screenshot.**\n";
+		p += "Scene tree analysis is your PRIMARY diagnostic tool — it gives you structural,\n";
+		p += "typed, quantitative data about every node. Screenshots are supplementary visual\n";
+		p += "confirmation ONLY, taken AFTER you already understand the scene structure.\n\n";
+		p += "Priority order (MANDATORY — never skip to a lower-priority tool):\n";
 		p += "1. console/get_manifest — semantic debug surface (fastest, richest)\n";
-		p += "2. runtime/browse_scene_tree — lightweight paginated tree (preferred over full tree)\n";
-		p += "3. runtime/get_node_properties — deep-inspect a specific node\n";
+		p += "2. runtime/browse_scene_tree — ALWAYS FIRST for scene inspection. Lightweight,\n";
+		p += "   paginated, gives you node names, types, and hierarchy. This tells you what\n";
+		p += "   exists, what's missing, and how the scene is structured.\n";
+		p += "3. runtime/get_node_properties — deep-inspect specific nodes found via browse\n";
 		p += "4. runtime/get_output + runtime/get_errors — what happened in the game\n";
 		p += "5. runtime/evaluate — run any expression for ad-hoc inspection\n";
-		p += "6. runtime/get_screenshot — visual check (AFTER structural inspection, not instead of)\n";
+		p += "6. runtime/get_screenshot — visual check ONLY after you've already inspected\n";
+		p += "   the tree. A screenshot without prior tree analysis is nearly useless —\n";
+		p += "   you can't diagnose structural issues from pixels alone.\n";
 		p += "7. runtime/get_scene_tree — full tree dump (expensive — prefer browse)\n";
 		p += "Call `help` for the full 80+ tool reference.\n\n";
 
@@ -1454,6 +1463,8 @@ String AgentPanel::_build_agents_json() const {
 		p += "- You sometimes forget to script/check after edits. This causes silent failures on relaunch.\n";
 		p += "- You may forget to runtime/stop before relaunching. Always stop first after code changes.\n";
 		p += "- You sometimes take screenshots too early, before inspecting the scene tree structurally.\n";
+		p += "  THIS IS YOUR BIGGEST WEAKNESS. Scene tree data is 10x more useful than screenshots.\n";
+		p += "  NEVER call runtime/get_screenshot without calling runtime/browse_scene_tree first.\n";
 		p += "- You can give up after one failed attempt. Iterate — try at least 3 approaches before escalating.\n";
 		p += "- You sometimes report what you THINK happened instead of providing tool output as evidence.\n\n";
 
@@ -1499,6 +1510,27 @@ String AgentPanel::_build_agents_json() const {
 		p += "- When testing keyboard shortcuts, try the input method first. If it fails, verify\n";
 		p += "  the feature works by calling the function directly. Report both results.\n\n";
 
+		// ── Troubleshooting: bridge not available ──
+		p += "## Troubleshooting: 'debugger bridge not available'\n";
+		p += "If all runtime/* tools return 'debugger bridge not available', the MCP debugger\n";
+		p += "bridge singleton failed to initialize. This is a known race condition.\n";
+		p += "Recovery steps:\n";
+		p += "1. runtime/stop (may fail — that's OK)\n";
+		p += "2. Ask the orchestrator to restart the editor\n";
+		p += "3. After restart, runtime/run_project should work — try it FIRST before other runtime tools\n";
+		p += "4. If it still fails: the editor binary needs rebuilding (contact orchestrator)\n";
+		p += "Do NOT try creative workarounds like editor/execute_script to call EditorInterface.play_main_scene().\n";
+		p += "These introduce their own errors. The bridge restart is the only reliable fix.\n\n";
+
+		// ── File writing workflow ──
+		p += "## File writing workflow (when editing scripts for diagnostics)\n";
+		p += "After writing .gd or .tscn files with your native file tools:\n";
+		p += "1. Call editor/scan_filesystem — this picks up your changes AND suppresses the\n";
+		p += "   'Files modified outside Godot' dialog automatically\n";
+		p += "2. Call script/check path=res://your_file.gd — validate syntax\n";
+		p += "3. runtime/stop → runtime/run_project — relaunch with changes\n";
+		p += "NEVER skip step 1. Without it, the editor shows a modal dialog that blocks everything.\n\n";
+
 		// ── Rules ──
 		p += "## Rules\n";
 		p += "- Launch and test. Don't theorize — run the game and observe.\n";
@@ -1506,7 +1538,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "- Read the build manifest first to know what to test.\n";
 		p += "- Read files before editing. script/check after every edit.\n";
 		p += "- runtime/stop before relaunching after code changes.\n";
-		p += "- browse_scene_tree before get_screenshot.\n";
+		p += "- ALWAYS browse_scene_tree BEFORE get_screenshot. No exceptions. Scene tree is your eyes.\n";
 		p += "- Prefer runtime/run_scene for isolated tests. Create test scenes freely.\n";
 		p += "- Use the manifest. If a CVar/query/action exists, use it.\n";
 		p += "- Events auto-log to output — check runtime/get_output after interactions.\n";

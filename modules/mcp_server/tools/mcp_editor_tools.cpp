@@ -48,6 +48,7 @@
 #include "editor/editor_node.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/script/editor_script.h"
+#include "editor/script/script_editor_plugin.h"
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
 
@@ -594,6 +595,47 @@ Dictionary MCPEditorTools::handle_reimport(const Dictionary &p_args) {
 // Tool C1: editor/scan_filesystem
 // ============================================================================
 
+// Helper: update cached modification times for open scenes AND scripts so the
+// "Files modified outside Godot" dialog doesn't fire for MCP-caused writes.
+// Must run on the main thread.
+static void _mcp_update_scene_mtimes() {
+	EditorNode *en = EditorNode::get_singleton();
+	if (!en) {
+		return;
+	}
+	EditorData &ed = EditorNode::get_editor_data();
+
+	// Update each open scene tab's cached mtime to match the current disk mtime.
+	for (int i = 0; i < ed.get_edited_scene_count(); i++) {
+		String scene_path = ed.get_scene_path(i);
+		if (scene_path.is_empty()) {
+			continue;
+		}
+		uint64_t disk_time = FileAccess::get_modified_time(scene_path);
+		if (disk_time > 0) {
+			ed.set_scene_modified_time(i, disk_time);
+		}
+	}
+
+	// Also update the project.godot cached time so it doesn't trigger
+	// the "project.godot was modified externally" dialog entry.
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (ps) {
+		String project_path = ps->get_resource_path().path_join("project.godot");
+		uint64_t proj_disk_time = FileAccess::get_modified_time(project_path);
+		if (proj_disk_time > 0) {
+			ps->set_last_saved_time(proj_disk_time);
+		}
+	}
+
+	// Update open script tabs' cached mtimes to suppress the ScriptEditor's
+	// "Files modified outside Godot" dialog for MCP-caused script writes.
+	ScriptEditor *se = ScriptEditor::get_singleton();
+	if (se) {
+		se->update_script_times();
+	}
+}
+
 Dictionary MCPEditorTools::handle_scan_filesystem(const Dictionary &p_args) {
 	EditorFileSystem *efs = EditorFileSystem::get_singleton();
 	if (!efs) {
@@ -601,13 +643,18 @@ Dictionary MCPEditorTools::handle_scan_filesystem(const Dictionary &p_args) {
 				"EditorFileSystem not available. This tool requires the Godot editor.");
 	}
 
+	// Update cached scene modification times BEFORE scanning, so that when
+	// the editor regains focus, _scan_external_changes() won't show the
+	// "Files modified outside Godot" dialog for MCP-caused writes.
+	callable_mp_static(&_mcp_update_scene_mtimes).call_deferred();
+
 	// Fire-and-forget: queue scan on the main thread.
 	callable_mp(efs, &EditorFileSystem::scan_changes).call_deferred();
 
 	Dictionary structured;
 	structured["status"] = "queued";
 
-	return make_tool_result("Filesystem scan queued.", structured);
+	return make_tool_result("Filesystem scan queued. Scene modification times updated to suppress external-change dialog.", structured);
 }
 
 // ============================================================================
