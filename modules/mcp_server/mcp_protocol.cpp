@@ -44,6 +44,7 @@
 #include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
 #include "tools/mcp_export_tools.h"
+#include "tools/mcp_help_tool.h"
 #include "tools/mcp_input_tools.h"
 #include "tools/mcp_memory_tools.h"
 #include "tools/mcp_scene_tools.h"
@@ -98,6 +99,7 @@ MCPProtocol::MCPProtocol() {
 	set_method("tools/call", callable_mp(this, &MCPProtocol::_handle_tools_call));
 
 	// Register all tools into the registry.
+	MCPHelpTool::register_tools(&tool_registry);
 	MCPEditorTools::register_tools(&tool_registry);
 	MCPDebugTools::register_tools(&tool_registry);
 	MCPAutomationTools::register_tools(&tool_registry);
@@ -875,7 +877,8 @@ Dictionary MCPProtocol::handle_initialize(const Dictionary &p_params) {
 							 "live inspection, game automation, and session summaries. "
 							 "All file paths use res:// format (Godot's virtual filesystem). "
 							 "Tools in runtime/* require a running game (use runtime/run_project first). "
-							 "Call tools/list to discover available tools.";
+							 "Call the 'help' tool for a categorized overview of all available tools, "
+							 "or 'help' with tool: \"<name>\" for detailed parameter info.";
 
 	// Stash session_id in result; process_request() extracts and removes it.
 	result["_mcp_session_id"] = new_session_id;

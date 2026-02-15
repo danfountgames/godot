@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_server_plugin.h                                                   */
+/*  mcp_help_tool.h                                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,78 +30,16 @@
 
 #pragma once
 
-#include "mcp_debugger_bridge.h"
-#include "mcp_protocol.h"
+#include "core/string/ustring.h"
+#include "core/variant/dictionary.h"
 
-#include "core/os/thread.h"
-#include "core/templates/safe_refcount.h"
-#include "editor/plugins/editor_plugin.h"
+class MCPToolRegistry;
 
-class Button;
-
-#ifdef TOOLS_ENABLED
-class MCPStatusPanel;
-#ifdef MCP_TERMINAL_ENABLED
-class AgentPanel;
-#endif
-#endif
-
-class MCPServerPlugin : public EditorPlugin {
-	GDCLASS(MCPServerPlugin, EditorPlugin)
-
-private:
-	MCPProtocol protocol;
-	Ref<MCPDebuggerBridge> debugger_bridge;
-
-	Thread thread;
-	SafeFlag thread_running;
-	bool start_attempted = false;
-	bool started = false;
-	bool use_thread = true;
-
-	String host = MCP_DEFAULT_HOST;
-	int port = MCP_DEFAULT_PORT;
-	String auth_token;
-
-#ifdef TOOLS_ENABLED
-	MCPStatusPanel *status_panel = nullptr;
-	Button *panel_button = nullptr;
-#ifdef MCP_TERMINAL_ENABLED
-	AgentPanel *agent_panel = nullptr;
-	Button *agent_panel_button = nullptr;
-#endif
-#endif
-
-	static void thread_main(void *p_userdata);
-
-	void start();
-	void stop();
-
-	// Discovery file for MCP clients to auto-detect the server.
-	void write_discovery_file();
-	void delete_discovery_file();
-	String get_discovery_file_path() const;
-	String get_legacy_discovery_file_path() const;
-	void cleanup_stale_discovery_files();
-
-	void _notification(int p_what);
-
-protected:
-	static void _bind_methods();
-
+class MCPHelpTool {
 public:
-	MCPServerPlugin();
-	~MCPServerPlugin();
+	// Register the help tool into the registry.
+	static void register_tools(MCPToolRegistry *p_registry);
 
-	MCPProtocol *get_protocol() { return &protocol; }
-	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
-
-	// Called by the panel's Start/Stop button.
-	void toggle_server();
-
-	// Expose host/port/token for the panels.
-	String get_host() const { return host; }
-	int get_port() const { return port; }
-	String get_auth_token() const { return auth_token; }
-	bool is_started() const { return started; }
+	// Tool handler: returns a categorized summary of all available tools.
+	static Dictionary handle_help(const Dictionary &p_args);
 };
