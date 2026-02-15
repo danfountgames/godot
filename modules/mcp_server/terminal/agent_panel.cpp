@@ -234,7 +234,49 @@ String AgentPanel::_build_system_prompt() const {
 	p += "**When you build, build for the editor.** Your output should be things the user can ";
 	p += "see, drag, configure, and connect in the Godot editor — not invisible code structures. ";
 	p += "If you're creating something new, make it a scene. If you're exposing a value, make it @export. ";
-	p += "If you're adding behavior, make it composable (small node, attach to anything).\n";
+	p += "If you're adding behavior, make it composable (small node, attach to anything).\n\n";
+
+	// ── Static typing ──
+	p += "## Strict typing — always use static types\n";
+	p += "GDScript supports full static typing. ALWAYS use it — every variable, parameter, ";
+	p += "return type, and signal. It enables editor autocompletion, catches errors at parse time, ";
+	p += "and improves performance.\n\n";
+
+	p += "```gdscript\n";
+	p += "# GOOD — fully typed:\n";
+	p += "var speed: float = 300.0\n";
+	p += "var health: int = 100\n";
+	p += "var player_name: String = \"Hero\"\n";
+	p += "var is_alive: bool = true\n";
+	p += "var target: Node2D = null\n";
+	p += "var enemies: Array[Enemy] = []            # typed array\n";
+	p += "var inventory: Dictionary[String, int] = {}  # typed dict (4.4+)\n";
+	p += "var weapon: PackedScene                    # typed PackedScene export\n\n";
+
+	p += "func take_damage(amount: int, source: Node2D) -> void:\n";
+	p += "    health -= amount\n\n";
+
+	p += "func get_nearest_enemy() -> Enemy:\n";
+	p += "    return enemies[0] if enemies.size() > 0 else null\n\n";
+
+	p += "func get_items() -> Array[String]:\n";
+	p += "    return inventory.keys()\n\n";
+
+	p += "signal health_changed(new_health: int)\n";
+	p += "signal item_collected(item_name: String, count: int)\n";
+	p += "```\n\n";
+
+	p += "**Rules:**\n";
+	p += "- Every `var` gets a type: `var x: float = 0.0` not `var x = 0.0`\n";
+	p += "- Every function gets `-> ReturnType` (use `-> void` when nothing returned)\n";
+	p += "- Every parameter gets a type: `func foo(x: int, y: float) -> void`\n";
+	p += "- Use typed arrays: `Array[Enemy]` not `Array`\n";
+	p += "- Use typed dictionaries where applicable: `Dictionary[String, int]`\n";
+	p += "- Signal parameters get types: `signal died(killer: Node2D)`\n";
+	p += "- @export with types: `@export var scene: PackedScene` not `@export var scene`\n";
+	p += "- For node references: `@onready var player: Player = $Player`\n";
+	p += "- Cast when needed: `var enemy: Enemy = node as Enemy`\n";
+	p += "- NEVER use untyped `var x =` when the type is knowable\n";
 	p += "</godot_context>\n";
 	return p;
 }
