@@ -49,11 +49,14 @@
 #include "editor/settings/editor_settings.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/gui/button.h"
+#include "scene/gui/check_box.h"
 #include "scene/gui/flow_container.h"
 #include "scene/gui/label.h"
 #include "scene/gui/menu_button.h"
 #include "scene/gui/panel.h"
+#include "scene/gui/popup.h"
 #include "scene/gui/separator.h"
+#include "scene/gui/spin_box.h"
 
 void GameViewDebugger::_session_started(Ref<EditorDebuggerSession> p_session) {
 	if (!is_feature_enabled) {
@@ -160,6 +163,49 @@ void GameViewDebugger::reset_time_scale() {
 	for (Ref<EditorDebuggerSession> &I : sessions) {
 		if (I->is_active()) {
 			I->send_message("scene:speed_changed", message);
+		}
+	}
+}
+
+void GameViewDebugger::advance_frames(int p_count, bool p_instant) {
+	Array message;
+	message.append(p_count);
+	message.append(p_instant);
+
+	for (Ref<EditorDebuggerSession> &I : sessions) {
+		if (I->is_active()) {
+			I->send_message("scene:advance_frames", message);
+		}
+	}
+}
+
+void GameViewDebugger::set_debug_pause_enabled(bool p_enabled) {
+	Array message;
+	message.append(p_enabled);
+
+	for (Ref<EditorDebuggerSession> &I : sessions) {
+		if (I->is_active()) {
+			I->send_message("scene:set_debug_pause_enabled", message);
+		}
+	}
+}
+
+void GameViewDebugger::set_debug_pause_tag_enabled(const String &p_tag, bool p_enabled) {
+	Array message;
+	message.append(p_tag);
+	message.append(p_enabled);
+
+	for (Ref<EditorDebuggerSession> &I : sessions) {
+		if (I->is_active()) {
+			I->send_message("scene:set_debug_pause_tag_enabled", message);
+		}
+	}
+}
+
+void GameViewDebugger::clear_debug_pause_hit_counts() {
+	for (Ref<EditorDebuggerSession> &I : sessions) {
+		if (I->is_active()) {
+			I->send_message("scene:clear_debug_pause_hits", Array());
 		}
 	}
 }
@@ -280,6 +326,7 @@ void GameViewDebugger::_feature_profile_changed() {
 void GameViewDebugger::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("session_started"));
 	ADD_SIGNAL(MethodInfo("session_stopped"));
+	ADD_SIGNAL(MethodInfo("debug_pause_hit", PropertyInfo(Variant::ARRAY, "data")));
 }
 
 bool GameViewDebugger::add_screenshot_callback(const Callable &p_callaback, const Rect2i &p_rect) {
@@ -324,6 +371,9 @@ bool GameViewDebugger::capture(const String &p_message, const Array &p_data, int
 
 	if (p_message == "game_view:get_screenshot") {
 		return _msg_get_screenshot(p_data);
+	} else if (p_message == "game_view:debug_pause_hit") {
+		emit_signal(SNAME("debug_pause_hit"), p_data);
+		return true;
 	} else {
 		// Any other messages with this prefix should be ignored.
 		WARN_PRINT("GameViewDebugger unknown message: " + p_message);
@@ -359,6 +409,11 @@ void GameView::_sessions_changed() {
 	}
 
 	_update_debugger_buttons();
+
+	// Send debug_pause enabled state to newly started sessions.
+	if (active_sessions > 0) {
+		debugger->set_debug_pause_enabled(debug_pause_enabled);
+	}
 
 #ifdef MACOS_ENABLED
 	if (!embedded_script_debugger || !embedded_script_debugger->is_session_active() || embedded_script_debugger->get_remote_pid() != embedded_process->get_embedded_pid()) {
@@ -564,6 +619,7 @@ void GameView::_update_debugger_buttons() {
 	camera_override_button->set_disabled(empty);
 	speed_state_button->set_disabled(empty);
 	reset_speed_button->set_disabled(empty);
+	debug_pause_button->set_disabled(empty);
 
 	PopupMenu *menu = camera_override_menu->get_popup();
 
@@ -577,7 +633,9 @@ void GameView::_update_debugger_buttons() {
 		_reset_time_scales();
 	}
 
-	next_frame_button->set_disabled(!suspend_button->is_pressed());
+	bool is_suspended = suspend_button->is_pressed();
+	next_frame_button->set_disabled(!is_suspended);
+	advance_n_button->set_disabled(!is_suspended);
 }
 
 void GameView::_handle_shortcut_requested(int p_embed_action) {
@@ -720,6 +778,88 @@ void GameView::_update_speed_state_size() {
 		min_size = MAX(speed_state_button->get_minimum_size_for_text_and_icon(vformat(U"%s×", lbl), Ref<Texture2D>()).x, min_size);
 	}
 	speed_state_button->set_custom_minimum_size(Vector2(min_size, 0));
+}
+
+void GameView::_advance_n_pressed() {
+	if (advance_n_popup->is_visible()) {
+		// If popup is open, execute the advance.
+		int count = advance_n_spinbox->get_value();
+		bool instant = advance_n_instant_check->is_pressed();
+
+		EditorSettings::get_singleton()->set_project_metadata("game_view", "advance_frame_count", count);
+		EditorSettings::get_singleton()->set_project_metadata("game_view", "advance_frame_instant", instant);
+
+		debugger->advance_frames(count, instant);
+		advance_n_popup->hide();
+	} else {
+		// Open the popup near the button.
+		Rect2 button_rect = advance_n_button->get_screen_rect();
+		advance_n_popup->set_position(Point2i(button_rect.position.x, button_rect.position.y + button_rect.size.y));
+		advance_n_popup->popup();
+	}
+}
+
+void GameView::_advance_n_popup_visibility() {
+	// Stub for future use if needed.
+}
+
+void GameView::_debug_pause_menu_pressed(int p_id) {
+	switch (p_id) {
+		case 0: {
+			// Toggle enable.
+			debug_pause_enabled = !debug_pause_enabled;
+			PopupMenu *dp_menu = debug_pause_button->get_popup();
+			dp_menu->set_item_checked(0, debug_pause_enabled);
+			_update_debug_pause_button();
+			debugger->set_debug_pause_enabled(debug_pause_enabled);
+			EditorSettings::get_singleton()->set_project_metadata("game_view", "debug_pause_enabled", debug_pause_enabled);
+		} break;
+		case 1: {
+			// Clear hit counts.
+			debugger->clear_debug_pause_hit_counts();
+		} break;
+	}
+}
+
+void GameView::_debug_pause_hit(const Array &p_data) {
+	// Update the suspend button state since the game is now suspended.
+	suspend_button->set_pressed(true);
+	_update_debugger_buttons();
+
+	// Parse the data: [tag, hit_count, file?, line?, func?]
+	String tag;
+	int hit_count = 0;
+	String file;
+	int line = 0;
+	String func;
+
+	if (p_data.size() >= 2) {
+		tag = p_data[0];
+		hit_count = p_data[1];
+	}
+	if (p_data.size() >= 5) {
+		file = p_data[2];
+		line = p_data[3];
+		func = p_data[4];
+	}
+
+	String location;
+	if (!file.is_empty()) {
+		location = vformat(" at %s:%d (%s)", file.get_file(), line, func);
+	}
+	String tag_str = tag.is_empty() ? "(untagged)" : tag;
+
+	WARN_PRINT(vformat("debug_pause(\"%s\") hit #%d%s", tag_str, hit_count, location));
+}
+
+void GameView::_update_debug_pause_button() {
+	debug_pause_button->set_text(debug_pause_enabled ? TTRC("BP On") : TTRC("BP Off"));
+	if (is_inside_tree()) {
+		Color color = debug_pause_enabled
+				? get_theme_color(SNAME("error_color"), EditorStringName(Editor))
+				: get_theme_color(SceneStringName(font_color), EditorStringName(Editor));
+		debug_pause_button->add_theme_color_override(SceneStringName(font_color), color);
+	}
 }
 
 GameView::EmbedAvailability GameView::_get_embed_available() {
@@ -922,7 +1062,10 @@ void GameView::_notification(int p_what) {
 		case NOTIFICATION_THEME_CHANGED: {
 			suspend_button->set_button_icon(get_editor_theme_icon(SNAME("Suspend")));
 			next_frame_button->set_button_icon(get_editor_theme_icon(SNAME("NextFrame")));
+			advance_n_button->set_button_icon(get_editor_theme_icon(SNAME("NextFrame")));
 			reset_speed_button->set_button_icon(get_editor_theme_icon(SNAME("Reload")));
+			debug_pause_button->set_button_icon(get_editor_theme_icon(SNAME("Breakpoint")));
+			_update_debug_pause_button();
 
 			node_type_button[RuntimeNodeSelect::NODE_TYPE_NONE]->set_button_icon(get_editor_theme_icon(SNAME("InputEventJoypadMotion")));
 			node_type_button[RuntimeNodeSelect::NODE_TYPE_2D]->set_button_icon(get_editor_theme_icon(SNAME("2DNodes")));
@@ -1267,6 +1410,69 @@ GameView::GameView(Ref<GameViewDebugger> p_debugger, EmbeddedProcessBase *p_embe
 
 	process_hb->add_child(memnew(VSeparator));
 
+	// Frame advance (N frames) button.
+	advance_n_button = memnew(Button);
+	process_hb->add_child(advance_n_button);
+	advance_n_button->set_theme_type_variation(SceneStringName(FlatButton));
+	advance_n_button->set_tooltip_text(TTRC("Advance multiple frames while suspended."));
+	advance_n_button->set_accessibility_name(TTRC("Advance Frames"));
+	advance_n_button->connect(SceneStringName(pressed), callable_mp(this, &GameView::_advance_n_pressed));
+
+	// Frame advance popup panel.
+	advance_n_popup = memnew(PopupPanel);
+	add_child(advance_n_popup);
+
+	VBoxContainer *advance_vb = memnew(VBoxContainer);
+	advance_vb->set_custom_minimum_size(Size2(200 * EDSCALE, 0));
+	advance_n_popup->add_child(advance_vb);
+
+	HBoxContainer *advance_count_hb = memnew(HBoxContainer);
+	advance_vb->add_child(advance_count_hb);
+	Label *advance_label = memnew(Label);
+	advance_label->set_text(TTRC("Frames:"));
+	advance_count_hb->add_child(advance_label);
+	advance_n_spinbox = memnew(SpinBox);
+	advance_n_spinbox->set_min(1);
+	advance_n_spinbox->set_max(10000);
+	advance_n_spinbox->set_step(1);
+	advance_n_spinbox->set_value(EditorSettings::get_singleton()->get_project_metadata("game_view", "advance_frame_count", 10));
+	advance_n_spinbox->set_h_size_flags(SIZE_EXPAND_FILL);
+	advance_count_hb->add_child(advance_n_spinbox);
+
+	advance_n_instant_check = memnew(CheckBox);
+	advance_n_instant_check->set_text(TTRC("Instant (simulated delta)"));
+	advance_n_instant_check->set_tooltip_text(TTRC("Runs N physics+process frames with a simulated delta.\nIntermediate frames are not rendered.\nInput events and rendering-dependent systems may behave differently."));
+	advance_n_instant_check->set_pressed(EditorSettings::get_singleton()->get_project_metadata("game_view", "advance_frame_instant", false));
+	advance_vb->add_child(advance_n_instant_check);
+
+	advance_n_go_button = memnew(Button);
+	advance_n_go_button->set_text(TTRC("Advance"));
+	advance_n_go_button->connect(SceneStringName(pressed), callable_mp(this, &GameView::_advance_n_pressed));
+	advance_vb->add_child(advance_n_go_button);
+
+	process_hb->add_child(memnew(VSeparator));
+
+	// Debug pause toggle button.
+	debug_pause_button = memnew(MenuButton);
+	process_hb->add_child(debug_pause_button);
+	debug_pause_button->set_flat(false);
+	debug_pause_button->set_theme_type_variation("FlatMenuButton");
+	debug_pause_button->set_tooltip_text(TTRC("Configure debug_pause() code breakpoints.\nWhen enabled, SceneTree.debug_pause() calls in your code will suspend the game."));
+	debug_pause_button->set_accessibility_name(TTRC("Debug Pause"));
+
+	debug_pause_enabled = EditorSettings::get_singleton()->get_project_metadata("game_view", "debug_pause_enabled", false);
+	debug_pause_button->set_text(debug_pause_enabled ? TTRC("BP On") : TTRC("BP Off"));
+
+	PopupMenu *dp_menu = debug_pause_button->get_popup();
+	dp_menu->set_hide_on_checkable_item_selection(false);
+	dp_menu->add_check_item(TTRC("Enable debug_pause() Breakpoints"), 0);
+	dp_menu->set_item_checked(0, debug_pause_enabled);
+	dp_menu->add_separator();
+	dp_menu->add_item(TTRC("Clear Hit Counts"), 1);
+	dp_menu->connect(SceneStringName(id_pressed), callable_mp(this, &GameView::_debug_pause_menu_pressed));
+
+	process_hb->add_child(memnew(VSeparator));
+
 	HBoxContainer *input_hb = memnew(HBoxContainer);
 	main_menu_fc->add_child(input_hb);
 
@@ -1458,6 +1664,7 @@ GameView::GameView(Ref<GameViewDebugger> p_debugger, EmbeddedProcessBase *p_embe
 
 	p_debugger->connect("session_started", callable_mp(this, &GameView::_sessions_changed));
 	p_debugger->connect("session_stopped", callable_mp(this, &GameView::_sessions_changed));
+	p_debugger->connect("debug_pause_hit", callable_mp(this, &GameView::_debug_pause_hit));
 
 	p_wrapper->set_override_close_request(true);
 	p_wrapper->connect("window_close_requested", callable_mp(this, &GameView::_window_close_request));

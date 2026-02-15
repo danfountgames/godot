@@ -37,7 +37,10 @@
 #include "scene/debugger/scene_debugger.h"
 #include "scene/gui/box_container.h"
 
+class CheckBox;
 class EmbeddedProcessBase;
+class PopupPanel;
+class SpinBox;
 class VSeparator;
 class WindowWrapper;
 class ScriptEditorDebugger;
@@ -84,9 +87,14 @@ public:
 
 	void set_suspend(bool p_enabled);
 	void next_frame();
+	void advance_frames(int p_count, bool p_instant);
 
 	void set_time_scale(double p_scale);
 	void reset_time_scale();
+
+	void set_debug_pause_enabled(bool p_enabled);
+	void set_debug_pause_tag_enabled(const String &p_tag, bool p_enabled);
+	void clear_debug_pause_hit_counts();
 
 	void set_node_type(int p_type);
 	void set_select_mode(int p_mode);
@@ -192,6 +200,24 @@ class GameView : public VBoxContainer {
 
 	MenuButton *speed_state_button = nullptr;
 	Button *reset_speed_button = nullptr;
+
+	// Frame advance controls.
+	Button *advance_n_button = nullptr;
+	PopupPanel *advance_n_popup = nullptr;
+	SpinBox *advance_n_spinbox = nullptr;
+	Button *advance_n_go_button = nullptr;
+	CheckBox *advance_n_instant_check = nullptr;
+
+	// Debug pause controls.
+	MenuButton *debug_pause_button = nullptr;
+	bool debug_pause_enabled = false;
+	HashMap<String, bool> debug_pause_tag_states;
+
+	void _advance_n_pressed();
+	void _advance_n_popup_visibility();
+	void _debug_pause_menu_pressed(int p_id);
+	void _debug_pause_hit(const Array &p_data);
+	void _update_debug_pause_button();
 
 	void _sessions_changed();
 
