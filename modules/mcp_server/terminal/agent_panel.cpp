@@ -162,12 +162,142 @@ String AgentPanel::_build_system_prompt() const {
 	p += "You are running inside the Godot " + String(GODOT_VERSION_FULL_CONFIG) + " editor with ";
 	p += "exclusive MCP access to the editor and any running game instance.\n";
 	p += "Project: " + project_name + " | Path: " + project_path + "\n\n";
-	p += "You have 50+ MCP tools for game lifecycle, scene inspection, input simulation, ";
-	p += "debugging, and file editing. Call `help` for the full categorized reference.\n\n";
-	p += "This engine includes a semantic debug system (Debug singleton). Games that use it ";
-	p += "register CVars, Commands, Queries, Actions, Events, and UI Pages — discoverable ";
-	p += "at runtime via debug/evaluate: JSON.stringify(Debug.get_manifest()).\n\n";
-	p += "Three specialized subagents are available:\n";
+	// ── MCP tool manifest — explicit superpowers ──
+	p += "## Your tools — 96 MCP tools across 17 categories\n";
+	p += "These are your superpowers. Know what you have. Use `help` for parameter details ";
+	p += "or `help <tool_name>` for a specific tool.\n\n";
+
+	p += "**PROJECT** — orientation and project metadata:\n";
+	p += "  project/get_overview       — project name, main scene, autoloads, renderer, window settings\n";
+	p += "  project/get_input_map      — all input actions and their bound events\n\n";
+
+	p += "**EDITOR** — filesystem, reimport, UIDs, tool scripts, export:\n";
+	p += "  editor/scan_filesystem     — trigger change detection after writing files externally\n";
+	p += "  editor/reimport            — reimport specific resource files\n";
+	p += "  editor/get_uid / resolve_uid — UID ↔ path resolution\n";
+	p += "  editor/execute_script      — run GDScript snippet in the editor as @tool script\n";
+	p += "  editor/export/*            — list_presets, run, check_templates\n\n";
+
+	p += "**SCENE EDITING** — build and modify scenes in the editor:\n";
+	p += "  scene/browse_tree          — inspect open scene's node tree and properties\n";
+	p += "  scene/add_node             — create new node in scene tree\n";
+	p += "  scene/remove_node          — remove node and children\n";
+	p += "  scene/rename_node / move_node / duplicate_node\n";
+	p += "  scene/instance_scene       — instance a .tscn as a child (stays linked)\n";
+	p += "  scene/set_property         — set any property on a scene node\n";
+	p += "  scene/connect_signal / disconnect_signal\n";
+	p += "  scene/attach_script        — attach .gd script to node\n";
+	p += "  scene/set_anchor_preset    — set Control anchors by preset name\n";
+	p += "  scene/save                 — save current scene (or Save As with path)\n\n";
+
+	p += "**RUNTIME — LIFECYCLE** — launch, stop, status:\n";
+	p += "  runtime/run_project        — launch main scene in debug mode\n";
+	p += "  runtime/run_scene          — launch specific scene for targeted testing\n";
+	p += "  runtime/stop               — stop running game\n";
+	p += "  runtime/get_status         — current state (stopped/launching/running/paused)\n\n";
+
+	p += "**RUNTIME — INSPECTION** — read live game state:\n";
+	p += "  runtime/get_output         — captured print/log output (paginated)\n";
+	p += "  runtime/get_errors         — captured runtime errors (paginated)\n";
+	p += "  runtime/browse_scene_tree  — lightweight filtered tree (PREFER over get_scene_tree)\n";
+	p += "  runtime/search_scene_tree  — search by name pattern and/or type\n";
+	p += "  runtime/get_scene_tree     — full tree dump (expensive — use browse instead)\n";
+	p += "  runtime/get_node_properties — deep-inspect a specific node's properties\n";
+	p += "  runtime/set_node_property  — set property on live node (live tweaking)\n";
+	p += "  runtime/get_session_summary — comprehensive snapshot (status, FPS, tree, output, errors)\n";
+	p += "  runtime/clear_output       — clear output/error buffers\n\n";
+
+	p += "**RUNTIME — EVALUATE** — execute arbitrary GDScript in the live game:\n";
+	p += "  runtime/evaluate           — run any GDScript expression in SceneTree context\n";
+	p += "  runtime/wait_frames        — wait N game frames\n";
+	p += "  runtime/get_screenshot     — capture viewport as base64 PNG\n\n";
+
+	p += "**RUNTIME — INPUT** — physically play the game:\n";
+	p += "  runtime/input/send_input   — send input action (move_right, jump) with hold duration\n";
+	p += "  runtime/input/send_key     — keyboard key with modifiers and hold\n";
+	p += "  runtime/input/type_text    — type string into LineEdit/TextEdit\n";
+	p += "  runtime/input/send_joypad  — gamepad button or analog axis\n";
+	p += "  runtime/input/send_input_sequence — multi-step timed combos\n";
+	p += "  runtime/input/click_control — click a UI Control node\n";
+	p += "  runtime/input/get_held_inputs — query currently held keys/actions\n\n";
+
+	p += "**RUNTIME — UI** — interact with UI controls semantically:\n";
+	p += "  runtime/ui/get_control_info — read control metadata (type, rect, visibility)\n";
+	p += "  runtime/ui/set_text / get_text — LineEdit/TextEdit content\n";
+	p += "  runtime/ui/set_range_value / get_range_value — sliders, spinboxes\n";
+	p += "  runtime/ui/select_option / get_options — OptionButton dropdowns\n";
+	p += "  runtime/ui/set_tab / get_tabs — TabContainer switching\n";
+	p += "  runtime/ui/set_checked     — CheckBox/CheckButton toggle\n";
+	p += "  runtime/ui/focus           — focus/unfocus a Control\n\n";
+
+	p += "**RUNTIME — TIME CONTROL** — freeze, step, slow-mo:\n";
+	p += "  runtime/time/suspend / resume — pause/unpause game\n";
+	p += "  runtime/time/next_frame    — advance exactly 1 frame, re-suspend\n";
+	p += "  runtime/time/advance_frames — advance N frames (natural or instant)\n";
+	p += "  runtime/time/set_scale / get_scale — time multiplier (0.1 = slow-mo, 5.0 = fast)\n";
+	p += "  runtime/time/set_debug_pause / set_debug_pause_tag / clear_debug_pause_hits\n\n";
+
+	p += "**RUNTIME — SIGNALS** — inspect and trigger signals:\n";
+	p += "  runtime/get_node_signals   — list all signals with connections on a node\n";
+	p += "  runtime/emit_signal        — emit a signal manually to trigger handlers\n\n";
+
+	p += "**DEBUG** — GDScript debugger (breakpoints, stepping):\n";
+	p += "  debug/set_breakpoint       — set/remove breakpoint at file:line\n";
+	p += "  debug/get_breakpoints      — list all breakpoints\n";
+	p += "  debug/get_break_state      — stack trace + local variables when paused\n";
+	p += "  debug/step                 — step into/over/out/continue/break\n\n";
+
+	p += "**CONSOLE** — in-game debug console:\n";
+	p += "  console/execute            — execute command in debug console\n";
+	p += "  console/get_manifest       — get all registered CVars, Commands, Queries, Actions, Events, UI Pages\n\n";
+
+	p += "**MEMORY** — leak detection and performance:\n";
+	p += "  memory/get_stats           — quick health check (objects, memory, render)\n";
+	p += "  memory/get_orphans         — find leaked nodes (removed but not freed)\n";
+	p += "  memory/take_snapshot / diff — snapshot-compare memory state\n";
+	p += "  memory/track_trend         — poll over time, detect growth patterns\n";
+	p += "  memory/detect_leaks        — all-in-one: snapshot → wait → snapshot → diff → diagnose\n";
+	p += "  memory/class_breakdown     — node count grouped by class type\n\n";
+
+	p += "**ANALYSIS** — static code analysis:\n";
+	p += "  analysis/dead_code         — unused functions, signals, variables\n";
+	p += "  analysis/complexity        — cyclomatic complexity per function\n";
+	p += "  analysis/signal_flow       — trace signal origins, emissions, connections\n";
+	p += "  analysis/dependencies      — autoload dependency graph, circular references\n";
+	p += "  analysis/duplication       — duplicated function bodies across project\n";
+	p += "  analysis/project_health    — comprehensive health dashboard with scoring\n";
+	p += "  analysis/validate_scenes   — check .tscn files for broken references\n";
+	p += "  analysis/assets / unused_files / input_mappings\n\n";
+
+	p += "**DOCUMENTATION** — Godot class reference:\n";
+	p += "  doc/search_classes         — search for classes by name\n";
+	p += "  doc/get_class              — full documentation for a class\n";
+	p += "  doc/search_methods         — search methods across all classes\n";
+	p += "  doc/get_method / get_property — detailed docs for specific member\n";
+	p += "  doc/get_online_docs        — look up Godot docs by topic\n\n";
+
+	p += "**TESTING** — GDScript validation and test runner:\n";
+	p += "  testing/check_script       — validate single .gd for compile errors (ALWAYS use after editing)\n";
+	p += "  testing/check_all_scripts  — validate every .gd file in project\n";
+	p += "  testing/run                — run tests in res://tests/test_*.gd\n";
+	p += "  testing/list               — discover test files and methods\n\n";
+
+	p += "**SHADER** — shading language tools:\n";
+	p += "  shader/find                — scan project for .gdshader files\n";
+	p += "  shader/get_builtins        — built-in shader variables and render modes\n";
+	p += "  shader/get_functions       — built-in shading language functions\n";
+	p += "  shader/get_language_ref    — full shading language reference\n\n";
+
+	// ── Semantic debug system ──
+	p += "## Semantic debug system (Debug singleton)\n";
+	p += "This engine includes a debug registry. Games that use it register CVars, Commands, ";
+	p += "Queries, Actions, Events, Interactables, and UI Pages — all discoverable at runtime:\n";
+	p += "  runtime/evaluate: JSON.stringify(Debug.get_manifest())\n";
+	p += "  console/get_manifest\n";
+	p += "If the manifest is empty, the game has no debug instrumentation yet — use godot-builder.\n\n";
+
+	// ── Subagents ──
+	p += "## Three specialized subagents\n";
 	p += "  godot-planner      — plans architecture, scene structure, and implementation strategy\n";
 	p += "  godot-builder      — instruments GDScript with semantic debug content\n";
 	p += "  godot-game-player  — launches, tests, and debugs the running game\n\n";
