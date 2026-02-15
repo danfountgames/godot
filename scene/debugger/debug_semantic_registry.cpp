@@ -53,6 +53,7 @@ DebugSemanticRegistry::~DebugSemanticRegistry() {
 }
 
 void DebugSemanticRegistry::_bind_methods() {
+#ifdef DEBUG_ENABLED
 	// Actions.
 	ClassDB::bind_method(D_METHOD("register_action", "name", "callable", "description", "params", "category"), &DebugSemanticRegistry::register_action, DEFVAL(""), DEFVAL(Dictionary()), DEFVAL(""));
 	ClassDB::bind_method(D_METHOD("unregister_action", "name"), &DebugSemanticRegistry::unregister_action);
@@ -122,6 +123,7 @@ void DebugSemanticRegistry::_bind_methods() {
 
 	// Internal (used for signal connections, not meant for GDScript).
 	ClassDB::bind_method(D_METHOD("_event_fired_0", "event_name"), &DebugSemanticRegistry::_event_fired_0);
+#endif // DEBUG_ENABLED
 
 	// CVar flag constants (exposed as plain ints since VARIANT_ENUM_CAST
 	// requires heavy includes we don't want in the header).
