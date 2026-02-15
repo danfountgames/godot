@@ -58,6 +58,116 @@ Wraps MoltenVK framework substitution in the iOS export plugin behind
 export plugin no longer references MoltenVK at all instead of substituting an
 empty path, which previously caused warnings.
 
+### MCP Server (`feature/mcp-server`)
+
+172 files, +46,706 / -69 — 40 commits
+
+Built-in [Model Context Protocol](https://modelcontextprotocol.io) server that
+lets LLM coding agents control the Godot editor over HTTP. Starts automatically
+when the editor opens — no external process or plugin needed.
+
+- **71 MCP tools** across 17 categories — project filesystem, GDScript
+  validation, scene editing, game lifecycle (run/stop), live scene-tree
+  inspection, node property read/write, runtime expression evaluation, input
+  simulation, UI automation, breakpoint management, signal introspection,
+  shader compilation, doc lookup, export, memory profiling, performance timing,
+  and code analysis.
+- **10 `godot://` URI resources** — structured read-only access to project info,
+  settings, file tree, input map, game status, live scene tree, output/error
+  logs, file contents, and node properties.
+- **SSE streaming** for long-running operations with progress notifications and
+  cancellation.
+- **Multi-instance support** — each editor instance gets its own port and
+  discovery file so multiple projects can run side-by-side.
+- **Security** — bearer-token auth, `res://`-only filesystem access, read-only
+  resource URIs.
+
+Auto-discovers on `http://127.0.0.1:6009/mcp`. See
+[`modules/mcp_server/README.md`](modules/mcp_server/README.md) for client
+configuration.
+
+### Semantic debug console (`feature/debug-console`)
+
+19 files, +7,236 — 4 commits
+
+Native in-game developer console and semantic debug registry. Games declare
+what's debuggable — CVars, Commands, Queries, Actions, Events, Interactables,
+UI Pages — through a `Debug` singleton that is discoverable by both human
+developers and LLM agents via MCP.
+
+- **CVars** — persistent tuning variables with type inference, min/max clamping,
+  and flags (`ARCHIVE`, `READONLY`, `CHEAT`, `HIDDEN`). Console shorthand:
+  `player.speed` to read, `player.speed 500` to write.
+- **Commands** — console-callable functions with tab-completion. Shorthand:
+  `kill_all`.
+- **Queries** — live-readable values from callables, pollable by the overlay
+  watcher. Shorthand: `query.player.health`.
+- **Actions** — parameterized operations with schemas, callable from MCP.
+  Shorthand: `action.heal_player amount=50`.
+- **Events** — auto-connected signal monitors with a 200-entry ring buffer,
+  queryable via `get_recent_events()`.
+- **Interactables** — semantic hints (ui, world_2d, world_3d, logic) that help
+  agents discover interactive nodes.
+- **UI Pages** — hierarchical navigation graph with visibility tracking.
+  Console: `ui pages`, `ui where`, `ui go <page>`.
+- **`auto_expose()`** — one-line bulk registration that scans `@export`
+  properties into CVars and `debug_*()` methods into Commands, with auto-cleanup
+  on tree exit.
+- **Scene tree navigation** — filesystem-like browsing with `cd`/`ls`/`pwd`,
+  bare child shortcuts (`Player.health`), relative paths (`../Boss:die`).
+- **Console UI** — toggle with backtick or three-finger swipe on mobile.
+  History, tab-completion, colored output, log filters, mini-badge popup.
+- **MCP tools** — `console/execute` and `console/get_manifest` let agents
+  interact with the console programmatically.
+- **Release-safe** — all APIs are no-ops in release builds. Zero performance
+  cost, no `#ifdef` needed in GDScript.
+
+See [`SEMANTIC_DEBUG_README.md`](SEMANTIC_DEBUG_README.md) for the full API
+reference.
+
+### Debug time control (`feature/debug-time-control`)
+
+6 files, +477 / -1 — 1 commit
+
+Frame-stepping and time-scale commands for the debug console, with matching
+editor UI buttons:
+
+- **`pause`** / **`resume`** — suspend and resume game execution at engine
+  level (console stays active).
+- **`step [N]`** — advance N frames then re-suspend (default: 1).
+- **`step_instant [N]`** — instant frame advance without rendering intermediate
+  frames.
+- **`timescale [value]`** — get/set `Engine.time_scale` (clamped 0.0–100.0).
+- **`debug_pause(condition)`** — conditional breakpoint callable from GDScript.
+  Pauses when the condition is true, no-op in release builds.
+- **Editor UI** — pause/resume/step buttons in the Game view toolbar.
+
+### Agent terminal (`feature/mcp-agent-terminal`)
+
+34 files, +9,693 / -5 — 4 commits
+
+Embedded Claude Code terminal panel in the Godot editor with two specialized
+subagents for AI-assisted game development.
+
+- **Terminal emulator** — full VT100/xterm-compatible terminal widget using
+  libvterm. Runs Claude Code as a subprocess with PTY management. Launch, stop,
+  and clear buttons in the editor toolbar.
+- **MCP auto-config** — automatically generates MCP server config JSON with the
+  running editor's endpoint and auth token so the agent connects instantly.
+- **System prompt** — lightweight Godot project context (name, path, version,
+  tool count, debug system availability) passed via `--append-system-prompt`.
+- **Two subagents** passed via Claude Code's `--agents` flag:
+  - **`godot-builder`** — instruments GDScript with semantic debug content.
+    Knows the full `Debug` API, density guidelines (HIGH for player-facing
+    systems, LOW for static infrastructure), naming conventions, and validation
+    workflow.
+  - **`godot-game-player`** — launches, tests, and debugs the running game.
+    Knows console shorthand syntax, scene tree navigation, UI interaction
+    commands, time control, and the MCP tool priority order. Acts rather than
+    describes — OODA loop workflow.
+- **`help` tool** — dynamic MCP tool that returns a categorized overview of all
+  registered tools, or detailed parameter info for a single tool.
+
 ---
 
 ## Branch structure
@@ -65,26 +175,31 @@ empty path, which previously caused warnings.
 ```
 4.6-stable (upstream tag)
 │
-├── feature/hdr-edr-output              ← PR-ready, single commit
+├── feature/hdr-edr-output                    ← PR-ready, single commit
 ├── feature/scroll-container-directional-drag  ← PR-ready, single commit
-├── feature/basebutton-deadzone         ← PR-ready, single commit
-├── feature/ios-metal-cleanup           ← PR-ready, single commit
+├── feature/basebutton-deadzone               ← PR-ready, single commit
+├── feature/ios-metal-cleanup                 ← PR-ready, single commit
 │
-├── verify/all-prs-combined             ← all 4 features merged, no branding
-│                                         (compile verification only)
+├── feature/mcp-server                        ← MCP server module (40 commits)
+│   └── feature/debug-console                 ← semantic debug console (4 commits)
 │
-└── fi-build                            ← all 4 features merged + FI branding
-                                          (this branch — production use)
+├── feature/debug-time-control                ← time control commands (1 commit)
+├── feature/mcp-agent-terminal                ← embedded Claude terminal (4 commits)
+│
+└── fi-build                                  ← all 8 features merged + FI branding
+                                                (this branch — production use)
 ```
 
-**`feature/*`** branches each contain a single commit on top of `4.6-stable`.
-They are designed to be submitted as upstream PRs independently.
+**`feature/*`** branches for PRs 1–4 each contain a single commit on top of
+`4.6-stable`. They are designed to be submitted as upstream PRs independently.
 
-**`verify/all-prs-combined`** merges all four feature branches with no other
-changes. Exists purely to verify the patches compile and don't conflict.
+**`feature/mcp-server`** is a multi-commit branch containing the full MCP server
+module. **`feature/debug-console`** branches from it and adds the semantic debug
+system. **`feature/debug-time-control`** and **`feature/mcp-agent-terminal`**
+branch independently from the fi-build base.
 
-**`fi-build`** (this branch) is `verify/all-prs-combined` plus FI branding and
-build tooling. This is the branch you check out to build and ship with.
+**`fi-build`** (this branch) merges all eight feature branches plus FI branding
+and build tooling. This is the branch you check out to build and ship with.
 
 ---
 
@@ -149,6 +264,7 @@ git checkout feature/hdr-edr-output
 git rebase upstream/4.7-stable
 
 # Repeat for other feature branches...
+# feature/debug-console must rebase after feature/mcp-server
 
 # Rebuild fi-build
 git checkout -B fi-build 4.7-stable
@@ -156,6 +272,10 @@ git merge feature/hdr-edr-output
 git merge feature/scroll-container-directional-drag
 git merge feature/basebutton-deadzone
 git merge feature/ios-metal-cleanup
+git merge feature/mcp-server
+git merge feature/debug-console
+git merge feature/debug-time-control
+git merge feature/mcp-agent-terminal
 # Cherry-pick or reapply FI branding commits
 ```
 
@@ -169,12 +289,6 @@ independently.
 A standalone CompositorEffect-based addon lives separately at `../lens-effects-addon/`.
 Barrel distortion, bokeh, and vignette as a post-process compute shader. No
 engine modifications required — works with upstream Godot 4.6+ or this fork.
-
----
-
-## MCP Server Module
-
-Built-in [Model Context Protocol](https://modelcontextprotocol.io) server that lets LLM coding agents control the editor — read/write files, run and debug games, inspect the scene tree, evaluate expressions, and automate UI. Starts automatically when the editor opens. See [`modules/mcp_server/README.md`](modules/mcp_server/README.md) for setup and LLM client configuration.
 
 ---
 
