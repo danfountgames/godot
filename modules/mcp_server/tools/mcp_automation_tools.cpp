@@ -95,16 +95,26 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 	{
 		Dictionary props;
 		props["expression"] = make_prop("string",
-				"GDScript expression. Use get_root().get_node(\"path\") for node access.");
+				"GDScript expression or code. Supports $NodePath shorthand, assignments, "
+				"and multi-line statements. Examples:\n"
+				"  $Main/Player.position\n"
+				"  $Main/Player.health = 100\n"
+				"  var p = $Main/Player; p.position.x = 50\n"
+				"  get_nodes_in_group(\"enemies\").size()");
 		Array required;
 		required.push_back("expression");
 		p_registry->register_tool(
 				"runtime/evaluate", "Evaluate Expression",
-				"Evaluate a GDScript expression in the running game's SceneTree context. "
-				"SceneTree is the base instance, so get_root(), get_nodes_in_group(), "
-				"current_scene work directly. $ shorthand does NOT work -- use "
-				"get_root().get_node(\"Main/Player\") instead. No var declarations or "
-				"control flow. Rotation values are in RADIANS (PI/2 = 90 degrees). "
+				"Evaluate a GDScript expression or execute GDScript code in the running "
+				"game's SceneTree context.\n\n"
+				"SIMPLE EXPRESSIONS: get_root(), get_nodes_in_group(), current_scene "
+				"work directly. Use $NodePath for node access: $Main/Player.position\n\n"
+				"ASSIGNMENTS & STATEMENTS: Supports var declarations, assignments, "
+				"loops, and control flow. Assign to _result to return a value:\n"
+				"  $Main/Player.health = 100\n"
+				"  for enemy in get_nodes_in_group(\"enemies\"): enemy.queue_free()\n"
+				"  _result = $Main/GameManager.score\n\n"
+				"Rotation values are in RADIANS (PI/2 = 90 degrees). "
 				"2D uses Y-down coordinates (positive Y = down on screen). "
 				"print() output goes to runtime/get_output.",
 				make_schema(props, required),
@@ -170,7 +180,19 @@ Dictionary MCPAutomationTools::_require_game_running() {
 }
 
 bool MCPAutomationTools::_action_exists(const String &p_action) {
-	return InputMap::get_singleton()->has_action(p_action);
+	// First check the editor's InputMap (includes built-in ui_* actions).
+	if (InputMap::get_singleton()->has_action(p_action)) {
+		return true;
+	}
+
+	// If not found, check project settings directly. The editor's InputMap
+	// may not include project-specific actions added to project.godot after
+	// the editor started, since InputMap::load_from_project_settings() is
+	// only called once at startup. Rather than reloading the entire input
+	// map (which could disrupt the editor), we check the project settings
+	// directly for the action definition.
+	String action_key = "input/" + p_action;
+	return ProjectSettings::get_singleton()->has_setting(action_key);
 }
 
 Vector<String> MCPAutomationTools::_find_similar_actions(const String &p_action) {
@@ -318,6 +340,96 @@ Dictionary MCPAutomationTools::handle_click_control(const Dictionary &p_args) {
 	return make_tool_result(text, structured);
 }
 
+// Helper: Rewrite $NodePath syntax to get_root().get_node("NodePath").
+// Handles $Node, $Node/Child, $"Node/With Spaces", and property access after.
+static String _rewrite_dollar_paths(const String &p_expr) {
+	String result;
+	int i = 0;
+	while (i < p_expr.length()) {
+		if (p_expr[i] == '$') {
+			// Found a $ — extract the node path.
+			i++; // Skip $
+			String node_path;
+			bool quoted = (i < p_expr.length() && p_expr[i] == '"');
+			if (quoted) {
+				// $"Some/Path" form
+				i++; // Skip opening "
+				while (i < p_expr.length() && p_expr[i] != '"') {
+					node_path += p_expr[i];
+					i++;
+				}
+				if (i < p_expr.length()) {
+					i++; // Skip closing "
+				}
+			} else {
+				// $Node/Child form — path chars are alphanumeric, _, /
+				while (i < p_expr.length()) {
+					char32_t c = p_expr[i];
+					if (is_ascii_alphanumeric_char(c) || c == '_' || c == '/') {
+						node_path += p_expr[i];
+						i++;
+					} else {
+						break;
+					}
+				}
+			}
+			if (!node_path.is_empty()) {
+				result += "get_root().get_node(\"" + node_path + "\")";
+			} else {
+				result += "$"; // Lone $ with nothing after, keep as-is
+			}
+		} else {
+			result += p_expr[i];
+			i++;
+		}
+	}
+	return result;
+}
+
+// Helper: Detect if an expression contains statements that require
+// GDScript execution rather than Expression evaluation.
+static bool _needs_gdscript_execution(const String &p_expr) {
+	// Check for multi-line code.
+	if (p_expr.contains("\n")) {
+		return true;
+	}
+
+	String stripped = p_expr.strip_edges();
+
+	// Assignment operators (but not == comparison).
+	// Check for = that's not ==, !=, <=, >=
+	for (int i = 0; i < stripped.length(); i++) {
+		if (stripped[i] == '=' && i > 0) {
+			char32_t prev = stripped[i - 1];
+			char32_t next = (i + 1 < stripped.length()) ? stripped[i + 1] : 0;
+			// Skip ==, !=, <=, >=
+			if (prev == '!' || prev == '<' || prev == '>' || prev == '=') {
+				continue;
+			}
+			if (next == '=') {
+				i++; // Skip ==
+				continue;
+			}
+			// This is an assignment: =, +=, -=, *=, /=
+			return true;
+		}
+	}
+
+	// Keywords that indicate statements.
+	static const char *statement_keywords[] = {
+		"var ", "const ", "for ", "while ", "if ", "elif ", "else:",
+		"match ", "return ", "pass", "break", "continue",
+		nullptr
+	};
+	for (const char **kw = statement_keywords; *kw != nullptr; kw++) {
+		if (stripped.begins_with(*kw) || stripped.contains(String("\n") + *kw)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 	Dictionary guard = _require_game_running();
 	if (!guard.is_empty()) {
@@ -330,9 +442,13 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 				"Missing required parameter: expression\n\n"
 				"Provide a GDScript expression to evaluate.\n"
 				"Examples:\n"
+				"  $Main/Player.position\n"
 				"  get_root().get_node(\"Main/Player\").position\n"
 				"  get_nodes_in_group(\"enemies\").size()\n"
-				"  current_scene.name");
+				"  current_scene.name\n\n"
+				"Assignments and statements are also supported:\n"
+				"  $Main/Player.position.x = 100\n"
+				"  var p = $Main/Player; p.health = 50");
 	}
 
 	// Security: block dangerous expressions that could execute arbitrary
@@ -370,21 +486,26 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 		}
 	}
 
+	// Rewrite $NodePath syntax to get_root().get_node("NodePath").
+	String rewritten = _rewrite_dollar_paths(expression);
+
 	MCPDebuggerBridge *bridge = _get_bridge();
-	Dictionary result = bridge->send_evaluate(expression);
+	Dictionary result;
+
+	if (_needs_gdscript_execution(rewritten)) {
+		// Use full GDScript execution for statements/assignments.
+		result = bridge->send_execute_code(rewritten);
+	} else {
+		// Use Expression evaluator for simple expressions (faster).
+		result = bridge->send_evaluate(rewritten);
+	}
 
 	if (!(bool)result.get("success", false)) {
 		String error_msg = result.get("value", result.get("error", "Unknown error"));
 
 		// Detect common mistakes and provide guidance.
 		String guidance;
-		if (String(error_msg).contains("Unexpected token") &&
-				expression.begins_with("$")) {
-			guidance = "\n\nNote: The $ node path shorthand is not supported "
-					   "by the Expression evaluator. Use get_root().get_node(\"path\") "
-					   "instead.\n\nExample: Instead of '$Player.position', use:\n"
-					   "  get_root().get_node(\"Main/Player\").position";
-		} else if (String(error_msg).contains("null instance")) {
+		if (String(error_msg).contains("null instance")) {
 			guidance = "\n\nThe node path may be incorrect. "
 					   "Use runtime/search_scene_tree to find the correct path.";
 		}

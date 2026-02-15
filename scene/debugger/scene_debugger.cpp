@@ -3950,6 +3950,119 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		return OK;
 	}
 
+	// --- execute_code ---
+	// Full GDScript execution (supports assignments, loops, control flow).
+	// Data: [code: String]
+	// The code is wrapped in a class that extends Node and given access to
+	// the scene tree via get_tree(). The last expression's value is captured
+	// via a _result variable.
+	if (p_msg == "execute_code") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		String user_code = p_data[0];
+
+		// Wrap user code in a GDScript class with a _run() method.
+		// The method receives the scene tree as an argument.
+		// No member variables are used -- dynamically compiled scripts without
+		// a resource path can have unreliable instance storage indices.
+		// Instead, convenience names are inlined via string replacement on the
+		// user code before embedding it.
+
+		// Inline convenience helpers in user code.
+		// get_root()             -> p_tree.root
+		// get_nodes_in_group(x)  -> p_tree.get_nodes_in_group(x)
+		// current_scene          -> p_tree.current_scene
+		user_code = user_code.replace("get_root()", "p_tree.root");
+		user_code = user_code.replace("get_nodes_in_group(", "p_tree.get_nodes_in_group(");
+		user_code = user_code.replace("current_scene", "p_tree.current_scene");
+
+		String full_source = "extends RefCounted\n\n"
+							 "func _run(p_tree: SceneTree) -> Variant:\n"
+							 "\tvar _result = null\n";
+
+		// Indent user code.
+		Vector<String> lines = user_code.split("\n");
+		for (int i = 0; i < lines.size(); i++) {
+			full_source += "\t" + lines[i] + "\n";
+		}
+		full_source += "\treturn _result\n";
+
+		// Find GDScript language.
+		ScriptLanguage *gdscript_lang = ScriptServer::get_language_for_extension("gd");
+		if (!gdscript_lang) {
+			Array result;
+			result.push_back(false);
+			result.push_back("GDScript language not available.");
+			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+			return OK;
+		}
+
+		// Create and compile a temporary GDScript.
+		Ref<Script> script(gdscript_lang->create_script());
+		script->set_source_code(full_source);
+		Error reload_err = script->reload();
+
+		if (reload_err != OK) {
+			Array result;
+			result.push_back(false);
+			result.push_back("GDScript compile error. Check syntax.\n\nGenerated source:\n" + full_source);
+			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+			return OK;
+		}
+
+		// Instantiate and call _run().
+		Object *obj = ClassDB::instantiate("RefCounted");
+		if (!obj) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Failed to instantiate script host.");
+			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+			return OK;
+		}
+		obj->set_script(script);
+
+		// Call _run(scene_tree).
+		Variant tree_arg(scene_tree);
+		const Variant *argptrs[1] = { &tree_arg };
+		Callable::CallError ce;
+		Variant ret = obj->callp("_run", argptrs, 1, ce);
+
+		// Instance is RefCounted, so it manages its own memory via ref counting.
+		// Wrapping in a Ref ensures proper cleanup.
+		Ref<RefCounted> ref_guard(Object::cast_to<RefCounted>(obj));
+
+		Array result;
+		if (ce.error != Callable::CallError::CALL_OK) {
+			result.push_back(false);
+			String err_detail;
+			switch (ce.error) {
+				case Callable::CallError::CALL_ERROR_INVALID_METHOD:
+					err_detail = "Method '_run' not found (compile error in generated script)";
+					break;
+				case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT:
+					err_detail = "Invalid argument at index " + itos(ce.argument);
+					break;
+				case Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS:
+				case Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS:
+					err_detail = "Argument count mismatch";
+					break;
+				default:
+					err_detail = "Error code " + itos(ce.error);
+					break;
+			}
+			result.push_back("Runtime error: " + err_detail);
+		} else {
+			result.push_back(true);
+			if (ret.get_type() == Variant::NIL) {
+				result.push_back("Nil: (code executed successfully)");
+			} else {
+				result.push_back(Variant::get_type_name(ret.get_type()) + ": " + String(ret));
+			}
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+		return OK;
+	}
+
 	// --- wait_frames ---
 	// Data: [frame_count: int]
 	if (p_msg == "wait_frames") {

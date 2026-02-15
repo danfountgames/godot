@@ -35,11 +35,67 @@
 
 #include "core/io/resource_loader.h"
 #include "core/object/class_db.h"
+#include "core/os/semaphore.h"
+#include "core/os/thread.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_undo_redo_manager.h"
 #include "scene/gui/control.h"
 #include "scene/main/node.h"
 #include "scene/resources/packed_scene.h"
+
+// ============================================================================
+// Main-thread dispatch for scene mutation tools
+// ============================================================================
+//
+// Scene mutation tools (add_node, remove_node, set_property, etc.) use
+// EditorUndoRedoManager which calls add_child/remove_child on the scene tree.
+// These operations MUST run on the main thread. When the MCP server runs in
+// threaded mode (use_thread=true, the default), tool handlers execute on the
+// poll thread. This causes silent failures:
+//   ERROR: Adding children to a node inside the SceneTree is only allowed
+//          from the main thread. Use call_deferred("add_child", node).
+//
+// Fix: Use the same deferred semaphore pattern as mcp_editor_tools.cpp.
+// The poll thread defers the actual work to the main thread via
+// call_deferred() and blocks on a semaphore until the main thread completes.
+
+static Semaphore _scene_deferred_semaphore;
+static Dictionary _scene_deferred_result;
+static Dictionary _scene_deferred_args;
+
+// Type alias for scene tool handler functions.
+typedef Dictionary (*SceneToolHandler)(const Dictionary &);
+
+// Currently dispatched handler (only one request at a time on the poll thread).
+static SceneToolHandler _scene_deferred_handler = nullptr;
+
+// Main-thread trampoline: executes the stored handler and posts the semaphore.
+void MCPSceneTools::_do_scene_tool_main() {
+	_scene_deferred_result = _scene_deferred_handler(_scene_deferred_args);
+	_scene_deferred_semaphore.post();
+}
+
+// Wrapper that ensures a scene tool handler runs on the main thread.
+// If already on the main thread, calls directly. Otherwise, defers and waits.
+Dictionary MCPSceneTools::_run_on_main_thread(SceneToolHandler p_handler, const Dictionary &p_args) {
+	if (Thread::is_main_thread()) {
+		return p_handler(p_args);
+	}
+
+	// Store the handler and args for the main-thread trampoline.
+	_scene_deferred_handler = p_handler;
+	_scene_deferred_args = p_args;
+
+	callable_mp_static(&MCPSceneTools::_do_scene_tool_main)
+			.call_deferred();
+	_scene_deferred_semaphore.wait();
+
+	// Clear references to allow garbage collection.
+	_scene_deferred_args = Dictionary();
+	_scene_deferred_handler = nullptr;
+
+	return _scene_deferred_result;
+}
 
 // ============================================================================
 // Helpers
@@ -672,6 +728,10 @@ Dictionary MCPSceneTools::handle_browse_tree(const Dictionary &p_args) {
 // ============================================================================
 
 Dictionary MCPSceneTools::handle_set_property(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_set_property_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_set_property_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	String property = String(p_args.get("property", "")).strip_edges();
@@ -756,6 +816,10 @@ Dictionary MCPSceneTools::handle_set_property(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_add_node(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_add_node_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_add_node_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String type = String(p_args.get("type", "")).strip_edges();
 	if (type.is_empty()) {
@@ -874,6 +938,10 @@ Dictionary MCPSceneTools::handle_add_node(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_remove_node(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_remove_node_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_remove_node_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	if (node_path.is_empty()) {
@@ -947,6 +1015,10 @@ Dictionary MCPSceneTools::handle_remove_node(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_rename_node(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_rename_node_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_rename_node_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	String new_name = String(p_args.get("new_name", "")).strip_edges();
@@ -1014,6 +1086,10 @@ Dictionary MCPSceneTools::handle_rename_node(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_move_node(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_move_node_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_move_node_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	String new_parent_path = String(p_args.get("new_parent_path", "")).strip_edges();
@@ -1113,6 +1189,10 @@ Dictionary MCPSceneTools::handle_move_node(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_duplicate_node(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_duplicate_node_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_duplicate_node_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	if (node_path.is_empty()) {
@@ -1197,6 +1277,10 @@ Dictionary MCPSceneTools::handle_duplicate_node(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_instance_scene(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_instance_scene_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_instance_scene_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String scene_path = String(p_args.get("scene_path", "")).strip_edges();
 	if (scene_path.is_empty()) {
@@ -1295,6 +1379,10 @@ Dictionary MCPSceneTools::handle_instance_scene(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_connect_signal(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_connect_signal_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_connect_signal_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String source_path = String(p_args.get("source_path", "")).strip_edges();
 	String signal_name = String(p_args.get("signal_name", "")).strip_edges();
@@ -1384,6 +1472,10 @@ Dictionary MCPSceneTools::handle_connect_signal(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_disconnect_signal(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_disconnect_signal_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_disconnect_signal_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String source_path = String(p_args.get("source_path", "")).strip_edges();
 	String signal_name = String(p_args.get("signal_name", "")).strip_edges();
@@ -1465,6 +1557,10 @@ Dictionary MCPSceneTools::handle_disconnect_signal(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_attach_script(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_attach_script_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_attach_script_impl(const Dictionary &p_args) {
 	// Validate required arguments.
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	String script_path = String(p_args.get("script_path", "")).strip_edges();
@@ -1552,6 +1648,16 @@ Dictionary MCPSceneTools::handle_attach_script(const Dictionary &p_args) {
 }
 
 Dictionary MCPSceneTools::handle_save(const Dictionary &p_args) {
+	// NOTE: save_scene uses EditorNode::save_scene_to_path() which shows a
+	// progress dialog. Progress dialogs cannot be created inside
+	// call_deferred() (MessageQueue::flush). Since save only reads the
+	// scene tree for serialization (no add_child/remove_child), it is safe
+	// to run directly from the poll thread (which has
+	// set_current_thread_safe_for_nodes(true)).
+	return _handle_save_impl(p_args);
+}
+
+Dictionary MCPSceneTools::_handle_save_impl(const Dictionary &p_args) {
 	// Check that a scene is open.
 	Node *scene_root = _get_scene_root();
 	if (!scene_root) {
@@ -1650,6 +1756,10 @@ static const HashMap<String, Vector4> &_get_anchor_presets() {
 // ============================================================================
 
 Dictionary MCPSceneTools::handle_set_anchor_preset(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_set_anchor_preset_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_set_anchor_preset_impl(const Dictionary &p_args) {
 	String node_path = String(p_args.get("node_path", "")).strip_edges();
 	String preset = ((String)p_args.get("preset", "")).strip_edges().to_lower();
 

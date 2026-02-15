@@ -67,4 +67,26 @@ private:
 	static Variant _coerce_json_to_variant(const Variant &p_json_value, Variant::Type p_target_type);
 	static Node *_get_scene_root();
 	static Node *_find_node(const String &p_path);
+
+	// Main-thread dispatch for scene mutation tools.
+	// Scene tree modifications (add_child, remove_child, etc.) must run on
+	// the main thread. These helpers ensure correct dispatch when the MCP
+	// server runs in threaded mode.
+	typedef Dictionary (*SceneToolHandler)(const Dictionary &);
+	static Dictionary _run_on_main_thread(SceneToolHandler p_handler, const Dictionary &p_args);
+	static void _do_scene_tool_main();
+
+	// Internal implementations of mutation tools (run on main thread).
+	static Dictionary _handle_set_property_impl(const Dictionary &p_args);
+	static Dictionary _handle_add_node_impl(const Dictionary &p_args);
+	static Dictionary _handle_remove_node_impl(const Dictionary &p_args);
+	static Dictionary _handle_rename_node_impl(const Dictionary &p_args);
+	static Dictionary _handle_move_node_impl(const Dictionary &p_args);
+	static Dictionary _handle_duplicate_node_impl(const Dictionary &p_args);
+	static Dictionary _handle_instance_scene_impl(const Dictionary &p_args);
+	static Dictionary _handle_connect_signal_impl(const Dictionary &p_args);
+	static Dictionary _handle_disconnect_signal_impl(const Dictionary &p_args);
+	static Dictionary _handle_attach_script_impl(const Dictionary &p_args);
+	static Dictionary _handle_save_impl(const Dictionary &p_args);
+	static Dictionary _handle_set_anchor_preset_impl(const Dictionary &p_args);
 };
