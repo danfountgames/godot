@@ -277,6 +277,22 @@ String AgentPanel::_build_system_prompt() const {
 	p += "- For node references: `@onready var player: Player = $Player`\n";
 	p += "- Cast when needed: `var enemy: Enemy = node as Enemy`\n";
 	p += "- NEVER use untyped `var x =` when the type is knowable\n";
+	p += "- NEVER duck-type function calls. Don't use `has_method()` / `call()` / `obj.maybe_exists()` ";
+	p += "on untyped Variants. Cast to the concrete type first, then call the method with full ";
+	p += "static dispatch. If you need polymorphism, use a shared base class or interface pattern:\n";
+	p += "```gdscript\n";
+	p += "# BAD — duck typing:\n";
+	p += "if body.has_method(\"take_damage\"):\n";
+	p += "    body.take_damage(10)  # no autocomplete, no error checking\n\n";
+	p += "# GOOD — typed cast:\n";
+	p += "var damageable: Damageable = body as Damageable\n";
+	p += "if damageable:\n";
+	p += "    damageable.take_damage(10)  # static dispatch, autocomplete works\n\n";
+	p += "# GOOD — shared base class:\n";
+	p += "class_name Damageable extends Node2D\n";
+	p += "func take_damage(amount: int) -> void:\n";
+	p += "    pass  # override in subclasses\n";
+	p += "```\n";
 	p += "</godot_context>\n";
 	return p;
 }
