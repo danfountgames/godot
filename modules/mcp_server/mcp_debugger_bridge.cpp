@@ -238,6 +238,16 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- exec_result ---
+	if (sub_msg == "exec_result") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["value"] = p_data[1];
+		_complete_pending("execute_code", result);
+		return true;
+	}
+
 	// --- action_done ---
 	if (sub_msg == "action_done") {
 		Dictionary result;
@@ -884,6 +894,16 @@ Dictionary MCPDebuggerBridge::send_evaluate(const String &p_expression, int p_ti
 	data.push_back(p_expression);
 
 	MCP_BRIDGE_SEND_OR_FAIL("evaluate", "mcp:evaluate", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_execute_code(const String &p_code, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	Array data;
+	data.push_back(p_code);
+
+	MCP_BRIDGE_SEND_OR_FAIL("execute_code", "mcp:execute_code", data);
 	return _wait_for_pending(req, p_timeout_msec);
 }
 
