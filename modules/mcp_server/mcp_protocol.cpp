@@ -39,6 +39,7 @@
 #include "tools/mcp_analysis_tools.h"
 #include "tools/mcp_automation_tools.h"
 #include "tools/mcp_breakpoint_tools.h"
+#include "tools/mcp_console_tools.h"
 #include "tools/mcp_debug_tools.h"
 #include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
@@ -112,6 +113,7 @@ MCPProtocol::MCPProtocol() {
 	MCPMemoryTools::register_tools(&tool_registry);
 	MCPAnalysisTools::register_tools(&tool_registry);
 	MCPShaderTools::register_tools(&tool_registry);
+	MCPConsoleTools::register_tools(&tool_registry);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
