@@ -855,6 +855,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "Debug.register_event(\"level_loaded\", level_manager.level_changed, \"Level transition\")\n";
 		p += "Debug.register_event(\"damage_taken\", player.damage_taken, \"Player hit\")\n";
 		p += "```\n";
+		p += "Pass the signal directly (e.g., `player.died`). Both Signal and Callable types are accepted.\n";
 		p += "Events auto-log to console when they fire. Check runtime/get_output to see them.\n";
 		p += "API: Debug.get_recent_events(10) -> [{name, args, frame, timestamp_msec}]\n";
 		p += "Good events: death, spawn, pickup, level transition, damage, state change, ";

@@ -371,13 +371,38 @@ PackedStringArray DebugSemanticRegistry::get_query_list() const {
 // Events
 // -----------------------------------------------------------------------------
 
-void DebugSemanticRegistry::register_event(const String &p_name, const Callable &p_signal_callable,
+void DebugSemanticRegistry::register_event(const String &p_name, const Variant &p_signal_or_callable,
 		const String &p_description, const String &p_category) {
 	ERR_FAIL_COND_MSG(p_name.is_empty(), "Event name cannot be empty.");
 
+	// Accept both Signal and Callable from GDScript.
+	// GDScript usage:
+	//   Debug.register_event("player_died", player.died, "Player died")
+	//   Debug.register_event("enemy_hit", Callable(enemy.hit), "Enemy hit")
+	Object *source = nullptr;
+	StringName signal_name;
+
+	if (p_signal_or_callable.get_type() == Variant::SIGNAL) {
+		Signal sig = p_signal_or_callable;
+		source = sig.get_object();
+		signal_name = sig.get_name();
+	} else if (p_signal_or_callable.get_type() == Variant::CALLABLE) {
+		Callable c = p_signal_or_callable;
+		source = c.get_object();
+		signal_name = c.get_method();
+	} else {
+		ERR_FAIL_MSG("register_event: second argument must be a Signal or Callable.");
+	}
+
+	// Store as Callable for disconnect logic.
+	Callable stored_callable;
+	if (source) {
+		stored_callable = Callable(source, signal_name);
+	}
+
 	EventEntry entry;
 	entry.name = p_name;
-	entry.callable = p_signal_callable;
+	entry.callable = stored_callable;
 	entry.description = p_description;
 	entry.category = p_category;
 	entry.connected = false;
@@ -385,54 +410,44 @@ void DebugSemanticRegistry::register_event(const String &p_name, const Callable 
 	events.insert(p_name, entry);
 	_completions_dirty = true;
 
-	// Connect to the signal. The p_signal_callable wraps a signal reference
-	// (e.g., player.died from GDScript). We extract the source object and
-	// signal name, then connect our event logger.
-	//
-	// GDScript usage:
-	//   Debug.register_event("player_died", player.died, "Player died")
-	if (p_signal_callable.is_valid()) {
-		Object *source = p_signal_callable.get_object();
-		StringName signal_name = p_signal_callable.get_method();
-		if (source && signal_name != StringName() && source->has_signal(signal_name)) {
-			// Determine how many args the signal emits so we can unbind them.
-			int signal_arg_count = 0;
-			List<MethodInfo> signal_list;
-			source->get_signal_list(&signal_list);
-			for (const MethodInfo &mi : signal_list) {
-				if (mi.name == signal_name) {
-					signal_arg_count = mi.arguments.size();
-					break;
-				}
+	if (source && signal_name != StringName() && source->has_signal(signal_name)) {
+		// Determine how many args the signal emits so we can unbind them.
+		int signal_arg_count = 0;
+		List<MethodInfo> signal_list;
+		source->get_signal_list(&signal_list);
+		for (const MethodInfo &mi : signal_list) {
+			if (mi.name == signal_name) {
+				signal_arg_count = mi.arguments.size();
+				break;
 			}
-
-			// Build callable that captures signal args (up to 3) instead of
-			// dropping them. .bind(name) appends the event name as the last arg.
-			Callable cb;
-			switch (signal_arg_count) {
-				case 0:
-					cb = Callable(this, SNAME("_event_fired_0")).bind(p_name);
-					break;
-				case 1:
-					cb = Callable(this, SNAME("_event_fired_1")).bind(p_name);
-					break;
-				case 2:
-					cb = Callable(this, SNAME("_event_fired_2")).bind(p_name);
-					break;
-				case 3:
-					cb = Callable(this, SNAME("_event_fired_3")).bind(p_name);
-					break;
-				default:
-					// >3 args: capture first 3, drop the rest.
-					cb = Callable(this, SNAME("_event_fired_3")).bind(p_name);
-					if (signal_arg_count > 3) {
-						cb = cb.unbind(signal_arg_count - 3);
-					}
-					break;
-			}
-			source->connect(signal_name, cb, Object::CONNECT_REFERENCE_COUNTED);
-			events.getptr(p_name)->connected = true;
 		}
+
+		// Build callable that captures signal args (up to 3) instead of
+		// dropping them. .bind(name) appends the event name as the last arg.
+		Callable cb;
+		switch (signal_arg_count) {
+			case 0:
+				cb = Callable(this, SNAME("_event_fired_0")).bind(p_name);
+				break;
+			case 1:
+				cb = Callable(this, SNAME("_event_fired_1")).bind(p_name);
+				break;
+			case 2:
+				cb = Callable(this, SNAME("_event_fired_2")).bind(p_name);
+				break;
+			case 3:
+				cb = Callable(this, SNAME("_event_fired_3")).bind(p_name);
+				break;
+			default:
+				// >3 args: capture first 3, drop the rest.
+				cb = Callable(this, SNAME("_event_fired_3")).bind(p_name);
+				if (signal_arg_count > 3) {
+					cb = cb.unbind(signal_arg_count - 3);
+				}
+				break;
+		}
+		source->connect(signal_name, cb, Object::CONNECT_REFERENCE_COUNTED);
+		events.getptr(p_name)->connected = true;
 	}
 }
 

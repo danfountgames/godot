@@ -432,6 +432,15 @@ static bool _needs_gdscript_execution(const String &p_expr) {
 		}
 	}
 
+	// Engine singletons are now passed as input variables to the Expression
+	// evaluator, so they no longer require GDScript execution.
+	// The only exception is Debug.* which should use console/* tools instead.
+
+	// _result = pattern (explicit GDScript request)
+	if (stripped.begins_with("_result")) {
+		return true;
+	}
+
 	return false;
 }
 
@@ -495,10 +504,21 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 	MCPDebuggerBridge *bridge = _get_bridge();
 	Dictionary result;
 
-	// Always use full GDScript execution. The Expression evaluator cannot
-	// resolve engine singletons (Debug, Engine, Time) and its micro-
-	// optimization is not worth the agent failures it causes.
-	result = bridge->send_execute_code(rewritten, timeout_ms);
+	// Always use the Expression evaluator. GDScript dynamic compilation
+	// (send_execute_code) is currently unavailable due to a subprocess crash.
+	// Reject expressions that require statement execution with a helpful message.
+	if (_needs_gdscript_execution(rewritten)) {
+		return make_tool_error(
+				"This expression requires GDScript statement execution "
+				"(multi-line code, assignments, or control flow), which is "
+				"not currently supported. Use single-expression evaluations instead.\n\n"
+				"For Debug singleton operations, use the console/* tools:\n"
+				"  - console/query for reading game state\n"
+				"  - console/invoke for triggering actions\n"
+				"  - console/get_cvar / console/set_cvar for configuration variables\n"
+				"  - console/batch_query for reading multiple values at once");
+	}
+	result = bridge->send_evaluate(rewritten, timeout_ms);
 
 	if (!(bool)result.get("success", false)) {
 		String error_msg = result.get("value", result.get("error", "Unknown error"));

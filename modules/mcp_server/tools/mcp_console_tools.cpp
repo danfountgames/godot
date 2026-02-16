@@ -294,22 +294,20 @@ Dictionary MCPConsoleTools::handle_get_manifest(const Dictionary &p_args) {
 		return err;
 	}
 
-	// Call Debug.get_manifest() on the running game.
-	// Must use execute_code because Expression cannot see singletons.
-	String code = "_result = JSON.stringify(Debug.get_manifest())";
-	Dictionary result = _execute_game_code(code, 10000);
-
-	if (result.has("error")) {
-		return make_tool_error(String(result["error"]));
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
 	}
+
+	Dictionary result = bridge->send_debug_command("debug_get_manifest", Array(), 10000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("get_manifest() failed: " + String(result.get("value", "")));
 	}
 
-	String json_str = _extract_value(result);
+	String json_str = result.get("value", "");
 
-	if (json_str.is_empty() || json_str == "(code executed successfully)") {
+	if (json_str.is_empty()) {
 		return make_tool_error("get_manifest() returned empty result. Is the Debug singleton available?");
 	}
 
@@ -340,12 +338,14 @@ Dictionary MCPConsoleTools::handle_query(const Dictionary &p_args) {
 		return make_tool_error("Missing required argument: name");
 	}
 
-	String code = vformat("_result = Debug.evaluate_query(\"%s\")", name.c_escape());
-	Dictionary result = _execute_game_code(code, 10000);
-
-	if (result.has("error")) {
-		return make_tool_error("Query '" + name + "' failed: " + String(result["error"]));
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
 	}
+
+	Array data;
+	data.push_back(name);
+	Dictionary result = bridge->send_debug_command("debug_query", data, 10000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("Query '" + name + "' failed: " + String(result.get("value", "")));
@@ -380,36 +380,25 @@ Dictionary MCPConsoleTools::handle_invoke_action(const Dictionary &p_args) {
 		params = p_args["params"];
 	}
 
-	// Build GDScript code to invoke the action with parameters.
-	String params_str = JSON::stringify(params);
-	String code = vformat(
-			"var p = JSON.parse_string('%s')\n"
-			"if p == null:\n"
-			"\tp = {}\n"
-			"_result = JSON.stringify(Debug.invoke_action(\"%s\", p))",
-			params_str.c_escape(), name.c_escape());
-
-	Dictionary result = _execute_game_code(code, 15000);
-
-	if (result.has("error")) {
-		return make_tool_error("Action '" + name + "' failed: " + String(result["error"]));
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
 	}
+
+	Array data;
+	data.push_back(name);
+	data.push_back(JSON::stringify(params));
+	Dictionary result = bridge->send_debug_command("debug_invoke_action", data, 15000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("Action '" + name + "' failed: " + String(result.get("value", "")));
 	}
 
-	String value = _extract_value(result);
+	String value = result.get("value", "");
 
-	// Try to parse the result as JSON.
 	Dictionary structured;
 	structured["name"] = name;
-	JSON json;
-	if (json.parse(value) == OK) {
-		structured["result"] = json.get_data();
-	} else {
-		structured["result"] = value;
-	}
+	structured["result"] = value;
 
 	return make_tool_result("Action '" + name + "': " + value, structured);
 }
@@ -429,12 +418,14 @@ Dictionary MCPConsoleTools::handle_get_cvar(const Dictionary &p_args) {
 		return make_tool_error("Missing required argument: name");
 	}
 
-	String code = vformat("_result = Debug.get_cvar(\"%s\")", name.c_escape());
-	Dictionary result = _execute_game_code(code, 10000);
-
-	if (result.has("error")) {
-		return make_tool_error("get_cvar '" + name + "' failed: " + String(result["error"]));
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
 	}
+
+	Array data;
+	data.push_back(name);
+	Dictionary result = bridge->send_debug_command("debug_get_cvar", data, 10000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("get_cvar '" + name + "' failed: " + String(result.get("value", "")));
@@ -469,19 +460,15 @@ Dictionary MCPConsoleTools::handle_set_cvar(const Dictionary &p_args) {
 		return make_tool_error("Missing required argument: value");
 	}
 
-	// set_cvar returns void, so we set it and then read back to confirm.
-	// This avoids the serialization timeout bug from trying to capture
-	// set_cvar's return value.
-	String code = vformat(
-			"Debug.set_cvar(\"%s\", %s)\n"
-			"_result = Debug.get_cvar(\"%s\")",
-			name.c_escape(), value_str, name.c_escape());
-
-	Dictionary result = _execute_game_code(code, 10000);
-
-	if (result.has("error")) {
-		return make_tool_error("set_cvar '" + name + "' failed: " + String(result["error"]));
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
 	}
+
+	Array data;
+	data.push_back(name);
+	data.push_back(value_str);
+	Dictionary result = bridge->send_debug_command("debug_set_cvar", data, 10000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("set_cvar '" + name + "' failed: " + String(result.get("value", "")));
@@ -510,20 +497,20 @@ Dictionary MCPConsoleTools::handle_get_events(const Dictionary &p_args) {
 	int count = (int)p_args.get("count", 20);
 	count = CLAMP(count, 1, 200);
 
-	String code = vformat(
-			"_result = JSON.stringify(Debug.get_recent_events(%d))", count);
-
-	Dictionary result = _execute_game_code(code, 10000);
-
-	if (result.has("error")) {
-		return make_tool_error("get_events failed: " + String(result["error"]));
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
 	}
+
+	Array data;
+	data.push_back(count);
+	Dictionary result = bridge->send_debug_command("debug_get_events", data, 10000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("get_events failed: " + String(result.get("value", "")));
 	}
 
-	String json_str = _extract_value(result);
+	String json_str = result.get("value", "");
 
 	// Parse JSON array.
 	JSON json;
@@ -574,26 +561,25 @@ Dictionary MCPConsoleTools::handle_batch_query(const Dictionary &p_args) {
 		return make_tool_error("names array is empty");
 	}
 
-	// Build GDScript that evaluates all queries and returns them as a dict.
-	String code = "var _r = {}\n";
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Debugger bridge not available.");
+	}
+
+	// Send as PackedStringArray.
+	PackedStringArray name_arr;
 	for (int i = 0; i < names.size(); i++) {
-		String name = names[i];
-		code += vformat("_r[\"%s\"] = Debug.evaluate_query(\"%s\")\n",
-				name.c_escape(), name.c_escape());
+		name_arr.push_back(names[i]);
 	}
-	code += "_result = JSON.stringify(_r)";
-
-	Dictionary result = _execute_game_code(code, 15000);
-
-	if (result.has("error")) {
-		return make_tool_error("batch_query failed: " + String(result["error"]));
-	}
+	Array data;
+	data.push_back(name_arr);
+	Dictionary result = bridge->send_debug_command("debug_batch_query", data, 15000);
 
 	if (!(bool)result.get("success", false)) {
 		return make_tool_error("batch_query failed: " + String(result.get("value", "")));
 	}
 
-	String json_str = _extract_value(result);
+	String json_str = result.get("value", "");
 
 	// Parse JSON dict.
 	JSON json;

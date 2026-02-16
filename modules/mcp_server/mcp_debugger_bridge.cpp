@@ -268,6 +268,16 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 		return true;
 	}
 
+	// --- debug_result --- (native Debug singleton responses)
+	if (sub_msg == "debug_result") {
+		ERR_FAIL_COND_V(p_data.size() < 2, false);
+		Dictionary result;
+		result["success"] = (bool)p_data[0];
+		result["value"] = p_data[1];
+		_complete_pending("debug_native", result);
+		return true;
+	}
+
 	// --- action_done ---
 	if (sub_msg == "action_done") {
 		Dictionary result;
@@ -928,6 +938,13 @@ Dictionary MCPDebuggerBridge::send_execute_code(const String &p_code, int p_time
 	data.push_back(p_code);
 
 	MCP_BRIDGE_SEND_OR_FAIL("execute_code", "mcp:execute_code", data);
+	return _wait_for_pending(req, p_timeout_msec);
+}
+
+Dictionary MCPDebuggerBridge::send_debug_command(const String &p_command, const Array &p_data, int p_timeout_msec) {
+	MCP_BRIDGE_CHECK_RUNNING();
+
+	MCP_BRIDGE_SEND_OR_FAIL("debug_native", "mcp:" + p_command, p_data);
 	return _wait_for_pending(req, p_timeout_msec);
 }
 

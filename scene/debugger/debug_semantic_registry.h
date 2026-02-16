@@ -215,7 +215,7 @@ public:
 	// =========================================================================
 	// Events
 	// =========================================================================
-	void register_event(const String &p_name, const Callable &p_signal_callable,
+	void register_event(const String &p_name, const Variant &p_signal_or_callable,
 			const String &p_description = "", const String &p_category = "");
 	void unregister_event(const String &p_name);
 	bool has_event(const String &p_name) const;
@@ -322,7 +322,7 @@ public:
 	bool has_query(const String &) const { return false; }
 	PackedStringArray get_query_list() const { return PackedStringArray(); }
 
-	void register_event(const String &, const Callable &,
+	void register_event(const String &, const Variant &,
 			const String & = "", const String & = "") {}
 	void unregister_event(const String &) {}
 	bool has_event(const String &) const { return false; }

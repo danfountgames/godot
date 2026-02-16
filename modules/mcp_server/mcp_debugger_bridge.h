@@ -242,6 +242,7 @@ public:
 	Dictionary request_browse_scene_tree(int p_timeout_msec = 10000);
 	Dictionary send_evaluate(const String &p_expression, int p_timeout_msec = 10000);
 	Dictionary send_execute_code(const String &p_code, int p_timeout_msec = 10000);
+	Dictionary send_debug_command(const String &p_command, const Array &p_data, int p_timeout_msec = 10000);
 	Dictionary send_inject_action(const String &p_action, bool p_pressed, int p_hold_frames = 0, float p_strength = 1.0f, int p_timeout_msec = 10000);
 	Dictionary send_click_control(const String &p_node_path, int p_timeout_msec = 10000);
 	Dictionary send_wait_frames(int p_frame_count, int p_timeout_msec = 30000);

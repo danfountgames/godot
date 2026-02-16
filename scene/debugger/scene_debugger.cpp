@@ -48,6 +48,8 @@
 #include "scene/main/canvas_layer.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
+#include "core/io/json.h"
+#include "scene/debugger/debug_semantic_registry.h"
 #include "scene/resources/packed_scene.h"
 #include "scene/theme/theme_db.h"
 #include "servers/audio/audio_server.h"
@@ -3925,8 +3927,57 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
 
 		String expr_str = p_data[0];
+
+		// Build input names and values for common engine singletons.
+		// This allows expressions like "Engine.get_frames_per_second()" to work.
+		PackedStringArray input_names;
+		Array input_values;
+
+		// Scan expression for singleton references and add them as inputs.
+		struct SingletonEntry {
+			const char *name;
+			const char *class_name;
+		};
+		static const SingletonEntry singleton_entries[] = {
+			{ "Engine", "Engine" },
+			{ "Time", "Time" },
+			{ "Input", "Input" },
+			{ "DisplayServer", "DisplayServer" },
+			{ "RenderingServer", "RenderingServer" },
+			{ "AudioServer", "AudioServer" },
+			{ "PhysicsServer2D", "PhysicsServer2D" },
+			{ "PhysicsServer3D", "PhysicsServer3D" },
+			{ "NavigationServer2D", "NavigationServer2D" },
+			{ "NavigationServer3D", "NavigationServer3D" },
+			{ "ResourceLoader", "ResourceLoader" },
+			{ "OS", "OS" },
+			{ "ProjectSettings", "ProjectSettings" },
+			{ "Performance", "Performance" },
+			{ nullptr, nullptr }
+		};
+
+		for (const SingletonEntry *entry = singleton_entries; entry->name != nullptr; entry++) {
+			if (expr_str.contains(entry->name)) {
+				Object *obj = Engine::get_singleton()->get_singleton_object(StringName(entry->class_name));
+				if (obj) {
+					input_names.push_back(entry->name);
+					input_values.push_back(obj);
+				}
+			}
+		}
+
+		// Also add the scene tree's current_scene and root as convenience inputs.
+		if (expr_str.contains("current_scene")) {
+			input_names.push_back("current_scene");
+			input_values.push_back(scene_tree->get_current_scene());
+		}
+		if (expr_str.contains("root")) {
+			input_names.push_back("root");
+			input_values.push_back(scene_tree->get_root());
+		}
+
 		Expression expr;
-		Error parse_err = expr.parse(expr_str);
+		Error parse_err = expr.parse(expr_str, input_names);
 
 		if (parse_err != OK) {
 			Array result;
@@ -3936,9 +3987,9 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 			return OK;
 		}
 
-		// Execute with SceneTree as the base instance.
+		// Execute with SceneTree as the base instance and singletons as inputs.
 		bool is_error = false;
-		Variant value = expr.execute(Array(), scene_tree, false, is_error);
+		Variant value = expr.execute(input_values, scene_tree, false, is_error);
 
 		Array result;
 		if (is_error) {
@@ -5556,6 +5607,165 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		result["new_value"] = String(new_value);
 		result["new_type"] = Variant::get_type_name(new_value.get_type());
 		send_result(result);
+		return OK;
+	}
+
+	// =========================================================================
+	// Native Debug singleton handlers (bypass GDScript to avoid crashes)
+	// =========================================================================
+
+	// --- debug_get_manifest ---
+	if (p_msg == "debug_get_manifest") {
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			result.push_back(true);
+			Dictionary manifest = reg->get_manifest();
+			result.push_back(JSON::stringify(manifest));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+		return OK;
+	}
+
+	// --- debug_query ---
+	// Data: [query_name: String]
+	if (p_msg == "debug_query") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+		String name = p_data[0];
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			Variant value = reg->evaluate_query(name);
+			result.push_back(true);
+			result.push_back(Variant::get_type_name(value.get_type()) + ": " + String(value));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+		return OK;
+	}
+
+	// --- debug_batch_query ---
+	// Data: [names: PackedStringArray]
+	if (p_msg == "debug_batch_query") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			PackedStringArray names = p_data[0];
+			Dictionary batch;
+			for (int i = 0; i < names.size(); i++) {
+				Variant value = reg->evaluate_query(names[i]);
+				batch[names[i]] = value;
+			}
+			result.push_back(true);
+			result.push_back(JSON::stringify(batch));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+		return OK;
+	}
+
+	// --- debug_invoke_action ---
+	// Data: [action_name: String, params_json: String]
+	if (p_msg == "debug_invoke_action") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+		String name = p_data[0];
+		String params_json = p_data[1];
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			Dictionary params;
+			if (!params_json.is_empty()) {
+				JSON json;
+				if (json.parse(params_json) == OK) {
+					params = json.get_data();
+				}
+			}
+			Dictionary ret = reg->invoke_action(name, params);
+			result.push_back(true);
+			result.push_back(JSON::stringify(ret));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+		return OK;
+	}
+
+	// --- debug_get_cvar ---
+	// Data: [cvar_name: String]
+	if (p_msg == "debug_get_cvar") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+		String name = p_data[0];
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			Variant value = reg->get_cvar(name);
+			result.push_back(true);
+			result.push_back(Variant::get_type_name(value.get_type()) + ": " + String(value));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+		return OK;
+	}
+
+	// --- debug_set_cvar ---
+	// Data: [cvar_name: String, value_json: String]
+	if (p_msg == "debug_set_cvar") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+		String name = p_data[0];
+		String value_str = p_data[1];
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			// Parse value from JSON.
+			JSON json;
+			Variant value;
+			if (json.parse(value_str) == OK) {
+				value = json.get_data();
+			} else {
+				value = value_str; // Use as string if JSON parse fails.
+			}
+			reg->set_cvar(name, value);
+			// Read back.
+			Variant readback = reg->get_cvar(name);
+			result.push_back(true);
+			result.push_back(Variant::get_type_name(readback.get_type()) + ": " + String(readback));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+		return OK;
+	}
+
+	// --- debug_get_events ---
+	// Data: [count: int]
+	if (p_msg == "debug_get_events") {
+		int count = 20;
+		if (!p_data.is_empty()) {
+			count = p_data[0];
+		}
+		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
+		Array result;
+		if (reg) {
+			Array events = reg->get_recent_events(count);
+			result.push_back(true);
+			result.push_back(JSON::stringify(events));
+		} else {
+			result.push_back(false);
+			result.push_back("Debug singleton not available.");
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
 		return OK;
 	}
 

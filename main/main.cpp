@@ -1144,6 +1144,8 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 			if (N) {
 				forwardable_cli_arguments[CLI_SCOPE_TOOL].push_back(arg);
 				forwardable_cli_arguments[CLI_SCOPE_TOOL].push_back(N->get());
+				forwardable_cli_arguments[CLI_SCOPE_PROJECT].push_back(arg);
+				forwardable_cli_arguments[CLI_SCOPE_PROJECT].push_back(N->get());
 			}
 		}
 		// If gpu is specified, both editor and debug instances started from editor will inherit.
