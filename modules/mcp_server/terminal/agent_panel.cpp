@@ -611,7 +611,10 @@ String AgentPanel::_build_agents_json() const {
 		p += "  5. **Resources** — any .tres files and their Resource class definitions\n";
 		p += "  6. **Implementation order** — what to build first (dependencies flow down)\n";
 		p += "  7. **Debug surface** — what to auto_expose, key queries, events, actions\n";
-		p += "  8. **Existing code impact** — what existing files change and how\n\n";
+		p += "  8. **Factories / Spawners** — for every entity created at runtime, identify the\n";
+		p += "     factory method (spawn_enemy, create_ball, etc.) and note that it should return\n";
+		p += "     the instance. The instrumenter wraps these as debug actions for testing.\n";
+		p += "  9. **Existing code impact** — what existing files change and how\n\n";
 
 		// ── Common patterns ──
 		p += "## Common Godot patterns\n\n";
@@ -733,6 +736,31 @@ String AgentPanel::_build_agents_json() const {
 		bp += "- Don't create monolithic scripts. Each file should do ONE thing.\n";
 		bp += "- Don't add features to files that are already too large — create new files.\n";
 		bp += "- Don't forget to wire new code into the calling script. Dead code is the #1 bug.\n\n";
+
+		// ── Factory / Spawner pattern ──
+		bp += "## Factory / Spawner pattern — how to build spawn systems\n";
+		bp += "When building anything that creates entities at runtime (enemies, projectiles,\n";
+		bp += "pickups, balls, blocks), use a factory method that centralizes creation logic:\n\n";
+		bp += "```gdscript\n";
+		bp += "class_name EnemySpawner extends Node2D\n\n";
+		bp += "@export var enemy_scene: PackedScene  # drag enemy.tscn in Inspector\n";
+		bp += "@export var spawn_group: String = \"enemies\"\n\n";
+		bp += "func spawn_enemy(pos: Vector2) -> Node2D:\n";
+		bp += "    var instance := enemy_scene.instantiate() as Node2D\n";
+		bp += "    instance.position = pos\n";
+		bp += "    instance.add_to_group(spawn_group)\n";
+		bp += "    add_child(instance)\n";
+		bp += "    return instance\n";
+		bp += "```\n\n";
+		bp += "**Why this matters for testing:** The MCP tester agent can invoke factory methods\n";
+		bp += "via debug actions to spawn items into the running game for integration testing.\n";
+		bp += "The instrumenter agent will wrap your factory method in a Debug.register_action()\n";
+		bp += "call. For this to work well, your factory method should:\n";
+		bp += "  1. Accept position (and any type/variant parameters) as arguments\n";
+		bp += "  2. Return the created instance (so the debug wrapper can get instance_id)\n";
+		bp += "  3. Handle ALL setup in one place (groups, signals, initial state)\n";
+		bp += "  4. Use @export PackedScene so the scene reference is Inspector-configurable\n";
+		bp += "Do NOT scatter instantiate() calls across multiple files. One factory = one place.\n\n";
 
 		// ── Wiring verification ──
 		bp += "## Wiring Verification (MANDATORY before declaring done)\n";
