@@ -38,6 +38,7 @@
 #include "../mcp_types.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/json.h"
 #include "servers/rendering/rendering_server.h"
 #include "core/input/input_map.h"
 #include "core/variant/typed_array.h"
@@ -140,6 +141,55 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPAutomationTools::handle_wait_frames));
+	}
+
+	// runtime/spawn_instance
+	{
+		Dictionary props;
+		props["scene_path"] = make_prop("string",
+				"Path to the .tscn scene file in res:// format "
+				"(e.g., 'res://scenes/enemies/slime.tscn', 'res://prefabs/ball.tscn'). "
+				"The scene must exist on disk. Use editor/scan_filesystem first if "
+				"you just created it.");
+		props["parent_path"] = make_prop("string",
+				"Scene tree path of the parent node to add the instance under "
+				"(e.g., '/root/Main', '/root/Level/Enemies'). "
+				"Defaults to '/root' if not specified. "
+				"Use runtime/browse_scene_tree to find valid parent paths.");
+		props["name"] = make_prop("string",
+				"Optional node name for the new instance (e.g., 'TestEnemy', 'Ball3'). "
+				"If omitted, Godot auto-names based on the scene root node name.");
+		props["properties"] = make_prop("object",
+				"Optional dictionary of property name → value to set on the instance "
+				"after adding it to the tree. Supports the same formats as "
+				"runtime/set_node_property: numbers, strings, booleans, arrays, "
+				"and dictionaries for compound types like Vector2 and Color.\n"
+				"Example: {\"position\": [100, 200], \"modulate\": {\"r\":1,\"g\":0,\"b\":0,\"a\":1}}");
+		Array required;
+		required.push_back("scene_path");
+		p_registry->register_tool(
+				"runtime/spawn_instance", "Spawn Scene Instance",
+				"Instantiate a PackedScene (.tscn) into the running game and return "
+				"the new node's unique instance ID and path. This is the GENERIC spawn "
+				"tool — it loads the scene, instantiates it, adds it to the tree, and "
+				"optionally sets initial properties.\n\n"
+				"For game-specific spawning that requires factory logic (adding to groups, "
+				"wiring signals, initializing complex state), prefer using console/invoke "
+				"with a registered spawn action (e.g., console/invoke {name: \"spawn_enemy\", "
+				"params: {type: \"slime\", position: [100, 200]}}). The instrumenter agent "
+				"can register these factory spawn actions.\n\n"
+				"Integration test workflow:\n"
+				"  1. runtime/time/suspend — pause the game\n"
+				"  2. runtime/spawn_instance — place prefabs into the scene\n"
+				"  3. runtime/set_node_property — configure positions, properties\n"
+				"  4. runtime/time/resume — unpause and observe behavior\n"
+				"  5. console/batch_query / runtime/get_node_properties — verify results\n\n"
+				"The returned instance_id is the Godot object ID, usable with "
+				"runtime/get_node_properties and runtime/set_node_property via the "
+				"returned node_path. Game must be running.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPAutomationTools::handle_spawn_instance));
 	}
 
 	// runtime/get_screenshot
@@ -627,6 +677,243 @@ Dictionary MCPAutomationTools::handle_wait_frames(const Dictionary &p_args) {
 
 	Dictionary structured;
 	structured["frames_waited"] = actual_frames;
+
+	return make_tool_result(text, structured);
+}
+
+Dictionary MCPAutomationTools::handle_spawn_instance(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	String scene_path = p_args.get("scene_path", "");
+	if (scene_path.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: scene_path\n\n"
+				"Provide a .tscn file path in res:// format.\n"
+				"Example: { \"scene_path\": \"res://scenes/enemies/slime.tscn\" }");
+	}
+
+	// Validate path format.
+	if (!validate_path(scene_path)) {
+		return make_tool_error(vformat(
+				"Invalid path: %s\n\n"
+				"Paths must start with res:// and cannot contain '..' traversal sequences.",
+				scene_path));
+	}
+
+	// Validate extension.
+	if (!scene_path.ends_with(".tscn")) {
+		return make_tool_error(vformat(
+				"Invalid scene file: %s\n\n"
+				"Only .tscn files can be instantiated. Provide a path ending in .tscn.",
+				scene_path));
+	}
+
+	String parent_path = p_args.get("parent_path", "/root");
+	String instance_name = p_args.get("name", "");
+	Dictionary properties;
+	if (p_args.has("properties")) {
+		Variant props_var = p_args["properties"];
+		if (props_var.get_type() == Variant::DICTIONARY) {
+			properties = props_var;
+		}
+	}
+
+	// Validate parent_path characters (prevent injection).
+	for (int i = 0; i < parent_path.length(); i++) {
+		char32_t c = parent_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' &&
+				c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error(vformat(
+					"'parent_path' contains invalid character '%c' at position %d.",
+					(char)c, i));
+		}
+	}
+
+	// Validate instance_name characters if provided.
+	if (!instance_name.is_empty()) {
+		for (int i = 0; i < instance_name.length(); i++) {
+			char32_t c = instance_name[i];
+			if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '-' && c != ' ') {
+				return make_tool_error(vformat(
+						"'name' contains invalid character '%c' at position %d. "
+						"Allowed: alphanumeric, _, -, space.",
+						(char)c, i));
+			}
+		}
+	}
+
+	// Build GDScript code to execute on the game side.
+	// This loads the scene, instantiates it, adds to parent, sets properties,
+	// and returns the instance ID and path.
+	String code;
+	code += "var _scene = load(\"" + scene_path.c_escape() + "\")\n";
+	code += "if _scene == null:\n";
+	code += "\t_result = \"ERROR: Failed to load scene: " + scene_path.c_escape() + "\"\n";
+	code += "else:\n";
+	code += "\tvar _inst = _scene.instantiate()\n";
+
+	if (!instance_name.is_empty()) {
+		code += "\t_inst.name = \"" + instance_name.c_escape() + "\"\n";
+	}
+
+	code += "\tvar _parent = get_root().get_node_or_null(\"" + parent_path.substr(parent_path.begins_with("/root") ? 5 : 0).c_escape() + "\")\n";
+	// Handle /root itself as a special case.
+	if (parent_path == "/root") {
+		code = code.replace("get_root().get_node_or_null(\"\")", "get_root()");
+	}
+	code += "\tif _parent == null:\n";
+	code += "\t\t_result = \"ERROR: Parent node not found: " + parent_path.c_escape() + "\"\n";
+	code += "\telse:\n";
+	code += "\t\t_parent.add_child(_inst)\n";
+	code += "\t\t_inst.owner = get_root()\n";
+
+	// Set properties if provided.
+	LocalVector<Variant> prop_keys = properties.get_key_list();
+	for (const Variant &key : prop_keys) {
+		String prop_name = key;
+		Variant prop_value = properties[key];
+
+		// Validate property name.
+		bool prop_name_safe = true;
+		for (int i = 0; i < prop_name.length(); i++) {
+			char32_t c = prop_name[i];
+			if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' && c != ':' && c != '.') {
+				prop_name_safe = false;
+				break;
+			}
+		}
+		if (!prop_name_safe) {
+			continue; // Skip invalid property names.
+		}
+
+		// Convert value to GDScript literal.
+		String val_str;
+		switch (prop_value.get_type()) {
+			case Variant::BOOL:
+				val_str = (bool)prop_value ? "true" : "false";
+				break;
+			case Variant::INT:
+				val_str = itos((int64_t)prop_value);
+				break;
+			case Variant::FLOAT:
+				val_str = String::num((double)prop_value);
+				break;
+			case Variant::STRING:
+				val_str = "\"" + String(prop_value).c_escape() + "\"";
+				break;
+			case Variant::ARRAY: {
+				Array arr = prop_value;
+				if (arr.size() == 2) {
+					val_str = vformat("Vector2(%s, %s)",
+							String::num((double)arr[0]),
+							String::num((double)arr[1]));
+				} else if (arr.size() == 3) {
+					val_str = vformat("Vector3(%s, %s, %s)",
+							String::num((double)arr[0]),
+							String::num((double)arr[1]),
+							String::num((double)arr[2]));
+				} else if (arr.size() == 4) {
+					val_str = vformat("Color(%s, %s, %s, %s)",
+							String::num((double)arr[0]),
+							String::num((double)arr[1]),
+							String::num((double)arr[2]),
+							String::num((double)arr[3]));
+				}
+			} break;
+			case Variant::DICTIONARY: {
+				Dictionary d = prop_value;
+				if (d.has("x") && d.has("y")) {
+					if (d.has("z")) {
+						val_str = vformat("Vector3(%s, %s, %s)",
+								String::num((double)d.get("x", 0.0)),
+								String::num((double)d.get("y", 0.0)),
+								String::num((double)d.get("z", 0.0)));
+					} else {
+						val_str = vformat("Vector2(%s, %s)",
+								String::num((double)d.get("x", 0.0)),
+								String::num((double)d.get("y", 0.0)));
+					}
+				} else if (d.has("r") && d.has("g") && d.has("b")) {
+					val_str = vformat("Color(%s, %s, %s, %s)",
+							String::num((double)d.get("r", 0.0)),
+							String::num((double)d.get("g", 0.0)),
+							String::num((double)d.get("b", 0.0)),
+							String::num((double)d.get("a", 1.0)));
+				}
+			} break;
+			default:
+				break;
+		}
+
+		if (!val_str.is_empty()) {
+			code += "\t\t_inst.set(\"" + prop_name.c_escape() + "\", " + val_str + ")\n";
+		}
+	}
+
+	code += "\t\tvar _id = _inst.get_instance_id()\n";
+	code += "\t\tvar _path = str(_inst.get_path())\n";
+	code += "\t\tvar _type = _inst.get_class()\n";
+	code += "\t\t_result = \"{\\\"instance_id\\\": \" + str(_id) + \", \\\"node_path\\\": \\\"\" + _path + \"\\\", \\\"type\\\": \\\"\" + _type + \"\\\", \\\"name\\\": \\\"\" + _inst.name + \"\\\"}\"\n";
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result = bridge->send_execute_code(code, 15000);
+
+	if (!(bool)result.get("success", false)) {
+		String error_msg = result.get("value", result.get("error", "Unknown error"));
+		return make_tool_error(
+				"Failed to spawn instance: " + error_msg + "\n\n"
+				"Check that the scene file exists and the parent node path is valid.\n"
+				"Use editor/scan_filesystem if the scene was just created.");
+	}
+
+	String value_str = result.get("value", "");
+
+	// Extract the JSON result from the value string.
+	// Bridge returns "Type: value" format.
+	String json_str = value_str;
+	int colon_pos = value_str.find(": ");
+	if (colon_pos >= 0) {
+		json_str = value_str.substr(colon_pos + 2);
+	}
+
+	// Check for error results.
+	if (json_str.begins_with("ERROR:")) {
+		return make_tool_error(json_str);
+	}
+
+	// Parse the JSON response.
+	JSON json;
+	Dictionary spawn_result;
+	if (json.parse(json_str) == OK && json.get_data().get_type() == Variant::DICTIONARY) {
+		spawn_result = json.get_data();
+	}
+
+	String node_path = spawn_result.get("node_path", "");
+	String node_name = spawn_result.get("name", "");
+	String node_type = spawn_result.get("type", "");
+	int64_t instance_id = (int64_t)spawn_result.get("instance_id", 0);
+
+	String text = vformat("Spawned '%s' (%s) at %s [id:%d]\nScene: %s\nParent: %s",
+			node_name, node_type, node_path, instance_id, scene_path, parent_path);
+
+	if (!properties.is_empty()) {
+		text += vformat("\nProperties set: %d", properties.size());
+	}
+
+	text += "\n\nUse runtime/get_node_properties with node_path=\"" + node_path + "\" to inspect.";
+	text += "\nUse runtime/set_node_property to modify properties on the spawned instance.";
+
+	Dictionary structured;
+	structured["instance_id"] = instance_id;
+	structured["node_path"] = node_path;
+	structured["name"] = node_name;
+	structured["type"] = node_type;
+	structured["scene_path"] = scene_path;
+	structured["parent_path"] = parent_path;
+	structured["properties_set"] = properties.size();
 
 	return make_tool_result(text, structured);
 }

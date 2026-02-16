@@ -45,6 +45,7 @@ public:
 	static Dictionary handle_evaluate(const Dictionary &p_args);
 	static Dictionary handle_wait_frames(const Dictionary &p_args);
 	static Dictionary handle_get_screenshot(const Dictionary &p_args);
+	static Dictionary handle_spawn_instance(const Dictionary &p_args);
 
 private:
 	// Helper: get the debugger bridge pointer.

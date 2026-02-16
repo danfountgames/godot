@@ -204,8 +204,9 @@ String AgentPanel::_build_system_prompt() const {
 	p += "  runtime/get_session_summary — comprehensive snapshot (status, FPS, tree, output, errors)\n";
 	p += "  runtime/clear_output       — clear output/error buffers\n\n";
 
-	p += "**RUNTIME — EVALUATE** — execute arbitrary GDScript in the live game:\n";
+	p += "**RUNTIME — EVALUATE & SPAWN** — execute GDScript and spawn into the live game:\n";
 	p += "  runtime/evaluate           — run any GDScript expression in SceneTree context\n";
+	p += "  runtime/spawn_instance     — instantiate a .tscn scene into the running game (returns instance_id)\n";
 	p += "  runtime/wait_frames        — wait N game frames\n";
 	p += "  runtime/get_screenshot     — capture viewport as base64 PNG\n\n";
 
@@ -891,6 +892,40 @@ String AgentPanel::_build_agents_json() const {
 		p += "Good actions: give_item, teleport, heal, set_level, spawn_at, trigger_event, ";
 		p += "unlock_ability, set_checkpoint, complete_quest.\n\n";
 
+		// Factory Spawn Actions
+		p += "### Factory Spawn Actions — spawning items via game logic (IMPORTANT)\n";
+		p += "Many games have factory methods that do more than just instantiate a scene — they\n";
+		p += "add nodes to groups, wire signals, set initial state, register with managers, etc.\n";
+		p += "Register these as debug actions so the MCP agent can spawn items through the game's\n";
+		p += "own factory logic instead of using raw runtime/spawn_instance.\n\n";
+		p += "```gdscript\n";
+		p += "# In your spawner/factory/manager script:\n";
+		p += "func _debug_spawn(params: Dictionary) -> Dictionary:\n";
+		p += "    var pos = Vector2(float(params.get(\"x\", 0)), float(params.get(\"y\", 0)))\n";
+		p += "    var instance = spawn_enemy(pos)  # YOUR factory method\n";
+		p += "    return {\n";
+		p += "        \"instance_id\": instance.get_instance_id(),\n";
+		p += "        \"node_path\": str(instance.get_path()),\n";
+		p += "        \"name\": instance.name,\n";
+		p += "        \"type\": instance.get_class()\n";
+		p += "    }\n\n";
+		p += "Debug.register_action(\"spawn_enemy\", _debug_spawn, \"Spawn enemy via factory\", {\n";
+		p += "    \"x\": \"float\", \"y\": \"float\"\n";
+		p += "})\n";
+		p += "```\n\n";
+		p += "**Key rules for factory spawn actions:**\n";
+		p += "- ALWAYS return instance_id, node_path, name, type in the result dict.\n";
+		p += "  The tester agent needs the instance_id to track and inspect the spawned node.\n";
+		p += "- Use the GAME'S spawn/factory method, not raw instantiate(). This ensures the\n";
+		p += "  node is properly registered with managers, added to groups, and initialized.\n";
+		p += "- Name the action with a 'spawn_' prefix (spawn_enemy, spawn_ball, spawn_item)\n";
+		p += "  so the tester agent can discover them easily in the manifest.\n";
+		p += "- Add position parameters (x, y or x, y, z) so items can be placed precisely.\n";
+		p += "- For games with multiple entity types, register one action per type:\n";
+		p += "  spawn_slime, spawn_goblin, spawn_boss, spawn_ball, spawn_powerup\n";
+		p += "- The MCP tool runtime/spawn_instance is the FALLBACK for raw scene instantiation.\n";
+		p += "  Factory actions are PREFERRED because they run game-specific setup logic.\n\n";
+
 		// Commands
 		p += "### Commands — console functions with string args\n";
 		p += "```gdscript\n";
@@ -955,19 +990,22 @@ String AgentPanel::_build_agents_json() const {
 
 		p += "**Scan the project and categorize every script:**\n\n";
 
-		p += "PRIORITY 1 — Autoloads / Singletons / Managers:\n";
+		p += "PRIORITY 1 — Autoloads / Singletons / Managers / Spawners / Factories:\n";
 		p += "  These are the nervous system. auto_expose + queries for every key metric + events for state changes.\n";
 		p += "  Examples: GameManager, PlayerData, SaveSystem, AudioManager, LevelManager, ScoreManager\n";
-		p += "  Typical: auto_expose + 3-8 queries + 2-5 events + 2-4 actions + debug commands\n\n";
+		p += "  **Spawners/Factories**: MUST register spawn_* actions that call the game's factory method\n";
+		p += "  and return {instance_id, node_path, name, type}. See 'Factory Spawn Actions' above.\n";
+		p += "  Typical: auto_expose + 3-8 queries + 2-5 events + 2-4 actions + factory spawn actions\n\n";
 
 		p += "PRIORITY 2 — Player / main character:\n";
 		p += "  Everything the player does should be observable. Queries for health/position/state,\n";
 		p += "  events for damage/death/pickup, actions for heal/teleport/give_item.\n";
 		p += "  Typical: auto_expose + 4-6 queries + 3-5 events + 2-3 actions\n\n";
 
-		p += "PRIORITY 3 — Enemies / NPCs / AI:\n";
+		p += "PRIORITY 3 — Enemies / NPCs / AI / Spawnable entities:\n";
 		p += "  auto_expose for @exports (speed, damage, health). Queries for state/target.\n";
 		p += "  Events for death/spawn. Use unique tags for multiple instances.\n";
+		p += "  If a spawner/factory creates these, register a spawn_* action on the FACTORY (Priority 1).\n";
 		p += "  Typical: auto_expose(self, name) + 1-3 queries + 1-2 events\n\n";
 
 		p += "PRIORITY 4 — UI Manager / Screen controller:\n";
@@ -1395,6 +1433,70 @@ String AgentPanel::_build_agents_json() const {
 		p += "  4. scene/save — save as res://test_scene.tscn\n";
 		p += "  5. runtime/run_scene scene=res://test_scene.tscn — run JUST that scene\n";
 		p += "Faster iteration, fewer variables, clearer diagnosis.\n\n";
+
+		// ── Integration testing with spawn ──
+		p += "## Integration testing — spawn, configure, observe\n";
+		p += "You can create real-time integration tests by spawning prefabs into the running\n";
+		p += "game, configuring them, and then observing behavior. This is your most powerful\n";
+		p += "testing technique for verifying gameplay mechanics.\n\n";
+
+		p += "**TWO WAYS TO SPAWN — choose the right one:**\n\n";
+
+		p += "1. **Factory spawn (PREFERRED)** — uses the game's own factory/spawn logic:\n";
+		p += "   Check console/get_manifest for spawn_* actions. These call the game's\n";
+		p += "   factory methods which handle group registration, signal wiring, and setup.\n";
+		p += "   console/invoke {name: \"spawn_enemy\", params: {x: 100, y: 200}}\n";
+		p += "   Returns: {instance_id, node_path, name, type} — use these to track the instance.\n\n";
+
+		p += "2. **Raw spawn (FALLBACK)** — direct scene instantiation:\n";
+		p += "   runtime/spawn_instance {scene_path: \"res://scenes/ball.tscn\", parent_path: \"/root/Main\"}\n";
+		p += "   Use when no factory action exists. The node gets added to the tree but won't\n";
+		p += "   have game-specific setup (groups, signals, manager registration).\n\n";
+
+		p += "**The pause → spawn → configure → unpause workflow:**\n";
+		p += "```\n";
+		p += "# Step 1: Pause the game to set up the test scenario\n";
+		p += "runtime/time/suspend\n\n";
+		p += "# Step 2: Spawn items (factory or raw)\n";
+		p += "console/invoke {name: \"spawn_ball\", params: {x: 200, y: 50}}    # factory\n";
+		p += "runtime/spawn_instance {scene_path: \"res://block.tscn\",          # raw\n";
+		p += "    parent_path: \"/root/Main\", properties: {position: [300, 400]}}\n\n";
+		p += "# Step 3: Configure spawned instances\n";
+		p += "runtime/set_node_property {node_path: \"/root/Main/Ball\",\n";
+		p += "    property: \"linear_velocity\", value: [0, 300]}\n";
+		p += "runtime/set_node_property {node_path: \"/root/Main/Block\",\n";
+		p += "    property: \"position\", value: [300, 500]}\n\n";
+		p += "# Step 4: Record baseline state\n";
+		p += "runtime/clear_output {target: \"all\"}\n";
+		p += "console/batch_query {names: [\"score\", \"lives\", \"remaining\"]}\n\n";
+		p += "# Step 5: Unpause and let the game run\n";
+		p += "runtime/time/resume\n";
+		p += "runtime/wait_frames {frames: 120}   # ~2 seconds at 60fps\n\n";
+		p += "# Step 6: Verify results\n";
+		p += "console/batch_query {names: [\"score\", \"lives\", \"remaining\"]}  # compare to baseline\n";
+		p += "runtime/browse_scene_tree {root_path: \"/root/Main\"}  # check what's still alive\n";
+		p += "runtime/get_output   # check for events, logs, errors\n";
+		p += "console/get_events   # check signal events (ball_fell, block_destroyed, etc.)\n";
+		p += "```\n\n";
+
+		p += "**Full integration test scenario (blank scene):**\n";
+		p += "For complete isolation, create a fresh test scene:\n";
+		p += "  1. Create a minimal .tscn (Node2D root) and save it\n";
+		p += "  2. runtime/run_scene {scene: \"res://test_integration.tscn\"}\n";
+		p += "  3. runtime/time/suspend — freeze before anything processes\n";
+		p += "  4. Spawn all test entities (factory or raw)\n";
+		p += "  5. Configure positions, velocities, initial state\n";
+		p += "  6. runtime/time/resume — let physics and game logic run\n";
+		p += "  7. Observe and verify: queries, events, scene tree, properties\n";
+		p += "  8. runtime/stop — clean up when done\n\n";
+
+		p += "**Tips for integration testing:**\n";
+		p += "- Factory spawns test the factory itself. If spawn_enemy works via console/invoke\n";
+		p += "  but not in gameplay, the bug is in the trigger, not the factory.\n";
+		p += "- Use instance_id from spawn results to track specific instances through the test.\n";
+		p += "- Use runtime/time/advance_frames for precise frame-count observation.\n";
+		p += "- Combine with console/get_events to verify signal firing (collision, death, etc.).\n";
+		p += "- If the manifest has NO spawn_* actions, request instrumenter to add them.\n\n";
 
 		// ── Scenarios: how to debug common problems ──
 		p += "## Debugging scenarios — how to approach common problems\n\n";
