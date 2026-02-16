@@ -531,6 +531,7 @@ int SceneDebugger::_frames_remaining = 0;
 
 #ifdef MODULE_MCP_SERVER_ENABLED
 int SceneDebugger::_mcp_wait_frames_remaining = 0;
+int SceneDebugger::_mcp_wait_frames_requested = 0;
 int64_t SceneDebugger::_mcp_frame_counter = 0;
 bool SceneDebugger::_mcp_heartbeat_connected = false;
 
@@ -3283,9 +3284,9 @@ void SceneDebugger::_mcp_process_frame_tick() {
 			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick));
 		}
 
-		// Send completion message back to editor.
+		// Send completion message back to editor with actual frames waited.
 		Array result;
-		result.push_back(0); // success code
+		result.push_back(_mcp_wait_frames_requested);
 		EngineDebugger::get_singleton()->send_message("mcp:wait_done", result);
 	}
 }
@@ -3832,22 +3833,22 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 
 		Input::get_singleton()->parse_input_event(ev);
 
-		// If hold_frames > 0 and pressed, schedule a release after N frames
-		// using a SceneTreeTimer with estimated frame duration.
+		// If hold_frames > 0 and pressed, track via MCPHeldInput for frame-exact
+		// release (same mechanism as inject_key). Previously used a SceneTreeTimer
+		// which was time-based and not frame-exact.
 		if (pressed && hold_frames > 0) {
-			double estimated_frame_time = 1.0 / Engine::get_singleton()->get_physics_ticks_per_second();
-			double hold_time = hold_frames * estimated_frame_time;
-
-			Ref<SceneTreeTimer> timer = scene_tree->create_timer(hold_time);
-			String captured_action = action_name;
-			timer->connect("timeout", callable_mp_static(+[](const String &p_action) {
-				Ref<InputEventAction> release_ev;
-				release_ev.instantiate();
-				release_ev->set_action(p_action);
-				release_ev->set_pressed(false);
-				release_ev->set_strength(0.0f);
-				Input::get_singleton()->parse_input_event(release_ev);
-			}).bind(captured_action));
+			MCPHeldInput held;
+			held.name = "action:" + action_name;
+			held.type = 1; // Action
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.device = 0;
+			held.value = strength;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
 		}
 
 		Array result;
@@ -4007,25 +4008,20 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 	// --- execute_code ---
 	// Full GDScript execution (supports assignments, loops, control flow).
 	// Data: [code: String]
-	// The code is wrapped in a class that extends Node and given access to
-	// the scene tree via get_tree(). The last expression's value is captured
-	// via a _result variable.
+	// The code is wrapped in a class that extends RefCounted and given access
+	// to the scene tree via an argument. The last expression's value is
+	// captured via a _result variable.
+	//
+	// IMPORTANT: GDScript compilation (script->reload()) is not safe to call
+	// from within a debugger message handler because the GDScript language
+	// mutex may already be held. We defer the compile+execute to the next
+	// idle frame via call_deferred to avoid the SIGSEGV crash.
 	if (p_msg == "execute_code") {
 		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
 
 		String user_code = p_data[0];
 
-		// Wrap user code in a GDScript class with a _run() method.
-		// The method receives the scene tree as an argument.
-		// No member variables are used -- dynamically compiled scripts without
-		// a resource path can have unreliable instance storage indices.
-		// Instead, convenience names are inlined via string replacement on the
-		// user code before embedding it.
-
 		// Inline convenience helpers in user code.
-		// get_root()             -> p_tree.root
-		// get_nodes_in_group(x)  -> p_tree.get_nodes_in_group(x)
-		// current_scene          -> p_tree.current_scene
 		user_code = user_code.replace("get_root()", "p_tree.root");
 		user_code = user_code.replace("get_nodes_in_group(", "p_tree.get_nodes_in_group(");
 		user_code = user_code.replace("current_scene", "p_tree.current_scene");
@@ -4041,79 +4037,94 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		}
 		full_source += "\treturn _result\n";
 
-		// Find GDScript language.
-		ScriptLanguage *gdscript_lang = ScriptServer::get_language_for_extension("gd");
-		if (!gdscript_lang) {
-			Array result;
-			result.push_back(false);
-			result.push_back("GDScript language not available.");
-			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
-			return OK;
-		}
+		// Defer compilation and execution to the next idle frame.
+		// This avoids SIGSEGV from GDScript compilation inside debugger
+		// message handlers where the GDScript language mutex may be held.
+		callable_mp_static(+[](const String &p_source) {
+			SceneTree *st = SceneTree::get_singleton();
 
-		// Create and compile a temporary GDScript.
-		Ref<Script> script(gdscript_lang->create_script());
-		script->set_source_code(full_source);
-		Error reload_err = script->reload();
-
-		if (reload_err != OK) {
-			Array result;
-			result.push_back(false);
-			result.push_back("GDScript compile error. Check syntax.\n\nGenerated source:\n" + full_source);
-			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
-			return OK;
-		}
-
-		// Instantiate and call _run().
-		Object *obj = ClassDB::instantiate("RefCounted");
-		if (!obj) {
-			Array result;
-			result.push_back(false);
-			result.push_back("Failed to instantiate script host.");
-			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
-			return OK;
-		}
-		obj->set_script(script);
-
-		// Call _run(scene_tree).
-		Variant tree_arg(scene_tree);
-		const Variant *argptrs[1] = { &tree_arg };
-		Callable::CallError ce;
-		Variant ret = obj->callp("_run", argptrs, 1, ce);
-
-		// Instance is RefCounted, so it manages its own memory via ref counting.
-		// Wrapping in a Ref ensures proper cleanup.
-		Ref<RefCounted> ref_guard(Object::cast_to<RefCounted>(obj));
-
-		Array result;
-		if (ce.error != Callable::CallError::CALL_OK) {
-			result.push_back(false);
-			String err_detail;
-			switch (ce.error) {
-				case Callable::CallError::CALL_ERROR_INVALID_METHOD:
-					err_detail = "Method '_run' not found (compile error in generated script)";
-					break;
-				case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT:
-					err_detail = "Invalid argument at index " + itos(ce.argument);
-					break;
-				case Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS:
-				case Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS:
-					err_detail = "Argument count mismatch";
-					break;
-				default:
-					err_detail = "Error code " + itos(ce.error);
-					break;
+			// Find GDScript language.
+			ScriptLanguage *gdscript_lang = ScriptServer::get_language_for_extension("gd");
+			if (!gdscript_lang) {
+				Array result;
+				result.push_back(false);
+				result.push_back("GDScript language not available.");
+				EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+				return;
 			}
-			result.push_back("Runtime error: " + err_detail);
-		} else {
-			result.push_back(true);
-			if (ret.get_type() == Variant::NIL) {
-				result.push_back("Nil: (code executed successfully)");
+
+			// Create and compile a temporary GDScript.
+			Ref<Script> script(gdscript_lang->create_script());
+			script->set_source_code(p_source);
+			Error reload_err = script->reload();
+
+			if (reload_err != OK) {
+				Array result;
+				result.push_back(false);
+				result.push_back("GDScript compile error. Check syntax.\n\nGenerated source:\n" + p_source);
+				EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+				return;
+			}
+
+			// Instantiate and call _run().
+			Object *obj = ClassDB::instantiate("RefCounted");
+			if (!obj) {
+				Array result;
+				result.push_back(false);
+				result.push_back("Failed to instantiate script host.");
+				EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+				return;
+			}
+			obj->set_script(script);
+
+			// Call _run(scene_tree).
+			Variant tree_arg(st);
+			const Variant *argptrs[1] = { &tree_arg };
+			Callable::CallError ce;
+			Variant ret = obj->callp("_run", argptrs, 1, ce);
+
+			// Instance is RefCounted, so wrapping in Ref ensures proper cleanup.
+			Ref<RefCounted> ref_guard(Object::cast_to<RefCounted>(obj));
+
+			Array result;
+			if (ce.error != Callable::CallError::CALL_OK) {
+				result.push_back(false);
+				String err_detail;
+				switch (ce.error) {
+					case Callable::CallError::CALL_ERROR_INVALID_METHOD:
+						err_detail = "Method '_run' not found (compile error in generated script)";
+						break;
+					case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT:
+						err_detail = "Invalid argument at index " + itos(ce.argument);
+						break;
+					case Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS:
+					case Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS:
+						err_detail = "Argument count mismatch";
+						break;
+					default:
+						err_detail = "Error code " + itos(ce.error);
+						break;
+				}
+				result.push_back("Runtime error: " + err_detail);
 			} else {
-				result.push_back(Variant::get_type_name(ret.get_type()) + ": " + String(ret));
+				result.push_back(true);
+				if (ret.get_type() == Variant::NIL) {
+					result.push_back("Nil: (code executed successfully)");
+				} else if (ret.get_type() == Variant::OBJECT) {
+					// Handle GDScriptFunctionState from coroutines.
+					Object *ret_obj = ret.get_validated_object();
+					if (ret_obj && ret_obj->get_class() == "GDScriptFunctionState") {
+						result.push_back("Nil: (async coroutine started)");
+					} else {
+						result.push_back(Variant::get_type_name(ret.get_type()) + ": " + String(ret));
+					}
+				} else {
+					result.push_back(Variant::get_type_name(ret.get_type()) + ": " + String(ret));
+				}
 			}
-		}
-		EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+		}).call_deferred(full_source);
+
 		return OK;
 	}
 
@@ -4135,6 +4146,7 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		// _create_pending mechanism wakes the old waiter with a "superseded" error).
 		// This is by design for the single-client MCP model.
 		_mcp_wait_frames_remaining = frame_count;
+		_mcp_wait_frames_requested = frame_count;
 
 		// Connect to process_frame if not already connected.
 		if (!scene_tree->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick))) {
@@ -5564,6 +5576,100 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 						return OK;
 					}
 					value = res;
+				}
+			} else if (value.get_type() == Variant::DICTIONARY) {
+				// Dictionary-to-math-type coercion for MCP JSON payloads.
+				// JSON objects like {"x": 1, "y": 2} arrive as Dictionary but
+				// the target property expects Vector2, Vector3, Color, etc.
+				Dictionary d = value;
+				bool coerced = true;
+				switch (target_type) {
+					case Variant::VECTOR2: {
+						value = Vector2(d.get("x", 0.0), d.get("y", 0.0));
+					} break;
+					case Variant::VECTOR2I: {
+						value = Vector2i((int)d.get("x", 0), (int)d.get("y", 0));
+					} break;
+					case Variant::VECTOR3: {
+						value = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0));
+					} break;
+					case Variant::VECTOR3I: {
+						value = Vector3i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0));
+					} break;
+					case Variant::VECTOR4: {
+						value = Vector4(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0), d.get("w", 0.0));
+					} break;
+					case Variant::VECTOR4I: {
+						value = Vector4i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0), (int)d.get("w", 0));
+					} break;
+					case Variant::COLOR: {
+						value = Color(d.get("r", 0.0), d.get("g", 0.0), d.get("b", 0.0), d.get("a", 1.0));
+					} break;
+					case Variant::RECT2: {
+						value = Rect2(d.get("x", 0.0), d.get("y", 0.0), d.get("w", 0.0), d.get("h", 0.0));
+					} break;
+					case Variant::RECT2I: {
+						value = Rect2i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("w", 0), (int)d.get("h", 0));
+					} break;
+					case Variant::TRANSFORM2D: {
+						// {"xx","xy","yx","yy","ox","oy"} or {"x": {}, "y": {}, "origin": {}}
+						if (d.has("xx")) {
+							value = Transform2D(
+									Vector2(d.get("xx", 1.0), d.get("xy", 0.0)),
+									Vector2(d.get("yx", 0.0), d.get("yy", 1.0)),
+									Vector2(d.get("ox", 0.0), d.get("oy", 0.0)));
+						} else {
+							coerced = false;
+						}
+					} break;
+					default:
+						coerced = false;
+						break;
+				}
+				if (!coerced) {
+					// Fall through to Variant::construct below.
+					Callable::CallError ce;
+					Variant converted;
+					const Variant *v_ptr = &value;
+					Variant::construct(target_type, converted, &v_ptr, 1, ce);
+					if (ce.error == Callable::CallError::CALL_OK) {
+						value = converted;
+					} else {
+						Dictionary result;
+						result["success"] = false;
+						result["error"] = vformat("Cannot convert Dictionary to %s for property '%s'. "
+								"For Vector2 use {\"x\":N,\"y\":N}, for Color use {\"r\":N,\"g\":N,\"b\":N,\"a\":N}.",
+								Variant::get_type_name(target_type), property);
+						send_result(result);
+						return OK;
+					}
+				}
+			} else if (value.get_type() == Variant::ARRAY && (target_type == Variant::VECTOR2 || target_type == Variant::VECTOR3 || target_type == Variant::VECTOR4 || target_type == Variant::COLOR)) {
+				// Array-to-math-type coercion: [x, y] -> Vector2, [r,g,b,a] -> Color, etc.
+				Array arr = value;
+				switch (target_type) {
+					case Variant::VECTOR2: {
+						if (arr.size() >= 2) {
+							value = Vector2(arr[0], arr[1]);
+						}
+					} break;
+					case Variant::VECTOR3: {
+						if (arr.size() >= 3) {
+							value = Vector3(arr[0], arr[1], arr[2]);
+						}
+					} break;
+					case Variant::VECTOR4: {
+						if (arr.size() >= 4) {
+							value = Vector4(arr[0], arr[1], arr[2], arr[3]);
+						}
+					} break;
+					case Variant::COLOR: {
+						if (arr.size() >= 3) {
+							value = Color(arr[0], arr[1], arr[2], arr.size() >= 4 ? (float)arr[3] : 1.0f);
+						}
+					} break;
+					default:
+						break;
 				}
 			} else {
 				// Use Variant::construct for type coercion.

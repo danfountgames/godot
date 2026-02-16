@@ -1265,6 +1265,16 @@ void MCPProtocol::_register_game_resources() {
 	def.requires_game = true;
 	def.subscribable = true;
 	resource_registry.register_resource(def);
+
+	def.uri = "godot://debug/events";
+	def.name = "Debug Events";
+	def.description = "Recent game events from the DebugSemanticRegistry event log (hit_barrel, ball_fell, etc.). "
+					  "Subscribe to receive notifications when new events fire.";
+	def.mime_type = "application/json";
+	def.handler = callable_mp(this, &MCPProtocol::_read_debug_events);
+	def.requires_game = true;
+	def.subscribable = true;
+	resource_registry.register_resource(def);
 }
 
 void MCPProtocol::_register_resource_templates() {
@@ -1589,6 +1599,20 @@ Dictionary MCPProtocol::_read_game_errors() {
 
 	Dictionary item;
 	item["text"] = JSON::stringify(result);
+	return item;
+}
+
+Dictionary MCPProtocol::_read_debug_events() {
+	ERR_FAIL_NULL_V(debugger_bridge, Dictionary());
+
+	// Use the debug_get_events bridge call to fetch recent events.
+	Array data;
+	data.push_back(20); // count
+	Dictionary events_result = debugger_bridge->send_debug_command("debug_get_events", data);
+	String events_json = events_result.get("value", "[]");
+
+	Dictionary item;
+	item["text"] = events_json;
 	return item;
 }
 

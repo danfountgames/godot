@@ -306,7 +306,27 @@ bool MCPDebuggerBridge::capture(const String &p_message, const Array &p_data, in
 	if (sub_msg == "wait_done") {
 		Dictionary result;
 		result["success"] = true;
+		if (!p_data.is_empty()) {
+			result["frames_waited"] = p_data[0];
+		}
 		_complete_pending("wait_frames", result);
+		return true;
+	}
+
+	// --- event_fired ---
+	// Game-side DebugSemanticRegistry event callback. Notify subscribed SSE
+	// clients that the events resource has changed so they can poll for new data.
+	if (sub_msg == "event_fired") {
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			MCPResourceRegistry *registry = protocol->get_resource_registry();
+			if (registry) {
+				registry->notify_changed("godot://debug/events");
+				// Also notify the game-status resource since events often indicate
+				// state changes (ball_fell, all_bricks_cleared, etc.).
+				registry->notify_changed("godot://game/status");
+			}
+		}
 		return true;
 	}
 

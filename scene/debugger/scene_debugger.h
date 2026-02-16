@@ -148,6 +148,7 @@ public:
 
 private:
 	static int _mcp_wait_frames_remaining;
+	static int _mcp_wait_frames_requested; // Original count for response.
 	static int64_t _mcp_frame_counter;
 	static bool _mcp_heartbeat_connected;
 	static void _mcp_process_frame_tick();
