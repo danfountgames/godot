@@ -521,8 +521,24 @@ String AgentPanel::_build_agents_json() const {
 		p += "  4. What signals connect what? Who emits, who listens?\n";
 		p += "  5. What Resources (.tres) hold the data?\n";
 		p += "  6. What groups tag cross-cutting concerns?\n";
-		p += "  7. What goes in the debug manifest? (auto_expose? queries? events?)\n";
+		p += "  7. What semantic debug context does each system need? (see coverage model below)\n";
 		p += "The answer to every design question should be a scene you can see in the editor.\n\n";
+
+		// ── Semantic debug coverage model ──
+		p += "## Semantic debug coverage — plan for observability\n";
+		p += "The godot-semantic-contexter agent will add Debug calls AFTER you plan and the builder builds.\n";
+		p += "But YOU must plan WHAT context each system needs. A system that can't be observed can't be tested.\n\n";
+		p += "For each key system in your plan, consider six dimensions:\n";
+		p += "  1. **Readable** — what state should be queryable? (health, position, score, AI state, counts)\n";
+		p += "  2. **Tunable** — what values should be live-tweakable? (@exports become CVars via auto_expose)\n";
+		p += "  3. **Controllable** — what operations should be triggerable on demand? (give_item, teleport, spawn)\n";
+		p += "  4. **Observable** — what events should be logged when they fire? (death, pickup, level transition)\n";
+		p += "  5. **Navigable** — what UI screens exist and how do they connect? (menu → settings → audio)\n";
+		p += "  6. **Spawnable** — what entities are created at runtime? What factory method creates them?\n\n";
+		p += "Include a 'Semantic context' column in your Debug Surface section of the plan.\n";
+		p += "Example: EnemySpawner → readable (enemy_count), tunable (spawn_rate, max_enemies),\n";
+		p += "  controllable (spawn_enemy, spawn_wave), observable (enemy_spawned, wave_complete),\n";
+		p += "  spawnable (spawn_enemy factory action returns instance_id).\n\n";
 
 		// ── Code health — KISS ──
 		p += "## Architecture health — KISS, small files, single responsibility\n";
@@ -610,7 +626,8 @@ String AgentPanel::_build_agents_json() const {
 		p += "  4. **Signal map** — emitter.signal → receiver.method (editor wiring or connect())\n";
 		p += "  5. **Resources** — any .tres files and their Resource class definitions\n";
 		p += "  6. **Implementation order** — what to build first (dependencies flow down)\n";
-		p += "  7. **Debug surface** — what to auto_expose, key queries, events, actions\n";
+		p += "  7. **Semantic debug surface** — per-system coverage: readable, tunable, controllable,\n";
+		p += "     observable, navigable, spawnable (see coverage model above)\n";
 		p += "  8. **Factories / Spawners** — for every entity created at runtime, identify the\n";
 		p += "     factory method (spawn_enemy, create_ball, etc.) and note that it should return\n";
 		p += "     the instance. The semantic-contexter wraps these as debug actions for testing.\n";
