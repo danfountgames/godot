@@ -80,8 +80,7 @@ find the actual HEAD).
 ├── feature/ios-metal-cleanup           ← PR-ready, single commit
 ├── feature/git-branch-title            ← PR-ready
 │
-├── feature/mcp-server                  ← MCP protocol, debugger bridge, tools
-├── feature/mcp-agent-terminal          ← embedded terminal + multi-tab AI panel
+├── feature/mcp-server                  ← MCP server, tools, embedded terminal, AI panel
 │
 ├── verify/all-prs-combined             ← upstream PRs merged, no branding
 │                                         (compile verification only)
@@ -93,8 +92,8 @@ find the actual HEAD).
 **`feature/*`** branches each contain focused changes on top of `4.6-stable`.
 The first four are designed to be submitted as upstream PRs independently.
 
-**`feature/mcp-server`** and **`feature/mcp-agent-terminal`** are FI-specific
-modules (MCP server for LLM integration, embedded terminal for Claude Code).
+**`feature/mcp-server`** is an FI-specific module (MCP server, 96 tools,
+embedded Claude Code terminal, 5 specialized subagents).
 
 **`verify/all-prs-combined`** merges upstream-submittable feature branches with
 no other changes. Exists purely to verify the patches compile and don't conflict.
