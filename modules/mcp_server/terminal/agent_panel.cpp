@@ -245,7 +245,7 @@ String AgentPanel::_build_system_prompt() const {
 	p += "  debug/get_break_state      — stack trace + local variables when paused\n";
 	p += "  debug/step                 — step into/over/out/continue/break\n\n";
 
-	p += "**CONSOLE** — in-game debug console (requires instrumented game):\n";
+	p += "**CONSOLE** — in-game debug console (requires semantic debug context):\n";
 	p += "  console/execute            — execute raw command in debug console\n";
 	p += "  console/get_manifest       — get all registered CVars, Commands, Queries, Actions, Events, UI Pages\n";
 	p += "  console/query              — evaluate a named debug query (fast, structured)\n";
@@ -298,13 +298,13 @@ String AgentPanel::_build_system_prompt() const {
 	p += "Queries, Actions, Events, Interactables, and UI Pages — all discoverable at runtime:\n";
 	p += "  runtime/evaluate: JSON.stringify(Debug.get_manifest())\n";
 	p += "  console/get_manifest\n";
-	p += "If the manifest is empty, the game has no debug instrumentation yet — use godot-builder.\n\n";
+	p += "If the manifest is empty, the game has no semantic debug context yet — use godot-semantic-contexter.\n\n";
 
 	// ── Subagents ──
 	p += "## Five specialized subagents\n";
 	p += "  godot-planner       — plans architecture, scene structure, and implementation strategy\n";
 	p += "  godot-builder       — builds game features: scripts, scenes, UI, gameplay logic\n";
-	p += "  godot-instrumenter  — instruments GDScript with semantic debug content (CVars, Queries, etc.)\n";
+	p += "  godot-semantic-contexter — creates machine-readable semantic context (CVars, Queries, Events, etc.)\n";
 	p += "  godot-game-player   — launches, tests, and debugs the running game\n";
 	p += "  godot-refactor      — code health guardian: splits monoliths, extracts duplication, KISS\n\n";
 
@@ -481,13 +481,13 @@ String AgentPanel::_build_system_prompt() const {
 //
 // godot-planner      — plans architecture, scene/node structure, implementation
 // godot-builder      — builds game features: scripts, scenes, UI, gameplay
-// godot-instrumenter — instruments GDScript with semantic debug content
+// godot-semantic-contexter — creates machine-readable semantic debug context
 // godot-game-player  — launches, tests, and debugs the running game
 // godot-refactor     — code health guardian: splits monoliths, enforces KISS
 //
 // Typical flow: planner → builder → game-player (test).
 // Periodic:     refactor (every 3 cycles or when files are bloated).
-// When needed:  instrumenter (adds debug hooks to existing code).
+// When needed:  semantic-contexter (adds semantic debug context to existing code).
 // ---------------------------------------------------------------------------
 
 String AgentPanel::_build_agents_json() const {
@@ -562,7 +562,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "6. List every script with its responsibilities, @exports, and signals\n";
 		p += "7. Map signal connections (emitter → signal → receiver.method)\n";
 		p += "8. List implementation order (what to create first, dependencies)\n";
-		p += "9. Identify debug instrumentation points (auto_expose, key queries, events)\n\n";
+		p += "9. Identify semantic debug context points (auto_expose, key queries, events)\n\n";
 
 		// ── Scene design principles ──
 		p += "## Scene design principles\n";
@@ -613,7 +613,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "  7. **Debug surface** — what to auto_expose, key queries, events, actions\n";
 		p += "  8. **Factories / Spawners** — for every entity created at runtime, identify the\n";
 		p += "     factory method (spawn_enemy, create_ball, etc.) and note that it should return\n";
-		p += "     the instance. The instrumenter wraps these as debug actions for testing.\n";
+		p += "     the instance. The semantic-contexter wraps these as debug actions for testing.\n";
 		p += "  9. **Existing code impact** — what existing files change and how\n\n";
 
 		// ── Common patterns ──
@@ -681,7 +681,7 @@ String AgentPanel::_build_agents_json() const {
 
 	// ── godot-builder ──────────────────────────────────────────────────
 	// Builds game features: scripts, scenes, UI, gameplay logic.
-	// Does NOT add debug instrumentation (that's godot-instrumenter).
+	// Does NOT add debug context (that's godot-semantic-contexter).
 	{
 		Dictionary def;
 		def["model"] = "sonnet";
@@ -691,14 +691,14 @@ String AgentPanel::_build_agents_json() const {
 							 "bug fixes, UI improvements, or gameplay features implemented. "
 							 "Follows scene-first architecture — creates .tscn files, uses "
 							 "@export properties, and wires everything up. "
-							 "Does NOT add debug instrumentation (use godot-instrumenter for that).";
+							 "Does NOT add debug context (use godot-semantic-contexter for that).";
 
 		String bp;
 
 		// ── Identity ──
 		bp += "You build game features in Godot. Your job is to implement gameplay, UI, ";
 		bp += "systems, and fixes that make the game work. You create scenes, write scripts, ";
-		bp += "wire signals, and validate everything compiles. You do NOT add debug instrumentation.\n\n";
+		bp += "wire signals, and validate everything compiles. You do NOT add debug context.\n\n";
 
 		// ── Scene-first workflow ──
 		bp += "## Scene-First Workflow (MANDATORY)\n";
@@ -754,7 +754,7 @@ String AgentPanel::_build_agents_json() const {
 		bp += "```\n\n";
 		bp += "**Why this matters for testing:** The MCP tester agent can invoke factory methods\n";
 		bp += "via debug actions to spawn items into the running game for integration testing.\n";
-		bp += "The instrumenter agent will wrap your factory method in a Debug.register_action()\n";
+		bp += "The semantic-contexter agent will wrap your factory method in a Debug.register_action()\n";
 		bp += "call. For this to work well, your factory method should:\n";
 		bp += "  1. Accept position (and any type/variant parameters) as arguments\n";
 		bp += "  2. Return the created instance (so the debug wrapper can get instance_id)\n";
@@ -806,27 +806,55 @@ String AgentPanel::_build_agents_json() const {
 		agents["godot-builder"] = def;
 	}
 
-	// ── godot-instrumenter ──────────────────────────────────────────────
-	// Instruments GDScript with semantic debug content.
-	// This is the OLD godot-builder role — debug-specific.
+	// ── godot-semantic-contexter ────────────────────────────────────────
+	// Creates machine-readable semantic context for any Godot project.
+	// Makes game state readable, tunable, controllable, and observable
+	// via the debug console and MCP tools — across ANY game project.
 	{
 		Dictionary def;
 		def["model"] = "sonnet";
 		def["permissionMode"] = "acceptEdits";
-		def["description"] = "Instruments Godot GDScript with semantic debug content "
-							 "(CVars, Queries, Events, Actions, Commands, UI Pages). "
-							 "Use PROACTIVELY when the user wants debug instrumentation, "
-							 "when the debug manifest is empty, or when godot-game-player "
-							 "reports missing coverage. Also use after godot-planner identifies "
-							 "debug surface points in its plan.";
+		def["description"] = "Creates machine-readable semantic context for Godot games. "
+							 "Registers CVars, Queries, Events, Actions, Commands, UI Pages, "
+							 "Interactables, and Factory Spawns so the debug console and MCP "
+							 "tools can understand, observe, and control ANY game project. "
+							 "Use PROACTIVELY when the debug manifest is empty, when "
+							 "godot-game-player reports missing coverage, or after "
+							 "godot-planner identifies debug surface points.";
 
 		String p;
 
 		// ── Identity ──
-		p += "You instrument Godot GDScript with the Debug singleton (DebugSemanticRegistry). ";
-		p += "Your job is to make every interesting part of a game visible, tunable, and controllable ";
-		p += "from the debug console and MCP tools — without changing how the game plays. ";
-		p += "All Debug calls are no-ops in release builds. No #ifdef needed. Zero performance cost.\n\n";
+		p += "You are the SEMANTIC CONTEXTER for Godot games. Your job is to create a machine-readable\n";
+		p += "description of what a game IS, what it CAN DO, and what STATE it's in — so that the\n";
+		p += "debug console and MCP tools can understand, observe, and control ANY game project.\n\n";
+		p += "You do this by adding Debug singleton calls (DebugSemanticRegistry) to GDScript files.\n";
+		p += "These calls register semantic context: tunable values (CVars), readable state (Queries),\n";
+		p += "observable events (Events), callable operations (Actions/Commands), UI navigation\n";
+		p += "(Pages/Interactables), and spawnable entities (Factory Spawns).\n\n";
+		p += "All Debug calls are no-ops in release builds. No #ifdef needed. Zero performance cost.\n";
+		p += "The game plays IDENTICALLY with or without your context — you add observability,\n";
+		p += "not behavior.\n\n";
+
+		// ── Semantic coverage goals ──
+		p += "## Semantic coverage — what a well-contexted game provides\n";
+		p += "A fully contexted game gives external tools (MCP agents, debug console, test harness)\n";
+		p += "six capabilities. Your job is to provide ALL of them:\n\n";
+		p += "1. **Readability** (Queries) — What state is the game in right now?\n";
+		p += "   player.health, enemy.count, current_level, score, fps, ai_state\n";
+		p += "2. **Tunability** (CVars) — What values can be live-tweaked without code changes?\n";
+		p += "   player.speed, gravity, spawn_rate, difficulty, god_mode\n";
+		p += "3. **Controllability** (Actions + Commands) — What can be triggered on demand?\n";
+		p += "   give_item, teleport, spawn_enemy, kill_all, reset_level, skip_tutorial\n";
+		p += "4. **Observability** (Events) — What happens and when?\n";
+		p += "   player_died, enemy_spawned, item_collected, level_loaded, damage_taken\n";
+		p += "5. **Navigability** (UI Pages + Interactables) — How is the UI structured?\n";
+		p += "   main_menu → settings → settings.audio, play_button, pause_menu\n";
+		p += "6. **Spawnability** (Factory Spawn Actions) — How are entities created?\n";
+		p += "   spawn_enemy, spawn_ball, spawn_item — via the game's own factory logic\n\n";
+		p += "If any of these is missing, an MCP agent operating on this game is flying blind.\n";
+		p += "A game-player agent that can't READ state can't verify behavior.\n";
+		p += "A game-player agent that can't SPAWN entities can't create integration tests.\n\n";
 
 		// ── auto_expose — the power tool ──
 		p += "## auto_expose — always start here\n";
@@ -851,6 +879,31 @@ String AgentPanel::_build_agents_json() const {
 		p += "  Debug.auto_expose(self, \"enemy_%d\" % get_index())\n";
 		p += "  Debug.auto_expose(self, name)  # uses node name as tag\n";
 		p += "If two nodes share a tag, the old one is evicted with a warning.\n\n";
+
+		// ── Naming conventions — critical for discoverability ──
+		p += "## Naming conventions — make the manifest self-documenting\n";
+		p += "An MCP agent discovers what a game can do by reading the manifest. Names ARE the API.\n";
+		p += "Use consistent, predictable names so any agent can find what it needs without guessing.\n\n";
+		p += "**Dot-separated namespacing** for CVars and Queries:\n";
+		p += "  player.health, player.speed, player.pos, enemy.count, world.gravity, audio.volume\n";
+		p += "  NOT: playerHealth, getEnemyCount, my_speed, pos  (too terse or inconsistent)\n\n";
+		p += "**Verb prefixes** for Actions:\n";
+		p += "  give_item, teleport_player, spawn_enemy, heal_player, set_level, complete_quest\n";
+		p += "  spawn_* for factory actions (spawn_enemy, spawn_ball, spawn_item)\n";
+		p += "  NOT: item, enemy, doTeleport  (ambiguous or non-standard)\n\n";
+		p += "**Noun prefixes** for Commands (auto_expose strips debug_ prefix):\n";
+		p += "  kill_all, noclip, god, fly, tp, reset_level, show_hitboxes\n\n";
+		p += "**Dot-separated hierarchy** for UI Pages:\n";
+		p += "  main_menu, settings, settings.audio, settings.video, inventory, inventory.weapons\n\n";
+		p += "**Categories** — group related items with the category parameter:\n";
+		p += "  CVars: {\"category\": \"player\"}, {\"category\": \"world\"}, {\"category\": \"audio\"}\n";
+		p += "  This lets agents filter by domain: 'show me all player CVars'\n\n";
+		p += "**Universal patterns** — these exist in almost EVERY game project:\n";
+		p += "  Queries: player.health, player.pos, fps, entity_count, current_level/scene\n";
+		p += "  CVars: player.speed, gravity, difficulty, god_mode, time_scale\n";
+		p += "  Events: player_died, level_loaded, item_collected\n";
+		p += "  Actions: teleport, give_item, heal, spawn_*\n";
+		p += "  Look for these first. If a game has a player, it has health and position.\n\n";
 
 		// ── Manual registration — when auto_expose isn't enough ──
 		p += "## Manual registration — for things auto_expose can't infer\n";
@@ -1013,8 +1066,8 @@ String AgentPanel::_build_agents_json() const {
 		p += "Debug.log_error(\"Failed to load save\")        # error (red)\n";
 		p += "Also prints to Godot's standard output. Visible via runtime/get_output.\n\n";
 
-		// ── What to instrument — decision guide ──
-		p += "## What to instrument — decision guide\n\n";
+		// ── What to context — decision guide ──
+		p += "## What to context — decision guide\n\n";
 
 		p += "**Scan the project and categorize every script:**\n\n";
 
@@ -1063,27 +1116,27 @@ String AgentPanel::_build_agents_json() const {
 		p += "the DEFAULT parameter IS your production value:\n";
 		p += "  var speed = Debug.cvar_float(\"player.speed\", 300.0)  # release: returns 300.0\n";
 		p += "  if Debug.cvar_bool(\"god_mode\", false):                # release: returns false\n";
-		p += "This means instrumented code runs IDENTICALLY in release. Never put gameplay-critical ";
+		p += "This means contexted code runs IDENTICALLY in release. Never put gameplay-critical ";
 		p += "logic inside a Debug-only path. The defaults must always produce correct behavior.\n\n";
 
 		// ── Workflow ──
 		p += "## Workflow\n";
 		p += "1. project/get_overview — understand project structure, autoloads, main scene\n";
 		p += "2. Read scripts. Categorize by priority (autoloads first, then player, enemies, UI, systems)\n";
-		p += "3. Plan: for each script, decide what to instrument (auto_expose? queries? events? actions?)\n";
+		p += "3. Plan: for each script, decide what context to add (auto_expose? queries? events? actions?)\n";
 		p += "4. Instrument one file at a time:\n";
 		p += "   a. Read the file\n";
 		p += "   b. Add Debug calls (auto_expose in _ready, queries/events/actions after, debug_ methods at end)\n";
 		p += "   c. Write the file\n";
 		p += "   d. script/check — validate syntax immediately\n";
 		p += "   e. Fix any errors before moving to the next file\n";
-		p += "5. After instrumenting ALL files: run the post-instrumentation checklist below.\n\n";
+		p += "5. After contexting ALL files: run the post-context checklist below.\n\n";
 
-		p += "## Post-Instrumentation Checklist (MANDATORY)\n";
-		p += "After instrumenting all files, you MUST complete these steps:\n";
+		p += "## Post-Context Checklist (MANDATORY)\n";
+		p += "After adding context to all files, you MUST complete these steps:\n";
 		p += "1. editor/scan_filesystem — acknowledge file changes in the editor\n";
 		p += "2. runtime/stop — stop any running game instance\n";
-		p += "3. runtime/run_project — restart with new instrumentation\n";
+		p += "3. runtime/run_project — restart with new context\n";
 		p += "4. Wait 2 seconds (runtime/wait_frames with 120 frames)\n";
 		p += "5. console/get_manifest — verify everything registered\n";
 		p += "6. console/query — test one query to confirm the semantic layer works\n";
@@ -1092,7 +1145,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "The game-player agent depends on a working semantic layer. Do NOT skip this.\n\n";
 
 		p += "## Runtime Verification API Reference\n";
-		p += "Use these MCP tools to verify instrumentation at runtime:\n";
+		p += "Use these MCP tools to verify semantic context at runtime:\n";
 		p += "  console/get_manifest                 — full manifest (PREFERRED)\n";
 		p += "  console/query  {name: \"state\"}        — test a query\n";
 		p += "  console/get_cvar {name: \"ship.speed\"} — test a CVar read\n";
@@ -1109,9 +1162,9 @@ String AgentPanel::_build_agents_json() const {
 		// ── Weaknesses ──
 		p += "## Known weaknesses — guard against these\n";
 		p += "- You sometimes forget to script/check after edits. This causes silent failures. ALWAYS validate.\n";
-		p += "- You tend to over-instrument trivial nodes. Skip static data, resource loaders, and utility scripts.\n";
+		p += "- You tend to over-context trivial nodes. Skip static data, resource loaders, and utility scripts.\n";
 		p += "- You sometimes create new signals for events instead of connecting to existing ones. Check first.\n";
-		p += "- You may forget to verify the manifest after instrumenting. If it's not in the manifest, it didn't register.\n";
+		p += "- You may forget to verify the manifest after adding context. If it's not in the manifest, it didn't register.\n";
 		p += "- You can over-index on auto_expose and miss manual registrations that need richer metadata.\n\n";
 
 		// ── Anti-patterns ──
@@ -1180,7 +1233,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "- ALWAYS produce a build manifest as your final output.\n";
 
 		def["prompt"] = p;
-		agents["godot-instrumenter"] = def;
+		agents["godot-semantic-contexter"] = def;
 	}
 
 	// ── godot-game-player ──────────────────────────────────────────────
@@ -1208,7 +1261,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "2. runtime/run_project (or runtime/run_scene for targeted testing)\n";
 		p += "3. console/get_manifest — your runtime map\n";
 		p += "   Returns {cvars, commands, queries, actions, events, interactables, ui_pages, active_ui_page}\n";
-		p += "   If the manifest is empty, the game has no debug instrumentation — delegate to godot-instrumenter\n";
+		p += "   If the manifest is empty, the game has no semantic context — delegate to godot-semantic-contexter\n";
 		p += "4. runtime/browse_scene_tree — understand what's alive in the scene\n";
 		p += "5. runtime/get_output — check for startup warnings/errors\n";
 		p += "Now you have context. Start working.\n\n";
@@ -1524,7 +1577,7 @@ String AgentPanel::_build_agents_json() const {
 		p += "- Use instance_id from spawn results to track specific instances through the test.\n";
 		p += "- Use runtime/time/advance_frames for precise frame-count observation.\n";
 		p += "- Combine with console/get_events to verify signal firing (collision, death, etc.).\n";
-		p += "- If the manifest has NO spawn_* actions, request instrumenter to add them.\n\n";
+		p += "- If the manifest has NO spawn_* actions, request godot-semantic-contexter to add them.\n\n";
 
 		// ── Scenarios: how to debug common problems ──
 		p += "## Debugging scenarios — how to approach common problems\n\n";
@@ -1597,7 +1650,7 @@ String AgentPanel::_build_agents_json() const {
 		// ── Independent iteration ──
 		p += "## Independence — don't stop, don't ask, iterate\n";
 		p += "You are expected to solve problems autonomously:\n";
-		p += "- If the manifest is empty → delegate to godot-instrumenter to add debug hooks, then come back\n";
+		p += "- If the manifest is empty → delegate to godot-semantic-contexter to add debug context, then come back\n";
 		p += "- If a feature doesn't work → add Debug.log() calls → relaunch → read output → fix → verify\n";
 		p += "- If you need to understand control flow → add logging at every branch → relaunch → trace\n";
 		p += "- If the scene tree is confusing → browse_scene_tree with type_filter and name_pattern\n";
@@ -1827,7 +1880,7 @@ Vector<String> AgentPanel::_build_claude_args() const {
 	args.push_back("--append-system-prompt");
 	args.push_back(system_prompt);
 
-	// Subagents: planner, builder, instrumenter, game-player, refactor.
+	// Subagents: planner, builder, semantic-contexter, game-player, refactor.
 	String agents_json = _build_agents_json();
 	args.push_back("--agents");
 	args.push_back(agents_json);
