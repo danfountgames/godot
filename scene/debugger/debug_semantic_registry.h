@@ -182,7 +182,10 @@ private:
 
 	// Internal helpers.
 	void _event_callback(const String &p_event_name, const Array &p_args);
-	void _event_fired_0(const String &p_event_name); // No-arg event callback for signal connection.
+	void _event_fired_0(const String &p_event_name); // 0-arg signal callback.
+	void _event_fired_1(const Variant &p_a1, const String &p_event_name); // 1-arg signal callback.
+	void _event_fired_2(const Variant &p_a1, const Variant &p_a2, const String &p_event_name); // 2-arg signal callback.
+	void _event_fired_3(const Variant &p_a1, const Variant &p_a2, const Variant &p_a3, const String &p_event_name); // 3-arg signal callback.
 	void _auto_expose_cleanup(ObjectID p_object_id);
 	String _get_object_tag(Object *p_obj, const String &p_tag) const;
 	void _push_console_log(const String &p_message, int p_type);
