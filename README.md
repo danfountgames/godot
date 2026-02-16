@@ -80,6 +80,7 @@ find the actual HEAD).
 ├── feature/ios-metal-cleanup           ← PR-ready, single commit
 ├── feature/git-branch-title            ← PR-ready
 │
+├── feature/debug-console               ← DebugSemanticRegistry + in-game console + compat stub
 ├── feature/mcp-server                  ← MCP server, tools, embedded terminal, AI panel
 │
 ├── verify/all-prs-combined             ← upstream PRs merged, no branding
@@ -90,10 +91,15 @@ find the actual HEAD).
 ```
 
 **`feature/*`** branches each contain focused changes on top of `4.6-stable`.
-The first four are designed to be submitted as upstream PRs independently.
+The first five are designed to be submitted as upstream PRs independently.
+
+**`feature/debug-console`** adds the `DebugSemanticRegistry` C++ singleton,
+the in-game debug console overlay, and the GDScript compatibility stub addon
+(see [Vanilla Godot compatibility](#vanilla-godot-compatibility) below).
 
 **`feature/mcp-server`** is an FI-specific module (MCP server, 96 tools,
-embedded Claude Code terminal, 5 specialized subagents).
+embedded Claude Code terminal, 5 specialized subagents). The `console/*` MCP
+tools consume the debug registry from `feature/debug-console`.
 
 **`verify/all-prs-combined`** merges upstream-submittable feature branches with
 no other changes. Exists purely to verify the patches compile and don't conflict.
@@ -255,6 +261,28 @@ A game with no context still works — MCP agents fall back to `runtime/evaluate
 and raw scene tree inspection. But a well-contexted game gives agents
 structured, named, documented access to everything they need, turning a
 black-box game into a transparent system.
+
+### Vanilla Godot compatibility
+
+Games that use the `Debug` singleton can run unmodified on stock Godot 4.6 —
+no `#ifdef`, no conditional code, no separate project configurations.
+
+The engine repo ships a GDScript compatibility addon at
+`misc/dist/addons/debug_compat/`. To use it, copy the folder into your game
+project's `addons/` directory and enable the **Debug Compat** plugin in
+Project Settings. The plugin registers a `Debug` autoload that mirrors the
+full `DebugSemanticRegistry` API (47 methods, 5 CVar flag constants). At
+runtime:
+
+- **FI build** (native singleton exists): every call proxies transparently
+  to the C++ `DebugSemanticRegistry`. Zero overhead for registration; negligible
+  for hot-path CVar reads.
+- **Vanilla Godot 4.6** (no native singleton): every call returns a safe
+  default (`false`, `0`, `""`, `{}`, `[]`). Game code runs identically — all
+  debug registrations become silent no-ops.
+
+Detection is automatic via `Engine.has_singleton("Debug")` in `_enter_tree()`.
+The same `project.godot` works on both engines without manual intervention.
 
 ### Other features
 
