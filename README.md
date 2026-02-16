@@ -179,14 +179,6 @@ independently.
 
 ---
 
-## Companion: Lens Effects addon
-
-A standalone CompositorEffect-based addon lives separately at `../lens-effects-addon/`.
-Barrel distortion, bokeh, and vignette as a post-process compute shader. No
-engine modifications required — works with upstream Godot 4.6+ or this fork.
-
----
-
 ## MCP Server Module
 
 Built-in [Model Context Protocol](https://modelcontextprotocol.io) server that
@@ -200,20 +192,84 @@ LLM client configuration.
 lifecycle / inspection / evaluate / input / UI / time / signals, debug, console,
 memory, analysis, docs, testing, shader.
 
-Key features:
+### Embedded terminal
 
-- **Embedded terminal** — Claude Code runs inside the editor with full MCP
-  access. Launches from the project directory so `CLAUDE.md` is picked up
-  automatically.
-- **5 specialized subagents** — planner, builder, semantic-contexter,
-  game-player, refactor. Each has a focused system prompt compiled from
-  `prompts/*.txt` at build time.
+Claude Code runs inside the editor with full MCP access. The terminal launches
+from the project directory so `CLAUDE.md` is picked up automatically for
+per-project instructions, while the compiled system prompt provides universal
+Godot context.
+
+Five specialized subagents handle different phases of development:
+
+| Agent | Role |
+|-------|------|
+| `godot-planner` | Architecture, scene trees, signal wiring, @exports |
+| `godot-builder` | Scripts, scenes, UI, gameplay — scene-first, validates compilation |
+| `godot-semantic-contexter` | Adds `Debug.register_*` calls for observability |
+| `godot-game-player` | Launches, tests, debugs — evidence-based, never speculates |
+| `godot-refactor` | Code health — splits monoliths, extracts duplication, never changes behavior |
+
+Agent prompts are maintained as `prompts/*.txt` files and compiled into the
+binary at build time via `prompt_builders.py`.
+
+### Semantic debug context
+
+The core idea behind the MCP integration: **any Godot game can be made
+machine-readable without changing its behavior.**
+
+Games register semantic context through a `Debug` autoload singleton
+(`DebugSemanticRegistry`). All calls are no-ops in release builds — zero
+performance cost, no `#ifdef` needed, the game plays identically with or without
+context. What it provides:
+
+| Primitive | Purpose | Example |
+|-----------|---------|---------|
+| **CVars** | Live-tunable values with min/max clamping | `player.speed`, `gravity`, `god_mode` |
+| **Queries** | Readable state, polled each frame when watched | `player.health`, `enemy.count`, `fps` |
+| **Actions** | Parameterized operations callable from MCP/console | `give_item`, `teleport`, `spawn_enemy` |
+| **Commands** | String-arg functions, auto-registered from `debug_*()` methods | `kill_all`, `noclip`, `reset_level` |
+| **Events** | Signal monitors that auto-log when they fire | `player_died`, `item_collected` |
+| **UI Pages** | Navigation graph of game screens | `main_menu` → `settings` → `settings.audio` |
+| **Interactables** | Semantic hints about interactive nodes | buttons, NPCs, chests with actions |
+
+The fastest way to add context is `Debug.auto_expose(self)` in `_ready()` —
+one line scans `@export` properties into live-bound CVars and `debug_*()`
+methods into commands. Manual `register_query`, `register_event`,
+`register_action` calls add richer metadata.
+
+This context serves two consumers:
+
+1. **MCP agents** — the `console/*` tools (`get_manifest`, `query`,
+   `batch_query`, `invoke`, `get_cvar`, `set_cvar`, `get_events`) give agents a
+   structured, typed API to read state, tweak values, and trigger operations
+   without crafting raw GDScript. An agent that can read the manifest can
+   understand, test, and debug any game project autonomously.
+
+2. **In-game debug console** — the same registry powers a runtime console
+   overlay with CVar editing, query watches pinned to an on-screen overlay,
+   command execution, scene tree navigation (`cd`, `ls`, `pwd`), UI interaction,
+   and time control (pause, step, slow-mo). The console is available in debug
+   builds via a configurable hotkey.
+
+A game with no context still works — MCP agents fall back to `runtime/evaluate`
+and raw scene tree inspection. But a well-contexted game gives agents
+structured, named, documented access to everything they need, turning a
+black-box game into a transparent system.
+
+### Other features
+
 - **Tool aliases & error recovery** — common misspellings auto-resolve (13
   aliases). Unknown tools suggest the closest match by name similarity.
 - **Manifest filtering** — `console/get_manifest` supports `names_only` and
   `sections` parameters for lightweight discovery plus human-readable summaries.
 - **Screenshot save** — `runtime/get_screenshot` and `editor/get_screenshot`
   accept an optional `save_path` to write the PNG directly to disk.
+- **Time control** — suspend, resume, frame-step, advance N frames, time scale.
+  Agents use freeze→act→inspect→step→inspect for frame-level testing precision.
+- **Memory profiling** — snapshots, diffs, trend tracking, leak detection,
+  class breakdowns, orphan node detection.
+- **Static analysis** — dead code, complexity, signal flow, dependencies,
+  duplication, project health, scene validation, unused files.
 
 ---
 
