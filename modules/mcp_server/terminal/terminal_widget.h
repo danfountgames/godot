@@ -105,7 +105,8 @@ protected:
 
 public:
 	// Start a process in the terminal.
-	bool start_process(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env = Vector<String>());
+	// If p_working_dir is non-empty, the child process chdir's there before exec.
+	bool start_process(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env = Vector<String>(), const String &p_working_dir = String());
 
 	// Stop the running process.
 	void stop_process();

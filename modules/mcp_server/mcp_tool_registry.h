@@ -57,6 +57,14 @@ public:
 
 private:
 	HashMap<String, ToolDef> tools;
+	HashMap<String, String> aliases; // alias name → canonical tool name.
+
+	// Find the closest matching tool name for "did you mean?" suggestions.
+	String _find_closest_tool(const String &p_name) const;
+
+	// Resolve a tool name through the alias table. Returns the canonical
+	// name if an alias exists, or the input unchanged if not.
+	String _resolve_alias(const String &p_name) const;
 
 public:
 	// Register a tool. The handler callable must accept a single Dictionary
@@ -80,11 +88,17 @@ public:
 			const Callable &p_handler,
 			ProgressHandler p_progress_handler);
 
+	// Register an alias that resolves to a canonical tool name.
+	// When tools/call receives the alias, it transparently dispatches
+	// to the canonical tool. Aliases do NOT appear in tools/list.
+	void register_alias(const String &p_alias, const String &p_canonical);
+
 	// JSON-RPC handler for "tools/list". Returns the tool list per MCP spec.
 	// Accepts params with optional "cursor" for pagination (we return all at once).
 	Dictionary list_tools(const Dictionary &p_params);
 
 	// JSON-RPC handler for "tools/call". Dispatches to the named tool's handler.
+	// Resolves aliases before lookup. On miss, suggests closest match.
 	// Accepts params: { "name": "tool/name", "arguments": { ... } }
 	// Returns the tool result dictionary, or a JSON-RPC error if tool not found.
 	Dictionary call_tool(const Dictionary &p_params);

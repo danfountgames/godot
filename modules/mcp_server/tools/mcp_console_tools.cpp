@@ -59,10 +59,16 @@ static MCPDebuggerBridge *_get_bridge() {
 static Dictionary _require_game_running() {
 	MCPDebuggerBridge *bridge = _get_bridge();
 	if (!bridge) {
-		return make_tool_error("Debugger bridge not available.");
+		return make_tool_error(
+				"Debugger bridge not available. The editor may need to be restarted.\n"
+				"  → If the editor was just opened, wait a moment and retry.");
 	}
 	if (!bridge->is_game_running()) {
-		return make_tool_error("Game is not running. Use runtime/run_project first.");
+		return make_tool_error(
+				"Game is not running.\n"
+				"  → Use runtime/run_project to launch the game.\n"
+				"  → Use runtime/get_status to check current state.\n"
+				"  → If the game crashed, check runtime/get_errors for details.");
 	}
 	return Dictionary();
 }
@@ -127,6 +133,13 @@ void MCPConsoleTools::register_tools(MCPToolRegistry *p_registry) {
 	// console/get_manifest
 	{
 		Dictionary props;
+		props["names_only"] = make_prop("boolean",
+				"If true, return only the names in each section (no descriptions, schemas, "
+				"or metadata). Much smaller response for quick discovery. Default: false.");
+		props["sections"] = make_prop("array",
+				"Optional filter: only return specific sections. "
+				"Values: 'actions', 'queries', 'events', 'cvars', 'commands'. "
+				"If omitted, returns all sections.");
 		Array required;
 		p_registry->register_tool(
 				"console/get_manifest",
@@ -140,6 +153,10 @@ void MCPConsoleTools::register_tools(MCPToolRegistry *p_registry) {
 				"  - actions: callable operations with parameter schemas\n"
 				"  - events: signals being monitored with recent fire counts\n"
 				"  - ui_pages: registered debug UI overlay pages\n"
+				"\n"
+				"Options:\n"
+				"  names_only: true — return just the names (fast discovery)\n"
+				"  sections: ['actions', 'queries'] — filter to specific sections\n"
 				"\n"
 				"This is the primary discovery tool — call it first to understand what the\n"
 				"game exposes. If the manifest is empty, the game has no debug instrumentation.\n"
@@ -251,7 +268,7 @@ void MCPConsoleTools::register_tools(MCPToolRegistry *p_registry) {
 		Dictionary props;
 		props["names"] = make_prop("array",
 				"Array of query names to evaluate (e.g. ['current_state', 'score', 'lives']). "
-				"All queries are evaluated in a single round-trip.");
+				"Also accepted as 'queries'. All queries are evaluated in a single round-trip.");
 		Array required;
 		required.push_back("names");
 		p_registry->register_tool(
@@ -333,19 +350,155 @@ Dictionary MCPConsoleTools::handle_get_manifest(const Dictionary &p_args) {
 	String json_str = result.get("value", "");
 
 	if (json_str.is_empty()) {
-		return make_tool_error("get_manifest() returned empty result. Is the Debug singleton available?");
+		return make_tool_error(
+				"get_manifest() returned empty. The game has no debug instrumentation.\n"
+				"  → Add Debug.auto_expose(self) to your scripts' _ready() functions.\n"
+				"  → Add Debug.register_query/action/event calls for custom observability.\n"
+				"  → Ensure the Debug autoload is configured in Project Settings → Autoload.");
 	}
 
 	// Parse the JSON back to a Dictionary for structured content.
 	JSON json;
 	Error parse_err = json.parse(json_str);
 
-	Dictionary structured;
+	Dictionary full_manifest;
 	if (parse_err == OK && json.get_data().get_type() == Variant::DICTIONARY) {
-		structured = json.get_data();
+		full_manifest = json.get_data();
 	}
 
-	return make_tool_result(json_str, structured);
+	// Apply optional filters: sections, names_only.
+	bool names_only = (bool)p_args.get("names_only", false);
+	Array sections_filter;
+	if (p_args.has("sections")) {
+		Variant sections_var = p_args["sections"];
+		if (sections_var.get_type() == Variant::ARRAY) {
+			sections_filter = sections_var;
+		}
+	}
+
+	Dictionary structured;
+	if (full_manifest.is_empty()) {
+		structured = full_manifest;
+	} else if (sections_filter.is_empty() && !names_only) {
+		// No filters — return the full manifest.
+		structured = full_manifest;
+	} else {
+		// Filter and/or reduce the manifest.
+		LocalVector<Variant> keys = full_manifest.get_key_list();
+
+		for (const Variant &key : keys) {
+			String section_name = key;
+
+			// Apply sections filter if provided.
+			if (!sections_filter.is_empty() && !sections_filter.has(section_name)) {
+				continue;
+			}
+
+			Variant section_data = full_manifest[key];
+
+			if (names_only) {
+				// Extract just the names/keys from this section.
+				if (section_data.get_type() == Variant::DICTIONARY) {
+					Dictionary section_dict = section_data;
+					structured[section_name] = section_dict.keys();
+				} else if (section_data.get_type() == Variant::ARRAY) {
+					// Array of objects — try to extract "name" field from each.
+					Array section_array = section_data;
+					Array name_list;
+					for (int i = 0; i < section_array.size(); i++) {
+						Variant item = section_array[i];
+						if (item.get_type() == Variant::DICTIONARY) {
+							Dictionary item_dict = item;
+							if (item_dict.has("name")) {
+								name_list.push_back(item_dict["name"]);
+							} else {
+								name_list.push_back(item);
+							}
+						} else {
+							name_list.push_back(item);
+						}
+					}
+					structured[section_name] = name_list;
+				} else {
+					structured[section_name] = section_data;
+				}
+			} else {
+				structured[section_name] = section_data;
+			}
+		}
+	}
+
+	// Build human-readable summary text.
+	String text;
+	{
+		LocalVector<Variant> keys = structured.get_key_list();
+
+		// Header with total counts.
+		int total_items = 0;
+		for (const Variant &key : keys) {
+			Variant val = structured[key];
+			if (val.get_type() == Variant::DICTIONARY) {
+				total_items += ((Dictionary)val).size();
+			} else if (val.get_type() == Variant::ARRAY) {
+				total_items += ((Array)val).size();
+			}
+		}
+
+		text = vformat("Debug Manifest: %d sections, %d total items", keys.size(), total_items);
+
+		if (!sections_filter.is_empty()) {
+			text += " (filtered)";
+		}
+		if (names_only) {
+			text += " [names only]";
+		}
+		text += "\n";
+
+		// Per-section summary.
+		for (const Variant &key : keys) {
+			String section_name = key;
+			Variant val = structured[key];
+			int count = 0;
+
+			if (val.get_type() == Variant::DICTIONARY) {
+				count = ((Dictionary)val).size();
+			} else if (val.get_type() == Variant::ARRAY) {
+				count = ((Array)val).size();
+			}
+
+			text += vformat("\n  %s (%d):", section_name, count);
+
+			// List names for quick scanning.
+			if (names_only && val.get_type() == Variant::ARRAY) {
+				Array names = val;
+				for (int i = 0; i < names.size(); i++) {
+					text += "\n    " + String(names[i]);
+				}
+			} else if (val.get_type() == Variant::DICTIONARY) {
+				Dictionary section_dict = val;
+				Array section_keys = section_dict.keys();
+				for (int i = 0; i < section_keys.size(); i++) {
+					text += "\n    " + String(section_keys[i]);
+				}
+			} else if (val.get_type() == Variant::ARRAY) {
+				Array items = val;
+				for (int i = 0; i < items.size(); i++) {
+					Variant item = items[i];
+					if (item.get_type() == Variant::DICTIONARY) {
+						Dictionary d = item;
+						if (d.has("name")) {
+							text += "\n    " + String(d["name"]);
+							if (d.has("description") && !String(d["description"]).is_empty()) {
+								text += " — " + String(d["description"]);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return make_tool_result(text, structured);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +526,10 @@ Dictionary MCPConsoleTools::handle_query(const Dictionary &p_args) {
 	Dictionary result = bridge->send_debug_command("debug_query", data, 10000);
 
 	if (!(bool)result.get("success", false)) {
-		return make_tool_error("Query '" + name + "' failed: " + String(result.get("value", "")));
+		return make_tool_error(
+				"Query '" + name + "' failed: " + String(result.get("value", "")) + "\n"
+				"  → Use console/get_manifest to see available query names.\n"
+				"  → Query names are case-sensitive.");
 	}
 
 	String value = _extract_value(result);
@@ -416,7 +572,10 @@ Dictionary MCPConsoleTools::handle_invoke_action(const Dictionary &p_args) {
 	Dictionary result = bridge->send_debug_command("debug_invoke_action", data, 15000);
 
 	if (!(bool)result.get("success", false)) {
-		return make_tool_error("Action '" + name + "' failed: " + String(result.get("value", "")));
+		return make_tool_error(
+				"Action '" + name + "' failed: " + String(result.get("value", "")) + "\n"
+				"  → Use console/get_manifest to see available actions and their parameters.\n"
+				"  → Action names and parameter keys are case-sensitive.");
 	}
 
 	String value = result.get("value", "");
@@ -576,10 +735,18 @@ Dictionary MCPConsoleTools::handle_batch_query(const Dictionary &p_args) {
 
 	Array names;
 	Variant names_var = p_args.get("names", Variant());
+	if (names_var.get_type() != Variant::ARRAY) {
+		// Accept "queries" as an alternate parameter name.
+		names_var = p_args.get("queries", Variant());
+	}
 	if (names_var.get_type() == Variant::ARRAY) {
 		names = names_var;
 	} else {
-		return make_tool_error("Missing or invalid argument: names (expected array of strings)");
+		return make_tool_error(
+				"Missing or invalid argument: names (expected array of query name strings).\n"
+				"Also accepted as 'queries'.\n"
+				"Example: {\"names\": [\"score\", \"lives\", \"current_state\"]}\n"
+				"Use console/get_manifest to discover available query names.");
 	}
 
 	if (names.is_empty()) {

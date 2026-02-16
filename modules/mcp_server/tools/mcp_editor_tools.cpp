@@ -222,11 +222,15 @@ void MCPEditorTools::register_tools(MCPToolRegistry *p_registry) {
 	{
 		Dictionary props;
 		Array required;
+		props["save_path"] = make_prop("string",
+				"Optional absolute file path to save the PNG to disk (e.g. '/tmp/editor.png'). "
+				"When provided, the image is saved to disk AND returned inline.");
 		p_registry->register_tool(
 				"editor/get_screenshot", "Get Editor Screenshot",
 				"Capture the Godot editor window as a PNG image. Shows the current state "
 				"of the editor including open panels, scene tree, inspector, and any "
-				"visible errors. Use runtime/get_screenshot for the running game viewport.",
+				"visible errors. Use runtime/get_screenshot for the running game viewport. "
+				"Optionally saves to disk via save_path.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPEditorTools::handle_get_editor_screenshot));
@@ -973,16 +977,79 @@ Dictionary MCPEditorTools::handle_get_editor_screenshot(const Dictionary &p_args
 		// which we immediately consume so it doesn't leak.
 		_do_get_screenshot_main();
 		_deferred_semaphore.wait(); // Consume the post() from above.
-		return _deferred_result;
+	} else {
+		// Threaded mode: defer viewport capture to main thread and wait.
+		// Viewport texture readback (RS::texture_2d_get) and window/viewport
+		// access are safest on the main thread where the rendering state is
+		// consistent.
+		callable_mp_static(&MCPEditorTools::_do_get_screenshot_main)
+				.call_deferred();
+		_deferred_semaphore.wait();
 	}
 
-	// Threaded mode: defer viewport capture to main thread and wait.
-	// Viewport texture readback (RS::texture_2d_get) and window/viewport
-	// access are safest on the main thread where the rendering state is
-	// consistent.
-	callable_mp_static(&MCPEditorTools::_do_get_screenshot_main)
-			.call_deferred();
-	_deferred_semaphore.wait();
-	return _deferred_result;
+	Dictionary response = _deferred_result;
+
+	// Optionally save to disk if save_path was provided.
+	String save_path = p_args.get("save_path", "");
+	if (!save_path.is_empty() && response.has("content")) {
+		// Find the base64 image data in the content array.
+		Array content = response["content"];
+		String base64_data;
+		for (int i = 0; i < content.size(); i++) {
+			Dictionary item = content[i];
+			if (String(item.get("type", "")) == "image") {
+				base64_data = item.get("data", "");
+				break;
+			}
+		}
+
+		String save_info;
+		if (!base64_data.is_empty()) {
+			CharString b64_ascii = base64_data.ascii();
+			size_t max_len = b64_ascii.length();
+			PackedByteArray png_bytes;
+			png_bytes.resize(max_len);
+			size_t decoded_len = 0;
+			Error decode_err = CryptoCore::b64_decode(
+					png_bytes.ptrw(), max_len, &decoded_len,
+					(const uint8_t *)b64_ascii.get_data(), b64_ascii.length());
+			if (decode_err == OK && decoded_len > 0) {
+				png_bytes.resize(decoded_len);
+				Ref<FileAccess> f = FileAccess::open(save_path, FileAccess::WRITE);
+				if (f.is_valid()) {
+					f->store_buffer(png_bytes.ptr(), png_bytes.size());
+					f->close();
+					save_info = "Saved to: " + save_path;
+				} else {
+					save_info = "WARNING: Could not write to '" + save_path + "'";
+				}
+			} else {
+				save_info = "WARNING: Failed to decode PNG data for save.";
+			}
+		}
+
+		if (!save_info.is_empty()) {
+			// Append save info to the text content block.
+			for (int i = 0; i < content.size(); i++) {
+				Dictionary item = content[i];
+				if (String(item.get("type", "")) == "text") {
+					item["text"] = String(item["text"]) + "\n" + save_info;
+					content[i] = item;
+					break;
+				}
+			}
+			response["content"] = content;
+
+			// Add save_path to structured content.
+			if (response.has("structuredContent")) {
+				Dictionary structured = response["structuredContent"];
+				structured["save_path"] = save_path;
+				structured["saved"] = save_info.begins_with("Saved");
+				response["structuredContent"] = structured;
+			}
+		}
+	}
+
+	return response;
 }
 

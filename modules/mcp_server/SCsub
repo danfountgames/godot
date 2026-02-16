@@ -16,6 +16,16 @@ thirdparty_obj = []
 if env.editor_build and env["platform"] != "windows" and env["platform"] != "web":
     env_mcp.Append(CPPDEFINES=["MCP_TERMINAL_ENABLED"])
 
+    # Generate agent_prompts.gen.h from .txt prompt files at build time.
+    import prompt_builders
+
+    prompt_sources = Glob("prompts/*.txt")
+    env_mcp.CommandNoCache(
+        "agent_prompts.gen.h",
+        prompt_sources,
+        env.Run(prompt_builders.make_agent_prompts_header),
+    )
+
     thirdparty_dir = "thirdparty/libvterm/"
     thirdparty_sources = [
         "src/encoding.c",

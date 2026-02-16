@@ -46,7 +46,8 @@ private:
 
 public:
 	// Calls forkpty(), sets non-blocking on master_fd, execvp in child.
-	bool fork_and_exec(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env);
+	// If p_working_dir is non-empty, chdir to it in the child before exec.
+	bool fork_and_exec(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env, const String &p_working_dir = String());
 
 	// Non-blocking read from master_fd. Returns bytes read, 0 if EAGAIN, -1 if error/closed.
 	int read_pty(uint8_t *p_buffer, int p_max_len);

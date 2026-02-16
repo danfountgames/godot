@@ -61,7 +61,7 @@ PTYManager::~PTYManager() {
 	close_pty();
 }
 
-bool PTYManager::fork_and_exec(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env) {
+bool PTYManager::fork_and_exec(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env, const String &p_working_dir) {
 	if (master_fd >= 0) {
 		// Already running; close the previous session first.
 		close_pty();
@@ -142,6 +142,15 @@ bool PTYManager::fork_and_exec(const String &p_command, const Vector<String> &p_
 #else
 		environ = envp.ptrw();
 #endif
+
+		// Change to project directory so Claude Code picks up CLAUDE.md
+		// and has the correct working directory for file operations.
+		if (!p_working_dir.is_empty()) {
+			CharString wd_utf8 = p_working_dir.utf8();
+			if (chdir(wd_utf8.get_data()) != 0) {
+				// Best-effort — proceed with inherited cwd if chdir fails.
+			}
+		}
 
 		execvp(cmd_utf8.get_data(), argv.ptrw());
 
