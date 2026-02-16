@@ -117,6 +117,22 @@ MCPProtocol::MCPProtocol() {
 	MCPShaderTools::register_tools(&tool_registry);
 	MCPConsoleTools::register_tools(&tool_registry);
 
+	// Register common aliases for tools that agents frequently guess wrong.
+	// These cover every hallucinated name observed in production agent sessions.
+	tool_registry.register_alias("runtime/take_screenshot", "runtime/get_screenshot");
+	tool_registry.register_alias("editor/take_screenshot", "editor/get_screenshot");
+	tool_registry.register_alias("runtime/play", "runtime/run_project");
+	tool_registry.register_alias("runtime/start", "runtime/run_project");
+	tool_registry.register_alias("runtime/run", "runtime/run_project");
+	tool_registry.register_alias("runtime/play_scene", "runtime/run_scene");
+	tool_registry.register_alias("runtime/eval", "runtime/evaluate");
+	tool_registry.register_alias("debug/run_project", "runtime/run_project");
+	tool_registry.register_alias("debug/run", "runtime/run_project");
+	tool_registry.register_alias("script/check", "testing/check_script");
+	tool_registry.register_alias("script/check_all", "testing/check_all_scripts");
+	tool_registry.register_alias("script/validate", "testing/check_script");
+	tool_registry.register_alias("editor/get_project_path", "project/get_overview");
+
 	// Resource methods (Phase 5).
 	set_method("resources/list",
 			callable_mp(this, &MCPProtocol::handle_resources_list));

@@ -81,6 +81,62 @@ void MCPToolRegistry::register_tool(
 }
 
 // ---------------------------------------------------------------------------
+// Aliases
+// ---------------------------------------------------------------------------
+
+void MCPToolRegistry::register_alias(const String &p_alias, const String &p_canonical) {
+	ERR_FAIL_COND_MSG(!tools.has(p_canonical),
+			vformat("Cannot alias '%s' → '%s': target tool not registered.", p_alias, p_canonical));
+	ERR_FAIL_COND_MSG(tools.has(p_alias),
+			vformat("Cannot alias '%s': a tool with that name already exists.", p_alias));
+	aliases.insert(p_alias, p_canonical);
+	print_verbose(vformat("[MCP] Alias registered: %s → %s", p_alias, p_canonical));
+}
+
+String MCPToolRegistry::_resolve_alias(const String &p_name) const {
+	if (aliases.has(p_name)) {
+		return aliases[p_name];
+	}
+	return p_name;
+}
+
+String MCPToolRegistry::_find_closest_tool(const String &p_name) const {
+	// Strategy: check for common suffix match first (wrong namespace),
+	// then fall back to best similarity score.
+	String input_suffix = p_name.get_file(); // Part after last '/'.
+	String best_match;
+	float best_sim = 0.0f;
+
+	for (const KeyValue<String, ToolDef> &kv : tools) {
+		// Exact suffix match → probably wrong namespace (e.g. debug/run_project vs runtime/run_project).
+		String tool_suffix = kv.key.get_file();
+		if (input_suffix == tool_suffix && p_name != kv.key) {
+			return kv.key;
+		}
+		// Similarity score.
+		float sim = p_name.similarity(kv.key);
+		if (sim > best_sim) {
+			best_sim = sim;
+			best_match = kv.key;
+		}
+	}
+
+	// Also check aliases for suffix matches.
+	for (const KeyValue<String, String> &kv : aliases) {
+		String alias_suffix = kv.key.get_file();
+		if (input_suffix == alias_suffix && p_name != kv.key) {
+			return kv.value; // Return the canonical name.
+		}
+	}
+
+	// Only suggest if reasonably similar (>0.5).
+	if (best_sim > 0.5f) {
+		return best_match;
+	}
+	return String();
+}
+
+// ---------------------------------------------------------------------------
 // tools/list
 // ---------------------------------------------------------------------------
 
@@ -126,13 +182,21 @@ Dictionary MCPToolRegistry::call_tool(const Dictionary &p_params) {
 		return response;
 	}
 
-	String tool_name = p_params["name"];
+	String requested_name = p_params["name"];
+	String tool_name = _resolve_alias(requested_name);
 
 	if (!tools.has(tool_name)) {
-		// JSON-RPC Invalid Params -- tools/call is a valid method, but the tool name is not.
+		// Try to find the closest match for a helpful error message.
+		String suggestion = _find_closest_tool(requested_name);
+		String msg = vformat("Unknown tool: %s", requested_name);
+		if (!suggestion.is_empty()) {
+			msg += vformat(". Did you mean '%s'?", suggestion);
+		}
+		msg += "\nUse the 'help' tool to list all available tools by category.";
+
 		Dictionary err;
 		err["code"] = JSONRPC::INVALID_PARAMS;
-		err["message"] = vformat("Unknown tool: %s", tool_name);
+		err["message"] = msg;
 		Dictionary response;
 		response["error"] = err;
 		return response;
@@ -244,14 +308,17 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 Dictionary MCPToolRegistry::call_tool_with_progress(
 		const String &p_name, const Dictionary &p_arguments,
 		ProgressContext *p_ctx) {
+	// Resolve aliases before dispatch.
+	String resolved = _resolve_alias(p_name);
+
 	// Use the registered progress handler if available.
-	if (tools.has(p_name) && tools[p_name].progress_handler) {
-		return tools[p_name].progress_handler(p_arguments, p_ctx);
+	if (tools.has(resolved) && tools[resolved].progress_handler) {
+		return tools[resolved].progress_handler(p_arguments, p_ctx);
 	}
 
 	// Fallback: standard dispatch for tools without progress support.
 	Dictionary params;
-	params["name"] = p_name;
+	params["name"] = resolved;
 	params["arguments"] = p_arguments;
 	return call_tool(params);
 }
@@ -261,7 +328,7 @@ Dictionary MCPToolRegistry::call_tool_with_progress(
 // ---------------------------------------------------------------------------
 
 bool MCPToolRegistry::has_tool(const String &p_name) const {
-	return tools.has(p_name);
+	return tools.has(p_name) || aliases.has(p_name);
 }
 
 int MCPToolRegistry::get_tool_count() const {

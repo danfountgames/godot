@@ -599,12 +599,12 @@ VTermModifier TerminalWidget::_godot_mods_to_vterm(const Ref<InputEvent> &p_even
 // Process management
 ///////////////////////////////////////////////////////////////////////////////
 
-bool TerminalWidget::start_process(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env) {
+bool TerminalWidget::start_process(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env, const String &p_working_dir) {
 	if (running) {
 		stop_process();
 	}
 
-	running = pty.fork_and_exec(p_command, p_args, p_env);
+	running = pty.fork_and_exec(p_command, p_args, p_env, p_working_dir);
 	if (running) {
 		pty.resize(emulator.get_rows(), emulator.get_cols());
 	}
