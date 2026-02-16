@@ -53,7 +53,6 @@ DebugSemanticRegistry::~DebugSemanticRegistry() {
 }
 
 void DebugSemanticRegistry::_bind_methods() {
-#ifdef DEBUG_ENABLED
 	// Actions.
 	ClassDB::bind_method(D_METHOD("register_action", "name", "callable", "description", "params", "category"), &DebugSemanticRegistry::register_action, DEFVAL(""), DEFVAL(Dictionary()), DEFVAL(""));
 	ClassDB::bind_method(D_METHOD("unregister_action", "name"), &DebugSemanticRegistry::unregister_action);

@@ -1002,10 +1002,34 @@ String AgentPanel::_build_agents_json() const {
 		p += "   c. Write the file\n";
 		p += "   d. script/check — validate syntax immediately\n";
 		p += "   e. Fix any errors before moving to the next file\n";
-		p += "5. After instrumenting a batch: runtime/run_project\n";
-		p += "6. runtime/evaluate: JSON.stringify(Debug.get_manifest()) — verify everything registered\n";
-		p += "7. Check runtime/get_errors — fix any runtime issues\n";
-		p += "8. Iterate until the manifest covers all key systems\n\n";
+		p += "5. After instrumenting ALL files: run the post-instrumentation checklist below.\n\n";
+
+		p += "## Post-Instrumentation Checklist (MANDATORY)\n";
+		p += "After instrumenting all files, you MUST complete these steps:\n";
+		p += "1. editor/scan_filesystem — acknowledge file changes in the editor\n";
+		p += "2. runtime/stop — stop any running game instance\n";
+		p += "3. runtime/run_project — restart with new instrumentation\n";
+		p += "4. Wait 2 seconds (runtime/wait_frames with 120 frames)\n";
+		p += "5. console/get_manifest — verify everything registered\n";
+		p += "6. console/query — test one query to confirm the semantic layer works\n";
+		p += "7. runtime/get_errors — check for runtime issues\n";
+		p += "If any step fails, fix the issue and repeat from step 2.\n";
+		p += "The game-player agent depends on a working semantic layer. Do NOT skip this.\n\n";
+
+		p += "## Runtime Verification API Reference\n";
+		p += "Use these MCP tools to verify instrumentation at runtime:\n";
+		p += "  console/get_manifest                 — full manifest (PREFERRED)\n";
+		p += "  console/query  {name: \"state\"}        — test a query\n";
+		p += "  console/get_cvar {name: \"ship.speed\"} — test a CVar read\n";
+		p += "Or via runtime/evaluate (use _result = prefix to force GDScript mode):\n";
+		p += "  _result = Debug.evaluate_query(\"name\")      # read a query\n";
+		p += "  _result = Debug.invoke_action(\"name\", {})    # run an action\n";
+		p += "  _result = Debug.get_cvar(\"name\")             # read a cvar\n";
+		p += "  Debug.set_cvar(\"name\", value)                # write a cvar (NO _result — void return)\n";
+		p += "  _result = JSON.stringify(Debug.get_manifest()) # full manifest\n";
+		p += "  _result = Debug.get_recent_events(20)        # event ring buffer\n";
+		p += "WRONG: Debug.query(\"name\") — this method does NOT exist.\n";
+		p += "WRONG: Debug.set_query() — queries are read-only.\n\n";
 
 		// ── Weaknesses ──
 		p += "## Known weaknesses — guard against these\n";
@@ -1107,9 +1131,9 @@ String AgentPanel::_build_agents_json() const {
 		p += "## Startup — every session begins here\n";
 		p += "1. project/get_overview — orient: project name, main scene, autoloads, file structure\n";
 		p += "2. runtime/run_project (or runtime/run_scene for targeted testing)\n";
-		p += "3. runtime/evaluate: JSON.stringify(Debug.get_manifest()) — your runtime map\n";
+		p += "3. console/get_manifest — your runtime map\n";
 		p += "   Returns {cvars, commands, queries, actions, events, interactables, ui_pages, active_ui_page}\n";
-		p += "   If the manifest is empty, the game has no debug instrumentation — delegate to godot-builder\n";
+		p += "   If the manifest is empty, the game has no debug instrumentation — delegate to godot-instrumenter\n";
 		p += "4. runtime/browse_scene_tree — understand what's alive in the scene\n";
 		p += "5. runtime/get_output — check for startup warnings/errors\n";
 		p += "Now you have context. Start working.\n\n";
@@ -1139,29 +1163,45 @@ String AgentPanel::_build_agents_json() const {
 
 		// ── Semantic debug system ──
 		p += "## Debug singleton — the game's semantic layer\n";
-		p += "The manifest tells you everything the game has declared debuggable:\n\n";
+		p += "The manifest tells you everything the game has declared debuggable.\n\n";
+
+		p += "IMPORTANT: Use the dedicated console/* MCP tools instead of runtime/evaluate:\n";
+		p += "  console/get_manifest                           — full manifest\n";
+		p += "  console/query        {name: \"score\"}           — read a query\n";
+		p += "  console/batch_query  {names: [\"score\",\"lives\"]} — read multiple queries at once\n";
+		p += "  console/invoke       {name: \"add_score\", params: {amount: 50}} — invoke action\n";
+		p += "  console/get_cvar     {name: \"ship.speed\"}      — read a CVar\n";
+		p += "  console/set_cvar     {name: \"ship.speed\", value: \"1200\"} — write a CVar\n";
+		p += "  console/get_events   {count: 20}               — recent events from ring buffer\n";
+		p += "These are MUCH more reliable than crafting raw GDScript via runtime/evaluate.\n\n";
+
+		p += "If you MUST use runtime/evaluate with Debug singleton calls, use the _result = pattern:\n";
+		p += "  _result = Debug.evaluate_query(\"current_state\")  — WORKS (forces GDScript mode)\n";
+		p += "  Debug.evaluate_query(\"current_state\")            — FAILS (Expression mode can't see singletons)\n";
+		p += "  Debug.set_cvar(\"name\", val)\\n_result = true      — set_cvar returns void, capture separately\n\n";
 
 		p += "**CVars** — tuning knobs. Read: name. Write: name value. Clamped to min/max.\n";
 		p += "  Example: player.speed → 300.0 | player.speed 500 | god_mode true\n";
-		p += "  API: Debug.get_cvar(name), Debug.set_cvar(name, val)\n";
-		p += "  Typed: cvar_float(name, default), cvar_bool(), cvar_int(), cvar_string()\n\n";
+		p += "  MCP: console/get_cvar, console/set_cvar\n";
+		p += "  GDScript: Debug.get_cvar(name), Debug.set_cvar(name, val)\n\n";
 
 		p += "**Commands** — functions you can call. Bare name with space-separated args.\n";
 		p += "  Example: kill_all | teleport 100 200 | spawn_enemy 5\n";
-		p += "  API: Debug.execute_command(name, PackedStringArray([arg1, arg2]))\n\n";
+		p += "  GDScript: Debug.execute_command(name, PackedStringArray([arg1, arg2]))\n\n";
 
 		p += "**Queries** — live values polled each frame when watched.\n";
 		p += "  Read once: query.player.health | Pin to overlay: watch query.player.health\n";
-		p += "  API: Debug.evaluate_query(name). Poll repeatedly to track changes over time.\n\n";
+		p += "  MCP: console/query, console/batch_query\n";
+		p += "  GDScript: Debug.evaluate_query(name)\n\n";
 
 		p += "**Actions** — parameterized operations.\n";
 		p += "  action.heal_player amount=50 | action.give_item item=sword count=3\n";
-		p += "  API: Debug.invoke_action(name, {param: value}) -> result dict\n\n";
+		p += "  MCP: console/invoke\n";
+		p += "  GDScript: Debug.invoke_action(name, {param: value}) -> result dict\n\n";
 
 		p += "**Events** — signal monitors. Auto-log to output when they fire.\n";
-		p += "  After interactions, check runtime/get_output to see which events triggered.\n";
-		p += "  API: Debug.get_recent_events(10) -> [{name, args, frame, timestamp_msec}]\n";
-		p += "  list events — show all registered.\n\n";
+		p += "  MCP: console/get_events — returns [{name, args, frame, timestamp_msec}]\n";
+		p += "  GDScript: Debug.get_recent_events(10)\n\n";
 
 		p += "**Interactables** — semantic hints about what exists and what it does.\n";
 		p += "  Manifest entry: {name, node_path, type, description, actions, category}\n";
@@ -1418,7 +1458,7 @@ String AgentPanel::_build_agents_json() const {
 		// ── Independent iteration ──
 		p += "## Independence — don't stop, don't ask, iterate\n";
 		p += "You are expected to solve problems autonomously:\n";
-		p += "- If the manifest is empty → delegate to godot-builder to instrument, then come back\n";
+		p += "- If the manifest is empty → delegate to godot-instrumenter to add debug hooks, then come back\n";
 		p += "- If a feature doesn't work → add Debug.log() calls → relaunch → read output → fix → verify\n";
 		p += "- If you need to understand control flow → add logging at every branch → relaunch → trace\n";
 		p += "- If the scene tree is confusing → browse_scene_tree with type_filter and name_pattern\n";
@@ -1507,8 +1547,17 @@ String AgentPanel::_build_agents_json() const {
 		p += "    runtime/evaluate: get_tree().current_scene._toggle_pause()\n";
 		p += "  This bypasses input entirely and tests the function itself.\n";
 		p += "- runtime/input/send_input_sequence — use for multi-step interactions with timing\n";
+		p += "- is_action_just_pressed() is UNRELIABLE via MCP. send_input with hold_frames causes\n";
+		p += "  the game to suspend after processing, so the 'just pressed' frame may be the\n";
+		p += "  suspended frame. Use runtime/evaluate to call game functions directly instead.\n";
 		p += "- When testing keyboard shortcuts, try the input method first. If it fails, verify\n";
 		p += "  the feature works by calling the function directly. Report both results.\n\n";
+
+		p += "## runtime/evaluate tips\n";
+		p += "- For operations that spawn many nodes or load resources, use timeout_ms: 30000\n";
+		p += "  (default is 10000ms). Max is 60000ms.\n";
+		p += "- If a function call times out, try using runtime/emit_signal to trigger the same\n";
+		p += "  behavior through signals instead of direct function calls.\n\n";
 
 		// ── Troubleshooting: bridge not available ──
 		p += "## Troubleshooting: 'debugger bridge not available'\n";
