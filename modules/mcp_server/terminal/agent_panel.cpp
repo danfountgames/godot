@@ -1702,6 +1702,11 @@ Vector<String> AgentPanel::_build_claude_args() const {
 	args.push_back("--agents");
 	args.push_back(agents_json);
 
+	// Experimental agent teams: in-process mode for embedded terminal.
+	// Allows multiple Claude Code instances to coordinate via shared task lists.
+	args.push_back("--teammate-mode");
+	args.push_back("in-process");
+
 	return args;
 }
 
@@ -1734,6 +1739,9 @@ Vector<String> AgentPanel::_build_claude_env() const {
 	}
 
 	env.push_back("TERM=xterm-256color");
+
+	// Enable experimental agent teams (research preview).
+	env.push_back("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1");
 
 	return env;
 }
