@@ -190,7 +190,31 @@ engine modifications required — works with upstream Godot 4.6+ or this fork.
 
 ## MCP Server Module
 
-Built-in [Model Context Protocol](https://modelcontextprotocol.io) server that lets LLM coding agents control the editor — read/write files, run and debug games, inspect the scene tree, evaluate expressions, and automate UI. Starts automatically when the editor opens. See [`modules/mcp_server/README.md`](modules/mcp_server/README.md) for setup and LLM client configuration.
+Built-in [Model Context Protocol](https://modelcontextprotocol.io) server that
+lets LLM coding agents control the editor — read/write files, run and debug
+games, inspect the scene tree, evaluate expressions, and automate UI. Starts
+automatically when the editor opens. See
+[`modules/mcp_server/README.md`](modules/mcp_server/README.md) for setup and
+LLM client configuration.
+
+**96 tools** across 17 categories: project, editor, scene editing, runtime
+lifecycle / inspection / evaluate / input / UI / time / signals, debug, console,
+memory, analysis, docs, testing, shader.
+
+Key features:
+
+- **Embedded terminal** — Claude Code runs inside the editor with full MCP
+  access. Launches from the project directory so `CLAUDE.md` is picked up
+  automatically.
+- **5 specialized subagents** — planner, builder, semantic-contexter,
+  game-player, refactor. Each has a focused system prompt compiled from
+  `prompts/*.txt` at build time.
+- **Tool aliases & error recovery** — common misspellings auto-resolve (13
+  aliases). Unknown tools suggest the closest match by name similarity.
+- **Manifest filtering** — `console/get_manifest` supports `names_only` and
+  `sections` parameters for lightweight discovery plus human-readable summaries.
+- **Screenshot save** — `runtime/get_screenshot` and `editor/get_screenshot`
+  accept an optional `save_path` to write the PNG directly to disk.
 
 ---
 
