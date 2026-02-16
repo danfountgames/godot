@@ -172,6 +172,7 @@ String AgentPanel::_build_system_prompt() const {
 	p += "  editor/reimport            — reimport specific resource files\n";
 	p += "  editor/get_uid / resolve_uid — UID ↔ path resolution\n";
 	p += "  editor/execute_script      — run GDScript snippet in the editor as @tool script\n";
+	p += "  editor/get_screenshot      — capture editor window as PNG (use runtime/get_screenshot for game)\n";
 	p += "  editor/export/*            — list_presets, run, check_templates\n\n";
 
 	p += "**SCENE EDITING** — build and modify scenes in the editor:\n";
@@ -243,9 +244,15 @@ String AgentPanel::_build_system_prompt() const {
 	p += "  debug/get_break_state      — stack trace + local variables when paused\n";
 	p += "  debug/step                 — step into/over/out/continue/break\n\n";
 
-	p += "**CONSOLE** — in-game debug console:\n";
-	p += "  console/execute            — execute command in debug console\n";
-	p += "  console/get_manifest       — get all registered CVars, Commands, Queries, Actions, Events, UI Pages\n\n";
+	p += "**CONSOLE** — in-game debug console (requires instrumented game):\n";
+	p += "  console/execute            — execute raw command in debug console\n";
+	p += "  console/get_manifest       — get all registered CVars, Commands, Queries, Actions, Events, UI Pages\n";
+	p += "  console/query              — evaluate a named debug query (fast, structured)\n";
+	p += "  console/batch_query        — evaluate multiple queries in one round-trip\n";
+	p += "  console/invoke             — invoke a named debug action with parameters\n";
+	p += "  console/get_cvar           — read a configuration variable value\n";
+	p += "  console/set_cvar           — set a configuration variable value\n";
+	p += "  console/get_events         — get recent debug events from ring buffer\n\n";
 
 	p += "**MEMORY** — leak detection and performance:\n";
 	p += "  memory/get_stats           — quick health check (objects, memory, render)\n";
@@ -309,8 +316,8 @@ String AgentPanel::_build_system_prompt() const {
 	p += "Never create Control nodes, Labels, Buttons, Panels, StyleBoxes, or containers via ";
 	p += "`.new()` and `add_child()` in scripts. This produces fragile, non-visual code that the ";
 	p += "user cannot edit in the Inspector. Instead:\n";
-	p += "  - Use `scene/create_scene` and `scene/add_node` MCP tools to build .tscn files\n";
-	p += "  - Use `scene/set_node_property` to configure node properties in the scene\n";
+	p += "  - Use `scene/add_node` MCP tool to build node trees in the currently open .tscn\n";
+	p += "  - Use `scene/set_property` to configure node properties in the scene\n";
 	p += "  - Attach scripts with @export properties so the user can tweak values in the Inspector\n";
 	p += "  - UI elements (HUD, menus, overlays, dialogs) should ALWAYS be .tscn scenes, not code\n";
 	p += "  - The ONLY acceptable `add_child()` in code is instantiating a pre-built PackedScene\n\n";
@@ -692,12 +699,13 @@ String AgentPanel::_build_agents_json() const {
 		// ── Scene-first workflow ──
 		bp += "## Scene-First Workflow (MANDATORY)\n";
 		bp += "When creating any new UI or node structure, use MCP scene tools — NOT code:\n";
-		bp += "1. scene/create_scene {path, root_type} — create the .tscn file\n";
-		bp += "2. scene/add_node {scene_path, parent, name, type} — add child nodes\n";
-		bp += "3. scene/set_node_property {scene_path, node, property, value} — configure\n";
-		bp += "4. Create a .gd script with @export properties for configuration\n";
-		bp += "5. scene/attach_script to wire the script to the scene root\n";
-		bp += "6. In the parent: preload('res://path.tscn').instantiate() + add_child()\n\n";
+		bp += "1. Write a minimal .tscn file with native tools (or open existing scene in editor)\n";
+		bp += "2. editor/scan_filesystem — register the new file\n";
+		bp += "3. scene/add_node {parent_path, type, name, properties} — add child nodes\n";
+		bp += "4. scene/set_property {node_path, property, value} — configure properties\n";
+		bp += "5. Create a .gd script with @export properties for configuration\n";
+		bp += "6. scene/attach_script {node_path, script_path} — wire the script\n";
+		bp += "7. In the parent: preload('res://path.tscn').instantiate() + add_child()\n\n";
 		bp += "NEVER do: var panel = PanelContainer.new(); var label = Label.new(); panel.add_child(label)\n";
 		bp += "This creates fragile, invisible code. ALWAYS build .tscn scenes.\n\n";
 
