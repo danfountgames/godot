@@ -38,6 +38,15 @@ class MCPConsoleTools {
 public:
 	static void register_tools(MCPToolRegistry *p_registry);
 
+	// Existing tools.
 	static Dictionary handle_execute(const Dictionary &p_args);
 	static Dictionary handle_get_manifest(const Dictionary &p_args);
+
+	// New dedicated semantic debug tools.
+	static Dictionary handle_query(const Dictionary &p_args);
+	static Dictionary handle_invoke_action(const Dictionary &p_args);
+	static Dictionary handle_get_cvar(const Dictionary &p_args);
+	static Dictionary handle_set_cvar(const Dictionary &p_args);
+	static Dictionary handle_get_events(const Dictionary &p_args);
+	static Dictionary handle_batch_query(const Dictionary &p_args);
 };

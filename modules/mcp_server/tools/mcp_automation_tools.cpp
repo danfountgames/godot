@@ -38,6 +38,7 @@
 #include "../mcp_types.h"
 
 #include "core/config/project_settings.h"
+#include "servers/rendering/rendering_server.h"
 #include "core/input/input_map.h"
 #include "core/variant/typed_array.h"
 
@@ -101,6 +102,9 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				"  $Main/Player.health = 100\n"
 				"  var p = $Main/Player; p.position.x = 50\n"
 				"  get_nodes_in_group(\"enemies\").size()");
+		props["timeout_ms"] = make_prop("integer",
+				"Timeout in milliseconds (default: 10000, max: 60000). "
+				"Increase for operations that spawn many nodes or load resources.");
 		Array required;
 		required.push_back("expression");
 		p_registry->register_tool(
@@ -453,7 +457,7 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 	}
 
 	// Security: block dangerous expressions that could execute arbitrary
-	// OS commands, load untrusted resources, or bypass the sandbox.
+	// OS commands or bypass the sandbox.
 	{
 		String expr_lower = expression.to_lower();
 		static const char *blocked_patterns[] = {
@@ -462,13 +466,7 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 			"os.create_process",
 			"os.create_instance",
 			"os.kill",
-			".call_deferred(",
 			".callv(",
-			"classdb",
-			"engine.get_singleton",
-			"load(",
-			"preload(",
-			"resourceloader",
 			"fileaccess",
 			"diraccess",
 			"thread",
@@ -480,8 +478,8 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 				return make_tool_error(
 						"Blocked: expression contains a disallowed pattern (\"" +
 						String(*p) +
-						"\"). For security, OS commands, dynamic loading, "
-						"file system access, and reflection APIs are not "
+						"\"). For security, OS commands, "
+						"file system access, and threading APIs are not "
 						"permitted in evaluated expressions.");
 			}
 		}
@@ -490,16 +488,17 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 	// Rewrite $NodePath syntax to get_root().get_node("NodePath").
 	String rewritten = _rewrite_dollar_paths(expression);
 
+	// Optional timeout override (default 10s, max 60s).
+	int timeout_ms = (int)p_args.get("timeout_ms", 10000);
+	timeout_ms = CLAMP(timeout_ms, 1000, 60000);
+
 	MCPDebuggerBridge *bridge = _get_bridge();
 	Dictionary result;
 
-	if (_needs_gdscript_execution(rewritten)) {
-		// Use full GDScript execution for statements/assignments.
-		result = bridge->send_execute_code(rewritten);
-	} else {
-		// Use Expression evaluator for simple expressions (faster).
-		result = bridge->send_evaluate(rewritten);
-	}
+	// Always use full GDScript execution. The Expression evaluator cannot
+	// resolve engine singletons (Debug, Engine, Time) and its micro-
+	// optimization is not worth the agent failures it causes.
+	result = bridge->send_execute_code(rewritten, timeout_ms);
 
 	if (!(bool)result.get("success", false)) {
 		String error_msg = result.get("value", result.get("error", "Unknown error"));
@@ -600,12 +599,37 @@ Dictionary MCPAutomationTools::handle_get_screenshot(const Dictionary &p_args) {
 	int data_size = base64_png.length() * 3 / 4; // Approximate decoded size.
 	double size_kb = (double)data_size / 1024.0;
 
+	// Detect software renderer (llvmpipe, swrast) — screenshots may be empty.
+	String warning;
+	String video_adapter = result.get("video_adapter", "");
+	if (video_adapter.is_empty()) {
+		// Try reading from OS.
+		video_adapter = RenderingServer::get_singleton()
+				? String(RenderingServer::get_singleton()->get_video_adapter_name())
+				: String();
+	}
+	if (!video_adapter.is_empty()) {
+		String adapter_lower = video_adapter.to_lower();
+		if (adapter_lower.contains("llvmpipe") || adapter_lower.contains("swrast") ||
+				adapter_lower.contains("software") || adapter_lower.contains("mesa")) {
+			warning = "Software renderer detected (" + video_adapter +
+					"). Screenshot pixel data may be empty or incorrect. "
+					"Use runtime/get_scene_tree or runtime/evaluate instead "
+					"for reliable state inspection.";
+		}
+	}
+
 	// Build response with both text and image content blocks.
-	Dictionary text_content;
-	text_content["type"] = "text";
-	text_content["text"] = "Screenshot captured (" +
+	String caption = "Screenshot captured (" +
 			itos(width) + "x" + itos(height) + ", " +
 			String::num(size_kb, 1) + " KB PNG)";
+	if (!warning.is_empty()) {
+		caption += "\n\nWARNING: " + warning;
+	}
+
+	Dictionary text_content;
+	text_content["type"] = "text";
+	text_content["text"] = caption;
 
 	Dictionary image_content;
 	image_content["type"] = "image";
@@ -621,6 +645,9 @@ Dictionary MCPAutomationTools::handle_get_screenshot(const Dictionary &p_args) {
 	structured["height"] = height;
 	structured["format"] = "png";
 	structured["size_bytes"] = data_size;
+	if (!warning.is_empty()) {
+		structured["warning"] = warning;
+	}
 
 	Dictionary response;
 	response["content"] = content;
