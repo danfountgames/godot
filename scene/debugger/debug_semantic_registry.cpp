@@ -122,6 +122,9 @@ void DebugSemanticRegistry::_bind_methods() {
 
 	// Internal (used for signal connections, not meant for GDScript).
 	ClassDB::bind_method(D_METHOD("_event_fired_0", "event_name"), &DebugSemanticRegistry::_event_fired_0);
+	ClassDB::bind_method(D_METHOD("_event_fired_1", "a1", "event_name"), &DebugSemanticRegistry::_event_fired_1);
+	ClassDB::bind_method(D_METHOD("_event_fired_2", "a1", "a2", "event_name"), &DebugSemanticRegistry::_event_fired_2);
+	ClassDB::bind_method(D_METHOD("_event_fired_3", "a1", "a2", "a3", "event_name"), &DebugSemanticRegistry::_event_fired_3);
 
 	// CVar flag constants (exposed as plain ints since VARIANT_ENUM_CAST
 	// requires heavy includes we don't want in the header).
@@ -186,11 +189,28 @@ void DebugSemanticRegistry::_event_callback(const String &p_event_name, const Ar
 }
 
 void DebugSemanticRegistry::_event_fired_0(const String &p_event_name) {
-	// Simple no-arg event notification. Signal args are dropped because
-	// callable_mp binds this method with fewer params than the signal emits,
-	// and extra positional args from .bind() are appended.
-	// We just log that the event occurred.
 	_event_callback(p_event_name, Array());
+}
+
+void DebugSemanticRegistry::_event_fired_1(const Variant &p_a1, const String &p_event_name) {
+	Array args;
+	args.push_back(p_a1);
+	_event_callback(p_event_name, args);
+}
+
+void DebugSemanticRegistry::_event_fired_2(const Variant &p_a1, const Variant &p_a2, const String &p_event_name) {
+	Array args;
+	args.push_back(p_a1);
+	args.push_back(p_a2);
+	_event_callback(p_event_name, args);
+}
+
+void DebugSemanticRegistry::_event_fired_3(const Variant &p_a1, const Variant &p_a2, const Variant &p_a3, const String &p_event_name) {
+	Array args;
+	args.push_back(p_a1);
+	args.push_back(p_a2);
+	args.push_back(p_a3);
+	_event_callback(p_event_name, args);
 }
 
 String DebugSemanticRegistry::_get_object_tag(Object *p_obj, const String &p_tag) const {
@@ -386,14 +406,29 @@ void DebugSemanticRegistry::register_event(const String &p_name, const Callable 
 				}
 			}
 
-			// Build callable: bind the event name, then unbind signal args.
-			// .bind(name) appends the event name as a "stored" arg.
-			// .unbind(N) tells the system to ignore N args from the signal.
-			// Result: signal emits N args, they're dropped, and _event_fired_0
-			// is called with just the bound event name.
-			Callable cb = Callable(this, SNAME("_event_fired_0")).bind(p_name);
-			if (signal_arg_count > 0) {
-				cb = cb.unbind(signal_arg_count);
+			// Build callable that captures signal args (up to 3) instead of
+			// dropping them. .bind(name) appends the event name as the last arg.
+			Callable cb;
+			switch (signal_arg_count) {
+				case 0:
+					cb = Callable(this, SNAME("_event_fired_0")).bind(p_name);
+					break;
+				case 1:
+					cb = Callable(this, SNAME("_event_fired_1")).bind(p_name);
+					break;
+				case 2:
+					cb = Callable(this, SNAME("_event_fired_2")).bind(p_name);
+					break;
+				case 3:
+					cb = Callable(this, SNAME("_event_fired_3")).bind(p_name);
+					break;
+				default:
+					// >3 args: capture first 3, drop the rest.
+					cb = Callable(this, SNAME("_event_fired_3")).bind(p_name);
+					if (signal_arg_count > 3) {
+						cb = cb.unbind(signal_arg_count - 3);
+					}
+					break;
 			}
 			source->connect(signal_name, cb, Object::CONNECT_REFERENCE_COUNTED);
 			events.getptr(p_name)->connected = true;
