@@ -528,6 +528,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return NodePath(p_json_value.operator String());
 		}
 		case Variant::VECTOR2: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Vector2(d.get("x", 0.0), d.get("y", 0.0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 2) {
@@ -537,6 +541,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return p_json_value;
 		}
 		case Variant::VECTOR2I: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Vector2i((int)d.get("x", 0), (int)d.get("y", 0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 2) {
@@ -546,6 +554,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return p_json_value;
 		}
 		case Variant::VECTOR3: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 3) {
@@ -555,6 +567,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return p_json_value;
 		}
 		case Variant::VECTOR3I: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Vector3i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 3) {
@@ -564,6 +580,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return p_json_value;
 		}
 		case Variant::VECTOR4: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Vector4(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0), d.get("w", 0.0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 4) {
@@ -573,7 +593,25 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			}
 			return p_json_value;
 		}
+		case Variant::VECTOR4I: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Vector4i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0), (int)d.get("w", 0));
+			}
+			if (p_json_value.get_type() == Variant::ARRAY) {
+				Array arr = p_json_value;
+				if (arr.size() >= 4) {
+					return Vector4i(arr[0].operator int64_t(), arr[1].operator int64_t(),
+							arr[2].operator int64_t(), arr[3].operator int64_t());
+				}
+			}
+			return p_json_value;
+		}
 		case Variant::COLOR: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Color(d.get("r", 0.0), d.get("g", 0.0), d.get("b", 0.0), d.get("a", 1.0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 4) {
@@ -590,6 +628,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return p_json_value;
 		}
 		case Variant::RECT2: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Rect2(d.get("x", 0.0), d.get("y", 0.0), d.get("w", 0.0), d.get("h", 0.0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 4) {
@@ -600,6 +642,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 			return p_json_value;
 		}
 		case Variant::RECT2I: {
+			if (p_json_value.get_type() == Variant::DICTIONARY) {
+				Dictionary d = p_json_value;
+				return Rect2i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("w", 0), (int)d.get("h", 0));
+			}
 			if (p_json_value.get_type() == Variant::ARRAY) {
 				Array arr = p_json_value;
 				if (arr.size() >= 4) {
@@ -1914,7 +1960,11 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 				"Uses the editor undo/redo system so changes can be reverted. The value is\n"
 				"automatically coerced from JSON to the correct Godot type.\n"
 				"\n"
-				"Value format: Vector2=[x,y], Vector3=[x,y,z], Color=[r,g,b,a], bool, string.",
+				"Value formats — two syntaxes supported for compound types:\n"
+				"  Array:  [x,y] for Vector2, [x,y,z] for Vector3, [r,g,b,a] for Color\n"
+				"  Dict:   {\"x\":N,\"y\":N} for Vector2, {\"r\":N,\"g\":N,\"b\":N,\"a\":N} for Color\n"
+				"  String: \"#ff0000\" or \"red\" for Color, \"res://path\" for Resources\n"
+				"  Rect2:  [x,y,w,h] or {\"x\":N,\"y\":N,\"w\":N,\"h\":N}",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPSceneTools::handle_set_property));
@@ -1961,7 +2011,13 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 				"Remove Node from Scene",
 				"Remove a node and all its children from the scene tree.\n"
 				"\n"
-				"Uses undo/redo. Cannot remove the scene root.",
+				"Recursively removes the target node and its entire subtree. Uses the editor\n"
+				"undo/redo system so the removal can be reverted. Cannot remove the scene root\n"
+				"node (the topmost node). After removal, any signal connections to/from the\n"
+				"removed nodes are also removed.\n"
+				"\n"
+				"Returns the name, type, and count of removed nodes. Use scene/save afterward\n"
+				"to persist changes. Related: scene/add_node, scene/move_node (reparent instead).",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/true, /*idempotent=*/false),
 				callable_mp_static(&MCPSceneTools::handle_remove_node));
@@ -1980,7 +2036,15 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 
 		p_registry->register_tool("scene/rename_node",
 				"Rename Node",
-				"Rename a node. Uses undo/redo. Godot may adjust for sibling uniqueness.",
+				"Rename a node in the scene tree.\n"
+				"\n"
+				"Changes the node's name. Godot enforces unique sibling names, so the final\n"
+				"name may be adjusted with a numeric suffix (e.g., 'Sprite2D2') if a sibling\n"
+				"already has the requested name. Uses undo/redo.\n"
+				"\n"
+				"Returns the old and new names. Note: renaming does NOT update NodePath\n"
+				"references in scripts or other properties — update those manually.\n"
+				"Related: scene/browse_tree (verify new name).",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPSceneTools::handle_rename_node));
@@ -2002,7 +2066,15 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 
 		p_registry->register_tool("scene/move_node",
 				"Move/Reparent Node",
-				"Reparent a node to a different parent. Optional index for ordering. Uses undo/redo.",
+				"Reparent a node to a different parent in the scene tree.\n"
+				"\n"
+				"Moves a node (and its entire subtree) from its current parent to a new one.\n"
+				"Optionally specify a child index for ordering under the new parent (-1 or\n"
+				"omitted appends as the last child). Uses undo/redo.\n"
+				"\n"
+				"Returns the old parent, new parent, and final child index. Cannot move the\n"
+				"scene root. A node cannot be moved to one of its own descendants.\n"
+				"Related: scene/rename_node, scene/duplicate_node.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPSceneTools::handle_move_node));
@@ -2020,7 +2092,15 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 
 		p_registry->register_tool("scene/duplicate_node",
 				"Duplicate Node",
-				"Duplicate a node and all its children as a sibling. Uses undo/redo.",
+				"Duplicate a node and all its children as a sibling in the scene tree.\n"
+				"\n"
+				"Creates a deep copy of the target node including all child nodes, property\n"
+				"values, and signal connections within the subtree. The duplicate is placed as\n"
+				"a sibling of the original. Optionally provide a name for the copy; if omitted,\n"
+				"Godot auto-generates one (e.g., 'Player2'). Uses undo/redo.\n"
+				"\n"
+				"Returns the name and path of the new duplicate.\n"
+				"Related: scene/add_node (create from scratch), scene/instance_scene (linked copy).",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPSceneTools::handle_duplicate_node));
@@ -2040,7 +2120,16 @@ void MCPSceneTools::register_tools(MCPToolRegistry *p_registry) {
 
 		p_registry->register_tool("scene/instance_scene",
 				"Instance Scene",
-				"Instance a .tscn/.scn as a child node. Stays linked to source file. Uses undo/redo.",
+				"Instance a .tscn or .scn file as a child node in the current scene.\n"
+				"\n"
+				"Creates a scene instance that stays linked to the source file — edits to the\n"
+				"source scene propagate to all instances. The instance appears as a single\n"
+				"collapsed node in the scene tree. Optionally name it or choose a parent.\n"
+				"Uses undo/redo.\n"
+				"\n"
+				"The scene file must exist on disk (use editor/scan_filesystem if you just\n"
+				"created it). Returns the instance name and source path.\n"
+				"Related: scene/duplicate_node (unlinked copy), scene/add_node (single node).",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPSceneTools::handle_instance_scene));

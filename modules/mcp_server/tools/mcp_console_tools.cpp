@@ -105,7 +105,20 @@ void MCPConsoleTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool(
 				"console/execute",
 				"Execute Console Command",
-				"Execute a command in the in-game debug console. Use 'help' for available commands.",
+				"Execute a command in the in-game debug console.\n"
+				"\n"
+				"Requires a running game with debug instrumentation (auto_expose or manual\n"
+				"Debug.register_* calls). Common commands:\n"
+				"  'help' — list all available commands\n"
+				"  'list cvars' / 'list queries' / 'list actions' — enumerate by category\n"
+				"  'query.<name>' — read a query value\n"
+				"  'action.<name> param=value' — invoke an action\n"
+				"  'set <cvar> <value>' — modify a CVar\n"
+				"  'watch query.<name>' — pin to debug overlay\n"
+				"\n"
+				"Returns the console output text. For structured data, prefer the dedicated\n"
+				"console/* tools (console/query, console/invoke, etc.) which return parsed\n"
+				"JSON instead of text.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
 				callable_mp_static(&MCPConsoleTools::handle_execute));
@@ -118,7 +131,19 @@ void MCPConsoleTools::register_tools(MCPToolRegistry *p_registry) {
 		p_registry->register_tool(
 				"console/get_manifest",
 				"Get Debug Manifest",
-				"Get all registered debug actions, queries, cvars, commands, events, and UI pages from the running game.",
+				"Get the complete debug manifest from the running game.\n"
+				"\n"
+				"Returns a structured JSON object with all registered debug primitives:\n"
+				"  - cvars: configuration variables with name, type, min/max, current value\n"
+				"  - commands: named console commands\n"
+				"  - queries: named read-only values (health, score, state) with return types\n"
+				"  - actions: callable operations with parameter schemas\n"
+				"  - events: signals being monitored with recent fire counts\n"
+				"  - ui_pages: registered debug UI overlay pages\n"
+				"\n"
+				"This is the primary discovery tool — call it first to understand what the\n"
+				"game exposes. If the manifest is empty, the game has no debug instrumentation.\n"
+				"Requires a running game. Related: console/query, console/invoke, console/get_cvar.",
 				make_schema(props, required),
 				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
 				callable_mp_static(&MCPConsoleTools::handle_get_manifest));

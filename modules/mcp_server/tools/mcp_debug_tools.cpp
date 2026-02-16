@@ -211,9 +211,11 @@ void MCPDebugTools::register_tools(MCPToolRegistry *p_registry) {
 				"Use runtime/get_node_properties to discover available properties and their types.");
 		Dictionary value_prop;
 		value_prop["description"] = "The new value. Type must be compatible with the property: "
-				"numbers for int/float, strings for String, booleans for bool, "
-				"arrays like [x,y] for Vector2, [x,y,z] for Vector3, "
-				"[r,g,b,a] for Color. Resource paths (res://...) auto-load for Object properties.";
+				"numbers for int/float, strings for String, booleans for bool. "
+				"Compound types accept two formats:\n"
+				"  Array: [x,y] for Vector2, [x,y,z] for Vector3, [r,g,b,a] for Color\n"
+				"  Dict:  {\"x\":N,\"y\":N} for Vector2, {\"r\":N,\"g\":N,\"b\":N,\"a\":N} for Color\n"
+				"Resource paths (res://...) auto-load for Object properties.";
 		props["value"] = value_prop;
 		props["field"] = make_prop("string",
 				"Optional: set only one component of a compound type. "
