@@ -180,6 +180,7 @@ private:
 	Dictionary _read_game_scene_tree();
 	Dictionary _read_game_output();
 	Dictionary _read_game_errors();
+	Dictionary _read_debug_events();
 	Dictionary _read_file_resource(const Dictionary &p_params);
 	Dictionary _read_node_properties_resource(const Dictionary &p_params);
 

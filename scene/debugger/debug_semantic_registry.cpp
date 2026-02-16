@@ -31,6 +31,7 @@
 #include "debug_semantic_registry.h"
 
 #include "core/config/engine.h"
+#include "core/debugger/engine_debugger.h"
 #include "core/object/script_language.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
@@ -185,6 +186,16 @@ void DebugSemanticRegistry::_event_callback(const String &p_event_name, const Ar
 		args_str = ": " + Variant(p_args).stringify();
 	}
 	_push_console_log("[EVENT] " + p_event_name + args_str, 0);
+
+	// Notify the editor via debugger message so SSE subscribers get
+	// a resource-updated notification for godot://debug/events.
+	if (EngineDebugger::get_singleton() && EngineDebugger::get_singleton()->is_active()) {
+		Array data;
+		data.push_back(p_event_name);
+		data.push_back(entry.frame);
+		data.push_back(entry.timestamp_msec);
+		EngineDebugger::get_singleton()->send_message("mcp:event_fired", data);
+	}
 }
 
 void DebugSemanticRegistry::_event_fired_0(const String &p_event_name) {
@@ -274,6 +285,19 @@ Dictionary DebugSemanticRegistry::invoke_action(const String &p_name, const Dict
 	if (ce.error != Callable::CallError::CALL_OK) {
 		// Try calling with no args (common pattern for simple actions).
 		entry->callable.callp(nullptr, 0, result, ce);
+	}
+
+	// GDScript coroutines (async functions using await) return a
+	// GDScriptFunctionState object that can't be serialized over the
+	// debugger protocol. Detect this and return a clean response.
+	if (result.get_type() == Variant::OBJECT) {
+		Object *obj = result.get_validated_object();
+		if (obj && obj->get_class() == "GDScriptFunctionState") {
+			Dictionary ret;
+			ret["result"] = "Action completed (async coroutine)";
+			ret["async"] = true;
+			return ret;
+		}
 	}
 
 	if (result.get_type() == Variant::DICTIONARY) {

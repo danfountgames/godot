@@ -460,27 +460,67 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 	// OS commands or bypass the sandbox.
 	{
 		String expr_lower = expression.to_lower();
-		static const char *blocked_patterns[] = {
-			"os.execute",
-			"os.shell_open",
-			"os.create_process",
-			"os.create_instance",
-			"os.kill",
-			".callv(",
-			"fileaccess",
-			"diraccess",
-			"thread",
-			"marshalls",
+
+		// Exact API patterns — these use "os." prefix or explicit class names
+		// so they won't false-positive on game identifiers like boss.execute().
+		static const char *blocked_exact[] = {
+			"os.execute(",
+			"os.shell_open(",
+			"os.create_process(",
+			"os.create_instance(",
+			"os.kill(",
 			nullptr
 		};
-		for (const char **p = blocked_patterns; *p != nullptr; p++) {
+		for (const char **p = blocked_exact; *p != nullptr; p++) {
 			if (expr_lower.find(*p) != -1) {
 				return make_tool_error(
 						"Blocked: expression contains a disallowed pattern (\"" +
 						String(*p) +
-						"\"). For security, OS commands, "
-						"file system access, and threading APIs are not "
-						"permitted in evaluated expressions.");
+						"\"). For security, OS commands are not permitted.");
+			}
+		}
+
+		// Class/API names that are dangerous when used as identifiers.
+		// These are checked with word-boundary awareness: the character before
+		// the match must NOT be alphanumeric or underscore (i.e., it's a
+		// standalone identifier, not part of a larger word like "bossfileaccess").
+		static const char *blocked_identifiers[] = {
+			"fileaccess",
+			"diraccess",
+			"marshalls",
+			nullptr
+		};
+		for (const char **p = blocked_identifiers; *p != nullptr; p++) {
+			String pattern(*p);
+			int pos = expr_lower.find(pattern);
+			while (pos != -1) {
+				// Check word boundary before match.
+				bool boundary_before = (pos == 0) || (!is_ascii_alphanumeric_char(expr_lower[pos - 1]) && expr_lower[pos - 1] != '_');
+				// Check word boundary after match.
+				int end = pos + pattern.length();
+				bool boundary_after = (end >= expr_lower.length()) || (!is_ascii_alphanumeric_char(expr_lower[end]) && expr_lower[end] != '_');
+				if (boundary_before && boundary_after) {
+					return make_tool_error(
+							"Blocked: expression contains a disallowed identifier (\"" +
+							pattern +
+							"\"). For security, file system access and "
+							"serialization APIs are not permitted.");
+				}
+				pos = expr_lower.find(pattern, pos + 1);
+			}
+		}
+
+		// Reflection/threading patterns that are suspicious in any context.
+		static const char *blocked_anywhere[] = {
+			".callv(",
+			nullptr
+		};
+		for (const char **p = blocked_anywhere; *p != nullptr; p++) {
+			if (expr_lower.find(*p) != -1) {
+				return make_tool_error(
+						"Blocked: expression contains a disallowed pattern (\"" +
+						String(*p) +
+						"\"). Reflection calls are not permitted.");
 			}
 		}
 	}
@@ -562,10 +602,11 @@ Dictionary MCPAutomationTools::handle_wait_frames(const Dictionary &p_args) {
 				"Try runtime/get_status to check game state.");
 	}
 
-	String text = "Waited " + itos(frames) + " frames.";
+	int actual_frames = (int)result.get("frames_waited", frames);
+	String text = "Waited " + itos(actual_frames) + " frames.";
 
 	Dictionary structured;
-	structured["frames_waited"] = frames;
+	structured["frames_waited"] = actual_frames;
 
 	return make_tool_result(text, structured);
 }
