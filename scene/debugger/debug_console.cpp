@@ -39,7 +39,6 @@
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "debug_console_renderer.h"
-#include "debug_semantic_registry.h"
 #include "scene/gui/base_button.h"
 #include "scene/gui/check_box.h"
 #include "scene/gui/check_button.h"
@@ -60,6 +59,10 @@
 #include "servers/rendering/rendering_server.h"
 
 DebugConsole *DebugConsole::singleton = nullptr;
+
+const char *DebugConsole::discovery_tab_labels[DISCOVERY_TAB_COUNT] = {
+	"Actions", "Queries", "CVars", "Commands"
+};
 
 DebugConsole::DebugConsole() {
 	singleton = this;
@@ -129,37 +132,7 @@ void DebugConsole::poll(double p_delta) {
 		}
 	}
 
-	// Sync console log from the semantic registry (always, even when closed).
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (reg) {
-		int total = reg->get_console_log_count();
-		while (_last_console_log_sync < total) {
-			const auto &entry = reg->get_console_log_entry(_last_console_log_sync);
-			Color color;
-			switch (entry.type) {
-				case 1:
-					color = Color(1.0, 0.9, 0.3); // Warning: yellow.
-					if (!_open) {
-						_popup_new_warning++;
-					}
-					break;
-				case 2:
-					color = Color(1.0, 0.3, 0.3); // Error: red.
-					if (!_open) {
-						_popup_new_error++;
-					}
-					break;
-				default:
-					color = Color(0.7, 0.9, 1.0); // Info: light blue.
-					if (!_open) {
-						_popup_new_info++;
-					}
-					break;
-			}
-			_push_output(entry.message, color);
-			_last_console_log_sync++;
-		}
-	}
+	// Semantic registry log sync removed.
 
 	// Skip main processing if fully closed.
 	if (_open_progress <= 0.0f && !_open) {
@@ -184,6 +157,13 @@ void DebugConsole::poll(double p_delta) {
 
 	// Update watches.
 	_update_watches();
+
+	// Update discovery pills (every 10 frames to keep live values fresh).
+	uint64_t frame = Engine::get_singleton()->get_process_frames();
+	if (frame - _discovery_last_update_frame >= 10) {
+		_discovery_last_update_frame = frame;
+		_update_discovery_items();
+	}
 
 	// Render.
 	if (_renderer) {
@@ -318,6 +298,21 @@ bool DebugConsole::handle_input(const Ref<InputEvent> &p_event) {
 					return true;
 				case DebugConsoleRenderer::HitAction::SNAP_TO_BOTTOM:
 					snap_to_bottom();
+					return true;
+				case DebugConsoleRenderer::HitAction::DISCOVERY_PILL:
+					tap_discovery_pill(payload);
+					return true;
+				case DebugConsoleRenderer::HitAction::DISCOVERY_TAB:
+					tap_discovery_tab(payload);
+					return true;
+				case DebugConsoleRenderer::HitAction::TRANSPORT:
+					tap_transport(payload);
+					return true;
+				case DebugConsoleRenderer::HitAction::TIMESCALE:
+					tap_timescale();
+					return true;
+				case DebugConsoleRenderer::HitAction::WATCH_TOGGLE:
+					toggle_watches_overlay();
 					return true;
 				case DebugConsoleRenderer::HitAction::POPUP_TAP:
 					popup_tapped();
@@ -696,15 +691,120 @@ void DebugConsole::_update_completions() {
 // =============================================================================
 
 void DebugConsole::_update_watches() {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
+	// TODO: Reimplement watches with DebugIntrospector path expressions.
+}
+
+// =============================================================================
+// Discovery pills — live browsing of registered semantic items
+// =============================================================================
+
+void DebugConsole::_update_discovery_items() {
+	_discovery_items.clear();
+	_discovery_visible = false;
+	// TODO: Reimplement discovery with DebugIntrospector tree browsing.
+}
+
+void DebugConsole::tap_discovery_pill(int p_index) {
+	if (p_index < 0 || p_index >= _discovery_items.size()) {
 		return;
 	}
 
-	for (WatchEntry &w : _watches) {
-		Variant val = reg->evaluate_query(w.query_name);
-		w.last_value = val;
-		w.display_text = w.query_name + ": " + val.stringify();
+	const DiscoveryItem &item = _discovery_items[p_index];
+
+	if (item.type == DISCOVERY_QUERY) {
+		// For queries, execute immediately and show the result.
+		String cmd = "query." + item.name;
+		_push_output("> " + cmd, Color(0.8, 0.8, 0.8));
+		String result = _execute_command_string(cmd);
+		if (!result.is_empty()) {
+			_push_output(result, Color(0.4, 1.0, 0.4));
+		}
+	} else {
+		// For actions/cvars/commands, populate the input field so user can
+		// add parameters before pressing Enter.
+		_input_text = item.command;
+		_cursor_pos = _input_text.length();
+		_completion_visible = false;
+		_update_completions();
+	}
+}
+
+void DebugConsole::tap_discovery_tab(int p_index) {
+	if (p_index < 0 || p_index >= DISCOVERY_TAB_COUNT) {
+		return;
+	}
+	_discovery_active_tab = p_index;
+	_update_discovery_items();
+}
+
+void DebugConsole::tap_transport(int p_index) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree) {
+		return;
+	}
+
+	bool suspended = tree->is_suspended();
+
+	switch (p_index) {
+		case 0: {
+			// Toggle pause/resume.
+			if (suspended) {
+				tree->set_suspend(false);
+				_push_output("Game resumed.", Color(0.4, 1.0, 0.4));
+			} else {
+				tree->set_suspend(true);
+				_push_output("Game suspended.", Color(1.0, 0.9, 0.3));
+			}
+		} break;
+		case 1: {
+			// Step 1 frame.
+			if (!suspended) {
+				tree->set_suspend(true);
+			}
+			_step_frames_remaining = 1;
+			_step_one_frame();
+			_push_output("Stepping 1 frame.", Color(0.7, 0.9, 1.0));
+		} break;
+		case 2: {
+			// Step 10 frames.
+			if (!suspended) {
+				tree->set_suspend(true);
+			}
+			_step_frames_remaining = 10;
+			_step_one_frame();
+			_push_output("Stepping 10 frames.", Color(0.7, 0.9, 1.0));
+		} break;
+	}
+}
+
+void DebugConsole::tap_timescale() {
+	static const double presets[] = { 0.25, 0.5, 1.0, 2.0, 4.0 };
+	static const int preset_count = 5;
+
+	double current = Engine::get_singleton()->get_time_scale();
+
+	// Find the next preset above current (with tolerance).
+	int next_idx = 0;
+	for (int i = 0; i < preset_count; i++) {
+		if (current < presets[i] - 0.01) {
+			next_idx = i;
+			break;
+		}
+		if (i == preset_count - 1) {
+			next_idx = 0; // Wrap around.
+		}
+	}
+
+	Engine::get_singleton()->set_time_scale(presets[next_idx]);
+	_push_output(vformat("Time scale: x%s", String::num(presets[next_idx], 2)), Color(0.7, 0.9, 1.0));
+}
+
+void DebugConsole::toggle_watches_overlay() {
+	_watches_overlay_visible = !_watches_overlay_visible;
+	if (_watches_overlay_visible) {
+		_push_output("Watch overlay enabled.", Color(0.7, 0.9, 1.0));
+	} else {
+		_push_output("Watch overlay disabled.", Color(0.7, 0.9, 1.0));
 	}
 }
 
@@ -871,88 +971,6 @@ String DebugConsole::_execute_command_string(const String &p_input) {
 		return _cmd_node(node_args);
 	}
 
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return "Error: Debug registry not available.";
-	}
-
-	// --- Actions: "action.name [params]" ---
-	if (cmd.begins_with("action.")) {
-		String action_name = cmd.substr(7);
-		if (reg->has_action(action_name)) {
-			Dictionary params;
-			// Simple key=value arg parsing.
-			for (const String &arg : args) {
-				int eq_pos = arg.find("=");
-				if (eq_pos != -1) {
-					params[arg.substr(0, eq_pos)] = arg.substr(eq_pos + 1);
-				}
-			}
-			Dictionary result = reg->invoke_action(action_name, params);
-			return Variant(result).stringify();
-		}
-		return vformat("Unknown action: '%s'", action_name);
-	}
-
-	// --- Queries: "query.name" ---
-	if (cmd.begins_with("query.")) {
-		String query_name = cmd.substr(6);
-		if (reg->has_query(query_name)) {
-			Variant result = reg->evaluate_query(query_name);
-			return vformat("%s = %s", query_name, result.stringify());
-		}
-		return vformat("Unknown query: '%s'", query_name);
-	}
-
-	// --- Registered commands ---
-	if (reg->has_command(cmd)) {
-		return reg->execute_command(cmd, args);
-	}
-
-	// --- CVars: "name" (read) or "name value" (write) ---
-	if (reg->has_cvar(cmd)) {
-		if (args.is_empty()) {
-			// Read.
-			Variant val = reg->get_cvar(cmd);
-			const DebugSemanticRegistry::CVarEntry *entry = reg->get_cvars().getptr(cmd);
-			String desc;
-			if (entry && !entry->description.is_empty()) {
-				desc = "   (" + entry->description;
-				if (entry->min_value.get_type() != Variant::NIL && entry->max_value.get_type() != Variant::NIL) {
-					desc += vformat(" Range: %s-%s", entry->min_value.stringify(), entry->max_value.stringify());
-				}
-				desc += ")";
-			}
-			return vformat("%s = %s%s", cmd, val.stringify(), desc);
-		} else {
-			// Write.
-			String value_str = args[0];
-			Variant value;
-			// Attempt to parse as the CVar's type.
-			const DebugSemanticRegistry::CVarEntry *entry = reg->get_cvars().getptr(cmd);
-			if (entry) {
-				switch (entry->type) {
-					case Variant::BOOL: {
-						value = (value_str == "true" || value_str == "1" || value_str == "yes");
-					} break;
-					case Variant::INT: {
-						value = value_str.to_int();
-					} break;
-					case Variant::FLOAT: {
-						value = value_str.to_float();
-					} break;
-					default: {
-						value = value_str;
-					} break;
-				}
-			} else {
-				value = value_str;
-			}
-			reg->set_cvar(cmd, value);
-			return vformat("%s = %s", cmd, reg->get_cvar(cmd).stringify());
-		}
-	}
-
 	// --- Last resort: try as a bare child name in cwd ---
 	// If the user types "Player" or "Player.health" without any '/' or '@',
 	// and cwd has a child with that name, treat it as an implicit node command.
@@ -985,7 +1003,9 @@ String DebugConsole::_execute_command_string(const String &p_input) {
 		}
 	}
 
-	return vformat("Unknown command: '%s'. Type 'help' for available commands.", cmd);
+	// --- Legacy semantic registry dispatch removed ---
+	// TODO: Add $Path.property and $Path.method() dispatch via DebugIntrospector.
+	return vformat("Unknown command: '%s'. Type 'help' for a list of commands.", cmd);
 }
 
 // =============================================================================
@@ -993,8 +1013,6 @@ String DebugConsole::_execute_command_string(const String &p_input) {
 // =============================================================================
 
 String DebugConsole::_cmd_help(const PackedStringArray &p_args) {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-
 	if (!p_args.is_empty()) {
 		String name = p_args[0];
 
@@ -1314,113 +1332,7 @@ String DebugConsole::_cmd_help(const PackedStringArray &p_args) {
 				   "Returns {} in release builds.";
 		}
 
-		// =====================================================================
-		// Dynamic registry lookups
-		// =====================================================================
-		if (reg) {
-			if (reg->has_command(name)) {
-				const auto *entry = reg->get_commands().getptr(name);
-				String result = vformat("[cmd] %s\n  %s", name, entry->description);
-				if (!entry->params_schema.is_empty()) {
-					result += vformat("\n  Params: %s", Variant(entry->params_schema).stringify());
-				}
-				if (!entry->category.is_empty()) {
-					result += vformat("\n  Category: %s", entry->category);
-				}
-				return result;
-			}
-			if (reg->has_cvar(name)) {
-				const auto *entry = reg->get_cvars().getptr(name);
-				String result = vformat("[cvar] %s = %s", name, reg->get_cvar(name).stringify());
-				result += vformat("\n  Default: %s  Type: %s", entry->default_value.stringify(), Variant::get_type_name(entry->type));
-				if (entry->min_value.get_type() != Variant::NIL && entry->max_value.get_type() != Variant::NIL) {
-					result += vformat("\n  Range: %s to %s", entry->min_value.stringify(), entry->max_value.stringify());
-				}
-				if (!entry->description.is_empty()) {
-					result += vformat("\n  %s", entry->description);
-				}
-				if (entry->flags) {
-					String flags;
-					if (entry->flags & DebugSemanticRegistry::CVAR_ARCHIVE) {
-						flags += " ARCHIVE";
-					}
-					if (entry->flags & DebugSemanticRegistry::CVAR_READONLY) {
-						flags += " READONLY";
-					}
-					if (entry->flags & DebugSemanticRegistry::CVAR_CHEAT) {
-						flags += " CHEAT";
-					}
-					if (entry->flags & DebugSemanticRegistry::CVAR_HIDDEN) {
-						flags += " HIDDEN";
-					}
-					result += vformat("\n  Flags:%s", flags);
-				}
-				return result;
-			}
-			String action_name = name.begins_with("action.") ? name.substr(7) : name;
-			if (reg->has_action(action_name)) {
-				const auto *entry = reg->get_actions().getptr(action_name);
-				String result = vformat("[action] %s\n  %s", action_name, entry->description);
-				if (!entry->params_schema.is_empty()) {
-					result += vformat("\n  Params: %s", Variant(entry->params_schema).stringify());
-				}
-				result += vformat("\n  Usage: action.%s key=value ...", action_name);
-				return result;
-			}
-			String query_name = name.begins_with("query.") ? name.substr(6) : name;
-			if (reg->has_query(query_name)) {
-				const auto *entry = reg->get_queries().getptr(query_name);
-				Variant val = reg->evaluate_query(query_name);
-				return vformat("[query] %s = %s\n  %s\n  Usage: query.%s (read) or watch query.%s (pin to overlay)",
-						query_name, val.stringify(), entry->description, query_name, query_name);
-			}
-			if (reg->has_event(name)) {
-				const auto *entry = reg->get_events().getptr(name);
-				return vformat("[event] %s\n  %s\n  Events auto-log to console when fired.", name, entry->description);
-			}
-			if (reg->has_interactable(name)) {
-				const auto *entry = reg->get_interactables().getptr(name);
-				String result = vformat("[interactable] %s [%s]\n  %s", name, entry->type, entry->description);
-				if (!entry->valid_actions.is_empty()) {
-					result += "\n  Actions:";
-					for (const String &a : entry->valid_actions) {
-						result += " " + a;
-					}
-				}
-				return result;
-			}
-			if (reg->has_ui_page(name)) {
-				Dictionary info = reg->get_ui_page_info(name);
-				String result = vformat("[ui page] %s", name);
-				if (info.has("description") && !String(info["description"]).is_empty()) {
-					result += vformat("\n  %s", String(info["description"]));
-				}
-				if (info.has("node_path")) {
-					result += vformat("\n  Node: %s", String(info["node_path"]));
-				}
-				if (info.has("visible")) {
-					result += vformat("\n  Visible: %s", (bool)info["visible"] ? "yes" : "no");
-				}
-				if (info.has("parent") && !String(info["parent"]).is_empty()) {
-					result += vformat("\n  Parent: %s", String(info["parent"]));
-				}
-				if (info.has("children")) {
-					PackedStringArray children = info["children"];
-					if (!children.is_empty()) {
-						result += "\n  Children:";
-						for (const String &c : children) {
-							result += " " + c;
-						}
-					}
-				}
-				if (info.has("back") && !String(info["back"]).is_empty()) {
-					result += vformat("\n  Back: %s", String(info["back"]));
-				}
-				return result;
-			}
-		}
-
-		return vformat("No help available for '%s'. Type 'help' for the full reference.", name);
+		return vformat("Unknown help topic: '%s'. Type 'help' for the full reference.", name);
 	}
 
 	// =========================================================================
@@ -1506,75 +1418,8 @@ String DebugConsole::_cmd_clear(const PackedStringArray &p_args) {
 }
 
 String DebugConsole::_cmd_list(const PackedStringArray &p_args) {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return "Registry not available.";
-	}
-
-	String category = p_args.is_empty() ? "all" : p_args[0];
-
-	String result;
-
-	if (category == "actions" || category == "all") {
-		result += "=== Actions ===\n";
-		for (const KeyValue<String, DebugSemanticRegistry::ActionEntry> &kv : reg->get_actions()) {
-			result += vformat("  action.%s - %s\n", kv.key, kv.value.description);
-		}
-	}
-	if (category == "queries" || category == "all") {
-		result += "=== Queries ===\n";
-		for (const KeyValue<String, DebugSemanticRegistry::QueryEntry> &kv : reg->get_queries()) {
-			Variant val = reg->evaluate_query(kv.key);
-			result += vformat("  query.%s = %s - %s\n", kv.key, val.stringify(), kv.value.description);
-		}
-	}
-	if (category == "events" || category == "all") {
-		result += "=== Events ===\n";
-		for (const KeyValue<String, DebugSemanticRegistry::EventEntry> &kv : reg->get_events()) {
-			result += vformat("  %s - %s\n", kv.key, kv.value.description);
-		}
-	}
-	if (category == "cvars" || category == "all") {
-		result += "=== CVars ===\n";
-		for (const KeyValue<String, DebugSemanticRegistry::CVarEntry> &kv : reg->get_cvars()) {
-			result += vformat("  %s = %s - %s\n", kv.key, reg->get_cvar(kv.key).stringify(), kv.value.description);
-		}
-	}
-	if (category == "commands" || category == "all") {
-		result += "=== Commands ===\n";
-		for (const KeyValue<String, DebugSemanticRegistry::CommandEntry> &kv : reg->get_commands()) {
-			result += vformat("  %s - %s\n", kv.key, kv.value.description);
-		}
-	}
-	if (category == "interactables" || category == "all") {
-		result += "=== Interactables ===\n";
-		for (const KeyValue<String, DebugSemanticRegistry::InteractableEntry> &kv : reg->get_interactables()) {
-			result += vformat("  %s [%s] - %s\n", kv.key, kv.value.type, kv.value.description);
-		}
-	}
-	if (category == "pages" || category == "all") {
-		if (!reg->get_ui_pages().is_empty()) {
-			result += "=== UI Pages ===\n";
-			for (const KeyValue<String, DebugSemanticRegistry::UIPageEntry> &kv : reg->get_ui_pages()) {
-				Object *obj = ObjectDB::get_instance(kv.value.node_id);
-				String vis;
-				if (obj) {
-					Node *node = Object::cast_to<Node>(obj);
-					if (node && node->has_method("is_visible_in_tree")) {
-						bool visible = node->call("is_visible_in_tree");
-						vis = visible ? " [ACTIVE]" : "";
-					}
-				}
-				result += vformat("  %s%s - %s\n", kv.key, vis, kv.value.description);
-			}
-		}
-	}
-
-	if (result.is_empty()) {
-		return vformat("Unknown category: '%s'. Use: actions, queries, events, cvars, commands, interactables, pages, all", category);
-	}
-
-	return result.strip_edges();
+	// TODO: Reimplement with DebugIntrospector.
+	return "List command not yet reimplemented. Use 'ls' to browse the scene tree.";
 }
 
 String DebugConsole::_cmd_watch(const PackedStringArray &p_args) {
@@ -1582,25 +1427,8 @@ String DebugConsole::_cmd_watch(const PackedStringArray &p_args) {
 		return "Usage: watch <query.name>";
 	}
 
-	String name = p_args[0];
-	String query_name = name.begins_with("query.") ? name.substr(6) : name;
-
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg || !reg->has_query(query_name)) {
-		return vformat("Query '%s' not found.", query_name);
-	}
-
-	// Check if already watching.
-	for (const WatchEntry &w : _watches) {
-		if (w.query_name == query_name) {
-			return vformat("Already watching '%s'.", query_name);
-		}
-	}
-
-	WatchEntry w;
-	w.query_name = query_name;
-	_watches.push_back(w);
-	return vformat("Watching query.%s", query_name);
+	// TODO: Watches are being reimplemented with DebugIntrospector.
+	return "Watch command is temporarily disabled during reimplementation.";
 }
 
 String DebugConsole::_cmd_unwatch(const PackedStringArray &p_args) {
@@ -2622,325 +2450,15 @@ String DebugConsole::_ui_interact(Node *p_node, const PackedStringArray &p_args)
 // --- UI page navigation helpers ---
 
 String DebugConsole::_ui_pages() const {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return "Registry not available.";
-	}
-
-	const auto &pages = reg->get_ui_pages();
-	if (pages.is_empty()) {
-		// Fall back to auto-detection.
-		SceneTree *tree = SceneTree::get_singleton();
-		if (tree && tree->get_root()) {
-			return _ui_auto_detect_pages(tree->get_root());
-		}
-		return "No UI pages registered. Use Debug.register_ui_page() in GDScript,\n"
-			   "or 'ui detect' to auto-detect page-like structures.";
-	}
-
-	String result = "=== UI Pages ===\n";
-
-	// Build tree display — show root pages first, then children indented.
-	Vector<String> root_pages;
-	for (const KeyValue<String, DebugSemanticRegistry::UIPageEntry> &kv : pages) {
-		if (kv.value.parent_page.is_empty()) {
-			root_pages.push_back(kv.key);
-		}
-	}
-
-	// Recursive lambda-like approach using a local stack.
-	struct PageStackEntry {
-		String name;
-		int depth;
-	};
-	Vector<PageStackEntry> stack;
-
-	// Push root pages.
-	for (int i = root_pages.size() - 1; i >= 0; i--) {
-		PageStackEntry se;
-		se.name = root_pages[i];
-		se.depth = 0;
-		stack.push_back(se);
-	}
-
-	while (!stack.is_empty()) {
-		PageStackEntry current = stack[stack.size() - 1];
-		stack.remove_at(stack.size() - 1);
-
-		const DebugSemanticRegistry::UIPageEntry *entry = pages.getptr(current.name);
-		if (!entry) {
-			continue;
-		}
-
-		// Check visibility.
-		String visibility;
-		Object *obj = ObjectDB::get_instance(entry->node_id);
-		if (obj) {
-			Node *node = Object::cast_to<Node>(obj);
-			if (node && node->has_method("is_visible_in_tree")) {
-				bool vis = node->call("is_visible_in_tree");
-				visibility = vis ? " [ACTIVE]" : "";
-			}
-		} else {
-			visibility = " [FREED]";
-		}
-
-		// Indent.
-		String indent;
-		for (int i = 0; i < current.depth; i++) {
-			indent += "  ";
-		}
-		String tree_marker = current.depth > 0 ? "├─ " : "";
-
-		result += vformat("%s%s%s%s", indent, tree_marker, entry->name, visibility);
-		if (!entry->description.is_empty()) {
-			result += " — " + entry->description;
-		}
-		result += "\n";
-
-		// Push children (in reverse order so first child is processed first).
-		for (int i = entry->child_pages.size() - 1; i >= 0; i--) {
-			PageStackEntry child_se;
-			child_se.name = entry->child_pages[i];
-			child_se.depth = current.depth + 1;
-			stack.push_back(child_se);
-		}
-	}
-
-	// Show any orphan pages (parent specified but parent doesn't exist).
-	for (const KeyValue<String, DebugSemanticRegistry::UIPageEntry> &kv : pages) {
-		if (!kv.value.parent_page.is_empty() && !pages.has(kv.value.parent_page)) {
-			bool already_shown = false;
-			for (const String &rp : root_pages) {
-				if (rp == kv.key) {
-					already_shown = true;
-					break;
-				}
-			}
-			if (!already_shown) {
-				result += vformat("  %s (orphan, parent '%s' not found)\n", kv.key, kv.value.parent_page);
-			}
-		}
-	}
-
-	return result.strip_edges();
+	return "UI page navigation removed — use 'tree' and 'ls' to navigate.";
 }
 
 String DebugConsole::_ui_where() const {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return "Registry not available.";
-	}
-
-	const auto &pages = reg->get_ui_pages();
-	if (pages.is_empty()) {
-		return "No UI pages registered. Use Debug.register_ui_page() to annotate game screens.";
-	}
-
-	// Find all currently visible pages and build a breadcrumb path.
-	Vector<String> visible_pages;
-	for (const KeyValue<String, DebugSemanticRegistry::UIPageEntry> &kv : pages) {
-		Object *obj = ObjectDB::get_instance(kv.value.node_id);
-		if (!obj) {
-			continue;
-		}
-		Node *node = Object::cast_to<Node>(obj);
-		if (!node) {
-			continue;
-		}
-		if (node->has_method("is_visible_in_tree")) {
-			bool vis = node->call("is_visible_in_tree");
-			if (vis) {
-				visible_pages.push_back(kv.key);
-			}
-		}
-	}
-
-	if (visible_pages.is_empty()) {
-		return "No UI pages currently visible.";
-	}
-
-	// Find the deepest visible page (most specific).
-	String deepest;
-	int max_depth = -1;
-	for (const String &page_name : visible_pages) {
-		int depth = 0;
-		String walk = page_name;
-		while (!walk.is_empty()) {
-			const DebugSemanticRegistry::UIPageEntry *entry = pages.getptr(walk);
-			if (!entry || entry->parent_page.is_empty()) {
-				break;
-			}
-			walk = entry->parent_page;
-			depth++;
-		}
-		if (depth > max_depth) {
-			max_depth = depth;
-			deepest = page_name;
-		}
-	}
-
-	// Build breadcrumb: walk up from deepest.
-	Vector<String> breadcrumb;
-	String walk = deepest;
-	while (!walk.is_empty()) {
-		breadcrumb.push_back(walk);
-		const DebugSemanticRegistry::UIPageEntry *entry = pages.getptr(walk);
-		if (!entry) {
-			break;
-		}
-		walk = entry->parent_page;
-	}
-
-	// Reverse to get root → leaf order.
-	String path;
-	for (int i = breadcrumb.size() - 1; i >= 0; i--) {
-		if (!path.is_empty()) {
-			path += " → ";
-		}
-		path += breadcrumb[i];
-	}
-
-	String result = vformat("Current: %s\n", path);
-
-	// Show available navigation from here.
-	const DebugSemanticRegistry::UIPageEntry *current = pages.getptr(deepest);
-	if (current) {
-		if (!current->description.is_empty()) {
-			result += vformat("  (%s)\n", current->description);
-		}
-		if (!current->child_pages.is_empty()) {
-			result += "  Navigate to: ";
-			for (int i = 0; i < current->child_pages.size(); i++) {
-				if (i > 0) {
-					result += ", ";
-				}
-				result += current->child_pages[i];
-			}
-			result += "\n";
-		}
-		if (!current->back_action.is_empty()) {
-			result += vformat("  Back: %s\n", current->back_action);
-		}
-	}
-
-	// Also list any other visible pages not in our breadcrumb.
-	Vector<String> other_visible;
-	for (const String &vp : visible_pages) {
-		bool in_breadcrumb = false;
-		for (const String &bc : breadcrumb) {
-			if (bc == vp) {
-				in_breadcrumb = true;
-				break;
-			}
-		}
-		if (!in_breadcrumb) {
-			other_visible.push_back(vp);
-		}
-	}
-	if (!other_visible.is_empty()) {
-		result += "  Also visible: ";
-		for (int i = 0; i < other_visible.size(); i++) {
-			if (i > 0) {
-				result += ", ";
-			}
-			result += other_visible[i];
-		}
-		result += "\n";
-	}
-
-	return result.strip_edges();
+	return "UI page navigation removed — use 'tree' and 'ls' to navigate.";
 }
 
 String DebugConsole::_ui_go(const String &p_page_name) const {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return "Registry not available.";
-	}
-
-	const DebugSemanticRegistry::UIPageEntry *target = reg->get_ui_pages().getptr(p_page_name);
-	if (!target) {
-		// Try fuzzy match.
-		String best_match;
-		for (const KeyValue<String, DebugSemanticRegistry::UIPageEntry> &kv : reg->get_ui_pages()) {
-			if (kv.key.to_lower().contains(p_page_name.to_lower())) {
-				if (best_match.is_empty()) {
-					best_match = kv.key;
-				} else {
-					// Multiple matches — ambiguous.
-					return vformat("Ambiguous page name '%s'. Matches: %s, %s, ...\nUse 'ui pages' to see all pages.",
-							p_page_name, best_match, kv.key);
-				}
-			}
-		}
-		if (!best_match.is_empty()) {
-			target = reg->get_ui_pages().getptr(best_match);
-		} else {
-			return vformat("UI page '%s' not found. Use 'ui pages' to see registered pages.", p_page_name);
-		}
-	}
-
-	Object *obj = ObjectDB::get_instance(target->node_id);
-	if (!obj) {
-		return vformat("UI page '%s' node has been freed.", target->name);
-	}
-
-	Node *node = Object::cast_to<Node>(obj);
-	if (!node) {
-		return vformat("UI page '%s' is not a Node.", target->name);
-	}
-
-	// Make the target page visible and hide sibling pages.
-	// Strategy: if the page has a parent page, hide all sibling pages, then
-	// show this one. Walk up the chain to make sure parents are also visible.
-
-	// First, make sure all ancestors are visible.
-	Vector<String> chain;
-	String walk = target->name;
-	while (!walk.is_empty()) {
-		chain.push_back(walk);
-		const DebugSemanticRegistry::UIPageEntry *entry = reg->get_ui_pages().getptr(walk);
-		if (!entry || entry->parent_page.is_empty()) {
-			break;
-		}
-		walk = entry->parent_page;
-	}
-
-	// Walk from root to leaf, showing each.
-	for (int i = chain.size() - 1; i >= 0; i--) {
-		const DebugSemanticRegistry::UIPageEntry *entry = reg->get_ui_pages().getptr(chain[i]);
-		if (!entry) {
-			continue;
-		}
-		Object *page_obj = ObjectDB::get_instance(entry->node_id);
-		if (!page_obj) {
-			continue;
-		}
-		Node *page_node = Object::cast_to<Node>(page_obj);
-		if (!page_node) {
-			continue;
-		}
-
-		// Hide siblings (other pages with the same parent).
-		for (const KeyValue<String, DebugSemanticRegistry::UIPageEntry> &kv : reg->get_ui_pages()) {
-			if (kv.key != chain[i] && kv.value.parent_page == entry->parent_page) {
-				Object *sib_obj = ObjectDB::get_instance(kv.value.node_id);
-				if (sib_obj) {
-					Node *sib_node = Object::cast_to<Node>(sib_obj);
-					if (sib_node && sib_node->has_method("set_visible")) {
-						sib_node->call("set_visible", false);
-					}
-				}
-			}
-		}
-
-		// Show this page.
-		if (page_node->has_method("set_visible")) {
-			page_node->call("set_visible", true);
-		}
-	}
-
-	return vformat("Navigated to: %s", target->name);
+	return "UI page navigation removed — use 'tree' and 'ls' to navigate.";
 }
 
 String DebugConsole::_ui_auto_detect_pages(Node *p_root) const {

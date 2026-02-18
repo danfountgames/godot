@@ -49,6 +49,7 @@ class DebugConsoleRenderer {
 	RID canvas_item_watches;
 	RID canvas_item_quick_buttons;
 	RID canvas_item_history_pills;
+	RID canvas_item_discovery; // Discovery pills (actions, queries, cvars).
 	RID canvas_item_popup; // Mini-badge popup shown when console is closed.
 	RID viewport_texture; // Not a full viewport — we draw into the root viewport's canvas.
 
@@ -88,6 +89,20 @@ class DebugConsoleRenderer {
 	Color pill_autocomplete_bg_color = Color(0.1, 0.2, 0.15, 1.0);
 	Color pill_autocomplete_text_color = Color(0.6, 1.0, 0.7);
 
+	// Discovery pill colors by item type.
+	Color pill_action_bg_color = Color(0.12, 0.15, 0.28, 1.0);
+	Color pill_action_text_color = Color(0.5, 0.7, 1.0);
+	Color pill_query_bg_color = Color(0.1, 0.22, 0.12, 1.0);
+	Color pill_query_text_color = Color(0.5, 1.0, 0.6);
+	Color pill_cvar_bg_color = Color(0.2, 0.12, 0.22, 1.0);
+	Color pill_cvar_text_color = Color(0.9, 0.6, 1.0);
+	Color pill_command_bg_color = Color(0.22, 0.18, 0.1, 1.0);
+	Color pill_command_text_color = Color(1.0, 0.85, 0.5);
+	Color pill_value_color = Color(0.6, 0.6, 0.6); // Dimmer color for live values on pills.
+	Color pill_tab_active_bg = Color(0.18, 0.18, 0.25, 1.0);
+	Color pill_tab_inactive_bg = Color(0.08, 0.08, 0.12, 0.8);
+	Color pill_tab_text_color = Color(0.6, 0.65, 0.7);
+
 	// Mini-badge popup colors.
 	Color popup_bg_color = Color(0.1, 0.1, 0.15, 0.9);
 	Color popup_info_color = Color(0.4, 0.7, 1.0);
@@ -109,6 +124,11 @@ public:
 		AUTOCOMPLETE_SELECT, // payload = completion index
 		QUICK_COMMAND, // payload = index into quick_commands
 		HISTORY_PILL, // payload = index into recent history (0 = most recent)
+		DISCOVERY_PILL, // payload = index into console's discovery_items vector
+		DISCOVERY_TAB, // payload = discovery tab index (0=actions, 1=queries, 2=cvars, 3=commands)
+		TRANSPORT, // payload = 0:pause/resume, 1:step1, 2:step10
+		TIMESCALE, // Cycle timescale presets.
+		WATCH_TOGGLE, // Toggle watch overlay visibility.
 		POPUP_TAP, // Mini-badge tapped — open console.
 		FILTER_INFO, // Toggle info log filter.
 		FILTER_WARNING, // Toggle warning log filter.

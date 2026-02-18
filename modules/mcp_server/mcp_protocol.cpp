@@ -39,13 +39,13 @@
 #include "tools/mcp_analysis_tools.h"
 #include "tools/mcp_automation_tools.h"
 #include "tools/mcp_breakpoint_tools.h"
-#include "tools/mcp_console_tools.h"
 #include "tools/mcp_debug_tools.h"
 #include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
 #include "tools/mcp_export_tools.h"
 #include "tools/mcp_help_tool.h"
 #include "tools/mcp_input_tools.h"
+#include "tools/mcp_introspection_tools.h"
 #include "tools/mcp_memory_tools.h"
 #include "tools/mcp_scene_tools.h"
 #include "tools/mcp_shader_tools.h"
@@ -115,8 +115,7 @@ MCPProtocol::MCPProtocol() {
 	MCPMemoryTools::register_tools(&tool_registry);
 	MCPAnalysisTools::register_tools(&tool_registry);
 	MCPShaderTools::register_tools(&tool_registry);
-	MCPConsoleTools::register_tools(&tool_registry);
-
+	MCPIntrospectionTools::register_tools(&tool_registry);
 	// Register common aliases for tools that agents frequently guess wrong.
 	// These cover every hallucinated name observed in production agent sessions.
 	tool_registry.register_alias("runtime/take_screenshot", "runtime/get_screenshot");
@@ -1284,7 +1283,7 @@ void MCPProtocol::_register_game_resources() {
 
 	def.uri = "godot://debug/events";
 	def.name = "Debug Events";
-	def.description = "Recent game events from the DebugSemanticRegistry event log (hit_barrel, ball_fell, etc.). "
+	def.description = "Recent game events from the debug event log. "
 					  "Subscribe to receive notifications when new events fire.";
 	def.mime_type = "application/json";
 	def.handler = callable_mp(this, &MCPProtocol::_read_debug_events);

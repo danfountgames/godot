@@ -176,16 +176,16 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				"tool — it loads the scene, instantiates it, adds it to the tree, and "
 				"optionally sets initial properties.\n\n"
 				"For game-specific spawning that requires factory logic (adding to groups, "
-				"wiring signals, initializing complex state), prefer using console/invoke "
-				"with a registered spawn action (e.g., console/invoke {name: \"spawn_enemy\", "
-				"params: {type: \"slime\", position: [100, 200]}}). The instrumenter agent "
+				"wiring signals, initializing complex state), prefer using debug/call "
+				"with a registered spawn method (e.g., debug/call {path: \"/root/Main/EnemySpawner\", "
+				"method: \"spawn_enemy\", args: [\"slime\", 100, 200]}). The instrumenter agent "
 				"can register these factory spawn actions.\n\n"
 				"Integration test workflow:\n"
 				"  1. runtime/time/suspend — pause the game\n"
 				"  2. runtime/spawn_instance — place prefabs into the scene\n"
 				"  3. runtime/set_node_property — configure positions, properties\n"
 				"  4. runtime/time/resume — unpause and observe behavior\n"
-				"  5. console/batch_query / runtime/get_node_properties — verify results\n\n"
+				"  5. debug/get / runtime/get_node_properties — verify results\n\n"
 				"The returned instance_id is the Godot object ID, usable with "
 				"runtime/get_node_properties and runtime/set_node_property via the "
 				"returned node_path. Game must be running.",
@@ -609,11 +609,11 @@ Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
 				"This expression requires GDScript statement execution "
 				"(multi-line code, assignments, or control flow), which is "
 				"not currently supported. Use single-expression evaluations instead.\n\n"
-				"For Debug singleton operations, use the console/* tools:\n"
-				"  - console/query for reading game state\n"
-				"  - console/invoke for triggering actions\n"
-				"  - console/get_cvar / console/set_cvar for configuration variables\n"
-				"  - console/batch_query for reading multiple values at once");
+				"For Debug singleton operations, use the debug/* tools:\n"
+				"  - debug/get for reading node properties\n"
+				"  - debug/set for writing node properties\n"
+				"  - debug/call for calling methods on nodes\n"
+				"  - debug/browse_tree / debug/describe_class for exploring the scene");
 	}
 	result = bridge->send_evaluate(rewritten, timeout_ms);
 

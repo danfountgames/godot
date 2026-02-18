@@ -94,6 +94,35 @@ private:
 
 	// === Watches ===
 	Vector<WatchEntry> _watches;
+	bool _watches_overlay_visible = false; // Toggle for persistent on-screen overlay. Default off.
+
+	// === Discovery pills ===
+public:
+	enum DiscoveryType {
+		DISCOVERY_ACTION,
+		DISCOVERY_QUERY,
+		DISCOVERY_CVAR,
+		DISCOVERY_COMMAND,
+		DISCOVERY_TYPE_COUNT,
+	};
+
+	struct DiscoveryItem {
+		String name; // e.g. "add_score", "score", "paddle.speed"
+		String display; // Label shown on pill (may include live value).
+		String command; // Command string to populate input with on tap.
+		DiscoveryType type = DISCOVERY_ACTION;
+	};
+
+	static const int DISCOVERY_TAB_COUNT = 4;
+	static const char *discovery_tab_labels[DISCOVERY_TAB_COUNT];
+	static const int MAX_DISCOVERY_PILLS = 20; // Max pills per tab visible.
+
+private:
+	int _discovery_active_tab = 1; // Default to queries (most useful to see live).
+	Vector<DiscoveryItem> _discovery_items; // Current filtered items for active tab.
+	bool _discovery_visible = true; // Show discovery row when registry has items.
+	uint64_t _discovery_last_update_frame = 0;
+	void _update_discovery_items();
 
 	// === Rendering ===
 	DebugConsoleRenderer *_renderer = nullptr;
@@ -222,6 +251,20 @@ public:
 	void select_completion(int p_index);
 	void execute_quick_command(int p_index);
 	void execute_history_pill(int p_index);
+	void tap_discovery_pill(int p_index);
+	void tap_discovery_tab(int p_index);
+	void tap_transport(int p_index); // Transport control buttons in status bar.
+	void tap_timescale(); // Cycle timescale presets.
+	void toggle_watches_overlay(); // Toggle persistent watch overlay.
+
+	// Watch overlay state.
+	bool is_watches_overlay_visible() const { return _watches_overlay_visible; }
+	bool has_watches() const { return !_watches.is_empty(); }
+
+	// Discovery pill state (for renderer).
+	bool is_discovery_visible() const { return _discovery_visible; }
+	int get_discovery_active_tab() const { return _discovery_active_tab; }
+	const Vector<DiscoveryItem> &get_discovery_items() const { return _discovery_items; }
 
 	// Mini-badge popup state (for renderer).
 	bool is_popup_visible() const { return _popup_visible && !_open; }

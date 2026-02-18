@@ -15,8 +15,8 @@ Use `help` to list all tools. Use `help <tool_name>` for parameters.
 **RUNTIME — UI**: runtime/ui/get_control_info, runtime/ui/set_text, runtime/ui/get_text, runtime/ui/set_range_value, runtime/ui/get_range_value, runtime/ui/select_option, runtime/ui/get_options, runtime/ui/set_tab, runtime/ui/get_tabs, runtime/ui/set_checked, runtime/ui/focus
 **RUNTIME — TIME**: runtime/time/suspend, runtime/time/resume, runtime/time/next_frame, runtime/time/advance_frames, runtime/time/set_scale, runtime/time/get_scale
 **RUNTIME — SIGNALS**: runtime/get_node_signals, runtime/emit_signal
-**DEBUG**: debug/set_breakpoint, debug/get_breakpoints, debug/get_break_state, debug/step
-**CONSOLE**: console/execute, console/get_manifest, console/query, console/batch_query, console/invoke, console/get_cvar, console/set_cvar, console/get_events
+**DEBUG**: debug/describe_class, debug/browse_tree, debug/get, debug/set, debug/call, debug/set_breakpoint, debug/get_breakpoints, debug/get_break_state, debug/step
+**CONSOLE**: console/execute
 **MEMORY**: memory/get_stats, memory/get_orphans, memory/take_snapshot, memory/diff, memory/track_trend, memory/detect_leaks, memory/class_breakdown
 **ANALYSIS**: analysis/dead_code, analysis/complexity, analysis/signal_flow, analysis/dependencies, analysis/duplication, analysis/project_health, analysis/validate_scenes, analysis/assets, analysis/unused_files, analysis/input_mappings
 **DOCS**: doc/search_classes, doc/get_class, doc/search_methods, doc/get_method, doc/get_property, doc/get_online_docs
@@ -40,22 +40,18 @@ Unknown tool errors suggest the closest match. Use `help` when unsure.
   3. runtime/get_output — no runtime errors
   4. runtime/get_screenshot — visual sanity check
 
-## Semantic debug system (Debug singleton)
-Games register CVars, Commands, Queries, Actions, Events, UI Pages, and Interactables via the Debug autoload singleton. All discoverable at runtime:
-  console/get_manifest                      — full manifest with summary text
-  console/get_manifest {names_only: true}   — lightweight: just names per section
-  console/get_manifest {sections: ["queries", "actions"]} — filter by section
-  console/query {name: "score"}             — read a query
-  console/batch_query {names: ["score","lives"]} — multiple queries (also accepts {queries: [...]})
-  console/invoke {name: "spawn_ball", params: {x: 100}} — invoke action
-  console/get_cvar / console/set_cvar       — read/write config variables
-  console/get_events {count: 20}            — recent debug events
-If the manifest is empty, the game has no semantic context — use godot-semantic-contexter.
+## Debug introspection system (automatic — no game code needed)
+The debug/* tools give you full introspection over any running game without any setup:
+  debug/describe_class {class: "CharacterBody2D"}   — parsed class reference (properties, methods, signals, docs)
+  debug/browse_tree {path: "/root", depth: 2}       — live scene tree with types, scripts, groups
+  debug/get {path: "/root/Player", property: "health"} — read properties (supports globs, where?, summarize?, group_by_value?)
+  debug/set {path: "/root/Player", property: "health", value: 100} — set properties (supports globs, where?)
+  debug/call {path: "/root/Player", method: "take_damage", args: [50]} — call methods (supports globs, where?)
+Discovery workflow: browse_tree → describe_class → get/set/call
 
-## Five specialized subagents
+## Four specialized subagents
   godot-planner       — plans architecture, scene trees, signal wiring, @exports. Use BEFORE building.
   godot-builder       — implements: scripts, scenes, UI, gameplay. Scene-first, validates compilation.
-  godot-semantic-contexter — adds Debug.register_* calls for observability. Enables console/* tools.
   godot-game-player   — owns the runtime: launches, tests, debugs, plays. Evidence-based answers.
   godot-refactor      — code health: splits monoliths, extracts duplication. NEVER changes behavior.
 
@@ -75,7 +71,7 @@ Godot is SCENE-DRIVEN. The RESULT of your work must be .tscn scene files that th
 - One script = one responsibility. Small files. If it's big, split it.
 
 ## Orchestrator workflow — cycle management
-Development follows iterative cycles: plan → build → context → test → (refactor).
+Development follows iterative cycles: plan → build → test → (refactor).
 Maintain cycle state JSON for session continuity. Launch godot-refactor every 3 cycles.
 
 </godot_context>

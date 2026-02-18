@@ -42,12 +42,12 @@
 const DebugConsoleRenderer::QuickCommand DebugConsoleRenderer::quick_commands[QUICK_COMMAND_COUNT] = {
 	{ "help", "help" },
 	{ "ls", "ls" },
-	{ "list", "list" },
-	{ "pause", "pause" },
-	{ "resume", "resume" },
+	{ "list all", "list all" },
 	{ "clear", "clear" },
 	{ "ui pages", "ui pages" },
 	{ "ui where", "ui where" },
+	{ "watch", "watch " },
+	{ "unwatch", "unwatch" },
 };
 
 DebugConsoleRenderer::DebugConsoleRenderer() {
@@ -85,6 +85,9 @@ DebugConsoleRenderer::~DebugConsoleRenderer() {
 	}
 	if (canvas_item_history_pills.is_valid()) {
 		rs->free_rid(canvas_item_history_pills);
+	}
+	if (canvas_item_discovery.is_valid()) {
+		rs->free_rid(canvas_item_discovery);
 	}
 	if (canvas_item_popup.is_valid()) {
 		rs->free_rid(canvas_item_popup);
@@ -139,6 +142,9 @@ void DebugConsoleRenderer::_ensure_initialized() {
 
 	canvas_item_history_pills = rs->canvas_item_create();
 	rs->canvas_item_set_parent(canvas_item_history_pills, canvas);
+
+	canvas_item_discovery = rs->canvas_item_create();
+	rs->canvas_item_set_parent(canvas_item_discovery, canvas);
 
 	canvas_item_popup = rs->canvas_item_create();
 	rs->canvas_item_set_parent(canvas_item_popup, canvas);
@@ -212,6 +218,7 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 	rs->canvas_item_clear(canvas_item_status);
 	rs->canvas_item_clear(canvas_item_quick_buttons);
 	rs->canvas_item_clear(canvas_item_history_pills);
+	rs->canvas_item_clear(canvas_item_discovery);
 	_hit_rects.clear();
 
 	float progress = p_console->get_open_progress();
@@ -224,6 +231,7 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		rs->canvas_item_set_visible(canvas_item_status, false);
 		rs->canvas_item_set_visible(canvas_item_quick_buttons, false);
 		rs->canvas_item_set_visible(canvas_item_history_pills, false);
+		rs->canvas_item_set_visible(canvas_item_discovery, false);
 		return;
 	}
 
@@ -234,6 +242,7 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 	rs->canvas_item_set_visible(canvas_item_status, true);
 	rs->canvas_item_set_visible(canvas_item_quick_buttons, true);
 	rs->canvas_item_set_visible(canvas_item_history_pills, true);
+	rs->canvas_item_set_visible(canvas_item_discovery, true);
 
 	// Get screen size.
 	Window *root = SceneTree::get_singleton()->get_root();
@@ -255,43 +264,119 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 	Vector<String> recent_history = p_console->get_recent_history(MAX_HISTORY_PILLS);
 	bool show_history_pills = !recent_history.is_empty();
 	bool show_quick_buttons = true; // Always show.
+	bool show_discovery = p_console->is_discovery_visible();
 
 	// --- Background ---
 	Rect2 bg_rect(0, y_offset, screen_size.x, console_height);
 	_draw_rect(canvas_item_bg, bg_rect, bg_color);
 
-	// --- Status bar (bottom of console) ---
+	// --- Status bar (bottom of console) — transport controls + filters ---
 	float status_y = y_offset + console_height - status_height;
 	Rect2 status_rect(0, status_y, screen_size.x, status_height);
 	_draw_rect(canvas_item_status, status_rect, status_bg_color);
 
-	// Status bar text.
+	int sfont = font_size - 2;
+	float btn_h = status_height - 4.0f;
+	float btn_y = status_y + 2.0f;
+	float text_baseline = status_y + status_height - 6.0f;
+
 	SceneTree *tree = SceneTree::get_singleton();
-	String status_text;
-	if (tree) {
-		if (tree->is_suspended()) {
-			status_text += String::utf8("\u23f8 SUSPENDED");
-		} else if (tree->is_paused()) {
-			status_text += String::utf8("\u23f8 PAUSED");
-		} else {
-			status_text += String::utf8("\u25b6 RUNNING");
-		}
-	}
-	status_text += vformat("  |  F:%d", Engine::get_singleton()->get_process_frames());
-	status_text += vformat("  |  FPS:%d", Engine::get_singleton()->get_frames_per_second());
-	double ts = Engine::get_singleton()->get_time_scale();
-	if (ts != 1.0) {
-		status_text += vformat("  |  x%s", String::num(ts, 2));
-	}
+	bool suspended = tree && tree->is_suspended();
+	bool paused = tree && tree->is_paused();
 
-	_draw_text(canvas_item_status,
-			Vector2(margin, status_y + status_height - 6.0f),
-			status_text, status_text_color, font_size - 2);
+	// --- Left side: transport controls ---
+	float lx = margin;
 
-	// --- Filter buttons (right side of status bar) ---
+	// Play/Pause toggle button.
 	{
-		float filter_x = screen_size.x - margin;
-		int filter_font = font_size - 2;
+		String label;
+		Color bg, text_col;
+		if (suspended || paused) {
+			label = String::utf8("\u25b6"); // Play icon
+			bg = Color(0.15, 0.25, 0.15, 1.0); // Green tint
+			text_col = Color(0.4, 1.0, 0.4);
+		} else {
+			label = String::utf8("\u23f8"); // Pause icon
+			bg = Color(0.25, 0.2, 0.1, 1.0); // Amber tint
+			text_col = Color(1.0, 0.9, 0.3);
+		}
+		float bw = _get_text_width(label, sfont) + 14.0f;
+		Rect2 r(lx, btn_y, bw, btn_h);
+		_draw_rect(canvas_item_status, r, bg);
+		_draw_text(canvas_item_status, Vector2(lx + 7.0f, text_baseline), label, text_col, sfont);
+		HitRect hr;
+		hr.rect = r;
+		hr.action = HitAction::TRANSPORT;
+		hr.payload = 0;
+		_hit_rects.push_back(hr);
+		lx += bw + 3.0f;
+	}
+
+	// Step buttons (always visible, but highlighted when suspended).
+	{
+		Color step_bg = suspended ? Color(0.15, 0.18, 0.28, 1.0) : Color(0.1, 0.1, 0.15, 0.6);
+		Color step_text = suspended ? Color(0.6, 0.8, 1.0) : Color(0.35, 0.35, 0.4);
+
+		// Step 1.
+		String s1 = String::utf8("\u23ed\ufe0e1");
+		float s1w = _get_text_width(s1, sfont) + 12.0f;
+		Rect2 r1(lx, btn_y, s1w, btn_h);
+		_draw_rect(canvas_item_status, r1, step_bg);
+		_draw_text(canvas_item_status, Vector2(lx + 6.0f, text_baseline), s1, step_text, sfont);
+		HitRect hr1;
+		hr1.rect = r1;
+		hr1.action = HitAction::TRANSPORT;
+		hr1.payload = 1;
+		_hit_rects.push_back(hr1);
+		lx += s1w + 3.0f;
+
+		// Step 10.
+		String s10 = String::utf8("\u23ed\ufe0e10");
+		float s10w = _get_text_width(s10, sfont) + 12.0f;
+		Rect2 r10(lx, btn_y, s10w, btn_h);
+		_draw_rect(canvas_item_status, r10, step_bg);
+		_draw_text(canvas_item_status, Vector2(lx + 6.0f, text_baseline), s10, step_text, sfont);
+		HitRect hr10;
+		hr10.rect = r10;
+		hr10.action = HitAction::TRANSPORT;
+		hr10.payload = 2;
+		_hit_rects.push_back(hr10);
+		lx += s10w + 3.0f;
+	}
+
+	// Separator.
+	lx += 4.0f;
+
+	// Timescale button (tappable, cycles through presets).
+	{
+		double ts = Engine::get_singleton()->get_time_scale();
+		String ts_label = vformat("x%s", String::num(ts, ts == (int)ts ? 0 : 2));
+		float tsw = _get_text_width(ts_label, sfont) + 12.0f;
+		Color ts_bg = (ts != 1.0) ? Color(0.25, 0.15, 0.1, 1.0) : Color(0.1, 0.1, 0.15, 0.6);
+		Color ts_col = (ts != 1.0) ? Color(1.0, 0.7, 0.3) : Color(0.4, 0.4, 0.5);
+		Rect2 r(lx, btn_y, tsw, btn_h);
+		_draw_rect(canvas_item_status, r, ts_bg);
+		_draw_text(canvas_item_status, Vector2(lx + 6.0f, text_baseline), ts_label, ts_col, sfont);
+		HitRect hr;
+		hr.rect = r;
+		hr.action = HitAction::TIMESCALE;
+		hr.payload = 0;
+		_hit_rects.push_back(hr);
+		lx += tsw + 8.0f;
+	}
+
+	// Frame count and FPS (non-interactive text).
+	{
+		String info = vformat("F:%d  FPS:%d", Engine::get_singleton()->get_process_frames(),
+				Engine::get_singleton()->get_frames_per_second());
+		_draw_text(canvas_item_status, Vector2(lx, text_baseline), info, status_text_color, sfont);
+	}
+
+	// --- Right side: watch toggle + filters ---
+	{
+		float rx = screen_size.x - margin;
+
+		// Filter buttons: ERR, WARN, INFO.
 		const char *filter_labels[] = { "ERR", "WARN", "INFO" };
 		bool filter_states[] = { p_console->is_filter_error(), p_console->is_filter_warning(), p_console->is_filter_info() };
 		Color filter_colors[] = { popup_error_color, popup_warning_color, popup_info_color };
@@ -299,19 +384,17 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 
 		for (int i = 0; i < 3; i++) {
 			String label = filter_labels[i];
-			float tw = _get_text_width(label, filter_font);
-			float btn_w = tw + 12.0f;
-			filter_x -= btn_w + 4.0f;
+			float tw = _get_text_width(label, sfont);
+			float bw = tw + 12.0f;
+			rx -= bw + 4.0f;
 
-			Rect2 btn_rect(filter_x, status_y + 2.0f, btn_w, status_height - 4.0f);
+			Rect2 r(rx, btn_y, bw, btn_h);
 			Color bg = filter_states[i] ? filter_active_color : filter_inactive_color;
-			_draw_rect(canvas_item_status, btn_rect, bg);
-			_draw_text(canvas_item_status,
-					Vector2(filter_x + 6.0f, status_y + status_height - 6.0f),
-					label, filter_states[i] ? filter_colors[i] : Color(0.4, 0.4, 0.4), filter_font);
-
+			_draw_rect(canvas_item_status, r, bg);
+			_draw_text(canvas_item_status, Vector2(rx + 6.0f, text_baseline),
+					label, filter_states[i] ? filter_colors[i] : Color(0.4, 0.4, 0.4), sfont);
 			HitRect hr;
-			hr.rect = btn_rect;
+			hr.rect = r;
 			hr.action = filter_actions[i];
 			hr.payload = 0;
 			_hit_rects.push_back(hr);
@@ -319,20 +402,43 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 
 		// Snap-to-bottom button (only when scrolled up).
 		if (!p_console->is_auto_scroll()) {
-			filter_x -= 4.0f;
+			rx -= 4.0f;
 			String snap_label = String::utf8("\u2193 BTM");
-			float snap_w = _get_text_width(snap_label, filter_font) + 12.0f;
-			filter_x -= snap_w;
+			float snap_w = _get_text_width(snap_label, sfont) + 12.0f;
+			rx -= snap_w;
 
-			Rect2 snap_rect(filter_x, status_y + 2.0f, snap_w, status_height - 4.0f);
-			_draw_rect(canvas_item_status, snap_rect, Color(0.15, 0.25, 0.15, 1.0));
-			_draw_text(canvas_item_status,
-					Vector2(filter_x + 6.0f, status_y + status_height - 6.0f),
-					snap_label, Color(0.5, 1.0, 0.5), filter_font);
-
+			Rect2 r(rx, btn_y, snap_w, btn_h);
+			_draw_rect(canvas_item_status, r, Color(0.15, 0.25, 0.15, 1.0));
+			_draw_text(canvas_item_status, Vector2(rx + 6.0f, text_baseline),
+					snap_label, Color(0.5, 1.0, 0.5), sfont);
 			HitRect hr;
-			hr.rect = snap_rect;
+			hr.rect = r;
 			hr.action = HitAction::SNAP_TO_BOTTOM;
+			hr.payload = 0;
+			_hit_rects.push_back(hr);
+		}
+
+		// Watch overlay toggle.
+		{
+			rx -= 4.0f;
+			bool has_w = p_console->has_watches();
+			bool vis = p_console->is_watches_overlay_visible();
+			String eye_label = has_w ? (vis ? String::utf8("\U0001F441") : String::utf8("\U0001F441\u0336")) : String::utf8("\U0001F441");
+			// Simpler approach: use text labels.
+			String w_label = vis ? "OVL" : "ovl";
+			if (has_w) {
+				w_label += vformat(":%d", p_console->get_watches().size());
+			}
+			float ww = _get_text_width(w_label, sfont) + 12.0f;
+			rx -= ww;
+			Color w_bg = vis ? Color(0.15, 0.22, 0.15, 1.0) : filter_inactive_color;
+			Color w_col = vis ? Color(0.5, 1.0, 0.6) : Color(0.35, 0.35, 0.4);
+			Rect2 r(rx, btn_y, ww, btn_h);
+			_draw_rect(canvas_item_status, r, w_bg);
+			_draw_text(canvas_item_status, Vector2(rx + 6.0f, text_baseline), w_label, w_col, sfont);
+			HitRect hr;
+			hr.rect = r;
+			hr.action = HitAction::WATCH_TOGGLE;
 			hr.payload = 0;
 			_hit_rects.push_back(hr);
 		}
@@ -450,7 +556,125 @@ void DebugConsoleRenderer::draw(DebugConsole *p_console) {
 		}
 	}
 
-	// Autocomplete chips (above history, only when completions are visible).
+	// Discovery pills (above history — tab headers + item pills).
+	if (show_discovery) {
+		const auto &items = p_console->get_discovery_items();
+		int active_tab = p_console->get_discovery_active_tab();
+
+		// Two rows: tab headers on top, item pills below.
+		// Item pill row.
+		current_pill_y -= pill_row_height;
+		float pill_row_y = current_pill_y;
+
+		_draw_rect(canvas_item_discovery,
+				Rect2(0, pill_row_y, screen_size.x, pill_row_height),
+				Color(0.04, 0.04, 0.07, 0.85));
+
+		if (!items.is_empty()) {
+			float x = margin;
+
+			// Choose colors based on active tab type.
+			Color item_bg, item_text;
+			switch (active_tab) {
+				case 0:
+					item_bg = pill_action_bg_color;
+					item_text = pill_action_text_color;
+					break;
+				case 1:
+					item_bg = pill_query_bg_color;
+					item_text = pill_query_text_color;
+					break;
+				case 2:
+					item_bg = pill_cvar_bg_color;
+					item_text = pill_cvar_text_color;
+					break;
+				case 3:
+					item_bg = pill_command_bg_color;
+					item_text = pill_command_text_color;
+					break;
+				default:
+					item_bg = pill_quick_bg_color;
+					item_text = pill_quick_text_color;
+					break;
+			}
+
+			for (int i = 0; i < items.size(); i++) {
+				String label = items[i].display;
+				if (label.length() > 25) {
+					label = label.left(23) + "..";
+				}
+				float text_w = _get_text_width(label, font_size - 2);
+				float pw = text_w + pill_padding_h * 2;
+
+				if (x + pw > screen_size.x - margin) {
+					break; // No wrapping — just cut off.
+				}
+
+				Rect2 pill_rect(x, pill_row_y + (pill_row_height - pill_height) / 2.0f,
+						pw, pill_height);
+				_draw_pill(canvas_item_discovery, pill_rect, item_bg, label, item_text, font_size - 2);
+
+				HitRect hr;
+				hr.rect = pill_rect;
+				hr.action = HitAction::DISCOVERY_PILL;
+				hr.payload = i;
+				_hit_rects.push_back(hr);
+
+				x += pw + pill_gap;
+			}
+		} else {
+			// Empty state message.
+			_draw_text(canvas_item_discovery,
+					Vector2(margin, pill_row_y + pill_row_height - 10.0f),
+					"No items registered.", Color(0.4, 0.4, 0.45), font_size - 2);
+		}
+
+		// Tab header row (above item pills).
+		current_pill_y -= pill_row_height;
+		float tab_row_y = current_pill_y;
+
+		_draw_rect(canvas_item_discovery,
+				Rect2(0, tab_row_y, screen_size.x, pill_row_height),
+				Color(0.05, 0.05, 0.08, 0.9));
+
+		{
+			float x = margin;
+
+			// "Browse:" label.
+			_draw_text(canvas_item_discovery,
+					Vector2(x, tab_row_y + pill_row_height - 10.0f),
+					"Browse:", Color(0.45, 0.45, 0.5), font_size - 2);
+			x += _get_text_width("Browse:", font_size - 2) + 8.0f;
+
+			for (int i = 0; i < DebugConsole::DISCOVERY_TAB_COUNT; i++) {
+				String label = DebugConsole::discovery_tab_labels[i];
+				float text_w = _get_text_width(label, font_size - 1);
+				float pw = text_w + pill_padding_h * 2;
+
+				if (x + pw > screen_size.x - margin) {
+					break;
+				}
+
+				bool is_active = (i == active_tab);
+				Color bg = is_active ? pill_tab_active_bg : pill_tab_inactive_bg;
+				Color text_col = is_active ? Color(1.0, 1.0, 1.0) : pill_tab_text_color;
+
+				Rect2 pill_rect(x, tab_row_y + (pill_row_height - pill_height) / 2.0f,
+						pw, pill_height);
+				_draw_pill(canvas_item_discovery, pill_rect, bg, label, text_col, font_size - 1);
+
+				HitRect hr;
+				hr.rect = pill_rect;
+				hr.action = HitAction::DISCOVERY_TAB;
+				hr.payload = i;
+				_hit_rects.push_back(hr);
+
+				x += pw + pill_gap;
+			}
+		}
+	}
+
+	// Autocomplete chips (above discovery/history, only when completions are visible).
 	if (show_autocomplete_chips) {
 		current_pill_y -= pill_row_height;
 		float x = margin;
@@ -613,7 +837,7 @@ void DebugConsoleRenderer::draw_watches(DebugConsole *p_console) {
 	rs->canvas_item_clear(canvas_item_watches);
 
 	const Vector<DebugConsole::WatchEntry> &watches = p_console->get_watches();
-	if (watches.is_empty()) {
+	if (watches.is_empty() || !p_console->is_watches_overlay_visible()) {
 		rs->canvas_item_set_visible(canvas_item_watches, false);
 		return;
 	}

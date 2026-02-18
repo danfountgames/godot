@@ -293,7 +293,11 @@ bool MCPToolRegistry::is_long_running_tool(const String &p_name) const {
 		"runtime/set_node_property",
 		"test/run",
 		"console/execute",
-		"console/get_manifest",
+		"debug/describe_class",
+		"debug/browse_tree",
+		"debug/get",
+		"debug/set",
+		"debug/call",
 		nullptr // Sentinel.
 	};
 

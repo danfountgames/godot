@@ -177,13 +177,11 @@ String AgentPanel::_build_system_prompt() const {
 //
 // godot-planner      — plans architecture, scene/node structure, implementation
 // godot-builder      — builds game features: scripts, scenes, UI, gameplay
-// godot-semantic-contexter — creates machine-readable semantic debug context
 // godot-game-player  — launches, tests, and debugs the running game
 // godot-refactor     — code health guardian: splits monoliths, enforces KISS
 //
 // Typical flow: planner → builder → game-player (test).
 // Periodic:     refactor (every 3 cycles or when files are bloated).
-// When needed:  semantic-contexter (adds semantic debug context to existing code).
 // ---------------------------------------------------------------------------
 
 String AgentPanel::_build_agents_json() const {
@@ -213,25 +211,9 @@ String AgentPanel::_build_agents_json() const {
 							 "bug fixes, UI improvements, or gameplay features implemented. "
 							 "Follows scene-first architecture — creates .tscn files, uses "
 							 "@export properties, and wires everything up. "
-							 "Does NOT add debug context (use godot-semantic-contexter for that).";
+							 "Debug introspection is automatic — no game-side code needed.";
 		def["prompt"] = _agent_prompt_agent_builder;
 		agents["godot-builder"] = def;
-	}
-
-	// ── godot-semantic-contexter ────────────────────────────────────────
-	{
-		Dictionary def;
-		def["model"] = "sonnet";
-		def["permissionMode"] = "acceptEdits";
-		def["description"] = "Creates machine-readable semantic context for Godot games. "
-							 "Registers CVars, Queries, Events, Actions, Commands, UI Pages, "
-							 "Interactables, and Factory Spawns so the debug console and MCP "
-							 "tools can understand, observe, and control ANY game project. "
-							 "Use PROACTIVELY when the debug manifest is empty, when "
-							 "godot-game-player reports missing coverage, or after "
-							 "godot-planner identifies debug surface points.";
-		def["prompt"] = _agent_prompt_agent_semantic_contexter;
-		agents["godot-semantic-contexter"] = def;
 	}
 
 	// ── godot-game-player ──────────────────────────────────────────────
@@ -282,7 +264,7 @@ Vector<String> AgentPanel::_build_claude_args() const {
 	args.push_back("--append-system-prompt");
 	args.push_back(system_prompt);
 
-	// Subagents: planner, builder, semantic-contexter, game-player, refactor.
+	// Subagents: planner, builder, game-player, refactor.
 	String agents_json = _build_agents_json();
 	args.push_back("--agents");
 	args.push_back(agents_json);

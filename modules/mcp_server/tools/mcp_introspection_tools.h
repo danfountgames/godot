@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  debug_console_autocomplete.h                                          */
+/*  mcp_introspection_tools.h                                             */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,43 +30,33 @@
 
 #pragma once
 
-#ifdef DEBUG_ENABLED
+#include "core/variant/dictionary.h"
 
-#include "core/string/ustring.h"
-#include "core/templates/vector.h"
-#include "core/variant/callable.h"
-#include "scene/resources/font.h"
+class MCPToolRegistry;
 
-class DebugConsoleAutocomplete {
+class MCPIntrospectionTools {
 public:
-	struct CompletionEntry {
-		String name; // "teleport", "query.health", "god_mode"
-		String description; // "Teleport player. x:float y:float"
-		String type_label; // "[cmd]", "[cvar]", "[action]", "[query]"
-		Color type_color;
+	static void register_tools(MCPToolRegistry *p_registry);
 
-		bool operator<(const CompletionEntry &p_other) const {
-			return name.naturalcasecmp_to(p_other.name) < 0;
-		}
-	};
+	// debug/describe_class -- class reference from parser/ClassDB
+	static Dictionary handle_describe_class(const Dictionary &p_args);
+
+	// debug/browse_tree -- live scene tree (wraps existing browse_scene_tree with defaults)
+	static Dictionary handle_browse_tree(const Dictionary &p_args);
+
+	// debug/get -- read property with globs, where, summarize
+	static Dictionary handle_get(const Dictionary &p_args);
+
+	// debug/set -- set property with globs, where
+	static Dictionary handle_set(const Dictionary &p_args);
+
+	// debug/call -- call method with globs, where
+	static Dictionary handle_call(const Dictionary &p_args);
+
+	// console/execute -- preserved from old tools, sends command to debug console
+	static Dictionary handle_console_execute(const Dictionary &p_args);
 
 private:
-	Vector<CompletionEntry> entries;
-	bool sorted = false;
-
-	void _rebuild();
-
-public:
-	// Rebuild the completion list if needed.
-	void rebuild_if_dirty();
-
-	// Get completions for a prefix.
-	Vector<const CompletionEntry *> get_completions(const String &p_prefix, int p_max_results = 8) const;
-
-	// Get argument completions for a specific command.
-	PackedStringArray get_argument_completions(const String &p_command, const String &p_partial) const;
-
-	int get_entry_count() const { return entries.size(); }
+	static class MCPDebuggerBridge *_get_bridge();
+	static Dictionary _require_game_running();
 };
-
-#endif // DEBUG_ENABLED

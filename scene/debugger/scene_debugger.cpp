@@ -31,6 +31,8 @@
 #include "scene_debugger.h"
 
 #include "core/config/engine.h"
+#include "core/doc_data.h"
+#include "core/object/class_db.h"
 #include "modules/modules_enabled.gen.h" // For mcp_server.
 #include "core/config/project_settings.h"
 #include "core/debugger/debugger_marshalls.h"
@@ -49,7 +51,6 @@
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
 #include "core/io/json.h"
-#include "scene/debugger/debug_semantic_registry.h"
 #include "scene/resources/packed_scene.h"
 #include "scene/theme/theme_db.h"
 #include "servers/audio/audio_server.h"
@@ -5716,162 +5717,820 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		return OK;
 	}
 
-	// =========================================================================
-	// Native Debug singleton handlers (bypass GDScript to avoid crashes)
-	// =========================================================================
-
-	// --- debug_get_manifest ---
-	if (p_msg == "debug_get_manifest") {
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			result.push_back(true);
-			Dictionary manifest = reg->get_manifest();
-			result.push_back(JSON::stringify(manifest));
-		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
-		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
-		return OK;
-	}
-
-	// --- debug_query ---
-	// Data: [query_name: String]
-	if (p_msg == "debug_query") {
+	// --- debug_describe_class ---
+	// Data: [class_or_path: String, include_private: bool, include_docs: bool]
+	if (p_msg == "debug_describe_class") {
 		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
-		String name = p_data[0];
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			Variant value = reg->evaluate_query(name);
-			result.push_back(true);
-			result.push_back(Variant::get_type_name(value.get_type()) + ": " + String(value));
-		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
-		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
-		return OK;
-	}
+		String class_or_path = p_data[0];
+		bool include_private = p_data.size() > 1 ? (bool)p_data[1] : false;
+		bool include_docs = p_data.size() > 2 ? (bool)p_data[2] : false;
 
-	// --- debug_batch_query ---
-	// Data: [names: PackedStringArray]
-	if (p_msg == "debug_batch_query") {
-		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			PackedStringArray names = p_data[0];
-			Dictionary batch;
-			for (int i = 0; i < names.size(); i++) {
-				Variant value = reg->evaluate_query(names[i]);
-				batch[names[i]] = value;
+		Dictionary result;
+		result["success"] = true;
+		String output;
+		int private_count = 0;
+		int doc_count = 0; // Track how many members have docs available.
+
+		// Try loading as a GDScript path first.
+		if (class_or_path.ends_with(".gd") || class_or_path.begins_with("res://")) {
+			Ref<Script> script = ResourceLoader::load(class_or_path);
+			if (script.is_valid()) {
+				Vector<DocData::ClassDoc> docs = script->get_documentation();
+				if (!docs.is_empty()) {
+					const DocData::ClassDoc &doc = docs[0];
+					output += doc.name;
+					if (!doc.inherits.is_empty()) {
+						output += " (extends " + doc.inherits + ")";
+					}
+					output += "\n";
+					if (include_docs) {
+						if (!doc.brief_description.is_empty()) {
+							output += "  " + doc.brief_description + "\n";
+						}
+						if (!doc.description.is_empty() && doc.description != doc.brief_description) {
+							output += "  " + doc.description + "\n";
+						}
+					} else {
+						if (!doc.brief_description.is_empty() || !doc.description.is_empty()) {
+							doc_count++;
+						}
+					}
+
+					// Constants
+					bool has_public_constants = false;
+					for (const DocData::ConstantDoc &c : doc.constants) {
+						if (c.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_constants) {
+							output += "\nConstants:\n";
+							has_public_constants = true;
+						}
+						output += "  " + c.name;
+						if (!c.type.is_empty()) {
+							output += ": " + c.type;
+						}
+						if (c.is_value_valid) {
+							output += " = " + c.value;
+						}
+						if (include_docs && !c.description.is_empty()) {
+							output += "  ## " + c.description;
+						} else if (!c.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Properties
+					bool has_public_props = false;
+					for (const DocData::PropertyDoc &p : doc.properties) {
+						if (p.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_props) {
+							output += "\nProperties:\n";
+							has_public_props = true;
+						}
+						output += "  ";
+						if (!p.setter.is_empty() || !p.getter.is_empty()) {
+							output += "@export ";
+						}
+						output += p.name;
+						if (!p.type.is_empty()) {
+							output += ": " + p.type;
+						}
+						if (!p.default_value.is_empty()) {
+							output += " = " + p.default_value;
+						}
+						if (include_docs && !p.description.is_empty()) {
+							output += "  ## " + p.description;
+						} else if (!p.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Methods
+					bool has_public_methods = false;
+					for (const DocData::MethodDoc &m : doc.methods) {
+						if (m.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_methods) {
+							output += "\nMethods:\n";
+							has_public_methods = true;
+						}
+						output += "  " + m.name + "(";
+						for (int i = 0; i < m.arguments.size(); i++) {
+							if (i > 0) {
+								output += ", ";
+							}
+							output += m.arguments[i].name;
+							if (!m.arguments[i].type.is_empty()) {
+								output += ": " + m.arguments[i].type;
+							}
+							if (!m.arguments[i].default_value.is_empty()) {
+								output += " = " + m.arguments[i].default_value;
+							}
+						}
+						output += ")";
+						if (!m.return_type.is_empty() && m.return_type != "void") {
+							output += " -> " + m.return_type;
+						}
+						if (include_docs && !m.description.is_empty()) {
+							output += "  ## " + m.description;
+						} else if (!m.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Signals
+					bool has_public_signals = false;
+					for (const DocData::MethodDoc &s : doc.signals) {
+						if (s.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_signals) {
+							output += "\nSignals:\n";
+							has_public_signals = true;
+						}
+						output += "  " + s.name + "(";
+						for (int i = 0; i < s.arguments.size(); i++) {
+							if (i > 0) {
+								output += ", ";
+							}
+							output += s.arguments[i].name;
+							if (!s.arguments[i].type.is_empty()) {
+								output += ": " + s.arguments[i].type;
+							}
+						}
+						output += ")";
+						if (include_docs && !s.description.is_empty()) {
+							output += "  ## " + s.description;
+						} else if (!s.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Footer hints.
+					String hints;
+					if (private_count > 0 && !include_private) {
+						hints += vformat("%d private members hidden", private_count);
+					}
+					if (doc_count > 0 && !include_docs) {
+						if (!hints.is_empty()) {
+							hints += ", ";
+						}
+						hints += vformat("%d doc comments available", doc_count);
+					}
+					if (!hints.is_empty()) {
+						output += "\n[" + hints;
+						PackedStringArray flags;
+						if (private_count > 0 && !include_private) {
+							flags.push_back("include_private: true");
+						}
+						if (doc_count > 0 && !include_docs) {
+							flags.push_back("include_docs: true");
+						}
+						output += " — use ";
+						for (int i = 0; i < flags.size(); i++) {
+							if (i > 0) {
+								output += ", ";
+							}
+							output += flags[i];
+						}
+						output += "]\n";
+					}
+				} else {
+					output = "Script loaded but no documentation available: " + class_or_path;
+				}
+			} else {
+				result["success"] = false;
+				output = "Failed to load script: " + class_or_path;
 			}
-			result.push_back(true);
-			result.push_back(JSON::stringify(batch));
 		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
+			// Try as native class name via ClassDB.
+			StringName class_name = StringName(class_or_path);
+			if (ClassDB::class_exists(class_name)) {
+				output += class_or_path;
+				StringName parent = ClassDB::get_parent_class(class_name);
+				if (parent != StringName()) {
+					output += " (extends " + String(parent) + ")";
+				}
+				output += "\n";
+
+				// Properties via ClassDB
+				List<PropertyInfo> props;
+				ClassDB::get_property_list(class_name, &props, true);
+				bool has_public_props = false;
+				for (const PropertyInfo &pi : props) {
+					if (pi.usage & PROPERTY_USAGE_CATEGORY || pi.usage & PROPERTY_USAGE_GROUP || pi.usage & PROPERTY_USAGE_SUBGROUP) {
+						continue;
+					}
+					if (!(pi.usage & PROPERTY_USAGE_EDITOR) && !(pi.usage & PROPERTY_USAGE_SCRIPT_VARIABLE)) {
+						continue;
+					}
+					if (pi.name.begins_with("_") && !include_private) {
+						private_count++;
+						continue;
+					}
+					if (!has_public_props) {
+						output += "\nProperties:\n";
+						has_public_props = true;
+					}
+					output += "  " + pi.name + ": " + Variant::get_type_name(pi.type) + "\n";
+				}
+
+				// Methods via ClassDB
+				List<MethodInfo> methods;
+				ClassDB::get_method_list(class_name, &methods, true);
+				bool has_public_methods = false;
+				for (const MethodInfo &mi : methods) {
+					if (mi.name.begins_with("_") && !include_private) {
+						private_count++;
+						continue;
+					}
+					if (!has_public_methods) {
+						output += "\nMethods:\n";
+						has_public_methods = true;
+					}
+					output += "  " + mi.name + "(";
+					for (int i = 0; i < mi.arguments.size(); i++) {
+						if (i > 0) {
+							output += ", ";
+						}
+						output += mi.arguments[i].name + ": " + Variant::get_type_name(mi.arguments[i].type);
+					}
+					output += ")";
+					if (mi.return_val.type != Variant::NIL) {
+						output += " -> " + Variant::get_type_name(mi.return_val.type);
+					}
+					output += "\n";
+				}
+
+				// Signals via ClassDB
+				List<MethodInfo> signals;
+				ClassDB::get_signal_list(class_name, &signals, true);
+				bool has_public_signals = false;
+				for (const MethodInfo &si : signals) {
+					if (si.name.begins_with("_") && !include_private) {
+						private_count++;
+						continue;
+					}
+					if (!has_public_signals) {
+						output += "\nSignals:\n";
+						has_public_signals = true;
+					}
+					output += "  " + si.name + "(";
+					for (int i = 0; i < si.arguments.size(); i++) {
+						if (i > 0) {
+							output += ", ";
+						}
+						output += si.arguments[i].name + ": " + Variant::get_type_name(si.arguments[i].type);
+					}
+					output += ")\n";
+				}
+
+				if (private_count > 0 && !include_private) {
+					output += vformat("\n[%d private members hidden — use include_private: true]\n", private_count);
+				}
+			} else {
+				result["success"] = false;
+				output = "Class not found: " + class_or_path + ". Use a script path (res://...) or native class name.";
+			}
 		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+
+		result["text"] = output;
+		Array msg;
+		msg.push_back(result.get("success", false));
+		msg.push_back(output);
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
 		return OK;
 	}
 
-	// --- debug_invoke_action ---
-	// Data: [action_name: String, params_json: String]
-	if (p_msg == "debug_invoke_action") {
+	// --- debug_get_property ---
+	// Data: [path: String, property: String, options_json: String]
+	if (p_msg == "debug_get_property") {
 		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
-		String name = p_data[0];
-		String params_json = p_data[1];
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			Dictionary params;
-			if (!params_json.is_empty()) {
-				JSON json;
-				if (json.parse(params_json) == OK) {
-					params = json.get_data();
+		String path_pattern = p_data[0];
+		String property = p_data[1];
+		String options_json = p_data.size() > 2 ? String(p_data[2]) : "";
+
+		Dictionary options;
+		if (!options_json.is_empty()) {
+			JSON json;
+			if (json.parse(options_json) == OK) {
+				options = json.get_data();
+			}
+		}
+
+		bool include_private = options.get("include_private", false);
+		bool summarize = options.get("summarize", false);
+		bool group_by_value = options.get("group_by_value", false);
+		String where_clause = options.get("where", "");
+
+		// Check private access.
+		if (property.begins_with("_") && !include_private) {
+			Array msg;
+			msg.push_back(false);
+			msg.push_back("Property '" + property + "' is private. Use include_private: true to access.");
+			EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+			return OK;
+		}
+
+		// Resolve glob pattern to matching nodes.
+		Vector<Node *> matches;
+		if (path_pattern.contains("*")) {
+			// Glob expansion.
+			PackedStringArray segments = path_pattern.split("/");
+			Node *root = scene_tree->get_root();
+			// Walk tree matching segments.
+			List<Pair<Node *, int>> walk_stack;
+			walk_stack.push_back({ root, 1 }); // Start after empty first segment.
+
+			while (!walk_stack.is_empty()) {
+				Pair<Node *, int> current = walk_stack.front()->get();
+				walk_stack.pop_front();
+				Node *node = current.first;
+				int seg_idx = current.second;
+
+				if (seg_idx >= segments.size()) {
+					// Matched all segments — this node matches.
+					matches.push_back(node);
+					continue;
+				}
+
+				String seg = segments[seg_idx];
+				if (seg == "*") {
+					// Match any direct child.
+					for (int i = 0; i < node->get_child_count(); i++) {
+						walk_stack.push_back({ node->get_child(i), seg_idx + 1 });
+					}
+				} else {
+					// Match specific name.
+					Node *child = node->get_node_or_null(NodePath(seg));
+					if (child) {
+						walk_stack.push_back({ child, seg_idx + 1 });
+					}
 				}
 			}
-			Dictionary ret = reg->invoke_action(name, params);
-			result.push_back(true);
-			result.push_back(JSON::stringify(ret));
 		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
+			// Single node.
+			Node *node = scene_tree->get_root()->get_node_or_null(NodePath(path_pattern));
+			if (node) {
+				matches.push_back(node);
+			}
 		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+
+		if (matches.is_empty()) {
+			Array msg;
+			msg.push_back(false);
+			msg.push_back("No nodes found matching: " + path_pattern);
+			EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+			return OK;
+		}
+
+		// Apply where clause filter.
+		if (!where_clause.is_empty()) {
+			// Parse simple condition: "property op value"
+			String where_prop;
+			String where_op;
+			String where_val_str;
+
+			// Find operator.
+			for (const String &op : { ">=", "<=", "!=", "==", ">", "<" }) {
+				int pos = where_clause.find(op);
+				if (pos >= 0) {
+					where_prop = where_clause.substr(0, pos).strip_edges();
+					where_op = op;
+					where_val_str = where_clause.substr(pos + op.length()).strip_edges();
+					break;
+				}
+			}
+
+			if (!where_op.is_empty()) {
+				Vector<Node *> filtered;
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(where_prop), &valid);
+					if (!valid) {
+						continue;
+					}
+
+					// Parse comparison value.
+					Variant cmp_val;
+					if (where_val_str == "true") {
+						cmp_val = true;
+					} else if (where_val_str == "false") {
+						cmp_val = false;
+					} else if (where_val_str.is_valid_float()) {
+						cmp_val = where_val_str.to_float();
+					} else if (where_val_str.is_valid_int()) {
+						cmp_val = where_val_str.to_int();
+					} else {
+						cmp_val = where_val_str;
+					}
+
+					bool pass = false;
+					if (where_op == "==") {
+						pass = (val == cmp_val);
+					} else if (where_op == "!=") {
+						pass = (val != cmp_val);
+					} else if (where_op == "<") {
+						pass = (val < cmp_val);
+					} else if (where_op == ">") {
+						pass = (val > cmp_val);
+					} else if (where_op == "<=") {
+						pass = (val <= cmp_val);
+					} else if (where_op == ">=") {
+						pass = (val >= cmp_val);
+					}
+
+					if (pass) {
+						filtered.push_back(n);
+					}
+				}
+				int total_before = matches.size();
+				matches = filtered;
+
+				// Note filtering in output.
+				if (matches.is_empty()) {
+					Array msg;
+					msg.push_back(true);
+					msg.push_back(vformat("0 nodes matched where clause '%s' (of %d total)", where_clause, total_before));
+					EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+					return OK;
+				}
+			}
+		}
+
+		// Build output.
+		String output;
+		// Handle multiple properties (comma-separated).
+		PackedStringArray props = property.split(",");
+		for (int p_idx = 0; p_idx < props.size(); p_idx++) {
+			props.write[p_idx] = props[p_idx].strip_edges();
+		}
+
+		if (matches.size() == 1) {
+			// Single node — show all requested properties.
+			Node *node = matches[0];
+			String node_path = node->get_path();
+			for (const String &prop : props) {
+				bool valid = false;
+				Variant val = node->get(StringName(prop), &valid);
+				if (valid) {
+					output += vformat("%s.%s = %s (%s)\n", node_path, prop, String(val), Variant::get_type_name(val.get_type()));
+				} else {
+					output += vformat("%s.%s — property not found\n", node_path, prop);
+				}
+			}
+		} else if (summarize || group_by_value) {
+			// Multiple nodes — produce summary.
+			output += vformat("%d nodes matched %s\n", matches.size(), path_pattern);
+
+			for (const String &prop : props) {
+				// Collect values.
+				HashMap<String, int> value_groups;
+				double val_min = 1e30, val_max = -1e30, val_sum = 0;
+				int numeric_count = 0;
+				int valid_count = 0;
+
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(prop), &valid);
+					if (!valid) {
+						continue;
+					}
+					valid_count++;
+
+					String val_str = String(val);
+					if (value_groups.has(val_str)) {
+						value_groups[val_str]++;
+					} else {
+						value_groups[val_str] = 1;
+					}
+
+					if (val.get_type() == Variant::INT || val.get_type() == Variant::FLOAT) {
+						double d = (double)val;
+						val_min = MIN(val_min, d);
+						val_max = MAX(val_max, d);
+						val_sum += d;
+						numeric_count++;
+					}
+				}
+
+				if (numeric_count > 0) {
+					output += vformat("%s: range [%s, %s], mean %.1f\n", prop,
+							String::num(val_min), String::num(val_max),
+							val_sum / numeric_count);
+				}
+
+				if (group_by_value || value_groups.size() <= 10) {
+					for (const KeyValue<String, int> &kv : value_groups) {
+						output += vformat("  %s: %d nodes\n", kv.key, kv.value);
+					}
+				}
+			}
+		} else {
+			// Multiple nodes — list first 20.
+			int total = matches.size();
+			output += vformat("%d nodes matched %s\n", total, path_pattern);
+			int show_count = MIN(total, 20);
+			for (int i = 0; i < show_count; i++) {
+				Node *node = matches[i];
+				for (const String &prop : props) {
+					bool valid = false;
+					Variant val = node->get(StringName(prop), &valid);
+					if (valid) {
+						output += vformat("  %s.%s = %s\n", node->get_name(), prop, String(val));
+					}
+				}
+			}
+			if (total > 20) {
+				output += vformat("  ... and %d more\n", total - 20);
+			}
+		}
+
+		Array msg;
+		msg.push_back(true);
+		msg.push_back(output.strip_edges());
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
 		return OK;
 	}
 
-	// --- debug_get_cvar ---
-	// Data: [cvar_name: String]
-	if (p_msg == "debug_get_cvar") {
-		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
-		String name = p_data[0];
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			Variant value = reg->get_cvar(name);
-			result.push_back(true);
-			result.push_back(Variant::get_type_name(value.get_type()) + ": " + String(value));
-		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
-		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
-		return OK;
-	}
+	// --- debug_set_property ---
+	// Data: [path: String, property: String, value_json: String, options_json: String]
+	if (p_msg == "debug_set_property") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+		String path_pattern = p_data[0];
+		String property = p_data[1];
+		String value_json = p_data[2];
+		String options_json = p_data.size() > 3 ? String(p_data[3]) : "";
 
-	// --- debug_set_cvar ---
-	// Data: [cvar_name: String, value_json: String]
-	if (p_msg == "debug_set_cvar") {
-		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
-		String name = p_data[0];
-		String value_str = p_data[1];
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			// Parse value from JSON.
+		// Parse value.
+		Variant value;
+		{
 			JSON json;
-			Variant value;
-			if (json.parse(value_str) == OK) {
+			if (json.parse(value_json) == OK) {
 				value = json.get_data();
 			} else {
-				value = value_str; // Use as string if JSON parse fails.
+				value = value_json;
 			}
-			reg->set_cvar(name, value);
-			// Read back.
-			Variant readback = reg->get_cvar(name);
-			result.push_back(true);
-			result.push_back(Variant::get_type_name(readback.get_type()) + ": " + String(readback));
-		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
 		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+
+		Dictionary options;
+		if (!options_json.is_empty()) {
+			JSON json;
+			if (json.parse(options_json) == OK) {
+				options = json.get_data();
+			}
+		}
+		String where_clause = options.get("where", "");
+
+		// Resolve nodes (same glob logic as get_property — send the implementation inline).
+		Vector<Node *> matches;
+		if (path_pattern.contains("*")) {
+			PackedStringArray segments = path_pattern.split("/");
+			Node *root = scene_tree->get_root();
+			List<Pair<Node *, int>> walk_stack;
+			walk_stack.push_back({ root, 1 });
+			while (!walk_stack.is_empty()) {
+				Pair<Node *, int> current = walk_stack.front()->get();
+				walk_stack.pop_front();
+				Node *node = current.first;
+				int seg_idx = current.second;
+				if (seg_idx >= segments.size()) {
+					matches.push_back(node);
+					continue;
+				}
+				String seg = segments[seg_idx];
+				if (seg == "*") {
+					for (int i = 0; i < node->get_child_count(); i++) {
+						walk_stack.push_back({ node->get_child(i), seg_idx + 1 });
+					}
+				} else {
+					Node *child = node->get_node_or_null(NodePath(seg));
+					if (child) {
+						walk_stack.push_back({ child, seg_idx + 1 });
+					}
+				}
+			}
+		} else {
+			Node *node = scene_tree->get_root()->get_node_or_null(NodePath(path_pattern));
+			if (node) {
+				matches.push_back(node);
+			}
+		}
+
+		// Apply where clause (same logic as get_property).
+		int total_glob_matches = matches.size();
+		if (!where_clause.is_empty()) {
+			String where_prop, where_op, where_val_str;
+			for (const String &op : { ">=", "<=", "!=", "==", ">", "<" }) {
+				int pos = where_clause.find(op);
+				if (pos >= 0) {
+					where_prop = where_clause.substr(0, pos).strip_edges();
+					where_op = op;
+					where_val_str = where_clause.substr(pos + op.length()).strip_edges();
+					break;
+				}
+			}
+			if (!where_op.is_empty()) {
+				Vector<Node *> filtered;
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(where_prop), &valid);
+					if (!valid) continue;
+					Variant cmp_val;
+					if (where_val_str == "true") cmp_val = true;
+					else if (where_val_str == "false") cmp_val = false;
+					else if (where_val_str.is_valid_float()) cmp_val = where_val_str.to_float();
+					else if (where_val_str.is_valid_int()) cmp_val = where_val_str.to_int();
+					else cmp_val = where_val_str;
+					bool pass = false;
+					if (where_op == "==") pass = (val == cmp_val);
+					else if (where_op == "!=") pass = (val != cmp_val);
+					else if (where_op == "<") pass = (val < cmp_val);
+					else if (where_op == ">") pass = (val > cmp_val);
+					else if (where_op == "<=") pass = (val <= cmp_val);
+					else if (where_op == ">=") pass = (val >= cmp_val);
+					if (pass) filtered.push_back(n);
+				}
+				matches = filtered;
+			}
+		}
+
+		// Set property on all matches.
+		int set_count = 0;
+		for (Node *n : matches) {
+			n->set(StringName(property), value);
+			set_count++;
+		}
+
+		String output;
+		if (!where_clause.is_empty()) {
+			output = vformat("Set %s = %s on %d nodes (of %d matched by glob, filtered by '%s')",
+					property, String(value), set_count, total_glob_matches, where_clause);
+		} else {
+			output = vformat("Set %s = %s on %d node(s)", property, String(value), set_count);
+		}
+
+		Array msg;
+		msg.push_back(true);
+		msg.push_back(output);
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
 		return OK;
 	}
 
-	// --- debug_get_events ---
-	// Data: [count: int]
-	if (p_msg == "debug_get_events") {
-		int count = 20;
-		if (!p_data.is_empty()) {
-			count = p_data[0];
+	// --- debug_call_method ---
+	// Data: [path: String, method: String, args_json: String, options_json: String]
+	if (p_msg == "debug_call_method") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+		String path_pattern = p_data[0];
+		String method = p_data[1];
+		String args_json = p_data.size() > 2 ? String(p_data[2]) : "";
+		String options_json = p_data.size() > 3 ? String(p_data[3]) : "";
+
+		// Parse args.
+		Array args;
+		if (!args_json.is_empty()) {
+			JSON json;
+			if (json.parse(args_json) == OK) {
+				Variant parsed = json.get_data();
+				if (parsed.get_type() == Variant::ARRAY) {
+					args = parsed;
+				}
+			}
 		}
-		DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-		Array result;
-		if (reg) {
-			Array events = reg->get_recent_events(count);
-			result.push_back(true);
-			result.push_back(JSON::stringify(events));
+
+		Dictionary options;
+		if (!options_json.is_empty()) {
+			JSON json;
+			if (json.parse(options_json) == OK) {
+				options = json.get_data();
+			}
+		}
+		String where_clause = options.get("where", "");
+
+		// Resolve nodes (same glob logic).
+		Vector<Node *> matches;
+		if (path_pattern.contains("*")) {
+			PackedStringArray segments = path_pattern.split("/");
+			Node *root = scene_tree->get_root();
+			List<Pair<Node *, int>> walk_stack;
+			walk_stack.push_back({ root, 1 });
+			while (!walk_stack.is_empty()) {
+				Pair<Node *, int> current = walk_stack.front()->get();
+				walk_stack.pop_front();
+				Node *node = current.first;
+				int seg_idx = current.second;
+				if (seg_idx >= segments.size()) {
+					matches.push_back(node);
+					continue;
+				}
+				String seg = segments[seg_idx];
+				if (seg == "*") {
+					for (int i = 0; i < node->get_child_count(); i++) {
+						walk_stack.push_back({ node->get_child(i), seg_idx + 1 });
+					}
+				} else {
+					Node *child = node->get_node_or_null(NodePath(seg));
+					if (child) {
+						walk_stack.push_back({ child, seg_idx + 1 });
+					}
+				}
+			}
 		} else {
-			result.push_back(false);
-			result.push_back("Debug singleton not available.");
+			Node *node = scene_tree->get_root()->get_node_or_null(NodePath(path_pattern));
+			if (node) {
+				matches.push_back(node);
+			}
 		}
-		EngineDebugger::get_singleton()->send_message("mcp:debug_result", result);
+
+		// Apply where clause.
+		int total_glob_matches = matches.size();
+		if (!where_clause.is_empty()) {
+			String where_prop, where_op, where_val_str;
+			for (const String &op : { ">=", "<=", "!=", "==", ">", "<" }) {
+				int pos = where_clause.find(op);
+				if (pos >= 0) {
+					where_prop = where_clause.substr(0, pos).strip_edges();
+					where_op = op;
+					where_val_str = where_clause.substr(pos + op.length()).strip_edges();
+					break;
+				}
+			}
+			if (!where_op.is_empty()) {
+				Vector<Node *> filtered;
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(where_prop), &valid);
+					if (!valid) continue;
+					Variant cmp_val;
+					if (where_val_str == "true") cmp_val = true;
+					else if (where_val_str == "false") cmp_val = false;
+					else if (where_val_str.is_valid_float()) cmp_val = where_val_str.to_float();
+					else if (where_val_str.is_valid_int()) cmp_val = where_val_str.to_int();
+					else cmp_val = where_val_str;
+					bool pass = false;
+					if (where_op == "==") pass = (val == cmp_val);
+					else if (where_op == "!=") pass = (val != cmp_val);
+					else if (where_op == "<") pass = (val < cmp_val);
+					else if (where_op == ">") pass = (val > cmp_val);
+					else if (where_op == "<=") pass = (val <= cmp_val);
+					else if (where_op == ">=") pass = (val >= cmp_val);
+					if (pass) filtered.push_back(n);
+				}
+				matches = filtered;
+			}
+		}
+
+		// Call method on all matches.
+		String output;
+		if (matches.size() == 1) {
+			// Single node — show return value.
+			Node *node = matches[0];
+			Variant ret;
+			if (args.is_empty()) {
+				ret = node->call(StringName(method));
+			} else {
+				// Build Variant args array for callv.
+				ret = node->callv(StringName(method), args);
+			}
+			output = vformat("Called %s.%s() on %s", node->get_path(), method, node->get_name());
+			if (ret.get_type() != Variant::NIL) {
+				output += vformat(" → %s", String(ret));
+			}
+		} else {
+			// Multiple nodes.
+			int call_count = 0;
+			for (Node *n : matches) {
+				if (args.is_empty()) {
+					n->call(StringName(method));
+				} else {
+					n->callv(StringName(method), args);
+				}
+				call_count++;
+			}
+			if (!where_clause.is_empty()) {
+				output = vformat("Called %s() on %d nodes (of %d matched by glob, filtered by '%s')",
+						method, call_count, total_glob_matches, where_clause);
+			} else {
+				output = vformat("Called %s() on %d node(s)", method, call_count);
+			}
+		}
+
+		Array msg;
+		msg.push_back(true);
+		msg.push_back(output);
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
 		return OK;
 	}
 

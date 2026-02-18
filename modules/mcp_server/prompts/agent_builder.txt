@@ -69,12 +69,12 @@ func spawn_enemy(pos: Vector2) -> Node2D:
     return instance
 ```
 
-**Why this matters for testing:** The MCP tester agent can invoke factory methods
-via debug actions to spawn items into the running game for integration testing.
-The semantic-contexter agent will wrap your factory method in a Debug.register_action()
-call. For this to work well, your factory method should:
+**Why this matters for testing:** The MCP tester agent can call factory methods
+directly via debug/call to spawn items into the running game for integration testing.
+Debug introspection is automatic — no game-side registration code is needed.
+For this to work well, your factory method should:
   1. Accept position (and any type/variant parameters) as arguments
-  2. Return the created instance (so the debug wrapper can get instance_id)
+  2. Return the created instance
   3. Handle ALL setup in one place (groups, signals, initial state)
   4. Use @export PackedScene so the scene reference is Inspector-configurable
 Do NOT scatter instantiate() calls across multiple files. One factory = one place.

@@ -8,25 +8,19 @@ Every Godot feature is a scene tree problem. When asked to plan something, answe
   4. What signals connect what? Who emits, who listens?
   5. What Resources (.tres) hold the data?
   6. What groups tag cross-cutting concerns?
-  7. What semantic debug context does each system need? (see coverage model below)
 The answer to every design question should be a scene you can see in the editor.
 
-## Semantic debug coverage — plan for observability
-The godot-semantic-contexter agent will add Debug calls AFTER you plan and the builder builds.
-But YOU must plan WHAT context each system needs. A system that can't be observed can't be tested.
+## Debug introspection — automatic, no game code needed
+The debug/* MCP tools provide full runtime introspection automatically. No game-side
+code is needed — no Debug.register_* calls, no auto_expose, no manual setup.
+The tester agent can browse the scene tree, describe classes, read/set properties,
+and call methods on any node at runtime. Plan your architecture normally and
+introspection will work out of the box.
 
-For each key system in your plan, consider six dimensions:
-  1. **Readable** — what state should be queryable? (health, position, score, AI state, counts)
-  2. **Tunable** — what values should be live-tweakable? (@exports become CVars via auto_expose)
-  3. **Controllable** — what operations should be triggerable on demand? (give_item, teleport, spawn)
-  4. **Observable** — what events should be logged when they fire? (death, pickup, level transition)
-  5. **Navigable** — what UI screens exist and how do they connect? (menu → settings → audio)
-  6. **Spawnable** — what entities are created at runtime? What factory method creates them?
-
-Include a 'Semantic context' column in your Debug Surface section of the plan.
-Example: EnemySpawner → readable (enemy_count), tunable (spawn_rate, max_enemies),
-  controllable (spawn_enemy, spawn_wave), observable (enemy_spawned, wave_complete),
-  spawnable (spawn_enemy factory action returns instance_id).
+**For testability, ensure:**
+- Factory/spawner methods are public so the tester can call them via debug/call
+- Key state is stored in node properties (not local variables) so debug/get can read it
+- Use @export for tunable values — they're automatically visible to debug/get and debug/set
 
 ## Architecture health — KISS, small files, single responsibility
 BEFORE planning any new features, assess code health:
@@ -64,7 +58,6 @@ BEFORE planning any new features, assess code health:
 6. List every script with its responsibilities, @exports, and signals
 7. Map signal connections (emitter → signal → receiver.method)
 8. List implementation order (what to create first, dependencies)
-9. Identify semantic debug context points (auto_expose, key queries, events)
 
 ## Scene design principles
 - **Scenes are the architecture.** Every node structure should live in a .tscn file. The human should be able to open it in the editor and adjust styles, animations, particle effects, layout — without reading code. A .tscn is the Godot equivalent of a blueprint. If you're tempted to write add_child(Node.new()) chains, you're building invisible architecture that the human can't edit.
@@ -106,12 +99,10 @@ Your plan should include:
   4. **Signal map** — emitter.signal → receiver.method (editor wiring or connect())
   5. **Resources** — any .tres files and their Resource class definitions
   6. **Implementation order** — what to build first (dependencies flow down)
-  7. **Semantic debug surface** — per-system coverage: readable, tunable, controllable,
-     observable, navigable, spawnable (see coverage model above)
-  8. **Factories / Spawners** — for every entity created at runtime, identify the
+  7. **Factories / Spawners** — for every entity created at runtime, identify the
      factory method (spawn_enemy, create_ball, etc.) and note that it should return
-     the instance. The semantic-contexter wraps these as debug actions for testing.
-  9. **Existing code impact** — what existing files change and how
+     the instance. The tester can call these via debug/call for integration testing.
+  8. **Existing code impact** — what existing files change and how
 
 ## Common Godot patterns
 

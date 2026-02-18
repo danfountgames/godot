@@ -32,14 +32,7 @@
 
 #include "debug_console_autocomplete.h"
 
-#include "debug_semantic_registry.h"
-
-void DebugConsoleAutocomplete::_rebuild_from_registry() {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return;
-	}
-
+void DebugConsoleAutocomplete::_rebuild() {
 	entries.clear();
 
 	// Built-in commands (always available).
@@ -72,10 +65,6 @@ void DebugConsoleAutocomplete::_rebuild_from_registry() {
 	};
 
 	Color color_builtin = Color(0.6, 0.6, 0.7);
-	Color color_cmd = Color(0.4, 0.8, 1.0);
-	Color color_cvar = Color(0.4, 1.0, 0.6);
-	Color color_action = Color(1.0, 0.8, 0.4);
-	Color color_query = Color(0.7, 0.7, 0.9);
 
 	for (int i = 0; builtins[i]; i++) {
 		CompletionEntry e;
@@ -86,58 +75,13 @@ void DebugConsoleAutocomplete::_rebuild_from_registry() {
 		entries.push_back(e);
 	}
 
-	// Commands from registry.
-	for (const KeyValue<String, DebugSemanticRegistry::CommandEntry> &kv : reg->get_commands()) {
-		CompletionEntry e;
-		e.name = kv.key;
-		e.description = kv.value.description;
-		e.type_label = "[cmd]";
-		e.type_color = color_cmd;
-		entries.push_back(e);
-	}
-
-	// CVars from registry.
-	for (const KeyValue<String, DebugSemanticRegistry::CVarEntry> &kv : reg->get_cvars()) {
-		if (kv.value.flags & DebugSemanticRegistry::CVAR_HIDDEN) {
-			continue;
-		}
-		CompletionEntry e;
-		e.name = kv.key;
-		e.description = kv.value.description;
-		e.type_label = "[cvar]";
-		e.type_color = color_cvar;
-		entries.push_back(e);
-	}
-
-	// Actions from registry (prefixed with "action.").
-	for (const KeyValue<String, DebugSemanticRegistry::ActionEntry> &kv : reg->get_actions()) {
-		CompletionEntry e;
-		e.name = "action." + kv.key;
-		e.description = kv.value.description;
-		e.type_label = "[action]";
-		e.type_color = color_action;
-		entries.push_back(e);
-	}
-
-	// Queries from registry (prefixed with "query.").
-	for (const KeyValue<String, DebugSemanticRegistry::QueryEntry> &kv : reg->get_queries()) {
-		CompletionEntry e;
-		e.name = "query." + kv.key;
-		e.description = kv.value.description;
-		e.type_label = "[query]";
-		e.type_color = color_query;
-		entries.push_back(e);
-	}
-
 	entries.sort();
 	sorted = true;
 }
 
 void DebugConsoleAutocomplete::rebuild_if_dirty() {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (reg && reg->is_completions_dirty()) {
-		_rebuild_from_registry();
-		reg->mark_completions_clean();
+	if (!sorted) {
+		_rebuild();
 	}
 }
 
@@ -183,24 +127,6 @@ Vector<const DebugConsoleAutocomplete::CompletionEntry *> DebugConsoleAutocomple
 }
 
 PackedStringArray DebugConsoleAutocomplete::get_argument_completions(const String &p_command, const String &p_partial) const {
-	DebugSemanticRegistry *reg = DebugSemanticRegistry::get_singleton();
-	if (!reg) {
-		return PackedStringArray();
-	}
-
-	// Check if the command has a custom completion function.
-	const DebugSemanticRegistry::CommandEntry *cmd = reg->get_commands().getptr(p_command);
-	if (cmd && cmd->completion_func.is_valid()) {
-		Variant result;
-		Callable::CallError ce;
-		const Variant partial_var = p_partial;
-		const Variant *args[1] = { &partial_var };
-		cmd->completion_func.callp(args, 1, result, ce);
-		if (ce.error == Callable::CallError::CALL_OK && result.get_type() == Variant::PACKED_STRING_ARRAY) {
-			return result;
-		}
-	}
-
 	// Built-in argument completions for "list".
 	if (p_command == "list") {
 		PackedStringArray options;
@@ -223,18 +149,6 @@ PackedStringArray DebugConsoleAutocomplete::get_argument_completions(const Strin
 			}
 		}
 		return filtered;
-	}
-
-	// Argument completions for "watch" / "unwatch".
-	if (p_command == "watch" || p_command == "unwatch") {
-		PackedStringArray queries;
-		for (const KeyValue<String, DebugSemanticRegistry::QueryEntry> &kv : reg->get_queries()) {
-			String name = "query." + kv.key;
-			if (p_partial.is_empty() || name.begins_with(p_partial)) {
-				queries.push_back(name);
-			}
-		}
-		return queries;
 	}
 
 	return PackedStringArray();
