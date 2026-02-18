@@ -1,0 +1,81 @@
+/**************************************************************************/
+/*  pty_manager.h                                                         */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+#ifdef MCP_TERMINAL_ENABLED
+
+#include "core/string/ustring.h"
+#include "core/templates/vector.h"
+
+#include <sys/types.h>
+
+class PTYManager {
+private:
+	int master_fd = -1;
+	pid_t child_pid = -1;
+	int rows = 24;
+	int cols = 80;
+
+public:
+	// Calls forkpty(), sets non-blocking on master_fd, execvp in child.
+	// If p_working_dir is non-empty, chdir to it in the child before exec.
+	bool fork_and_exec(const String &p_command, const Vector<String> &p_args, const Vector<String> &p_env, const String &p_working_dir = String());
+
+	// Non-blocking read from master_fd. Returns bytes read, 0 if EAGAIN, -1 if error/closed.
+	int read_pty(uint8_t *p_buffer, int p_max_len);
+
+	// Write to master_fd. Returns true on success.
+	bool write_pty(const uint8_t *p_data, int p_len);
+
+	// Send TIOCSWINSZ ioctl to master_fd.
+	void resize(int p_rows, int p_cols);
+
+	// Check if child is alive via waitpid(WNOHANG).
+	bool is_running() const;
+
+	// Returns exit code after child exits. -1 if still running.
+	int get_exit_code();
+
+	// Send SIGTERM, then SIGKILL after short wait.
+	void kill_child();
+
+	// Close master_fd, reap child.
+	void close_pty();
+
+	int get_master_fd() const { return master_fd; }
+	int get_rows() const { return rows; }
+	int get_cols() const { return cols; }
+
+	PTYManager();
+	~PTYManager();
+};
+
+#endif // MCP_TERMINAL_ENABLED

@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "modules/modules_enabled.gen.h" // For mcp_server.
+
 #include "core/input/shortcut.h"
 #include "core/object/ref_counted.h"
 #include "core/string/ustring.h"
@@ -72,6 +74,10 @@ private:
 	static void _set_object_property(ObjectID p_id, const String &p_property, const Variant &p_value, const String &p_field = "");
 	static void _send_object_ids(const Vector<ObjectID> &p_ids, bool p_update_selection);
 	static void _next_frame();
+	static void _advance_n_frames_natural(int p_count);
+	static void _step_one_natural();
+	static int _frames_remaining;
+	static void _advance_n_frames_instant(int p_count);
 
 	/// Message handler function for parse_message.
 	typedef Error (*ParseMessageFunc)(const Array &p_args);
@@ -89,6 +95,10 @@ private:
 	static Error _msg_clear_selection(const Array &p_args);
 	static Error _msg_suspend_changed(const Array &p_args);
 	static Error _msg_next_frame(const Array &p_args);
+	static Error _msg_advance_frames(const Array &p_args);
+	static Error _msg_set_debug_pause_enabled(const Array &p_args);
+	static Error _msg_set_debug_pause_tag_enabled(const Array &p_args);
+	static Error _msg_clear_debug_pause_hits(const Array &p_args);
 	static Error _msg_speed_changed(const Array &p_args);
 	static Error _msg_debug_mute_audio(const Array &p_args);
 	static Error _msg_override_cameras(const Array &p_args);
@@ -131,6 +141,79 @@ public:
 	static void add_to_cache(const String &p_filename, Node *p_node);
 	static void remove_from_cache(const String &p_filename, Node *p_node);
 	static void reload_cached_files(const PackedStringArray &p_files);
+
+#ifdef MODULE_MCP_SERVER_ENABLED
+	static Error _mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured);
+	static void _mcp_start_heartbeat();
+
+private:
+	static int _mcp_wait_frames_remaining;
+	static int _mcp_wait_frames_requested; // Original count for response.
+	static int64_t _mcp_frame_counter;
+	static bool _mcp_heartbeat_connected;
+	static void _mcp_process_frame_tick();
+	static void _mcp_heartbeat_tick();
+
+	// --- Input Simulation State ---
+
+	// Held input tracking for MCP-injected inputs.
+	struct MCPHeldInput {
+		String name; // Unique identifier, e.g., "key:space", "joypad_button:a:0".
+		int type; // 0=key, 1=action, 2=joypad_button, 3=joypad_axis.
+		int device; // Joypad device index (0 for keys/actions).
+		float value; // Axis value or strength.
+		int frames_held; // Incremented each process frame.
+		int auto_release_at; // Frame count at which to auto-release. -1 = manual.
+		int keycode; // For keys: the keycode value.
+		int button_idx; // For joypad buttons: the JoyButton enum value.
+		int axis_idx; // For joypad axes: the JoyAxis enum value.
+		int modifier_flags; // For keys: modifier bitmask.
+	};
+
+	static Vector<MCPHeldInput> _mcp_held_inputs;
+	static bool _mcp_held_tick_connected;
+
+	// Held input management.
+	static void _mcp_held_inputs_tick();
+	static void _mcp_add_held_input(const MCPHeldInput &p_input);
+	static void _mcp_remove_held_input(const String &p_name);
+	static void _mcp_release_held_input(const MCPHeldInput &p_input);
+	static void _mcp_ensure_held_tick_connected();
+
+	// Typing queue state.
+	static String _mcp_type_queue;
+	static int _mcp_type_index;
+	static int _mcp_type_interval;
+	static int _mcp_type_frame_counter;
+	static bool _mcp_type_tick_connected;
+	static void _mcp_type_text_tick();
+
+	// Sequence execution state.
+	struct MCPSequenceState {
+		Array steps;
+		int current_step;
+		int wait_frames_remaining;
+		Array results;
+		bool active;
+
+		MCPSequenceState() :
+				current_step(0), wait_frames_remaining(0), active(false) {}
+	};
+
+	static MCPSequenceState _mcp_sequence;
+	static bool _mcp_sequence_tick_connected;
+	static void _mcp_sequence_tick();
+	static void _mcp_sequence_execute_step();
+	static void _mcp_sequence_complete();
+
+	// Key/button/axis name lookup helpers (game-side).
+	static int _mcp_key_name_to_keycode(const String &p_name);
+	static int _mcp_button_name_to_enum(const String &p_name);
+	static int _mcp_axis_name_to_enum(const String &p_name);
+	static char32_t _mcp_keycode_to_unicode(int p_keycode);
+	static void _mcp_send_char_key(char32_t p_char, bool p_pressed);
+#endif // MODULE_MCP_SERVER_ENABLED
+
 #endif
 };
 

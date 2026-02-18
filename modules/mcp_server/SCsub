@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+Import("env")
+Import("env_modules")
+
+env_mcp = env_modules.Clone()
+
+# ---------------------------------------------------------------------------
+# Thirdparty: libvterm (terminal state machine)
+# Only compiled on non-Windows platforms where PTY support is available.
+# ---------------------------------------------------------------------------
+
+thirdparty_obj = []
+
+if env.editor_build and env["platform"] != "windows" and env["platform"] != "web":
+    env_mcp.Append(CPPDEFINES=["MCP_TERMINAL_ENABLED"])
+
+    # Generate agent_prompts.gen.h from .txt prompt files at build time.
+    import prompt_builders
+
+    prompt_sources = Glob("prompts/*.txt")
+    env_mcp.CommandNoCache(
+        "agent_prompts.gen.h",
+        prompt_sources,
+        env.Run(prompt_builders.make_agent_prompts_header),
+    )
+
+    thirdparty_dir = "thirdparty/libvterm/"
+    thirdparty_sources = [
+        "src/encoding.c",
+        "src/keyboard.c",
+        # mouse.c omitted -- we don't use vterm_mouse_move/button.
+        "src/parser.c",
+        "src/pen.c",
+        "src/screen.c",
+        "src/state.c",
+        "src/unicode.c",
+        "src/vterm.c",
+    ]
+    thirdparty_sources = [thirdparty_dir + s for s in thirdparty_sources]
+
+    env_thirdparty = env_mcp.Clone()
+    env_thirdparty.Prepend(CPPPATH=[thirdparty_dir + "include", thirdparty_dir + "src"])
+    env_thirdparty.disable_warnings()
+    env_thirdparty.add_source_files(thirdparty_obj, thirdparty_sources)
+    env.modules_sources += thirdparty_obj
+
+    # Module code that wraps libvterm needs the include path too.
+    env_mcp.Prepend(CPPPATH=[thirdparty_dir + "include"])
+
+# ---------------------------------------------------------------------------
+# Godot module source files
+# ---------------------------------------------------------------------------
+
+module_obj = []
+
+env_mcp.add_source_files(module_obj, "*.cpp")
+env_mcp.add_source_files(module_obj, "tools/*.cpp")
+env_mcp.add_source_files(module_obj, "editor/*.cpp")
+
+if env.editor_build and env["platform"] != "windows" and env["platform"] != "web":
+    env_mcp.add_source_files(module_obj, "terminal/*.cpp")
+
+env.modules_sources += module_obj
+
+# Rebuild module files when thirdparty is updated.
+env.Depends(module_obj, thirdparty_obj)

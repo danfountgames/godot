@@ -1,0 +1,1048 @@
+/**************************************************************************/
+/*  mcp_automation_tools.cpp                                              */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#include "mcp_automation_tools.h"
+
+#include "core/object/script_language.h"
+
+#include "../mcp_debugger_bridge.h"
+#include "../mcp_protocol.h"
+#include "../mcp_tool_registry.h"
+#include "../mcp_types.h"
+
+#include "core/config/project_settings.h"
+#include "core/crypto/crypto_core.h"
+#include "core/io/file_access.h"
+#include "core/io/json.h"
+#include "servers/rendering/rendering_server.h"
+#include "core/input/input_map.h"
+#include "core/variant/typed_array.h"
+
+// ============================================================================
+// Registration
+// ============================================================================
+
+void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
+	ERR_FAIL_NULL(p_registry);
+
+	// runtime/input/send_input
+	{
+		Dictionary props;
+		props["action"] = make_prop("string",
+				"Input action name as defined in the Input Map (e.g., 'jump', 'move_left')");
+		props["pressed"] = make_prop("boolean",
+				"Press (true) or release (false) the action (default: true)");
+		props["hold_frames"] = make_prop("integer",
+				"Frames to hold before auto-release (default: 1, max: 600)");
+		props["strength"] = make_prop("number",
+				"Analog strength 0.0-1.0 (default: 1.0)");
+		Array required;
+		required.push_back("action");
+		p_registry->register_tool(
+				"runtime/input/send_input", "Send Input Action",
+				"Send an input action to the running game. Action names are project-specific "
+				"and must exist in Input Map (use project/get_input_map to discover them). "
+				"These are NOT raw key names — use runtime/input/send_key for raw keyboard input. "
+				"Actions prefixed 'ui_' are Godot built-ins (ui_accept, ui_cancel, etc). "
+				"Supports hold_frames for sustained input and strength for analog. "
+				"Game must be running.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPAutomationTools::handle_send_input));
+	}
+
+	// runtime/input/click_control
+	{
+		Dictionary props;
+		props["node_path"] = make_prop("string",
+				"Path to the Control node (e.g., '/root/Main/UI/StartButton')");
+		Array required;
+		required.push_back("node_path");
+		p_registry->register_tool(
+				"runtime/input/click_control", "Click UI Control",
+				"Simulate a mouse click on a UI Control node. Sends press+release at control "
+				"center. Works with Button, TextureButton, CheckBox, and any Control. "
+				"Game must be running.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPAutomationTools::handle_click_control));
+	}
+
+	// runtime/evaluate
+	{
+		Dictionary props;
+		props["expression"] = make_prop("string",
+				"GDScript expression or code. Supports $NodePath shorthand, assignments, "
+				"and multi-line statements. Examples:\n"
+				"  $Main/Player.position\n"
+				"  $Main/Player.health = 100\n"
+				"  var p = $Main/Player; p.position.x = 50\n"
+				"  get_nodes_in_group(\"enemies\").size()");
+		props["timeout_ms"] = make_prop("integer",
+				"Timeout in milliseconds (default: 10000, max: 60000). "
+				"Increase for operations that spawn many nodes or load resources.");
+		Array required;
+		required.push_back("expression");
+		p_registry->register_tool(
+				"runtime/evaluate", "Evaluate Expression",
+				"Evaluate a GDScript expression or execute GDScript code in the running "
+				"game's SceneTree context.\n\n"
+				"SIMPLE EXPRESSIONS: get_root(), get_nodes_in_group(), current_scene "
+				"work directly. Use $NodePath for node access: $Main/Player.position\n\n"
+				"ASSIGNMENTS & STATEMENTS: Supports var declarations, assignments, "
+				"loops, and control flow. Assign to _result to return a value:\n"
+				"  $Main/Player.health = 100\n"
+				"  for enemy in get_nodes_in_group(\"enemies\"): enemy.queue_free()\n"
+				"  _result = $Main/GameManager.score\n\n"
+				"Rotation values are in RADIANS (PI/2 = 90 degrees). "
+				"2D uses Y-down coordinates (positive Y = down on screen). "
+				"print() output goes to runtime/get_output.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPAutomationTools::handle_evaluate));
+	}
+
+	// runtime/wait_frames
+	{
+		Dictionary props;
+		props["frames"] = make_prop("integer",
+				"Frames to wait (default: 1, max: 600). 60 frames = ~1 second at 60fps.");
+		Array required;
+		p_registry->register_tool(
+				"runtime/wait_frames", "Wait Frames",
+				"Wait for N game frames using frame counting via process_frame signal "
+				"(NOT timers). Use between automation actions to let the game process changes. "
+				"Game must be running. Max 600 frames.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/true),
+				callable_mp_static(&MCPAutomationTools::handle_wait_frames));
+	}
+
+	// runtime/spawn_instance
+	{
+		Dictionary props;
+		props["scene_path"] = make_prop("string",
+				"Path to the .tscn scene file in res:// format "
+				"(e.g., 'res://scenes/enemies/slime.tscn', 'res://prefabs/ball.tscn'). "
+				"The scene must exist on disk. Use editor/scan_filesystem first if "
+				"you just created it.");
+		props["parent_path"] = make_prop("string",
+				"Scene tree path of the parent node to add the instance under "
+				"(e.g., '/root/Main', '/root/Level/Enemies'). "
+				"Defaults to '/root' if not specified. "
+				"Use runtime/browse_scene_tree to find valid parent paths.");
+		props["name"] = make_prop("string",
+				"Optional node name for the new instance (e.g., 'TestEnemy', 'Ball3'). "
+				"If omitted, Godot auto-names based on the scene root node name.");
+		props["properties"] = make_prop("object",
+				"Optional dictionary of property name → value to set on the instance "
+				"after adding it to the tree. Supports the same formats as "
+				"runtime/set_node_property: numbers, strings, booleans, arrays, "
+				"and dictionaries for compound types like Vector2 and Color.\n"
+				"Example: {\"position\": [100, 200], \"modulate\": {\"r\":1,\"g\":0,\"b\":0,\"a\":1}}");
+		Array required;
+		required.push_back("scene_path");
+		p_registry->register_tool(
+				"runtime/spawn_instance", "Spawn Scene Instance",
+				"Instantiate a PackedScene (.tscn) into the running game and return "
+				"the new node's unique instance ID and path. This is the GENERIC spawn "
+				"tool — it loads the scene, instantiates it, adds it to the tree, and "
+				"optionally sets initial properties.\n\n"
+				"For game-specific spawning that requires factory logic (adding to groups, "
+				"wiring signals, initializing complex state), prefer using debug/call "
+				"with a registered spawn method (e.g., debug/call {path: \"/root/Main/EnemySpawner\", "
+				"method: \"spawn_enemy\", args: [\"slime\", 100, 200]}). The instrumenter agent "
+				"can register these factory spawn actions.\n\n"
+				"Integration test workflow:\n"
+				"  1. runtime/time/suspend — pause the game\n"
+				"  2. runtime/spawn_instance — place prefabs into the scene\n"
+				"  3. runtime/set_node_property — configure positions, properties\n"
+				"  4. runtime/time/resume — unpause and observe behavior\n"
+				"  5. debug/get / runtime/get_node_properties — verify results\n\n"
+				"The returned instance_id is the Godot object ID, usable with "
+				"runtime/get_node_properties and runtime/set_node_property via the "
+				"returned node_path. Game must be running.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/false, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPAutomationTools::handle_spawn_instance));
+	}
+
+	// runtime/get_screenshot
+	{
+		Dictionary props;
+		Array required;
+		props["save_path"] = make_prop("string",
+				"Optional absolute file path to save the PNG to disk (e.g. '/tmp/screenshot.png'). "
+				"When provided, the image is saved to disk AND returned inline. "
+				"Useful for archiving screenshots or sharing with external tools.");
+		p_registry->register_tool(
+				"runtime/get_screenshot", "Get Screenshot",
+				"IMPORTANT: Screenshots are expensive and rarely needed. In almost all cases, "
+				"you should use runtime/get_scene_tree or runtime/get_node_properties instead "
+				"to inspect game state programmatically — this is faster, cheaper, and gives you "
+				"structured data you can actually reason about. Only use screenshots when you "
+				"specifically need to verify VISUAL appearance (rendering, layout, animations) "
+				"that cannot be determined from the scene tree. "
+				"Captures the running game's viewport as a base64-encoded PNG image. Game must be running. "
+				"Optionally saves to disk via save_path.",
+				make_schema(props, required),
+				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
+				callable_mp_static(&MCPAutomationTools::handle_get_screenshot));
+	}
+}
+
+// ============================================================================
+// Common Helpers
+// ============================================================================
+
+MCPDebuggerBridge *MCPAutomationTools::_get_bridge() {
+	return MCPDebuggerBridge::get_singleton();
+}
+
+Dictionary MCPAutomationTools::_require_game_running() {
+	MCPDebuggerBridge *bridge = _get_bridge();
+	if (!bridge) {
+		return make_tool_error("Internal error: debugger bridge not available.");
+	}
+	if (!bridge->is_game_running()) {
+		return make_tool_error(
+				"No game is currently running.\n\n"
+				"If the game stopped unexpectedly, check runtime/get_errors for runtime errors.\n"
+				"To start a game: runtime/run_project (main scene) or runtime/run_scene (specific scene).\n"
+				"To check status: runtime/get_status (includes stop_reason when stopped).");
+	}
+	return Dictionary();
+}
+
+bool MCPAutomationTools::_action_exists(const String &p_action) {
+	// First check the editor's InputMap (includes built-in ui_* actions).
+	if (InputMap::get_singleton()->has_action(p_action)) {
+		return true;
+	}
+
+	// If not found, check project settings directly. The editor's InputMap
+	// may not include project-specific actions added to project.godot after
+	// the editor started, since InputMap::load_from_project_settings() is
+	// only called once at startup. Rather than reloading the entire input
+	// map (which could disrupt the editor), we check the project settings
+	// directly for the action definition.
+	String action_key = "input/" + p_action;
+	return ProjectSettings::get_singleton()->has_setting(action_key);
+}
+
+Vector<String> MCPAutomationTools::_find_similar_actions(const String &p_action) {
+	Vector<String> suggestions;
+	String lower_action = p_action.to_lower();
+
+	// Get all action names.
+	TypedArray<StringName> actions = InputMap::get_singleton()->get_actions();
+
+	for (int idx = 0; idx < actions.size(); idx++) {
+		String action_str = String(StringName(actions[idx]));
+		// Simple similarity: contains as substring.
+		if (action_str.to_lower().contains(lower_action) ||
+				lower_action.contains(action_str.to_lower())) {
+			suggestions.push_back(action_str);
+		}
+		if (suggestions.size() >= 5) {
+			break;
+		}
+	}
+
+	return suggestions;
+}
+
+// ============================================================================
+// Tool Handlers
+// ============================================================================
+
+Dictionary MCPAutomationTools::handle_send_input(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	String action = p_args.get("action", "");
+	if (action.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: action\n\n"
+				"Provide an input action name from the Input Map.\n"
+				"Use project/get_input_map to see available actions.");
+	}
+
+	bool pressed = (bool)p_args.get("pressed", true);
+	int hold_frames = (int)p_args.get("hold_frames", 1);
+	float strength = (float)(double)p_args.get("strength", 1.0);
+
+	// Clamp parameters.
+	hold_frames = CLAMP(hold_frames, 0, 600);
+	strength = CLAMP(strength, 0.0f, 1.0f);
+
+	// Validate action exists in InputMap BEFORE sending to game.
+	if (!_action_exists(action)) {
+		String error_text = "Unknown input action: '" + action + "'. "
+															"This action is not defined in the project's Input Map.\n\n";
+
+		Vector<String> suggestions = _find_similar_actions(action);
+		if (suggestions.size() > 0) {
+			error_text += "Did you mean one of these?\n";
+			for (int i = 0; i < suggestions.size(); i++) {
+				error_text += "  " + suggestions[i] + "\n";
+			}
+			error_text += "\n";
+		}
+
+		error_text += "Use project/get_input_map to see all available actions.";
+		return make_tool_error(error_text);
+	}
+
+	// Send to game via bridge.
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result = bridge->send_inject_action(action, pressed, hold_frames, strength);
+
+	if (!(bool)result.get("success", false)) {
+		return make_tool_error(
+				"Failed to send input action '" + action + "': " +
+				String(result.get("error", "Unknown error")));
+	}
+
+	// Build response.
+	String text = "Input action '" + action + "' " +
+			(pressed ? "pressed" : "released") +
+			" (hold: " + itos(hold_frames) + " frames, strength: " +
+			String::num(strength, 1) + ")";
+
+	Dictionary structured;
+	structured["action"] = action;
+	structured["pressed"] = pressed;
+	structured["hold_frames"] = hold_frames;
+	structured["strength"] = strength;
+	structured["success"] = true;
+
+	return make_tool_result(text, structured);
+}
+
+Dictionary MCPAutomationTools::handle_click_control(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	String node_path = p_args.get("node_path", "");
+	if (node_path.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: node_path\n\n"
+				"Provide the scene tree path of a Control node.\n"
+				"Example: { \"node_path\": \"/root/Main/UI/StartButton\" }\n"
+				"Use runtime/search_scene_tree to find Control nodes.");
+	}
+
+	// Validate node_path contains only safe characters (same rules as get_node_properties).
+	for (int i = 0; i < node_path.length(); i++) {
+		char32_t c = node_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' && c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error("Invalid node path: contains disallowed character");
+		}
+	}
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result = bridge->send_click_control(node_path);
+
+	if (!(bool)result.get("success", false)) {
+		String error_msg = result.get("message", result.get("error", "Unknown error"));
+
+		// Provide contextual guidance based on the error.
+		String guidance;
+		if (String(error_msg).contains("not found")) {
+			guidance = "\n\nUse runtime/search_scene_tree with name_pattern to find the correct path.";
+		} else if (String(error_msg).contains("not a Control")) {
+			guidance = "\n\nruntime/input/click_control only works on UI Control nodes "
+					   "(Button, Label, etc.). For non-UI interaction, use "
+					   "runtime/input/send_input with input actions.";
+		}
+
+		return make_tool_error(String(error_msg) + guidance);
+	}
+
+	String msg = result.get("message", "Click sent");
+	String text = "Clicked " + node_path + ": " + msg;
+
+	Dictionary structured;
+	structured["success"] = true;
+	structured["node_path"] = node_path;
+	structured["message"] = msg;
+
+	return make_tool_result(text, structured);
+}
+
+// Helper: Rewrite $NodePath syntax to get_root().get_node("NodePath").
+// Handles $Node, $Node/Child, $"Node/With Spaces", and property access after.
+static String _rewrite_dollar_paths(const String &p_expr) {
+	String result;
+	int i = 0;
+	while (i < p_expr.length()) {
+		if (p_expr[i] == '$') {
+			// Found a $ — extract the node path.
+			i++; // Skip $
+			String node_path;
+			bool quoted = (i < p_expr.length() && p_expr[i] == '"');
+			if (quoted) {
+				// $"Some/Path" form
+				i++; // Skip opening "
+				while (i < p_expr.length() && p_expr[i] != '"') {
+					node_path += p_expr[i];
+					i++;
+				}
+				if (i < p_expr.length()) {
+					i++; // Skip closing "
+				}
+			} else {
+				// $Node/Child form — path chars are alphanumeric, _, /
+				while (i < p_expr.length()) {
+					char32_t c = p_expr[i];
+					if (is_ascii_alphanumeric_char(c) || c == '_' || c == '/') {
+						node_path += p_expr[i];
+						i++;
+					} else {
+						break;
+					}
+				}
+			}
+			if (!node_path.is_empty()) {
+				result += "get_root().get_node(\"" + node_path + "\")";
+			} else {
+				result += "$"; // Lone $ with nothing after, keep as-is
+			}
+		} else {
+			result += p_expr[i];
+			i++;
+		}
+	}
+	return result;
+}
+
+// Helper: Detect if an expression contains statements that require
+// GDScript execution rather than Expression evaluation.
+static bool _needs_gdscript_execution(const String &p_expr) {
+	// Check for multi-line code.
+	if (p_expr.contains("\n")) {
+		return true;
+	}
+
+	String stripped = p_expr.strip_edges();
+
+	// Assignment operators (but not == comparison).
+	// Check for = that's not ==, !=, <=, >=
+	for (int i = 0; i < stripped.length(); i++) {
+		if (stripped[i] == '=' && i > 0) {
+			char32_t prev = stripped[i - 1];
+			char32_t next = (i + 1 < stripped.length()) ? stripped[i + 1] : 0;
+			// Skip ==, !=, <=, >=
+			if (prev == '!' || prev == '<' || prev == '>' || prev == '=') {
+				continue;
+			}
+			if (next == '=') {
+				i++; // Skip ==
+				continue;
+			}
+			// This is an assignment: =, +=, -=, *=, /=
+			return true;
+		}
+	}
+
+	// Keywords that indicate statements.
+	static const char *statement_keywords[] = {
+		"var ", "const ", "for ", "while ", "if ", "elif ", "else:",
+		"match ", "return ", "pass", "break", "continue",
+		nullptr
+	};
+	for (const char **kw = statement_keywords; *kw != nullptr; kw++) {
+		if (stripped.begins_with(*kw) || stripped.contains(String("\n") + *kw)) {
+			return true;
+		}
+	}
+
+	// Engine singletons are now passed as input variables to the Expression
+	// evaluator, so they no longer require GDScript execution.
+	// The only exception is Debug.* which should use console/* tools instead.
+
+	// _result = pattern (explicit GDScript request)
+	if (stripped.begins_with("_result")) {
+		return true;
+	}
+
+	return false;
+}
+
+Dictionary MCPAutomationTools::handle_evaluate(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	String expression = p_args.get("expression", "");
+	if (expression.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: expression\n\n"
+				"Provide a GDScript expression to evaluate.\n"
+				"Examples:\n"
+				"  $Main/Player.position\n"
+				"  get_root().get_node(\"Main/Player\").position\n"
+				"  get_nodes_in_group(\"enemies\").size()\n"
+				"  current_scene.name\n\n"
+				"Assignments and statements are also supported:\n"
+				"  $Main/Player.position.x = 100\n"
+				"  var p = $Main/Player; p.health = 50");
+	}
+
+	// Security: block dangerous expressions that could execute arbitrary
+	// OS commands or bypass the sandbox.
+	{
+		String expr_lower = expression.to_lower();
+
+		// Exact API patterns — these use "os." prefix or explicit class names
+		// so they won't false-positive on game identifiers like boss.execute().
+		static const char *blocked_exact[] = {
+			"os.execute(",
+			"os.shell_open(",
+			"os.create_process(",
+			"os.create_instance(",
+			"os.kill(",
+			nullptr
+		};
+		for (const char **p = blocked_exact; *p != nullptr; p++) {
+			if (expr_lower.find(*p) != -1) {
+				return make_tool_error(
+						"Blocked: expression contains a disallowed pattern (\"" +
+						String(*p) +
+						"\"). For security, OS commands are not permitted.");
+			}
+		}
+
+		// Class/API names that are dangerous when used as identifiers.
+		// These are checked with word-boundary awareness: the character before
+		// the match must NOT be alphanumeric or underscore (i.e., it's a
+		// standalone identifier, not part of a larger word like "bossfileaccess").
+		static const char *blocked_identifiers[] = {
+			"fileaccess",
+			"diraccess",
+			"marshalls",
+			nullptr
+		};
+		for (const char **p = blocked_identifiers; *p != nullptr; p++) {
+			String pattern(*p);
+			int pos = expr_lower.find(pattern);
+			while (pos != -1) {
+				// Check word boundary before match.
+				bool boundary_before = (pos == 0) || (!is_ascii_alphanumeric_char(expr_lower[pos - 1]) && expr_lower[pos - 1] != '_');
+				// Check word boundary after match.
+				int end = pos + pattern.length();
+				bool boundary_after = (end >= expr_lower.length()) || (!is_ascii_alphanumeric_char(expr_lower[end]) && expr_lower[end] != '_');
+				if (boundary_before && boundary_after) {
+					return make_tool_error(
+							"Blocked: expression contains a disallowed identifier (\"" +
+							pattern +
+							"\"). For security, file system access and "
+							"serialization APIs are not permitted.");
+				}
+				pos = expr_lower.find(pattern, pos + 1);
+			}
+		}
+
+		// Reflection/threading patterns that are suspicious in any context.
+		static const char *blocked_anywhere[] = {
+			".callv(",
+			nullptr
+		};
+		for (const char **p = blocked_anywhere; *p != nullptr; p++) {
+			if (expr_lower.find(*p) != -1) {
+				return make_tool_error(
+						"Blocked: expression contains a disallowed pattern (\"" +
+						String(*p) +
+						"\"). Reflection calls are not permitted.");
+			}
+		}
+	}
+
+	// Rewrite $NodePath syntax to get_root().get_node("NodePath").
+	String rewritten = _rewrite_dollar_paths(expression);
+
+	// Optional timeout override (default 10s, max 60s).
+	int timeout_ms = (int)p_args.get("timeout_ms", 10000);
+	timeout_ms = CLAMP(timeout_ms, 1000, 60000);
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result;
+
+	// Always use the Expression evaluator. GDScript dynamic compilation
+	// (send_execute_code) is currently unavailable due to a subprocess crash.
+	// Reject expressions that require statement execution with a helpful message.
+	if (_needs_gdscript_execution(rewritten)) {
+		return make_tool_error(
+				"This expression requires GDScript statement execution "
+				"(multi-line code, assignments, or control flow), which is "
+				"not currently supported. Use single-expression evaluations instead.\n\n"
+				"For Debug singleton operations, use the debug/* tools:\n"
+				"  - debug/get for reading node properties\n"
+				"  - debug/set for writing node properties\n"
+				"  - debug/call for calling methods on nodes\n"
+				"  - debug/browse_tree / debug/describe_class for exploring the scene");
+	}
+	result = bridge->send_evaluate(rewritten, timeout_ms);
+
+	if (!(bool)result.get("success", false)) {
+		String error_msg = result.get("value", result.get("error", "Unknown error"));
+
+		// Detect common mistakes and provide guidance.
+		String guidance;
+		if (String(error_msg).contains("null instance")) {
+			guidance = "\n\nThe node path may be incorrect. "
+					   "Use runtime/search_scene_tree to find the correct path.";
+		}
+
+		return make_tool_error(
+				"Expression error: " + String(error_msg) + guidance);
+	}
+
+	String value_str = result.get("value", "");
+
+	// Parse type and value from the bridge response format "Type: value".
+	String type_name;
+	String display_value = value_str;
+	int colon_pos = value_str.find(": ");
+	if (colon_pos >= 0) {
+		type_name = value_str.substr(0, colon_pos);
+		display_value = value_str.substr(colon_pos + 2);
+	}
+
+	String text = "Result: " + display_value;
+	if (!type_name.is_empty()) {
+		text += "\nType: " + type_name;
+	}
+
+	Dictionary structured;
+	structured["success"] = true;
+	structured["value"] = display_value;
+	structured["type"] = type_name;
+	structured["raw"] = value_str;
+
+	return make_tool_result(text, structured);
+}
+
+Dictionary MCPAutomationTools::handle_wait_frames(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	int frames = (int)p_args.get("frames", 1);
+	frames = CLAMP(frames, 1, 600);
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+
+	// Generous timeout: frames * 200ms upper bound.
+	// At 60fps, 600 frames = 10 seconds; our timeout = 120 seconds (very safe).
+	int timeout_ms = MAX(frames * 200, 10000);
+	Dictionary result = bridge->send_wait_frames(frames, timeout_ms);
+
+	if (!(bool)result.get("success", false)) {
+		return make_tool_error(
+				"Wait failed: " + String(result.get("error", "Unknown error")) +
+				"\n\nThe game may have crashed or stopped during the wait.\n"
+				"Try runtime/get_status to check game state.");
+	}
+
+	int actual_frames = (int)result.get("frames_waited", frames);
+	String text = "Waited " + itos(actual_frames) + " frames.";
+
+	Dictionary structured;
+	structured["frames_waited"] = actual_frames;
+
+	return make_tool_result(text, structured);
+}
+
+Dictionary MCPAutomationTools::handle_spawn_instance(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	String scene_path = p_args.get("scene_path", "");
+	if (scene_path.is_empty()) {
+		return make_tool_error(
+				"Missing required parameter: scene_path\n\n"
+				"Provide a .tscn file path in res:// format.\n"
+				"Example: { \"scene_path\": \"res://scenes/enemies/slime.tscn\" }");
+	}
+
+	// Validate path format.
+	if (!validate_path(scene_path)) {
+		return make_tool_error(vformat(
+				"Invalid path: %s\n\n"
+				"Paths must start with res:// and cannot contain '..' traversal sequences.",
+				scene_path));
+	}
+
+	// Validate extension.
+	if (!scene_path.ends_with(".tscn")) {
+		return make_tool_error(vformat(
+				"Invalid scene file: %s\n\n"
+				"Only .tscn files can be instantiated. Provide a path ending in .tscn.",
+				scene_path));
+	}
+
+	String parent_path = p_args.get("parent_path", "/root");
+	String instance_name = p_args.get("name", "");
+	Dictionary properties;
+	if (p_args.has("properties")) {
+		Variant props_var = p_args["properties"];
+		if (props_var.get_type() == Variant::DICTIONARY) {
+			properties = props_var;
+		}
+	}
+
+	// Validate parent_path characters (prevent injection).
+	for (int i = 0; i < parent_path.length(); i++) {
+		char32_t c = parent_path[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' &&
+				c != '.' && c != '@' && c != ':' && c != '-' && c != ' ') {
+			return make_tool_error(vformat(
+					"'parent_path' contains invalid character '%c' at position %d.",
+					(char)c, i));
+		}
+	}
+
+	// Validate instance_name characters if provided.
+	if (!instance_name.is_empty()) {
+		for (int i = 0; i < instance_name.length(); i++) {
+			char32_t c = instance_name[i];
+			if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '-' && c != ' ') {
+				return make_tool_error(vformat(
+						"'name' contains invalid character '%c' at position %d. "
+						"Allowed: alphanumeric, _, -, space.",
+						(char)c, i));
+			}
+		}
+	}
+
+	// Build GDScript code to execute on the game side.
+	// This loads the scene, instantiates it, adds to parent, sets properties,
+	// and returns the instance ID and path.
+	String code;
+	code += "var _scene = load(\"" + scene_path.c_escape() + "\")\n";
+	code += "if _scene == null:\n";
+	code += "\t_result = \"ERROR: Failed to load scene: " + scene_path.c_escape() + "\"\n";
+	code += "else:\n";
+	code += "\tvar _inst = _scene.instantiate()\n";
+
+	if (!instance_name.is_empty()) {
+		code += "\t_inst.name = \"" + instance_name.c_escape() + "\"\n";
+	}
+
+	code += "\tvar _parent = get_root().get_node_or_null(\"" + parent_path.substr(parent_path.begins_with("/root") ? 5 : 0).c_escape() + "\")\n";
+	// Handle /root itself as a special case.
+	if (parent_path == "/root") {
+		code = code.replace("get_root().get_node_or_null(\"\")", "get_root()");
+	}
+	code += "\tif _parent == null:\n";
+	code += "\t\t_result = \"ERROR: Parent node not found: " + parent_path.c_escape() + "\"\n";
+	code += "\telse:\n";
+	code += "\t\t_parent.add_child(_inst)\n";
+	code += "\t\t_inst.owner = get_root()\n";
+
+	// Set properties if provided.
+	LocalVector<Variant> prop_keys = properties.get_key_list();
+	for (const Variant &key : prop_keys) {
+		String prop_name = key;
+		Variant prop_value = properties[key];
+
+		// Validate property name.
+		bool prop_name_safe = true;
+		for (int i = 0; i < prop_name.length(); i++) {
+			char32_t c = prop_name[i];
+			if (!is_ascii_alphanumeric_char(c) && c != '_' && c != '/' && c != ':' && c != '.') {
+				prop_name_safe = false;
+				break;
+			}
+		}
+		if (!prop_name_safe) {
+			continue; // Skip invalid property names.
+		}
+
+		// Convert value to GDScript literal.
+		String val_str;
+		switch (prop_value.get_type()) {
+			case Variant::BOOL:
+				val_str = (bool)prop_value ? "true" : "false";
+				break;
+			case Variant::INT:
+				val_str = itos((int64_t)prop_value);
+				break;
+			case Variant::FLOAT:
+				val_str = String::num((double)prop_value);
+				break;
+			case Variant::STRING:
+				val_str = "\"" + String(prop_value).c_escape() + "\"";
+				break;
+			case Variant::ARRAY: {
+				Array arr = prop_value;
+				if (arr.size() == 2) {
+					val_str = vformat("Vector2(%s, %s)",
+							String::num((double)arr[0]),
+							String::num((double)arr[1]));
+				} else if (arr.size() == 3) {
+					val_str = vformat("Vector3(%s, %s, %s)",
+							String::num((double)arr[0]),
+							String::num((double)arr[1]),
+							String::num((double)arr[2]));
+				} else if (arr.size() == 4) {
+					val_str = vformat("Color(%s, %s, %s, %s)",
+							String::num((double)arr[0]),
+							String::num((double)arr[1]),
+							String::num((double)arr[2]),
+							String::num((double)arr[3]));
+				}
+			} break;
+			case Variant::DICTIONARY: {
+				Dictionary d = prop_value;
+				if (d.has("x") && d.has("y")) {
+					if (d.has("z")) {
+						val_str = vformat("Vector3(%s, %s, %s)",
+								String::num((double)d.get("x", 0.0)),
+								String::num((double)d.get("y", 0.0)),
+								String::num((double)d.get("z", 0.0)));
+					} else {
+						val_str = vformat("Vector2(%s, %s)",
+								String::num((double)d.get("x", 0.0)),
+								String::num((double)d.get("y", 0.0)));
+					}
+				} else if (d.has("r") && d.has("g") && d.has("b")) {
+					val_str = vformat("Color(%s, %s, %s, %s)",
+							String::num((double)d.get("r", 0.0)),
+							String::num((double)d.get("g", 0.0)),
+							String::num((double)d.get("b", 0.0)),
+							String::num((double)d.get("a", 1.0)));
+				}
+			} break;
+			default:
+				break;
+		}
+
+		if (!val_str.is_empty()) {
+			code += "\t\t_inst.set(\"" + prop_name.c_escape() + "\", " + val_str + ")\n";
+		}
+	}
+
+	code += "\t\tvar _id = _inst.get_instance_id()\n";
+	code += "\t\tvar _path = str(_inst.get_path())\n";
+	code += "\t\tvar _type = _inst.get_class()\n";
+	code += "\t\t_result = \"{\\\"instance_id\\\": \" + str(_id) + \", \\\"node_path\\\": \\\"\" + _path + \"\\\", \\\"type\\\": \\\"\" + _type + \"\\\", \\\"name\\\": \\\"\" + _inst.name + \"\\\"}\"\n";
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result = bridge->send_execute_code(code, 15000);
+
+	if (!(bool)result.get("success", false)) {
+		String error_msg = result.get("value", result.get("error", "Unknown error"));
+		return make_tool_error(
+				"Failed to spawn instance: " + error_msg + "\n\n"
+				"Check that the scene file exists and the parent node path is valid.\n"
+				"Use editor/scan_filesystem if the scene was just created.");
+	}
+
+	String value_str = result.get("value", "");
+
+	// Extract the JSON result from the value string.
+	// Bridge returns "Type: value" format.
+	String json_str = value_str;
+	int colon_pos = value_str.find(": ");
+	if (colon_pos >= 0) {
+		json_str = value_str.substr(colon_pos + 2);
+	}
+
+	// Check for error results.
+	if (json_str.begins_with("ERROR:")) {
+		return make_tool_error(json_str);
+	}
+
+	// Parse the JSON response.
+	JSON json;
+	Dictionary spawn_result;
+	if (json.parse(json_str) == OK && json.get_data().get_type() == Variant::DICTIONARY) {
+		spawn_result = json.get_data();
+	}
+
+	String node_path = spawn_result.get("node_path", "");
+	String node_name = spawn_result.get("name", "");
+	String node_type = spawn_result.get("type", "");
+	int64_t instance_id = (int64_t)spawn_result.get("instance_id", 0);
+
+	String text = vformat("Spawned '%s' (%s) at %s [id:%d]\nScene: %s\nParent: %s",
+			node_name, node_type, node_path, instance_id, scene_path, parent_path);
+
+	if (!properties.is_empty()) {
+		text += vformat("\nProperties set: %d", properties.size());
+	}
+
+	text += "\n\nUse runtime/get_node_properties with node_path=\"" + node_path + "\" to inspect.";
+	text += "\nUse runtime/set_node_property to modify properties on the spawned instance.";
+
+	Dictionary structured;
+	structured["instance_id"] = instance_id;
+	structured["node_path"] = node_path;
+	structured["name"] = node_name;
+	structured["type"] = node_type;
+	structured["scene_path"] = scene_path;
+	structured["parent_path"] = parent_path;
+	structured["properties_set"] = properties.size();
+
+	return make_tool_result(text, structured);
+}
+
+Dictionary MCPAutomationTools::handle_get_screenshot(const Dictionary &p_args) {
+	Dictionary guard = _require_game_running();
+	if (!guard.is_empty()) {
+		return guard;
+	}
+
+	MCPDebuggerBridge *bridge = _get_bridge();
+	Dictionary result = bridge->send_screenshot();
+
+	if (!(bool)result.get("success", false)) {
+		return make_tool_error(
+				"Screenshot failed: " + String(result.get("error", "Unknown error")));
+	}
+
+	String base64_png = result.get("base64_png", "");
+	if (base64_png.is_empty()) {
+		return make_tool_error(
+				"Screenshot captured but returned empty data.\n\n"
+				"This may indicate a rendering issue. Try again after a few frames.");
+	}
+
+	// Extract dimensions from bridge result.
+	int width = result.get("width", 0);
+	int height = result.get("height", 0);
+
+	// Estimate size.
+	int data_size = base64_png.length() * 3 / 4; // Approximate decoded size.
+	double size_kb = (double)data_size / 1024.0;
+
+	// Detect software renderer (llvmpipe, swrast) — screenshots may be empty.
+	String warning;
+	String video_adapter = result.get("video_adapter", "");
+	if (video_adapter.is_empty()) {
+		// Try reading from OS.
+		video_adapter = RenderingServer::get_singleton()
+				? String(RenderingServer::get_singleton()->get_video_adapter_name())
+				: String();
+	}
+	if (!video_adapter.is_empty()) {
+		String adapter_lower = video_adapter.to_lower();
+		if (adapter_lower.contains("llvmpipe") || adapter_lower.contains("swrast") ||
+				adapter_lower.contains("software") || adapter_lower.contains("mesa")) {
+			warning = "Software renderer detected (" + video_adapter +
+					"). Screenshot pixel data may be empty or incorrect. "
+					"Use runtime/get_scene_tree or runtime/evaluate instead "
+					"for reliable state inspection.";
+		}
+	}
+
+	// Optionally save to disk.
+	String save_path = p_args.get("save_path", "");
+	String save_info;
+	if (!save_path.is_empty()) {
+		// Decode base64 back to raw PNG bytes for disk write.
+		CharString b64_ascii = base64_png.ascii();
+		size_t max_len = b64_ascii.length(); // Decoded will be smaller.
+		PackedByteArray png_bytes;
+		png_bytes.resize(max_len);
+		size_t decoded_len = 0;
+		Error decode_err = CryptoCore::b64_decode(
+				png_bytes.ptrw(), max_len, &decoded_len,
+				(const uint8_t *)b64_ascii.get_data(), b64_ascii.length());
+		if (decode_err != OK || decoded_len == 0) {
+			save_info = "WARNING: Failed to decode PNG data for save.";
+		} else {
+			png_bytes.resize(decoded_len);
+			Ref<FileAccess> f = FileAccess::open(save_path, FileAccess::WRITE);
+			if (f.is_valid()) {
+				f->store_buffer(png_bytes.ptr(), png_bytes.size());
+				f->close();
+				save_info = "Saved to: " + save_path;
+			} else {
+				save_info = "WARNING: Could not write to '" + save_path + "': " +
+						itos((int)FileAccess::get_open_error());
+			}
+		}
+	}
+
+	// Build response with both text and image content blocks.
+	String caption = "Screenshot captured (" +
+			itos(width) + "x" + itos(height) + ", " +
+			String::num(size_kb, 1) + " KB PNG)";
+	if (!save_info.is_empty()) {
+		caption += "\n" + save_info;
+	}
+	if (!warning.is_empty()) {
+		caption += "\n\nWARNING: " + warning;
+	}
+
+	Dictionary text_content;
+	text_content["type"] = "text";
+	text_content["text"] = caption;
+
+	Dictionary image_content;
+	image_content["type"] = "image";
+	image_content["data"] = base64_png;
+	image_content["mimeType"] = "image/png";
+
+	Array content;
+	content.push_back(text_content);
+	content.push_back(image_content);
+
+	Dictionary structured;
+	structured["width"] = width;
+	structured["height"] = height;
+	structured["format"] = "png";
+	structured["size_bytes"] = data_size;
+	if (!save_path.is_empty()) {
+		structured["save_path"] = save_path;
+		structured["saved"] = save_info.begins_with("Saved");
+	}
+	if (!warning.is_empty()) {
+		structured["warning"] = warning;
+	}
+
+	Dictionary response;
+	response["content"] = content;
+	response["structuredContent"] = structured;
+
+	return response;
+}

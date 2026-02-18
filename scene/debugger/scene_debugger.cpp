@@ -30,6 +30,10 @@
 
 #include "scene_debugger.h"
 
+#include "core/config/engine.h"
+#include "core/doc_data.h"
+#include "core/object/class_db.h"
+#include "modules/modules_enabled.gen.h" // For mcp_server.
 #include "core/config/project_settings.h"
 #include "core/debugger/debugger_marshalls.h"
 #include "core/debugger/engine_debugger.h"
@@ -46,9 +50,11 @@
 #include "scene/main/canvas_layer.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
+#include "core/io/json.h"
 #include "scene/resources/packed_scene.h"
 #include "scene/theme/theme_db.h"
 #include "servers/audio/audio_server.h"
+#include "servers/rendering/rendering_server.h"
 
 #ifndef PHYSICS_2D_DISABLED
 #include "scene/2d/physics/collision_object_2d.h"
@@ -75,11 +81,17 @@ SceneDebugger::SceneDebugger() {
 	RuntimeNodeSelect::singleton = memnew(RuntimeNodeSelect);
 
 	EngineDebugger::register_message_capture("scene", EngineDebugger::Capture(nullptr, SceneDebugger::parse_message));
+#ifdef MODULE_MCP_SERVER_ENABLED
+	EngineDebugger::register_message_capture("mcp", EngineDebugger::Capture(nullptr, SceneDebugger::_mcp_capture));
+#endif // MODULE_MCP_SERVER_ENABLED
 #endif // DEBUG_ENABLED
 }
 
 SceneDebugger::~SceneDebugger() {
 #ifdef DEBUG_ENABLED
+#ifdef MODULE_MCP_SERVER_ENABLED
+	EngineDebugger::unregister_message_capture("mcp");
+#endif // MODULE_MCP_SERVER_ENABLED
 	if (LiveEditor::singleton) {
 		EngineDebugger::unregister_message_capture("scene");
 		memdelete(LiveEditor::singleton);
@@ -516,6 +528,25 @@ Error SceneDebugger::_msg_rq_screenshot(const Array &p_args) {
 // endregion
 
 HashMap<String, SceneDebugger::ParseMessageFunc> SceneDebugger::message_handlers;
+int SceneDebugger::_frames_remaining = 0;
+
+#ifdef MODULE_MCP_SERVER_ENABLED
+int SceneDebugger::_mcp_wait_frames_remaining = 0;
+int SceneDebugger::_mcp_wait_frames_requested = 0;
+int64_t SceneDebugger::_mcp_frame_counter = 0;
+bool SceneDebugger::_mcp_heartbeat_connected = false;
+
+// Input simulation state.
+Vector<SceneDebugger::MCPHeldInput> SceneDebugger::_mcp_held_inputs;
+bool SceneDebugger::_mcp_held_tick_connected = false;
+String SceneDebugger::_mcp_type_queue;
+int SceneDebugger::_mcp_type_index = 0;
+int SceneDebugger::_mcp_type_interval = 0;
+int SceneDebugger::_mcp_type_frame_counter = 0;
+bool SceneDebugger::_mcp_type_tick_connected = false;
+SceneDebugger::MCPSequenceState SceneDebugger::_mcp_sequence;
+bool SceneDebugger::_mcp_sequence_tick_connected = false;
+#endif // MODULE_MCP_SERVER_ENABLED
 
 Error SceneDebugger::parse_message(void *p_user, const String &p_msg, const Array &p_args, bool &r_captured) {
 	ERR_FAIL_NULL_V(SceneTree::get_singleton(), ERR_UNCONFIGURED);
@@ -552,6 +583,10 @@ void SceneDebugger::_init_message_handlers() {
 	message_handlers["clear_selection"] = _msg_clear_selection;
 	message_handlers["suspend_changed"] = _msg_suspend_changed;
 	message_handlers["next_frame"] = _msg_next_frame;
+	message_handlers["advance_frames"] = _msg_advance_frames;
+	message_handlers["set_debug_pause_enabled"] = _msg_set_debug_pause_enabled;
+	message_handlers["set_debug_pause_tag_enabled"] = _msg_set_debug_pause_tag_enabled;
+	message_handlers["clear_debug_pause_hits"] = _msg_clear_debug_pause_hits;
 	message_handlers["speed_changed"] = _msg_speed_changed;
 	message_handlers["debug_mute_audio"] = _msg_debug_mute_audio;
 	message_handlers["override_cameras"] = _msg_override_cameras;
@@ -708,6 +743,93 @@ void SceneDebugger::_next_frame() {
 
 	scene_tree->set_suspend(false);
 	RenderingServer::get_singleton()->connect("frame_post_draw", callable_mp(scene_tree, &SceneTree::set_suspend).bind(true), Object::CONNECT_ONE_SHOT);
+}
+
+void SceneDebugger::_advance_n_frames_natural(int p_count) {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	if (!scene_tree->is_suspended()) {
+		return;
+	}
+
+	_frames_remaining = p_count;
+	_step_one_natural();
+}
+
+void SceneDebugger::_step_one_natural() {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+
+	// If tree was re-suspended (e.g., by debug_pause), abort remaining frames.
+	if (scene_tree->is_suspended() && _frames_remaining < 0) {
+		_frames_remaining = 0;
+		return;
+	}
+
+	_frames_remaining--;
+	scene_tree->set_suspend(false);
+
+	if (_frames_remaining > 0) {
+		RenderingServer::get_singleton()->connect(SNAME("frame_post_draw"),
+				callable_mp_static(&SceneDebugger::_step_one_natural),
+				Object::CONNECT_ONE_SHOT);
+	} else {
+		// Last frame - re-suspend after render.
+		RenderingServer::get_singleton()->connect(SNAME("frame_post_draw"),
+				callable_mp(scene_tree, &SceneTree::set_suspend).bind(true),
+				Object::CONNECT_ONE_SHOT);
+	}
+}
+
+void SceneDebugger::_advance_n_frames_instant(int p_count) {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	if (!scene_tree->is_suspended()) {
+		return;
+	}
+
+	double delta = 1.0 / Engine::get_singleton()->get_physics_ticks_per_second();
+
+	scene_tree->set_suspend(false);
+
+	for (int i = 0; i < p_count; i++) {
+		scene_tree->physics_process(delta);
+		scene_tree->process(delta);
+
+		// If a debug_pause() fired during processing, stop early.
+		if (scene_tree->is_suspended()) {
+			return;
+		}
+	}
+
+	scene_tree->set_suspend(true);
+}
+
+Error SceneDebugger::_msg_advance_frames(const Array &p_args) {
+	ERR_FAIL_COND_V(p_args.size() < 2, ERR_INVALID_DATA);
+	int count = p_args[0];
+	bool instant = p_args[1];
+
+	if (instant) {
+		_advance_n_frames_instant(count);
+	} else {
+		_advance_n_frames_natural(count);
+	}
+	return OK;
+}
+
+Error SceneDebugger::_msg_set_debug_pause_enabled(const Array &p_args) {
+	ERR_FAIL_COND_V(p_args.is_empty(), ERR_INVALID_DATA);
+	SceneTree::set_debug_pause_enabled(p_args[0]);
+	return OK;
+}
+
+Error SceneDebugger::_msg_set_debug_pause_tag_enabled(const Array &p_args) {
+	ERR_FAIL_COND_V(p_args.size() < 2, ERR_INVALID_DATA);
+	SceneTree::set_debug_pause_tag_enabled(p_args[0], p_args[1]);
+	return OK;
+}
+
+Error SceneDebugger::_msg_clear_debug_pause_hits(const Array &p_args) {
+	SceneTree::clear_debug_pause_hit_counts();
+	return OK;
 }
 
 void SceneDebugger::add_to_cache(const String &p_filename, Node *p_node) {
@@ -3114,5 +3236,3309 @@ void RuntimeNodeSelect::_reset_camera_3d() {
 	}
 }
 #endif // _3D_DISABLED
+
+// ========================================================================
+// MCP Capture (game-side message handlers)
+// ========================================================================
+
+#ifdef MODULE_MCP_SERVER_ENABLED
+
+#include "core/config/engine.h"
+#include "core/crypto/crypto_core.h"
+#include "core/input/input.h"
+#include "core/input/input_event.h"
+#include "core/input/input_map.h"
+#include "core/io/image.h"
+#include "core/math/expression.h"
+#include "main/performance.h"
+#include "scene/gui/base_button.h"
+#include "scene/gui/button.h"
+#include "scene/gui/check_box.h"
+#include "scene/gui/check_button.h"
+#include "scene/gui/control.h"
+#include "scene/gui/item_list.h"
+#include "scene/gui/label.h"
+#include "scene/gui/line_edit.h"
+#include "scene/gui/option_button.h"
+#include "scene/gui/progress_bar.h"
+#include "scene/gui/range.h"
+#include "scene/gui/scroll_container.h"
+#include "scene/gui/slider.h"
+#include "scene/gui/spin_box.h"
+#include "scene/gui/tab_bar.h"
+#include "scene/gui/tab_container.h"
+#include "scene/gui/text_edit.h"
+#include "scene/gui/tree.h"
+
+void SceneDebugger::_mcp_process_frame_tick() {
+	// Called every process frame while waiting.
+	if (_mcp_wait_frames_remaining <= 0) {
+		return;
+	}
+
+	_mcp_wait_frames_remaining--;
+
+	if (_mcp_wait_frames_remaining <= 0) {
+		// Disconnect ourselves from the signal.
+		SceneTree *st = SceneTree::get_singleton();
+		if (st && st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick));
+		}
+
+		// Send completion message back to editor with actual frames waited.
+		Array result;
+		result.push_back(_mcp_wait_frames_requested);
+		EngineDebugger::get_singleton()->send_message("mcp:wait_done", result);
+	}
+}
+
+void SceneDebugger::_mcp_heartbeat_tick() {
+	_mcp_frame_counter++;
+	if (_mcp_frame_counter % 60 == 0) {
+		Array data;
+		data.push_back(_mcp_frame_counter);
+		EngineDebugger::get_singleton()->send_message("mcp:heartbeat", data);
+	}
+}
+
+void SceneDebugger::_mcp_start_heartbeat() {
+	if (_mcp_heartbeat_connected) {
+		return;
+	}
+	SceneTree *st = SceneTree::get_singleton();
+	if (st) {
+		_mcp_frame_counter = 0;
+		st->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_heartbeat_tick));
+		_mcp_heartbeat_connected = true;
+	}
+}
+
+// ========================================================================
+// Input Simulation Helpers (game-side)
+// ========================================================================
+
+#include "core/input/input_event.h"
+
+int SceneDebugger::_mcp_key_name_to_keycode(const String &p_name) {
+	String name = p_name.to_lower().strip_edges();
+	if (name.length() == 1 && name[0] >= 'a' && name[0] <= 'z') {
+		return 65 + (name[0] - 'a');
+	}
+	if (name.length() == 1 && name[0] >= '0' && name[0] <= '9') {
+		return 48 + (name[0] - '0');
+	}
+	if (name.begins_with("f") && name.length() >= 2 && name.length() <= 3) {
+		String num_str = name.substr(1);
+		if (num_str.is_valid_int()) {
+			int n = num_str.to_int();
+			if (n >= 1 && n <= 12) {
+				return 4194332 + (n - 1);
+			}
+		}
+	}
+	if (name == "space") return 32;
+	if (name == "enter" || name == "return") return 4194309;
+	if (name == "escape" || name == "esc") return 4194305;
+	if (name == "tab") return 4194306;
+	if (name == "backspace") return 4194308;
+	if (name == "insert") return 4194311;
+	if (name == "delete") return 4194312;
+	if (name == "home") return 4194313;
+	if (name == "end") return 4194314;
+	if (name == "pageup" || name == "page_up") return 4194315;
+	if (name == "pagedown" || name == "page_down") return 4194316;
+	if (name == "left") return 4194319;
+	if (name == "up") return 4194320;
+	if (name == "right") return 4194321;
+	if (name == "down") return 4194322;
+	if (name == "shift") return 4194325;
+	if (name == "ctrl" || name == "control") return 4194326;
+	if (name == "alt") return 4194327;
+	if (name == "meta" || name == "super") return 4194328;
+	if (name == "capslock" || name == "caps_lock") return 4194329;
+	if (name == "numlock" || name == "num_lock") return 4194330;
+	if (name == "scrolllock" || name == "scroll_lock") return 4194331;
+	if (name == "pause") return 4194310;
+	if (name == "print_screen" || name == "printscreen") return 4194307;
+	if (name == "minus") return 45;
+	if (name == "equal") return 61;
+	if (name == "bracketleft") return 91;
+	if (name == "bracketright") return 93;
+	if (name == "backslash") return 92;
+	if (name == "semicolon") return 59;
+	if (name == "apostrophe") return 39;
+	if (name == "quoteleft") return 96;
+	if (name == "comma") return 44;
+	if (name == "period") return 46;
+	if (name == "slash") return 47;
+	return 0; // KEY_NONE
+}
+
+int SceneDebugger::_mcp_button_name_to_enum(const String &p_name) {
+	String name = p_name.to_lower().strip_edges();
+	if (name == "a") return 0;
+	if (name == "b") return 1;
+	if (name == "x") return 2;
+	if (name == "y") return 3;
+	if (name == "back") return 4;
+	if (name == "guide") return 5;
+	if (name == "start") return 6;
+	if (name == "left_stick") return 7;
+	if (name == "right_stick") return 8;
+	if (name == "left_shoulder" || name == "lb") return 9;
+	if (name == "right_shoulder" || name == "rb") return 10;
+	if (name == "dpad_up") return 11;
+	if (name == "dpad_down") return 12;
+	if (name == "dpad_left") return 13;
+	if (name == "dpad_right") return 14;
+	return -1;
+}
+
+int SceneDebugger::_mcp_axis_name_to_enum(const String &p_name) {
+	String name = p_name.to_lower().strip_edges();
+	if (name == "left_x") return 0;
+	if (name == "left_y") return 1;
+	if (name == "right_x") return 2;
+	if (name == "right_y") return 3;
+	if (name == "trigger_left" || name == "lt") return 4;
+	if (name == "trigger_right" || name == "rt") return 5;
+	return -1;
+}
+
+char32_t SceneDebugger::_mcp_keycode_to_unicode(int p_keycode) {
+	if (p_keycode >= 32 && p_keycode <= 126) {
+		return (char32_t)p_keycode;
+	}
+	return 0;
+}
+
+void SceneDebugger::_mcp_send_char_key(char32_t p_char, bool p_pressed) {
+	Ref<InputEventKey> ev;
+	ev.instantiate();
+
+	int keycode = 0;
+	if (p_char >= 'a' && p_char <= 'z') {
+		keycode = 65 + (p_char - 'a');
+	} else if (p_char >= 'A' && p_char <= 'Z') {
+		keycode = 65 + (p_char - 'A');
+		ev->set_shift_pressed(true);
+	} else if (p_char >= '0' && p_char <= '9') {
+		keycode = 48 + (p_char - '0');
+	} else if (p_char == ' ') {
+		keycode = 32;
+	} else if (p_char == '\n') {
+		keycode = 4194309;
+	} else if (p_char == '\t') {
+		keycode = 4194306;
+	}
+
+	ev->set_keycode((Key)keycode);
+	ev->set_physical_keycode((Key)keycode);
+	ev->set_unicode(p_char);
+	ev->set_pressed(p_pressed);
+	ev->set_echo(false);
+
+	Input::get_singleton()->parse_input_event(ev);
+}
+
+// --- Held Input Management ---
+
+void SceneDebugger::_mcp_ensure_held_tick_connected() {
+	if (_mcp_held_tick_connected) {
+		return;
+	}
+	SceneTree *st = SceneTree::get_singleton();
+	if (st) {
+		st->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_held_inputs_tick));
+		_mcp_held_tick_connected = true;
+	}
+}
+
+void SceneDebugger::_mcp_add_held_input(const MCPHeldInput &p_input) {
+	for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+		if (_mcp_held_inputs[i].name == p_input.name) {
+			_mcp_held_inputs.write[i] = p_input;
+			_mcp_ensure_held_tick_connected();
+			return;
+		}
+	}
+	_mcp_held_inputs.push_back(p_input);
+	_mcp_ensure_held_tick_connected();
+}
+
+void SceneDebugger::_mcp_remove_held_input(const String &p_name) {
+	for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+		if (_mcp_held_inputs[i].name == p_name) {
+			_mcp_held_inputs.remove_at(i);
+			return;
+		}
+	}
+}
+
+void SceneDebugger::_mcp_release_held_input(const MCPHeldInput &p_input) {
+	switch (p_input.type) {
+		case 0: { // Key
+			Ref<InputEventKey> ev;
+			ev.instantiate();
+			ev->set_keycode((Key)p_input.keycode);
+			ev->set_physical_keycode((Key)p_input.keycode);
+			ev->set_pressed(false);
+			ev->set_echo(false);
+			ev->set_unicode(_mcp_keycode_to_unicode(p_input.keycode));
+			ev->set_shift_pressed(p_input.modifier_flags & 1);
+			ev->set_ctrl_pressed(p_input.modifier_flags & 2);
+			ev->set_alt_pressed(p_input.modifier_flags & 4);
+			ev->set_meta_pressed(p_input.modifier_flags & 8);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+		case 1: { // Action
+			Ref<InputEventAction> ev;
+			ev.instantiate();
+			String action_name = p_input.name.substr(7); // Skip "action:"
+			ev->set_action(action_name);
+			ev->set_pressed(false);
+			ev->set_strength(0.0f);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+		case 2: { // Joypad button
+			Ref<InputEventJoypadButton> ev;
+			ev.instantiate();
+			ev->set_device(p_input.device);
+			ev->set_button_index((JoyButton)p_input.button_idx);
+			ev->set_pressed(false);
+			ev->set_pressure(0.0f);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+		case 3: { // Joypad axis -- reset to 0.
+			Ref<InputEventJoypadMotion> ev;
+			ev.instantiate();
+			ev->set_device(p_input.device);
+			ev->set_axis((JoyAxis)p_input.axis_idx);
+			ev->set_axis_value(0.0f);
+			Input::get_singleton()->parse_input_event(ev);
+		} break;
+	}
+}
+
+void SceneDebugger::_mcp_held_inputs_tick() {
+	const int SAFETY_CEILING = 1800;
+
+	for (int i = _mcp_held_inputs.size() - 1; i >= 0; i--) {
+		MCPHeldInput &held = _mcp_held_inputs.write[i];
+		held.frames_held++;
+
+		bool should_release = false;
+		// Use > instead of >= to fix off-by-one: hold_frames=N should hold
+		// for N full frames. The counter starts at 0 and is incremented before
+		// the check, so >= would release after N-1 frames of actual holding.
+		if (held.auto_release_at >= 0 && held.frames_held > held.auto_release_at) {
+			should_release = true;
+		}
+		if (held.frames_held >= SAFETY_CEILING) {
+			should_release = true;
+		}
+
+		if (should_release) {
+			_mcp_release_held_input(held);
+			_mcp_held_inputs.remove_at(i);
+		}
+	}
+
+	if (_mcp_held_inputs.is_empty() && _mcp_held_tick_connected) {
+		SceneTree *st = SceneTree::get_singleton();
+		if (st && st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_held_inputs_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_held_inputs_tick));
+			_mcp_held_tick_connected = false;
+		}
+	}
+}
+
+// --- Text Typing Tick ---
+
+void SceneDebugger::_mcp_type_text_tick() {
+	if (_mcp_type_index >= _mcp_type_queue.length()) {
+		SceneTree *st = SceneTree::get_singleton();
+		if (st && st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_type_text_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_type_text_tick));
+			_mcp_type_tick_connected = false;
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back(_mcp_type_queue.length());
+		EngineDebugger::get_singleton()->send_message("mcp:type_text_done", result);
+		_mcp_type_queue = "";
+		return;
+	}
+
+	_mcp_type_frame_counter++;
+	if (_mcp_type_frame_counter < _mcp_type_interval) {
+		return;
+	}
+	_mcp_type_frame_counter = 0;
+
+	char32_t c = _mcp_type_queue[_mcp_type_index];
+	_mcp_send_char_key(c, true);
+	_mcp_send_char_key(c, false);
+	_mcp_type_index++;
+}
+
+// --- Sequence Execution ---
+
+void SceneDebugger::_mcp_sequence_execute_step() {
+	if (_mcp_sequence.current_step >= _mcp_sequence.steps.size()) {
+		_mcp_sequence_complete();
+		return;
+	}
+
+	Dictionary step = _mcp_sequence.steps[_mcp_sequence.current_step];
+	String step_type = String(step.get("type", "")).to_lower().strip_edges();
+
+	Dictionary step_result;
+	step_result["type"] = step_type;
+
+	if (step_type == "wait") {
+		int frames = (int)step.get("frames", 0);
+		step_result["frames"] = frames;
+		_mcp_sequence.results.push_back(step_result);
+		_mcp_sequence.wait_frames_remaining = frames;
+		_mcp_sequence.current_step++;
+		return;
+	}
+
+	if (step_type == "key") {
+		String key = String(step.get("key", "")).to_lower().strip_edges();
+		bool pressed = (bool)step.get("pressed", true);
+		int frames = (int)step.get("frames", 0);
+		int modifier_flags = 0;
+
+		if (step.has("modifiers")) {
+			Array modifiers = step["modifiers"];
+			for (int i = 0; i < modifiers.size(); i++) {
+				String mod = String(modifiers[i]).to_lower().strip_edges();
+				if (mod == "shift") modifier_flags |= 1;
+				else if (mod == "ctrl" || mod == "control") modifier_flags |= 2;
+				else if (mod == "alt") modifier_flags |= 4;
+				else if (mod == "meta" || mod == "super") modifier_flags |= 8;
+			}
+		}
+
+		int keycode = _mcp_key_name_to_keycode(key);
+
+		Ref<InputEventKey> ev;
+		ev.instantiate();
+		ev->set_keycode((Key)keycode);
+		ev->set_physical_keycode((Key)keycode);
+		ev->set_pressed(pressed);
+		ev->set_echo(false);
+		char32_t unicode = _mcp_keycode_to_unicode(keycode);
+		if (modifier_flags & 1) {
+			unicode = String::char_uppercase(unicode);
+		}
+		ev->set_unicode(unicode);
+		ev->set_shift_pressed(modifier_flags & 1);
+		ev->set_ctrl_pressed(modifier_flags & 2);
+		ev->set_alt_pressed(modifier_flags & 4);
+		ev->set_meta_pressed(modifier_flags & 8);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_key:" + key;
+			held.type = 0;
+			held.device = 0;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = keycode;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.modifier_flags = modifier_flags;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["key"] = key;
+		step_result["pressed"] = pressed;
+		if (frames > 0) step_result["frames"] = frames;
+
+	} else if (step_type == "action") {
+		String action = step.get("action", "");
+		bool pressed = (bool)step.get("pressed", true);
+		float strength = (float)(double)step.get("value", 1.0);
+		int frames = (int)step.get("frames", 0);
+
+		Ref<InputEventAction> ev;
+		ev.instantiate();
+		ev->set_action(action);
+		ev->set_pressed(pressed);
+		ev->set_strength(pressed ? strength : 0.0f);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_action:" + action;
+			held.type = 1;
+			held.device = 0;
+			held.value = strength;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["action"] = action;
+		step_result["pressed"] = pressed;
+		if (frames > 0) step_result["frames"] = frames;
+
+	} else if (step_type == "joypad_button") {
+		String button = String(step.get("button", "")).to_lower().strip_edges();
+		bool pressed = (bool)step.get("pressed", true);
+		int device = (int)step.get("device", 0);
+		int frames = (int)step.get("frames", 0);
+		int button_idx = _mcp_button_name_to_enum(button);
+
+		Ref<InputEventJoypadButton> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_button_index((JoyButton)button_idx);
+		ev->set_pressed(pressed);
+		ev->set_pressure(pressed ? 1.0f : 0.0f);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_joypad_button:" + button + ":" + itos(device);
+			held.type = 2;
+			held.device = device;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = 0;
+			held.button_idx = button_idx;
+			held.axis_idx = 0;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["button"] = button;
+		step_result["pressed"] = pressed;
+		if (frames > 0) step_result["frames"] = frames;
+
+	} else if (step_type == "joypad_axis") {
+		String axis = String(step.get("axis", "")).to_lower().strip_edges();
+		float value = (float)(double)step.get("value", 1.0);
+		int device = (int)step.get("device", 0);
+		int frames = (int)step.get("frames", 0);
+		int axis_idx = _mcp_axis_name_to_enum(axis);
+
+		Ref<InputEventJoypadMotion> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_axis((JoyAxis)axis_idx);
+		ev->set_axis_value(value);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (frames > 0) {
+			MCPHeldInput held;
+			held.name = "seq_joypad_axis:" + axis + ":" + itos(device);
+			held.type = 3;
+			held.device = device;
+			held.value = value;
+			held.frames_held = 0;
+			held.auto_release_at = frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = axis_idx;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		step_result["axis"] = axis;
+		step_result["value"] = value;
+		if (frames > 0) step_result["frames"] = frames;
+	}
+
+	_mcp_sequence.results.push_back(step_result);
+	_mcp_sequence.current_step++;
+}
+
+void SceneDebugger::_mcp_sequence_tick() {
+	if (!_mcp_sequence.active) {
+		return;
+	}
+
+	if (_mcp_sequence.wait_frames_remaining > 0) {
+		_mcp_sequence.wait_frames_remaining--;
+		return;
+	}
+
+	// Execute steps until a wait or end of sequence.
+	_mcp_sequence_execute_step();
+}
+
+void SceneDebugger::_mcp_sequence_complete() {
+	_mcp_sequence.active = false;
+
+	SceneTree *st = SceneTree::get_singleton();
+	if (st && _mcp_sequence_tick_connected) {
+		if (st->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick))) {
+			st->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick));
+		}
+		_mcp_sequence_tick_connected = false;
+	}
+
+	Array result;
+	result.push_back(true);
+	result.push_back(_mcp_sequence.results.size());
+	result.push_back(_mcp_sequence.results);
+	EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+}
+
+Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array &p_data, bool &r_captured) {
+	SceneTree *scene_tree = SceneTree::get_singleton();
+	ERR_FAIL_NULL_V(scene_tree, ERR_UNCONFIGURED);
+
+	// Start heartbeat on first MCP message from the editor.
+	_mcp_start_heartbeat();
+
+	r_captured = true;
+
+	// --- inject_action ---
+	// Data: [action_name: String, pressed: bool, hold_frames: int, strength: float]
+	if (p_msg == "inject_action") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+
+		String action_name = p_data[0];
+		bool pressed = p_data[1];
+		int hold_frames = p_data[2];
+		float strength = p_data[3];
+
+		// Validate action exists.
+		if (!InputMap::get_singleton()->has_action(action_name)) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Action not found: " + action_name);
+			EngineDebugger::get_singleton()->send_message("mcp:action_done", result);
+			return OK;
+		}
+
+		// Create and inject the InputEventAction.
+		Ref<InputEventAction> ev;
+		ev.instantiate();
+		ev->set_action(action_name);
+		ev->set_pressed(pressed);
+		ev->set_strength(strength);
+
+		Input::get_singleton()->parse_input_event(ev);
+
+		// If hold_frames > 0 and pressed, track via MCPHeldInput for frame-exact
+		// release (same mechanism as inject_key). Previously used a SceneTreeTimer
+		// which was time-based and not frame-exact.
+		if (pressed && hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "action:" + action_name;
+			held.type = 1; // Action
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.device = 0;
+			held.value = strength;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:action_done", result);
+		return OK;
+	}
+
+	// --- click_control ---
+	// Data: [node_path: String]
+	if (p_msg == "click_control") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		String node_path_str = p_data[0];
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+
+		if (!node) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Node not found: " + node_path_str);
+			EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+			return OK;
+		}
+
+		BaseButton *btn = Object::cast_to<BaseButton>(node);
+		Control *ctrl = Object::cast_to<Control>(node);
+
+		if (btn) {
+			// For buttons, emit the pressed signal directly.
+			btn->emit_signal(SNAME("pressed"));
+			Array result;
+			result.push_back(true);
+			result.push_back("Button pressed: " + node_path_str);
+			EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+			return OK;
+		}
+
+		if (ctrl) {
+			// For generic controls, simulate a click at the center.
+			Vector2 center = ctrl->get_global_rect().get_center();
+
+			Ref<InputEventMouseButton> press_ev;
+			press_ev.instantiate();
+			press_ev->set_button_index(MouseButton::LEFT);
+			press_ev->set_pressed(true);
+			press_ev->set_position(center);
+			press_ev->set_global_position(center);
+
+			Ref<InputEventMouseButton> release_ev;
+			release_ev.instantiate();
+			release_ev->set_button_index(MouseButton::LEFT);
+			release_ev->set_pressed(false);
+			release_ev->set_position(center);
+			release_ev->set_global_position(center);
+
+			Input::get_singleton()->parse_input_event(press_ev);
+			Input::get_singleton()->parse_input_event(release_ev);
+
+			Array result;
+			result.push_back(true);
+			result.push_back("Clicked control: " + node_path_str);
+			EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+			return OK;
+		}
+
+		Array result;
+		result.push_back(false);
+		result.push_back("Node is not a Control: " + node_path_str);
+		EngineDebugger::get_singleton()->send_message("mcp:click_result", result);
+		return OK;
+	}
+
+	// --- evaluate ---
+	// Data: [expression_string: String]
+	if (p_msg == "evaluate") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		String expr_str = p_data[0];
+
+		// Build input names and values for common engine singletons.
+		// This allows expressions like "Engine.get_frames_per_second()" to work.
+		PackedStringArray input_names;
+		Array input_values;
+
+		// Scan expression for singleton references and add them as inputs.
+		struct SingletonEntry {
+			const char *name;
+			const char *class_name;
+		};
+		static const SingletonEntry singleton_entries[] = {
+			{ "Engine", "Engine" },
+			{ "Time", "Time" },
+			{ "Input", "Input" },
+			{ "DisplayServer", "DisplayServer" },
+			{ "RenderingServer", "RenderingServer" },
+			{ "AudioServer", "AudioServer" },
+			{ "PhysicsServer2D", "PhysicsServer2D" },
+			{ "PhysicsServer3D", "PhysicsServer3D" },
+			{ "NavigationServer2D", "NavigationServer2D" },
+			{ "NavigationServer3D", "NavigationServer3D" },
+			{ "ResourceLoader", "ResourceLoader" },
+			{ "OS", "OS" },
+			{ "ProjectSettings", "ProjectSettings" },
+			{ "Performance", "Performance" },
+			{ nullptr, nullptr }
+		};
+
+		for (const SingletonEntry *entry = singleton_entries; entry->name != nullptr; entry++) {
+			if (expr_str.contains(entry->name)) {
+				Object *obj = Engine::get_singleton()->get_singleton_object(StringName(entry->class_name));
+				if (obj) {
+					input_names.push_back(entry->name);
+					input_values.push_back(obj);
+				}
+			}
+		}
+
+		// Also add the scene tree's current_scene and root as convenience inputs.
+		if (expr_str.contains("current_scene")) {
+			input_names.push_back("current_scene");
+			input_values.push_back(scene_tree->get_current_scene());
+		}
+		if (expr_str.contains("root")) {
+			input_names.push_back("root");
+			input_values.push_back(scene_tree->get_root());
+		}
+
+		Expression expr;
+		Error parse_err = expr.parse(expr_str, input_names);
+
+		if (parse_err != OK) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Parse error: " + expr.get_error_text());
+			EngineDebugger::get_singleton()->send_message("mcp:eval_result", result);
+			return OK;
+		}
+
+		// Execute with SceneTree as the base instance and singletons as inputs.
+		bool is_error = false;
+		Variant value = expr.execute(input_values, scene_tree, false, is_error);
+
+		Array result;
+		if (is_error) {
+			result.push_back(false);
+			result.push_back("Execution error: " + expr.get_error_text());
+		} else {
+			result.push_back(true);
+			// Convert to string representation for transport.
+			result.push_back(Variant::get_type_name(value.get_type()) + ": " + String(value));
+		}
+		EngineDebugger::get_singleton()->send_message("mcp:eval_result", result);
+		return OK;
+	}
+
+	// --- execute_code ---
+	// Full GDScript execution (supports assignments, loops, control flow).
+	// Data: [code: String]
+	// The code is wrapped in a class that extends RefCounted and given access
+	// to the scene tree via an argument. The last expression's value is
+	// captured via a _result variable.
+	//
+	// IMPORTANT: GDScript compilation (script->reload()) is not safe to call
+	// from within a debugger message handler because the GDScript language
+	// mutex may already be held. We defer the compile+execute to the next
+	// idle frame via call_deferred to avoid the SIGSEGV crash.
+	if (p_msg == "execute_code") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		String user_code = p_data[0];
+
+		// Inline convenience helpers in user code.
+		user_code = user_code.replace("get_root()", "p_tree.root");
+		user_code = user_code.replace("get_nodes_in_group(", "p_tree.get_nodes_in_group(");
+		user_code = user_code.replace("current_scene", "p_tree.current_scene");
+
+		String full_source = "extends RefCounted\n\n"
+							 "func _run(p_tree: SceneTree) -> Variant:\n"
+							 "\tvar _result = null\n";
+
+		// Indent user code.
+		Vector<String> lines = user_code.split("\n");
+		for (int i = 0; i < lines.size(); i++) {
+			full_source += "\t" + lines[i] + "\n";
+		}
+		full_source += "\treturn _result\n";
+
+		// Defer compilation and execution to the next idle frame.
+		// This avoids SIGSEGV from GDScript compilation inside debugger
+		// message handlers where the GDScript language mutex may be held.
+		callable_mp_static(+[](const String &p_source) {
+			SceneTree *st = SceneTree::get_singleton();
+
+			// Find GDScript language.
+			ScriptLanguage *gdscript_lang = ScriptServer::get_language_for_extension("gd");
+			if (!gdscript_lang) {
+				Array result;
+				result.push_back(false);
+				result.push_back("GDScript language not available.");
+				EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+				return;
+			}
+
+			// Create and compile a temporary GDScript.
+			Ref<Script> script(gdscript_lang->create_script());
+			script->set_source_code(p_source);
+			Error reload_err = script->reload();
+
+			if (reload_err != OK) {
+				Array result;
+				result.push_back(false);
+				result.push_back("GDScript compile error. Check syntax.\n\nGenerated source:\n" + p_source);
+				EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+				return;
+			}
+
+			// Instantiate and call _run().
+			Object *obj = ClassDB::instantiate("RefCounted");
+			if (!obj) {
+				Array result;
+				result.push_back(false);
+				result.push_back("Failed to instantiate script host.");
+				EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+				return;
+			}
+			obj->set_script(script);
+
+			// Call _run(scene_tree).
+			Variant tree_arg(st);
+			const Variant *argptrs[1] = { &tree_arg };
+			Callable::CallError ce;
+			Variant ret = obj->callp("_run", argptrs, 1, ce);
+
+			// Instance is RefCounted, so wrapping in Ref ensures proper cleanup.
+			Ref<RefCounted> ref_guard(Object::cast_to<RefCounted>(obj));
+
+			Array result;
+			if (ce.error != Callable::CallError::CALL_OK) {
+				result.push_back(false);
+				String err_detail;
+				switch (ce.error) {
+					case Callable::CallError::CALL_ERROR_INVALID_METHOD:
+						err_detail = "Method '_run' not found (compile error in generated script)";
+						break;
+					case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT:
+						err_detail = "Invalid argument at index " + itos(ce.argument);
+						break;
+					case Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS:
+					case Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS:
+						err_detail = "Argument count mismatch";
+						break;
+					default:
+						err_detail = "Error code " + itos(ce.error);
+						break;
+				}
+				result.push_back("Runtime error: " + err_detail);
+			} else {
+				result.push_back(true);
+				if (ret.get_type() == Variant::NIL) {
+					result.push_back("Nil: (code executed successfully)");
+				} else if (ret.get_type() == Variant::OBJECT) {
+					// Handle GDScriptFunctionState from coroutines.
+					Object *ret_obj = ret.get_validated_object();
+					if (ret_obj && ret_obj->get_class() == "GDScriptFunctionState") {
+						result.push_back("Nil: (async coroutine started)");
+					} else {
+						result.push_back(Variant::get_type_name(ret.get_type()) + ": " + String(ret));
+					}
+				} else {
+					result.push_back(Variant::get_type_name(ret.get_type()) + ": " + String(ret));
+				}
+			}
+			EngineDebugger::get_singleton()->send_message("mcp:exec_result", result);
+		}).call_deferred(full_source);
+
+		return OK;
+	}
+
+	// --- wait_frames ---
+	// Data: [frame_count: int]
+	if (p_msg == "wait_frames") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		int frame_count = p_data[0];
+		if (frame_count <= 0) {
+			Array result;
+			result.push_back(0);
+			EngineDebugger::get_singleton()->send_message("mcp:wait_done", result);
+			return OK;
+		}
+
+		// NOTE: This is a single static counter. If a second wait_frames request
+		// arrives while one is active, the old one is superseded (the bridge's
+		// _create_pending mechanism wakes the old waiter with a "superseded" error).
+		// This is by design for the single-client MCP model.
+		_mcp_wait_frames_remaining = frame_count;
+		_mcp_wait_frames_requested = frame_count;
+
+		// Connect to process_frame if not already connected.
+		if (!scene_tree->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick))) {
+			scene_tree->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_process_frame_tick));
+		}
+
+		return OK;
+	}
+
+	// --- screenshot ---
+	// Data: [] (empty)
+	if (p_msg == "screenshot") {
+		Viewport *viewport = scene_tree->get_root();
+		ERR_FAIL_NULL_V_MSG(viewport, ERR_UNCONFIGURED, "Cannot get viewport.");
+
+		Ref<ViewportTexture> texture = viewport->get_texture();
+		ERR_FAIL_COND_V_MSG(texture.is_null(), ERR_UNCONFIGURED, "Cannot get viewport texture.");
+
+		Ref<Image> img = texture->get_image();
+		ERR_FAIL_COND_V_MSG(img.is_null(), ERR_UNCONFIGURED, "Cannot get image from viewport.");
+
+		img->clear_mipmaps();
+
+		int width = img->get_width();
+		int height = img->get_height();
+
+		// Encode as PNG and convert to base64.
+		PackedByteArray png_data = img->save_png_to_buffer();
+		String base64 = CryptoCore::b64_encode_str(png_data.ptr(), png_data.size());
+
+		Array result;
+		result.push_back(base64);
+		result.push_back(width);
+		result.push_back(height);
+		EngineDebugger::get_singleton()->send_message("mcp:screenshot_result", result);
+		return OK;
+	}
+
+	// --- get_performance ---
+	// Data: [] (empty)
+	if (p_msg == "get_performance") {
+		Performance *perf = Performance::get_singleton();
+		ERR_FAIL_NULL_V(perf, ERR_UNCONFIGURED);
+
+		Array result;
+		result.push_back(perf->get_monitor(Performance::TIME_FPS));
+		result.push_back(perf->get_monitor(Performance::TIME_PROCESS));
+		result.push_back(perf->get_monitor(Performance::TIME_PHYSICS_PROCESS));
+		result.push_back(perf->get_monitor(Performance::MEMORY_STATIC));
+		result.push_back(perf->get_monitor(Performance::OBJECT_COUNT));
+		result.push_back(perf->get_monitor(Performance::OBJECT_NODE_COUNT));
+		result.push_back(perf->get_monitor(Performance::OBJECT_ORPHAN_NODE_COUNT));
+		EngineDebugger::get_singleton()->send_message("mcp:performance_result", result);
+		return OK;
+	}
+
+	// --- get_scene_tree ---
+	// Data: [] (empty)
+	if (p_msg == "get_scene_tree") {
+		Node *root = scene_tree->get_root();
+		ERR_FAIL_NULL_V(root, ERR_UNCONFIGURED);
+
+		SceneDebuggerTree tree(root);
+		Array arr;
+		tree.serialize(arr);
+		EngineDebugger::get_singleton()->send_message("mcp:scene_tree_result", arr);
+		return OK;
+	}
+
+	// --- get_scene_tree_browse ---
+	// Extended scene tree serialization for the browse tool.
+	// Sends 8 fields per node instead of 6:
+	//   [child_count, name, type_name, id, scene_file_path, view_flags, has_script, group_count]
+	// Data: [] (empty)
+	if (p_msg == "get_scene_tree_browse") {
+		Node *root = scene_tree->get_root();
+		ERR_FAIL_NULL_V(root, ERR_UNCONFIGURED);
+
+		// Depth-first serialization matching SceneDebuggerTree::serialize() order,
+		// but with two additional fields per node: has_script and group_count.
+		Array arr;
+		List<Node *> stack;
+		stack.push_back(root);
+		while (!stack.is_empty()) {
+			Node *node = stack.front()->get();
+			stack.pop_front();
+
+			int child_count = node->get_child_count();
+			arr.push_back(child_count);
+			arr.push_back(node->get_name());
+			arr.push_back(node->get_class());
+			arr.push_back(node->get_instance_id());
+			arr.push_back(node->get_scene_file_path());
+
+			// view_flags -- mirror SceneDebuggerTree logic exactly.
+			int view_flags = 0;
+			if (node != root && node->has_method(SNAME("is_visible"))) {
+				const Variant visible = node->call(SNAME("is_visible"));
+				if (visible.get_type() == Variant::BOOL) {
+					view_flags = SceneDebuggerTree::RemoteNode::VIEW_HAS_VISIBLE_METHOD;
+					view_flags |= uint8_t(visible) * SceneDebuggerTree::RemoteNode::VIEW_VISIBLE;
+				}
+				if (node->has_method(SNAME("is_visible_in_tree"))) {
+					const Variant visible_in_tree = node->call(SNAME("is_visible_in_tree"));
+					if (visible_in_tree.get_type() == Variant::BOOL) {
+						view_flags |= uint8_t(visible_in_tree) * SceneDebuggerTree::RemoteNode::VIEW_VISIBLE_IN_TREE;
+					}
+				}
+			}
+			arr.push_back(view_flags);
+
+			// Extended fields for browse tool.
+			arr.push_back(!node->get_script().is_null()); // has_script
+			// Count non-internal groups.
+			List<Node::GroupInfo> groups;
+			node->get_groups(&groups);
+			int user_group_count = 0;
+			for (const Node::GroupInfo &gi : groups) {
+				if (!gi.persistent) {
+					continue; // Skip internal/non-persistent groups.
+				}
+				user_group_count++;
+			}
+			arr.push_back(user_group_count); // group_count
+
+			// Push children in reverse order so first child is processed first.
+			for (int i = child_count - 1; i >= 0; i--) {
+				stack.push_front(node->get_child(i));
+			}
+		}
+
+		EngineDebugger::get_singleton()->send_message("mcp:browse_tree_result", arr);
+		return OK;
+	}
+
+	// --- ui_interact ---
+	// Data: [action: String, node_path: String, params: Dictionary]
+	// Single message type for all UI navigation/interaction tools.
+	if (p_msg == "ui_interact") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+
+		String ui_action = p_data[0];
+		String ui_node_path = p_data[1];
+		Dictionary ui_params = p_data[2];
+
+		// Helper lambdas for sending results.
+		auto send_ui_ok = [](const Dictionary &p_result_data) {
+			Array res;
+			res.push_back(true);
+			res.push_back(p_result_data);
+			EngineDebugger::get_singleton()->send_message("mcp:ui_interact_result", res);
+		};
+
+		auto send_ui_err = [](const String &p_error) {
+			Dictionary err_data;
+			err_data["error"] = p_error;
+			Array res;
+			res.push_back(false);
+			res.push_back(err_data);
+			EngineDebugger::get_singleton()->send_message("mcp:ui_interact_result", res);
+		};
+
+		// 1. Find the node.
+		Node *ui_node = scene_tree->get_root()->get_node_or_null(NodePath(ui_node_path));
+		if (!ui_node) {
+			send_ui_err("Node not found: " + ui_node_path +
+					"\n\nThe node may have been removed from the scene. "
+					"Use debug/search_scene_tree to find the correct path.");
+			return OK;
+		}
+
+		// 2. Cast to Control.
+		Control *ui_ctrl = Object::cast_to<Control>(ui_node);
+		if (!ui_ctrl) {
+			send_ui_err("Node is not a Control: " + ui_node_path +
+					" (type: " + ui_node->get_class() + ")");
+			return OK;
+		}
+
+		// 3. Build base info shared by all actions.
+		Dictionary ui_base;
+		ui_base["node_path"] = ui_node_path;
+		ui_base["class"] = ui_node->get_class();
+		ui_base["visible"] = ui_ctrl->is_visible();
+		ui_base["visible_in_tree"] = ui_ctrl->is_visible_in_tree();
+		ui_base["focused"] = ui_ctrl->has_focus();
+
+		Rect2 ui_r = ui_ctrl->get_global_rect();
+		Dictionary ui_rd;
+		ui_rd["x"] = ui_r.position.x;
+		ui_rd["y"] = ui_r.position.y;
+		ui_rd["width"] = ui_r.size.x;
+		ui_rd["height"] = ui_r.size.y;
+		ui_base["rect"] = ui_rd;
+
+		// ========== ACTION: get_info ==========
+		if (ui_action == "get_info") {
+			Dictionary ui_res = ui_base;
+			Dictionary cd;
+
+			LineEdit *le = Object::cast_to<LineEdit>(ui_ctrl);
+			TextEdit *te = Object::cast_to<TextEdit>(ui_ctrl);
+			BaseButton *bb = Object::cast_to<BaseButton>(ui_ctrl);
+			Range *rng = Object::cast_to<Range>(ui_ctrl);
+			OptionButton *ob = Object::cast_to<OptionButton>(ui_ctrl);
+			TabContainer *tc = Object::cast_to<TabContainer>(ui_ctrl);
+			TabBar *tb = Object::cast_to<TabBar>(ui_ctrl);
+			Label *lbl = Object::cast_to<Label>(ui_ctrl);
+			ItemList *il = Object::cast_to<ItemList>(ui_ctrl);
+			Tree *tr = Object::cast_to<Tree>(ui_ctrl);
+			ScrollContainer *sc = Object::cast_to<ScrollContainer>(ui_ctrl);
+
+			if (le) {
+				cd["text"] = le->get_text();
+				cd["placeholder"] = le->get_placeholder();
+				cd["max_length"] = le->get_max_length();
+				cd["editable"] = le->is_editable();
+				cd["secret"] = le->is_secret();
+				cd["caret_column"] = le->get_caret_column();
+			} else if (te) {
+				cd["text"] = te->get_text();
+				cd["line_count"] = te->get_line_count();
+				cd["editable"] = te->is_editable();
+				cd["caret_line"] = te->get_caret_line();
+				cd["caret_column"] = te->get_caret_column();
+				cd["has_selection"] = te->has_selection();
+				cd["selected_text"] = te->has_selection() ? te->get_selected_text() : String();
+			} else if (ob) {
+				// OptionButton before BaseButton since it inherits from it.
+				cd["selected_index"] = ob->get_selected();
+				cd["selected_text"] = ob->get_selected() >= 0 ? ob->get_item_text(ob->get_selected()) : String();
+				cd["item_count"] = ob->get_item_count();
+				cd["text"] = ob->get_text();
+				cd["pressed"] = ob->is_pressed();
+				cd["toggle_mode"] = ob->is_toggle_mode();
+				cd["disabled"] = ob->is_disabled();
+			} else if (bb) {
+				Button *btn = Object::cast_to<Button>(ui_ctrl);
+				if (btn) {
+					cd["text"] = btn->get_text();
+				}
+				cd["pressed"] = bb->is_pressed();
+				cd["toggle_mode"] = bb->is_toggle_mode();
+				cd["disabled"] = bb->is_disabled();
+				if (Object::cast_to<CheckBox>(ui_ctrl) || Object::cast_to<CheckButton>(ui_ctrl)) {
+					cd["checked"] = bb->is_pressed();
+				}
+			} else if (rng) {
+				cd["value"] = rng->get_value();
+				cd["min_value"] = rng->get_min();
+				cd["max_value"] = rng->get_max();
+				cd["step"] = rng->get_step();
+				double rs = rng->get_max() - rng->get_min();
+				cd["ratio"] = rs > 0.0 ? (rng->get_value() - rng->get_min()) / rs : 0.0;
+				Slider *sl = Object::cast_to<Slider>(ui_ctrl);
+				SpinBox *sbx = Object::cast_to<SpinBox>(ui_ctrl);
+				if (sl) {
+					cd["editable"] = sl->is_editable();
+				} else if (sbx) {
+					cd["editable"] = sbx->is_editable();
+				} else {
+					cd["editable"] = true; // Default for Range subclasses without is_editable.
+				}
+				if (sbx) {
+					cd["prefix"] = sbx->get_prefix();
+					cd["suffix"] = sbx->get_suffix();
+				}
+			} else if (tc) {
+				cd["current_tab"] = tc->get_current_tab();
+				cd["tab_count"] = tc->get_tab_count();
+				Array tn;
+				for (int i = 0; i < tc->get_tab_count(); i++) {
+					tn.push_back(tc->get_tab_title(i));
+				}
+				cd["tab_names"] = tn;
+			} else if (tb) {
+				cd["current_tab"] = tb->get_current_tab();
+				cd["tab_count"] = tb->get_tab_count();
+				Array tn;
+				for (int i = 0; i < tb->get_tab_count(); i++) {
+					tn.push_back(tb->get_tab_title(i));
+				}
+				cd["tab_names"] = tn;
+			} else if (il) {
+				cd["item_count"] = il->get_item_count();
+				Array si;
+				for (int i = 0; i < il->get_item_count(); i++) {
+					if (il->is_selected(i)) {
+						si.push_back(i);
+					}
+				}
+				cd["selected_indices"] = si;
+				cd["max_columns"] = il->get_max_columns();
+			} else if (tr) {
+				TreeItem *sel = tr->get_selected();
+				cd["selected_item_text"] = sel ? sel->get_text(0) : String();
+				cd["column_count"] = tr->get_columns();
+				Array ct;
+				for (int i = 0; i < tr->get_columns(); i++) {
+					ct.push_back(tr->get_column_title(i));
+				}
+				cd["column_titles"] = ct;
+			} else if (sc) {
+				cd["scroll_h"] = sc->get_h_scroll();
+				cd["scroll_v"] = sc->get_v_scroll();
+			} else if (lbl) {
+				cd["text"] = lbl->get_text();
+				cd["visible_characters"] = lbl->get_visible_characters();
+				cd["autowrap_mode"] = (int)lbl->get_autowrap_mode();
+			}
+
+			ui_res["control_data"] = cd;
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_text ==========
+		if (ui_action == "set_text") {
+			String mode = ui_params.get("mode", "replace");
+			String text = ui_params.get("text", "");
+			bool do_focus = ui_params.get("focus", true);
+
+			LineEdit *le = Object::cast_to<LineEdit>(ui_ctrl);
+			TextEdit *te = Object::cast_to<TextEdit>(ui_ctrl);
+
+			if (!le && !te) {
+				send_ui_err("Expected LineEdit or TextEdit but found " +
+						ui_node->get_class() + " at " + ui_node_path +
+						"\n\nUse debug/ui_get_control_info to check the control type.");
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["mode"] = mode;
+
+			if (le) {
+				if (!le->is_editable()) {
+					send_ui_err("Control is not editable: " + ui_node_path);
+					return OK;
+				}
+				ui_res["previous_text"] = le->get_text();
+				if (do_focus) {
+					le->grab_focus();
+				}
+				if (mode == "replace") {
+					le->set_text(text);
+					le->emit_signal(SNAME("text_changed"), text);
+				} else if (mode == "clear") {
+					le->set_text("");
+					le->emit_signal(SNAME("text_changed"), String());
+				} else if (mode == "append") {
+					String cur = le->get_text();
+					String nt = cur + text;
+					le->set_text(nt);
+					le->emit_signal(SNAME("text_changed"), nt);
+				} else if (mode == "insert") {
+					int caret = le->get_caret_column();
+					String cur = le->get_text();
+					String nt = cur.insert(caret, text);
+					le->set_text(nt);
+					le->set_caret_column(caret + text.length());
+					le->emit_signal(SNAME("text_changed"), nt);
+				} else {
+					send_ui_err("Unknown text mode: '" + mode + "'. Valid: replace, append, insert, clear");
+					return OK;
+				}
+				ui_res["current_text"] = le->get_text();
+				ui_res["caret_column"] = le->get_caret_column();
+				ui_res["focused"] = le->has_focus();
+			}
+
+			if (te) {
+				if (!te->is_editable()) {
+					send_ui_err("Control is not editable: " + ui_node_path);
+					return OK;
+				}
+				ui_res["previous_text"] = te->get_text();
+				if (do_focus) {
+					te->grab_focus();
+				}
+				if (mode == "replace") {
+					te->set_text(text);
+				} else if (mode == "clear") {
+					te->set_text("");
+				} else if (mode == "append") {
+					String cur = te->get_text();
+					te->set_text(cur + text);
+				} else if (mode == "insert") {
+					te->insert_text_at_caret(text);
+				} else {
+					send_ui_err("Unknown text mode: '" + mode + "'. Valid: replace, append, insert, clear");
+					return OK;
+				}
+				ui_res["current_text"] = te->get_text();
+				ui_res["line_count"] = te->get_line_count();
+				ui_res["caret_line"] = te->get_caret_line();
+				ui_res["caret_column"] = te->get_caret_column();
+				ui_res["focused"] = te->has_focus();
+			}
+
+			ui_res["success"] = true;
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_text ==========
+		if (ui_action == "get_text") {
+			bool sel_only = ui_params.get("selection_only", false);
+
+			LineEdit *le = Object::cast_to<LineEdit>(ui_ctrl);
+			TextEdit *te = Object::cast_to<TextEdit>(ui_ctrl);
+
+			if (!le && !te) {
+				send_ui_err("Expected LineEdit or TextEdit but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+
+			if (le) {
+				ui_res["text"] = (sel_only && le->has_selection()) ? le->get_selected_text() : le->get_text();
+				ui_res["has_selection"] = le->has_selection();
+				ui_res["caret_column"] = le->get_caret_column();
+			}
+
+			if (te) {
+				ui_res["text"] = (sel_only && te->has_selection()) ? te->get_selected_text() : te->get_text();
+				ui_res["line_count"] = te->get_line_count();
+				ui_res["caret_line"] = te->get_caret_line();
+				ui_res["caret_column"] = te->get_caret_column();
+				ui_res["has_selection"] = te->has_selection();
+				ui_res["selected_text"] = te->has_selection() ? te->get_selected_text() : String();
+			}
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_range ==========
+		if (ui_action == "set_range") {
+			Range *rng = Object::cast_to<Range>(ui_ctrl);
+			if (!rng) {
+				send_ui_err("Expected a Range-based control (HSlider, VSlider, SpinBox, ProgressBar) but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+			{
+				Slider *sl = Object::cast_to<Slider>(ui_ctrl);
+				SpinBox *sbx = Object::cast_to<SpinBox>(ui_ctrl);
+				bool editable = true;
+				if (sl) {
+					editable = sl->is_editable();
+				} else if (sbx) {
+					editable = sbx->is_editable();
+				}
+				if (!editable) {
+					send_ui_err("Control is not editable: " + ui_node_path);
+					return OK;
+				}
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_value"] = rng->get_value();
+
+			if (ui_params.has("value")) {
+				rng->set_value((double)ui_params["value"]);
+			} else if (ui_params.has("ratio")) {
+				double ratio = CLAMP((double)ui_params["ratio"], 0.0, 1.0);
+				rng->set_value(rng->get_min() + ratio * (rng->get_max() - rng->get_min()));
+			} else if (ui_params.has("delta")) {
+				rng->set_value(rng->get_value() + (double)ui_params["delta"]);
+			}
+
+			ui_res["current_value"] = rng->get_value();
+			ui_res["min_value"] = rng->get_min();
+			ui_res["max_value"] = rng->get_max();
+			ui_res["step"] = rng->get_step();
+			double rs = rng->get_max() - rng->get_min();
+			ui_res["ratio"] = rs > 0.0 ? (rng->get_value() - rng->get_min()) / rs : 0.0;
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_range ==========
+		if (ui_action == "get_range") {
+			Range *rng = Object::cast_to<Range>(ui_ctrl);
+			if (!rng) {
+				send_ui_err("Expected a Range-based control but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["value"] = rng->get_value();
+			ui_res["min_value"] = rng->get_min();
+			ui_res["max_value"] = rng->get_max();
+			ui_res["step"] = rng->get_step();
+			double rs = rng->get_max() - rng->get_min();
+			ui_res["ratio"] = rs > 0.0 ? (rng->get_value() - rng->get_min()) / rs : 0.0;
+			{
+				Slider *sl = Object::cast_to<Slider>(ui_ctrl);
+				SpinBox *sbx = Object::cast_to<SpinBox>(ui_ctrl);
+				if (sl) {
+					ui_res["editable"] = sl->is_editable();
+				} else if (sbx) {
+					ui_res["editable"] = sbx->is_editable();
+				} else {
+					ui_res["editable"] = true;
+				}
+			}
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: select_option ==========
+		if (ui_action == "select_option") {
+			OptionButton *ob = Object::cast_to<OptionButton>(ui_ctrl);
+			if (!ob) {
+				send_ui_err("Expected OptionButton but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+			if (ob->is_disabled()) {
+				send_ui_err("Control is disabled: " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_index"] = ob->get_selected();
+			ui_res["previous_text"] = ob->get_selected() >= 0 ? ob->get_item_text(ob->get_selected()) : String();
+
+			int tidx = -1;
+			if (ui_params.has("index")) {
+				tidx = (int)ui_params["index"];
+				if (tidx < 0 || tidx >= ob->get_item_count()) {
+					send_ui_err("Index " + itos(tidx) + " is out of range for OptionButton with " +
+							itos(ob->get_item_count()) + " items (valid: 0-" +
+							itos(ob->get_item_count() - 1) + ") at " + ui_node_path);
+					return OK;
+				}
+			} else if (ui_params.has("text")) {
+				String mt = String(ui_params["text"]).to_lower();
+				for (int i = 0; i < ob->get_item_count(); i++) {
+					if (ob->get_item_text(i).to_lower() == mt) {
+						tidx = i;
+						break;
+					}
+				}
+				if (tidx < 0) {
+					String il;
+					for (int i = 0; i < ob->get_item_count(); i++) {
+						if (i > 0) {
+							il += ", ";
+						}
+						il += ob->get_item_text(i);
+					}
+					send_ui_err("No item with text matching '" + String(ui_params["text"]) +
+							"' found in OptionButton at " + ui_node_path +
+							"\n\nAvailable items: " + il +
+							"\n\nUse debug/ui_get_options to see all items.");
+					return OK;
+				}
+			}
+
+			ob->select(tidx);
+			ob->emit_signal(SNAME("item_selected"), tidx);
+
+			ui_res["selected_index"] = ob->get_selected();
+			ui_res["selected_text"] = ob->get_item_text(tidx);
+			ui_res["item_count"] = ob->get_item_count();
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_options ==========
+		if (ui_action == "get_options") {
+			OptionButton *ob = Object::cast_to<OptionButton>(ui_ctrl);
+			if (!ob) {
+				send_ui_err("Expected OptionButton but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["selected_index"] = ob->get_selected();
+			ui_res["selected_text"] = ob->get_selected() >= 0 ? ob->get_item_text(ob->get_selected()) : String();
+
+			Array items;
+			for (int i = 0; i < ob->get_item_count(); i++) {
+				Dictionary item;
+				item["index"] = i;
+				item["text"] = ob->get_item_text(i);
+				item["disabled"] = ob->is_item_disabled(i);
+				item["separator"] = ob->is_item_separator(i);
+				items.push_back(item);
+			}
+			ui_res["items"] = items;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_tab ==========
+		if (ui_action == "set_tab") {
+			TabContainer *tc = Object::cast_to<TabContainer>(ui_ctrl);
+			TabBar *tb = Object::cast_to<TabBar>(ui_ctrl);
+
+			if (!tc && !tb) {
+				send_ui_err("Expected TabContainer or TabBar but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			int tc_n = tc ? tc->get_tab_count() : tb->get_tab_count();
+			int cur_t = tc ? tc->get_current_tab() : tb->get_current_tab();
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_tab"] = cur_t;
+
+			int ttab = -1;
+			if (ui_params.has("index")) {
+				ttab = (int)ui_params["index"];
+				if (ttab < 0 || ttab >= tc_n) {
+					send_ui_err("Tab index " + itos(ttab) + " is out of range (valid: 0-" +
+							itos(tc_n - 1) + ") at " + ui_node_path);
+					return OK;
+				}
+			} else if (ui_params.has("title")) {
+				String mtitle = String(ui_params["title"]).to_lower();
+				for (int i = 0; i < tc_n; i++) {
+					String ttl = tc ? tc->get_tab_title(i) : tb->get_tab_title(i);
+					if (ttl.to_lower() == mtitle) {
+						ttab = i;
+						break;
+					}
+				}
+				if (ttab < 0) {
+					String tl;
+					for (int i = 0; i < tc_n; i++) {
+						if (i > 0) {
+							tl += ", ";
+						}
+						tl += tc ? tc->get_tab_title(i) : tb->get_tab_title(i);
+					}
+					send_ui_err("No tab with title matching '" + String(ui_params["title"]) +
+							"' found at " + ui_node_path +
+							"\n\nAvailable tabs: " + tl +
+							"\n\nUse debug/ui_get_tabs to see all tabs.");
+					return OK;
+				}
+			}
+
+			if (tc) {
+				tc->set_current_tab(ttab);
+			} else {
+				tb->set_current_tab(ttab);
+			}
+
+			Array tab_titles;
+			for (int i = 0; i < tc_n; i++) {
+				tab_titles.push_back(tc ? tc->get_tab_title(i) : tb->get_tab_title(i));
+			}
+
+			int nt = tc ? tc->get_current_tab() : tb->get_current_tab();
+			ui_res["current_tab"] = nt;
+			ui_res["current_tab_title"] = tc ? tc->get_tab_title(nt) : tb->get_tab_title(nt);
+			ui_res["tab_count"] = tc_n;
+			ui_res["tab_titles"] = tab_titles;
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: get_tabs ==========
+		if (ui_action == "get_tabs") {
+			TabContainer *tc = Object::cast_to<TabContainer>(ui_ctrl);
+			TabBar *tb = Object::cast_to<TabBar>(ui_ctrl);
+
+			if (!tc && !tb) {
+				send_ui_err("Expected TabContainer or TabBar but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+
+			int tc_n = tc ? tc->get_tab_count() : tb->get_tab_count();
+			int cur_t = tc ? tc->get_current_tab() : tb->get_current_tab();
+
+			Dictionary ui_res = ui_base;
+			ui_res["current_tab"] = cur_t;
+			ui_res["tab_count"] = tc_n;
+
+			Array tabs;
+			for (int i = 0; i < tc_n; i++) {
+				Dictionary tab;
+				tab["index"] = i;
+				tab["title"] = tc ? tc->get_tab_title(i) : tb->get_tab_title(i);
+				tab["disabled"] = tc ? tc->is_tab_disabled(i) : tb->is_tab_disabled(i);
+				tab["hidden"] = tc ? tc->is_tab_hidden(i) : tb->is_tab_hidden(i);
+				tabs.push_back(tab);
+			}
+			ui_res["tabs"] = tabs;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: set_checked ==========
+		if (ui_action == "set_checked") {
+			BaseButton *bb = Object::cast_to<BaseButton>(ui_ctrl);
+			if (!bb) {
+				send_ui_err("Expected CheckBox, CheckButton, or BaseButton but found " +
+						ui_node->get_class() + " at " + ui_node_path);
+				return OK;
+			}
+			if (bb->is_disabled()) {
+				send_ui_err("Control is disabled: " + ui_node_path);
+				return OK;
+			}
+			if (!bb->is_toggle_mode()) {
+				send_ui_err("Control at " + ui_node_path + " does not have toggle_mode enabled. "
+						"set_checked only works on toggle-mode buttons (CheckBox, CheckButton, etc.).");
+				return OK;
+			}
+
+			Dictionary ui_res = ui_base;
+			ui_res["previous_checked"] = bb->is_pressed();
+
+			if (ui_params.has("checked")) {
+				bb->set_pressed((bool)ui_params["checked"]);
+			} else {
+				bb->set_pressed(!bb->is_pressed());
+			}
+
+			bb->emit_signal(SNAME("toggled"), bb->is_pressed());
+
+			ui_res["current_checked"] = bb->is_pressed();
+			Button *btn = Object::cast_to<Button>(ui_ctrl);
+			if (btn) {
+				ui_res["text"] = btn->get_text();
+			}
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// ========== ACTION: focus ==========
+		if (ui_action == "focus") {
+			String focus_act = ui_params.get("action", "grab");
+			Dictionary ui_res = ui_base;
+
+			if (focus_act == "grab") {
+				if (ui_ctrl->get_focus_mode() == Control::FOCUS_NONE) {
+					ui_res["warning"] = "Control has focus_mode=NONE; focus was not changed";
+					ui_res["focused"] = ui_ctrl->has_focus();
+					ui_res["focus_mode"] = "none";
+					ui_res["success"] = true;
+					send_ui_ok(ui_res);
+					return OK;
+				}
+				ui_ctrl->grab_focus();
+			} else if (focus_act == "release") {
+				ui_ctrl->release_focus();
+			} else {
+				send_ui_err("Unknown focus action: '" + focus_act + "'. Valid: grab, release");
+				return OK;
+			}
+
+			ui_res["focused"] = ui_ctrl->has_focus();
+			String fm_str;
+			switch (ui_ctrl->get_focus_mode()) {
+				case Control::FOCUS_NONE:
+					fm_str = "none";
+					break;
+				case Control::FOCUS_CLICK:
+					fm_str = "click";
+					break;
+				case Control::FOCUS_ALL:
+					fm_str = "all";
+					break;
+				default:
+					fm_str = "unknown";
+					break;
+			}
+			ui_res["focus_mode"] = fm_str;
+			ui_res["success"] = true;
+
+			send_ui_ok(ui_res);
+			return OK;
+		}
+
+		// Unknown UI action.
+		send_ui_err("Unknown UI action: " + ui_action);
+		return OK;
+	}
+
+	// --- inject_key ---
+	// Data: [key_name: String, pressed: bool, hold_frames: int, modifier_flags: int, echo: bool]
+	if (p_msg == "inject_key") {
+		ERR_FAIL_COND_V(p_data.size() < 5, ERR_INVALID_DATA);
+
+		String key_name = String(p_data[0]).to_lower().strip_edges();
+		bool pressed = p_data[1];
+		int hold_frames = p_data[2];
+		int modifier_flags = p_data[3];
+		bool echo = p_data[4];
+
+		int keycode = _mcp_key_name_to_keycode(key_name);
+		if (keycode < 0) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Unknown key name: " + key_name);
+			EngineDebugger::get_singleton()->send_message("mcp:key_done", result);
+			return OK;
+		}
+
+		Ref<InputEventKey> ev;
+		ev.instantiate();
+		ev->set_keycode((Key)keycode);
+		ev->set_physical_keycode((Key)keycode);
+		ev->set_pressed(pressed);
+		ev->set_echo(echo);
+		char32_t unicode = _mcp_keycode_to_unicode(keycode);
+		if (modifier_flags & 1) { // Shift
+			unicode = String::char_uppercase(unicode);
+		}
+		ev->set_unicode(unicode);
+		ev->set_shift_pressed(modifier_flags & 1);
+		ev->set_ctrl_pressed(modifier_flags & 2);
+		ev->set_alt_pressed(modifier_flags & 4);
+		ev->set_meta_pressed(modifier_flags & 8);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "key:" + key_name;
+			held.type = 0; // Key
+			held.device = 0;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = keycode;
+			held.button_idx = 0;
+			held.axis_idx = 0;
+			held.modifier_flags = modifier_flags;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:key_done", result);
+		return OK;
+	}
+
+	// --- inject_joypad_button ---
+	// Data: [button_name: String, pressed: bool, hold_frames: int, device: int]
+	if (p_msg == "inject_joypad_button") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+
+		String button_name = String(p_data[0]).to_lower().strip_edges();
+		bool pressed = p_data[1];
+		int hold_frames = p_data[2];
+		int device = p_data[3];
+
+		int button_idx = _mcp_button_name_to_enum(button_name);
+		if (button_idx < 0) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Unknown joypad button: " + button_name);
+			EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+			return OK;
+		}
+
+		Ref<InputEventJoypadButton> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_button_index((JoyButton)button_idx);
+		ev->set_pressed(pressed);
+		ev->set_pressure(pressed ? 1.0f : 0.0f);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (pressed && hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "joypad_button:" + button_name + ":" + itos(device);
+			held.type = 2; // Joypad button
+			held.device = device;
+			held.value = 1.0f;
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = 0;
+			held.button_idx = button_idx;
+			held.axis_idx = 0;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+		return OK;
+	}
+
+	// --- inject_joypad_axis ---
+	// Data: [axis_name: String, value: float, hold_frames: int, device: int]
+	if (p_msg == "inject_joypad_axis") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+
+		String axis_name = String(p_data[0]).to_lower().strip_edges();
+		float value = p_data[1];
+		int hold_frames = p_data[2];
+		int device = p_data[3];
+
+		int axis_idx = _mcp_axis_name_to_enum(axis_name);
+		if (axis_idx < 0) {
+			Array result;
+			result.push_back(false);
+			result.push_back("Unknown joypad axis: " + axis_name);
+			EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+			return OK;
+		}
+
+		Ref<InputEventJoypadMotion> ev;
+		ev.instantiate();
+		ev->set_device(device);
+		ev->set_axis((JoyAxis)axis_idx);
+		ev->set_axis_value(value);
+		Input::get_singleton()->parse_input_event(ev);
+
+		if (hold_frames > 0) {
+			MCPHeldInput held;
+			held.name = "joypad_axis:" + axis_name + ":" + itos(device);
+			held.type = 3; // Joypad axis
+			held.device = device;
+			held.value = value;
+			held.frames_held = 0;
+			held.auto_release_at = hold_frames;
+			held.keycode = 0;
+			held.button_idx = 0;
+			held.axis_idx = axis_idx;
+			held.modifier_flags = 0;
+			_mcp_add_held_input(held);
+		}
+
+		Array result;
+		result.push_back(true);
+		result.push_back("");
+		EngineDebugger::get_singleton()->send_message("mcp:joypad_done", result);
+		return OK;
+	}
+
+	// --- type_text ---
+	// Data: [text: String, interval_frames: int]
+	if (p_msg == "type_text") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+
+		String text = p_data[0];
+		int interval_frames = p_data[1];
+
+		if (text.is_empty()) {
+			Array result;
+			result.push_back(true);
+			result.push_back(0);
+			EngineDebugger::get_singleton()->send_message("mcp:type_text_done", result);
+			return OK;
+		}
+
+		if (interval_frames <= 0) {
+			// Immediate typing -- send all characters at once.
+			for (int i = 0; i < text.length(); i++) {
+				char32_t c = text[i];
+				_mcp_send_char_key(c, true);
+				_mcp_send_char_key(c, false);
+			}
+
+			Array result;
+			result.push_back(true);
+			result.push_back(text.length());
+			EngineDebugger::get_singleton()->send_message("mcp:type_text_done", result);
+			return OK;
+		}
+
+		// Interval-based typing: queue the text and connect the tick.
+		_mcp_type_queue = text;
+		_mcp_type_index = 0;
+		_mcp_type_interval = interval_frames;
+		_mcp_type_frame_counter = interval_frames; // Fire on first tick.
+
+		if (!_mcp_type_tick_connected) {
+			scene_tree->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_type_text_tick));
+			_mcp_type_tick_connected = true;
+		}
+
+		return OK;
+	}
+
+	// --- run_input_sequence ---
+	// Data: [steps: Array]
+	if (p_msg == "run_input_sequence") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		Array steps = p_data[0];
+
+		if (steps.is_empty()) {
+			Array result;
+			result.push_back(true);
+			result.push_back(0);
+			result.push_back(Array());
+			EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+			return OK;
+		}
+
+		// Validate steps before starting.
+		for (int i = 0; i < steps.size(); i++) {
+			if (steps[i].get_type() != Variant::DICTIONARY) {
+				Array result;
+				result.push_back(false);
+				result.push_back(0);
+				Array err_details;
+				Dictionary err;
+				err["error"] = "Step " + itos(i) + " is not a dictionary.";
+				err_details.push_back(err);
+				result.push_back(err_details);
+				EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+				return OK;
+			}
+			Dictionary step = steps[i];
+			String step_type = String(step.get("type", "")).to_lower().strip_edges();
+			if (step_type != "key" && step_type != "action" && step_type != "joypad_button" &&
+					step_type != "joypad_axis" && step_type != "wait") {
+				Array result;
+				result.push_back(false);
+				result.push_back(0);
+				Array err_details;
+				Dictionary err;
+				err["error"] = "Step " + itos(i) + " has unknown type: '" + step_type + "'. Valid types: key, action, joypad_button, joypad_axis, wait";
+				err_details.push_back(err);
+				result.push_back(err_details);
+				EngineDebugger::get_singleton()->send_message("mcp:sequence_done", result);
+				return OK;
+			}
+		}
+
+		// Abort any previously running sequence.
+		if (_mcp_sequence.active) {
+			_mcp_sequence.active = false;
+			if (_mcp_sequence_tick_connected) {
+				if (scene_tree->is_connected(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick))) {
+					scene_tree->disconnect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick));
+				}
+				_mcp_sequence_tick_connected = false;
+			}
+		}
+
+		// Initialize sequence state.
+		_mcp_sequence.steps = steps;
+		_mcp_sequence.current_step = 0;
+		_mcp_sequence.wait_frames_remaining = 0;
+		_mcp_sequence.results.clear();
+		_mcp_sequence.active = true;
+
+		// Connect tick and execute the first step immediately.
+		if (!_mcp_sequence_tick_connected) {
+			scene_tree->connect(SNAME("process_frame"), callable_mp_static(&SceneDebugger::_mcp_sequence_tick));
+			_mcp_sequence_tick_connected = true;
+		}
+
+		_mcp_sequence_execute_step();
+		return OK;
+	}
+
+	// --- get_held_inputs ---
+	// Data: [release_all: bool]
+	if (p_msg == "get_held_inputs") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+
+		bool release_all = p_data[0];
+
+		Array held_list;
+		for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+			const MCPHeldInput &held = _mcp_held_inputs[i];
+			Dictionary entry;
+			entry["name"] = held.name;
+
+			switch (held.type) {
+				case 0: entry["type"] = "key"; break;
+				case 1: entry["type"] = "action"; break;
+				case 2: entry["type"] = "joypad_button"; break;
+				case 3: entry["type"] = "joypad_axis"; break;
+				default: entry["type"] = "unknown"; break;
+			}
+
+			entry["frames_held"] = held.frames_held;
+			entry["auto_release_at"] = held.auto_release_at;
+
+			if (held.type == 3) { // Joypad axis
+				entry["value"] = held.value;
+			}
+			if (held.device != 0) {
+				entry["device"] = held.device;
+			}
+
+			held_list.push_back(entry);
+		}
+
+		int released_count = 0;
+		if (release_all) {
+			released_count = _mcp_held_inputs.size();
+			for (int i = 0; i < _mcp_held_inputs.size(); i++) {
+				_mcp_release_held_input(_mcp_held_inputs[i]);
+			}
+			_mcp_held_inputs.clear();
+		}
+
+		Array result;
+		result.push_back(held_list);
+		result.push_back(released_count);
+		EngineDebugger::get_singleton()->send_message("mcp:held_inputs_result", result);
+		return OK;
+	}
+
+	// --- get_node_signals ---
+	if (p_msg == "get_node_signals") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+		String node_path_str = p_data[0];
+		bool include_inherited = p_data[1];
+		String filter_signal_name = p_data[2];
+
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+		if (!node) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Node not found: " + node_path_str;
+			Array response;
+			response.push_back(result);
+			EngineDebugger::get_singleton()->send_message("mcp:node_signals_result", response);
+			return OK;
+		}
+
+		// Collect script signals to determine origin.
+		List<MethodInfo> script_signals;
+		Ref<Script> script = node->get_script();
+		if (script.is_valid()) {
+			script->get_script_signal_list(&script_signals);
+		}
+		HashSet<StringName> script_signal_names;
+		for (const MethodInfo &mi : script_signals) {
+			script_signal_names.insert(mi.name);
+		}
+
+		// Class signals (optionally without inheritance).
+		List<MethodInfo> class_signals;
+		ClassDB::get_signal_list(node->get_class_name(), &class_signals, false);
+		HashSet<StringName> class_signal_names;
+		for (const MethodInfo &mi : class_signals) {
+			class_signal_names.insert(mi.name);
+		}
+
+		// Direct class signals (no inheritance) for filtering.
+		HashSet<StringName> direct_class_signal_names;
+		if (!include_inherited) {
+			List<MethodInfo> direct_signals;
+			ClassDB::get_signal_list(node->get_class_name(), &direct_signals, true);
+			for (const MethodInfo &mi : direct_signals) {
+				direct_class_signal_names.insert(mi.name);
+			}
+		}
+
+		// Full signal list.
+		List<MethodInfo> all_signals;
+		node->get_signal_list(&all_signals);
+
+		Array signals_arr;
+		for (const MethodInfo &mi : all_signals) {
+			// Filter by signal_name if specified.
+			if (!filter_signal_name.is_empty() && mi.name != StringName(filter_signal_name)) {
+				continue;
+			}
+
+			// Skip inherited signals if include_inherited is false.
+			if (!include_inherited) {
+				bool is_script = script_signal_names.has(mi.name);
+				bool is_direct_class = direct_class_signal_names.has(mi.name);
+				bool is_user = !script_signal_names.has(mi.name) && !class_signal_names.has(mi.name);
+				if (!is_script && !is_direct_class && !is_user) {
+					continue; // Inherited class signal, skip.
+				}
+			}
+
+			Dictionary sig_dict;
+			sig_dict["name"] = String(mi.name);
+
+			// Determine origin.
+			String origin;
+			if (script_signal_names.has(mi.name)) {
+				origin = "script";
+			} else if (class_signal_names.has(mi.name)) {
+				origin = "class";
+			} else {
+				origin = "user";
+			}
+			sig_dict["origin"] = origin;
+
+			// Arguments.
+			Array args_arr;
+			for (int i = 0; i < mi.arguments.size(); i++) {
+				const PropertyInfo &pi = mi.arguments[i];
+				Dictionary arg;
+				arg["name"] = pi.name;
+				arg["type"] = Variant::get_type_name(pi.type);
+				arg["type_id"] = (int)pi.type;
+				if (!pi.class_name.is_empty()) {
+					arg["class_name"] = String(pi.class_name);
+				}
+				args_arr.push_back(arg);
+			}
+			sig_dict["arguments"] = args_arr;
+
+			// Connections.
+			List<Object::Connection> connections;
+			node->get_signal_connection_list(mi.name, &connections);
+
+			Array conn_arr;
+			for (const Object::Connection &conn : connections) {
+				Dictionary conn_dict;
+				ObjectID target_id = conn.callable.get_object_id();
+				Object *target_obj = ObjectDB::get_instance(target_id);
+				Node *target_node = Object::cast_to<Node>(target_obj);
+				if (target_node) {
+					conn_dict["target_path"] = String(target_node->get_path());
+					conn_dict["target_type"] = target_node->get_class();
+				} else if (target_obj) {
+					conn_dict["target_path"] = "<Object#" + itos(target_id) + ">";
+					conn_dict["target_type"] = target_obj->get_class();
+				} else {
+					conn_dict["target_path"] = "<invalid>";
+					conn_dict["target_type"] = "";
+				}
+
+				StringName method = conn.callable.get_method();
+				conn_dict["method"] = method.is_empty() ? String("<lambda>") : String(method);
+				conn_dict["flags"] = (int)conn.flags;
+
+				String flags_desc;
+				if (conn.flags & Object::CONNECT_DEFERRED) {
+					flags_desc += "deferred";
+				}
+				if (conn.flags & Object::CONNECT_ONE_SHOT) {
+					if (!flags_desc.is_empty()) {
+						flags_desc += ",";
+					}
+					flags_desc += "one_shot";
+				}
+				if (conn.flags & Object::CONNECT_PERSIST) {
+					if (!flags_desc.is_empty()) {
+						flags_desc += ",";
+					}
+					flags_desc += "persist";
+				}
+				conn_dict["flags_desc"] = flags_desc;
+				conn_arr.push_back(conn_dict);
+			}
+			sig_dict["connections"] = conn_arr;
+			sig_dict["connection_count"] = conn_arr.size();
+			signals_arr.push_back(sig_dict);
+		}
+
+		Dictionary result;
+		result["success"] = true;
+		result["node_type"] = node->get_class();
+		result["signals"] = signals_arr;
+		Array response;
+		response.push_back(result);
+		EngineDebugger::get_singleton()->send_message("mcp:node_signals_result", response);
+		return OK;
+	}
+
+	// --- emit_signal ---
+	if (p_msg == "emit_signal") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+		String node_path_str = p_data[0];
+		String signal_name = p_data[1];
+		Array args = p_data[2];
+
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+		if (!node) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Node not found: " + node_path_str;
+			Array response;
+			response.push_back(result);
+			EngineDebugger::get_singleton()->send_message("mcp:emit_signal_result", response);
+			return OK;
+		}
+
+		if (!node->has_signal(StringName(signal_name))) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Signal not found on node: " + signal_name;
+			Array response;
+			response.push_back(result);
+			EngineDebugger::get_singleton()->send_message("mcp:emit_signal_result", response);
+			return OK;
+		}
+
+		// Get expected argument types for conversion.
+		List<MethodInfo> all_signals;
+		node->get_signal_list(&all_signals);
+		Vector<PropertyInfo> expected_args;
+		for (const MethodInfo &mi : all_signals) {
+			if (mi.name == StringName(signal_name)) {
+				expected_args = mi.arguments;
+				break;
+			}
+		}
+
+		// Convert args to proper Variant types.
+		Vector<Variant> converted_args;
+		converted_args.resize(args.size());
+		for (int i = 0; i < args.size(); i++) {
+			Variant arg_val = args[i];
+			if (i < expected_args.size()) {
+				Variant::Type expected_type = expected_args[i].type;
+				if (expected_type != Variant::NIL && arg_val.get_type() != expected_type) {
+					Callable::CallError ce;
+					Variant converted;
+					const Variant *v_ptr = &arg_val;
+					Variant::construct(expected_type, converted, &v_ptr, 1, ce);
+					if (ce.error == Callable::CallError::CALL_OK) {
+						arg_val = converted;
+					}
+				}
+			}
+			converted_args.write[i] = arg_val;
+		}
+
+		// Build pointer array.
+		Vector<const Variant *> argptrs;
+		argptrs.resize(converted_args.size());
+		for (int i = 0; i < converted_args.size(); i++) {
+			argptrs.write[i] = &converted_args[i];
+		}
+
+		// Count connections.
+		List<Object::Connection> connections;
+		node->get_signal_connection_list(StringName(signal_name), &connections);
+		int connection_count = connections.size();
+
+		// Emit.
+		const Variant **argptrs_raw = argptrs.is_empty() ? nullptr : (const Variant **)argptrs.ptr();
+		Error err = node->emit_signalp(
+				StringName(signal_name),
+				argptrs_raw,
+				argptrs.size());
+
+		Dictionary result;
+		if (err == OK) {
+			result["success"] = true;
+			result["connections_triggered"] = connection_count;
+		} else {
+			result["success"] = false;
+			result["error"] = "emit_signal returned error code: " + itos((int)err);
+			result["connections_triggered"] = 0;
+		}
+		Array response;
+		response.push_back(result);
+		EngineDebugger::get_singleton()->send_message("mcp:emit_signal_result", response);
+		return OK;
+	}
+
+	// --- set_node_property ---
+	if (p_msg == "set_node_property") {
+		ERR_FAIL_COND_V(p_data.size() < 4, ERR_INVALID_DATA);
+		String node_path_str = p_data[0];
+		String property = p_data[1];
+		Variant value = p_data[2];
+		String field = p_data[3];
+
+		auto send_result = [](const Dictionary &p_result) {
+			Array response;
+			response.push_back(p_result);
+			EngineDebugger::get_singleton()->send_message("mcp:set_property_result", response);
+		};
+
+		// 1. Resolve node.
+		Node *node = scene_tree->get_root()->get_node_or_null(NodePath(node_path_str));
+		if (!node) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Node not found: " + node_path_str;
+			send_result(result);
+			return OK;
+		}
+
+		// 2. Get current value (validates property exists).
+		bool valid = false;
+		Variant old_value = node->get(StringName(property), &valid);
+		if (!valid) {
+			Dictionary result;
+			result["success"] = false;
+			result["error"] = "Property not found on node: " + property;
+			send_result(result);
+			return OK;
+		}
+
+		// 3. Type conversion.
+		Variant::Type target_type = old_value.get_type();
+		if (target_type != Variant::NIL && value.get_type() != target_type) {
+			if (target_type == Variant::OBJECT && value.get_type() == Variant::STRING) {
+				// Resource path auto-loading.
+				String path = value;
+				if (path.begins_with("res://")) {
+					Ref<Resource> res = ResourceLoader::load(path);
+					if (res.is_null()) {
+						Dictionary result;
+						result["success"] = false;
+						result["error"] = "Failed to load resource: " + path;
+						send_result(result);
+						return OK;
+					}
+					value = res;
+				}
+			} else if (value.get_type() == Variant::DICTIONARY) {
+				// Dictionary-to-math-type coercion for MCP JSON payloads.
+				// JSON objects like {"x": 1, "y": 2} arrive as Dictionary but
+				// the target property expects Vector2, Vector3, Color, etc.
+				Dictionary d = value;
+				bool coerced = true;
+				switch (target_type) {
+					case Variant::VECTOR2: {
+						value = Vector2(d.get("x", 0.0), d.get("y", 0.0));
+					} break;
+					case Variant::VECTOR2I: {
+						value = Vector2i((int)d.get("x", 0), (int)d.get("y", 0));
+					} break;
+					case Variant::VECTOR3: {
+						value = Vector3(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0));
+					} break;
+					case Variant::VECTOR3I: {
+						value = Vector3i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0));
+					} break;
+					case Variant::VECTOR4: {
+						value = Vector4(d.get("x", 0.0), d.get("y", 0.0), d.get("z", 0.0), d.get("w", 0.0));
+					} break;
+					case Variant::VECTOR4I: {
+						value = Vector4i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0), (int)d.get("w", 0));
+					} break;
+					case Variant::COLOR: {
+						value = Color(d.get("r", 0.0), d.get("g", 0.0), d.get("b", 0.0), d.get("a", 1.0));
+					} break;
+					case Variant::RECT2: {
+						value = Rect2(d.get("x", 0.0), d.get("y", 0.0), d.get("w", 0.0), d.get("h", 0.0));
+					} break;
+					case Variant::RECT2I: {
+						value = Rect2i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("w", 0), (int)d.get("h", 0));
+					} break;
+					case Variant::TRANSFORM2D: {
+						// {"xx","xy","yx","yy","ox","oy"} or {"x": {}, "y": {}, "origin": {}}
+						if (d.has("xx")) {
+							value = Transform2D(
+									Vector2(d.get("xx", 1.0), d.get("xy", 0.0)),
+									Vector2(d.get("yx", 0.0), d.get("yy", 1.0)),
+									Vector2(d.get("ox", 0.0), d.get("oy", 0.0)));
+						} else {
+							coerced = false;
+						}
+					} break;
+					default:
+						coerced = false;
+						break;
+				}
+				if (!coerced) {
+					// Fall through to Variant::construct below.
+					Callable::CallError ce;
+					Variant converted;
+					const Variant *v_ptr = &value;
+					Variant::construct(target_type, converted, &v_ptr, 1, ce);
+					if (ce.error == Callable::CallError::CALL_OK) {
+						value = converted;
+					} else {
+						Dictionary result;
+						result["success"] = false;
+						result["error"] = vformat("Cannot convert Dictionary to %s for property '%s'. "
+								"For Vector2 use {\"x\":N,\"y\":N}, for Color use {\"r\":N,\"g\":N,\"b\":N,\"a\":N}.",
+								Variant::get_type_name(target_type), property);
+						send_result(result);
+						return OK;
+					}
+				}
+			} else if (value.get_type() == Variant::ARRAY && (target_type == Variant::VECTOR2 || target_type == Variant::VECTOR3 || target_type == Variant::VECTOR4 || target_type == Variant::COLOR)) {
+				// Array-to-math-type coercion: [x, y] -> Vector2, [r,g,b,a] -> Color, etc.
+				Array arr = value;
+				switch (target_type) {
+					case Variant::VECTOR2: {
+						if (arr.size() >= 2) {
+							value = Vector2(arr[0], arr[1]);
+						}
+					} break;
+					case Variant::VECTOR3: {
+						if (arr.size() >= 3) {
+							value = Vector3(arr[0], arr[1], arr[2]);
+						}
+					} break;
+					case Variant::VECTOR4: {
+						if (arr.size() >= 4) {
+							value = Vector4(arr[0], arr[1], arr[2], arr[3]);
+						}
+					} break;
+					case Variant::COLOR: {
+						if (arr.size() >= 3) {
+							value = Color(arr[0], arr[1], arr[2], arr.size() >= 4 ? (float)arr[3] : 1.0f);
+						}
+					} break;
+					default:
+						break;
+				}
+			} else {
+				// Use Variant::construct for type coercion.
+				Callable::CallError ce;
+				Variant converted;
+				const Variant *v_ptr = &value;
+				Variant::construct(target_type, converted, &v_ptr, 1, ce);
+				if (ce.error == Callable::CallError::CALL_OK) {
+					value = converted;
+				} else {
+					Dictionary result;
+					result["success"] = false;
+					result["error"] = vformat("Cannot convert %s to %s for property '%s'",
+							Variant::get_type_name(value.get_type()),
+							Variant::get_type_name(target_type),
+							property);
+					send_result(result);
+					return OK;
+				}
+			}
+		}
+
+		// 4. Field-level assignment (e.g., position.x).
+		if (!field.is_empty()) {
+			value = fieldwise_assign(old_value, value, field);
+		}
+
+		// 5. Set the property.
+		node->set(StringName(property), value);
+
+		// 6. Read back for confirmation.
+		Variant new_value = node->get(StringName(property));
+
+		// 7. Send success.
+		Dictionary result;
+		result["success"] = true;
+		result["node_path"] = node_path_str;
+		result["property"] = property;
+		result["old_value"] = String(old_value);
+		result["old_type"] = Variant::get_type_name(old_value.get_type());
+		result["new_value"] = String(new_value);
+		result["new_type"] = Variant::get_type_name(new_value.get_type());
+		send_result(result);
+		return OK;
+	}
+
+	// --- debug_describe_class ---
+	// Data: [class_or_path: String, include_private: bool, include_docs: bool]
+	if (p_msg == "debug_describe_class") {
+		ERR_FAIL_COND_V(p_data.is_empty(), ERR_INVALID_DATA);
+		String class_or_path = p_data[0];
+		bool include_private = p_data.size() > 1 ? (bool)p_data[1] : false;
+		bool include_docs = p_data.size() > 2 ? (bool)p_data[2] : false;
+
+		Dictionary result;
+		result["success"] = true;
+		String output;
+		int private_count = 0;
+		int doc_count = 0; // Track how many members have docs available.
+
+		// Try loading as a GDScript path first.
+		if (class_or_path.ends_with(".gd") || class_or_path.begins_with("res://")) {
+			Ref<Script> script = ResourceLoader::load(class_or_path);
+			if (script.is_valid()) {
+				Vector<DocData::ClassDoc> docs = script->get_documentation();
+				if (!docs.is_empty()) {
+					const DocData::ClassDoc &doc = docs[0];
+					output += doc.name;
+					if (!doc.inherits.is_empty()) {
+						output += " (extends " + doc.inherits + ")";
+					}
+					output += "\n";
+					if (include_docs) {
+						if (!doc.brief_description.is_empty()) {
+							output += "  " + doc.brief_description + "\n";
+						}
+						if (!doc.description.is_empty() && doc.description != doc.brief_description) {
+							output += "  " + doc.description + "\n";
+						}
+					} else {
+						if (!doc.brief_description.is_empty() || !doc.description.is_empty()) {
+							doc_count++;
+						}
+					}
+
+					// Constants
+					bool has_public_constants = false;
+					for (const DocData::ConstantDoc &c : doc.constants) {
+						if (c.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_constants) {
+							output += "\nConstants:\n";
+							has_public_constants = true;
+						}
+						output += "  " + c.name;
+						if (!c.type.is_empty()) {
+							output += ": " + c.type;
+						}
+						if (c.is_value_valid) {
+							output += " = " + c.value;
+						}
+						if (include_docs && !c.description.is_empty()) {
+							output += "  ## " + c.description;
+						} else if (!c.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Properties
+					bool has_public_props = false;
+					for (const DocData::PropertyDoc &p : doc.properties) {
+						if (p.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_props) {
+							output += "\nProperties:\n";
+							has_public_props = true;
+						}
+						output += "  ";
+						if (!p.setter.is_empty() || !p.getter.is_empty()) {
+							output += "@export ";
+						}
+						output += p.name;
+						if (!p.type.is_empty()) {
+							output += ": " + p.type;
+						}
+						if (!p.default_value.is_empty()) {
+							output += " = " + p.default_value;
+						}
+						if (include_docs && !p.description.is_empty()) {
+							output += "  ## " + p.description;
+						} else if (!p.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Methods
+					bool has_public_methods = false;
+					for (const DocData::MethodDoc &m : doc.methods) {
+						if (m.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_methods) {
+							output += "\nMethods:\n";
+							has_public_methods = true;
+						}
+						output += "  " + m.name + "(";
+						for (int i = 0; i < m.arguments.size(); i++) {
+							if (i > 0) {
+								output += ", ";
+							}
+							output += m.arguments[i].name;
+							if (!m.arguments[i].type.is_empty()) {
+								output += ": " + m.arguments[i].type;
+							}
+							if (!m.arguments[i].default_value.is_empty()) {
+								output += " = " + m.arguments[i].default_value;
+							}
+						}
+						output += ")";
+						if (!m.return_type.is_empty() && m.return_type != "void") {
+							output += " -> " + m.return_type;
+						}
+						if (include_docs && !m.description.is_empty()) {
+							output += "  ## " + m.description;
+						} else if (!m.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Signals
+					bool has_public_signals = false;
+					for (const DocData::MethodDoc &s : doc.signals) {
+						if (s.name.begins_with("_") && !include_private) {
+							private_count++;
+							continue;
+						}
+						if (!has_public_signals) {
+							output += "\nSignals:\n";
+							has_public_signals = true;
+						}
+						output += "  " + s.name + "(";
+						for (int i = 0; i < s.arguments.size(); i++) {
+							if (i > 0) {
+								output += ", ";
+							}
+							output += s.arguments[i].name;
+							if (!s.arguments[i].type.is_empty()) {
+								output += ": " + s.arguments[i].type;
+							}
+						}
+						output += ")";
+						if (include_docs && !s.description.is_empty()) {
+							output += "  ## " + s.description;
+						} else if (!s.description.is_empty()) {
+							doc_count++;
+						}
+						output += "\n";
+					}
+
+					// Footer hints.
+					String hints;
+					if (private_count > 0 && !include_private) {
+						hints += vformat("%d private members hidden", private_count);
+					}
+					if (doc_count > 0 && !include_docs) {
+						if (!hints.is_empty()) {
+							hints += ", ";
+						}
+						hints += vformat("%d doc comments available", doc_count);
+					}
+					if (!hints.is_empty()) {
+						output += "\n[" + hints;
+						PackedStringArray flags;
+						if (private_count > 0 && !include_private) {
+							flags.push_back("include_private: true");
+						}
+						if (doc_count > 0 && !include_docs) {
+							flags.push_back("include_docs: true");
+						}
+						output += " — use ";
+						for (int i = 0; i < flags.size(); i++) {
+							if (i > 0) {
+								output += ", ";
+							}
+							output += flags[i];
+						}
+						output += "]\n";
+					}
+				} else {
+					output = "Script loaded but no documentation available: " + class_or_path;
+				}
+			} else {
+				result["success"] = false;
+				output = "Failed to load script: " + class_or_path;
+			}
+		} else {
+			// Try as native class name via ClassDB.
+			StringName class_name = StringName(class_or_path);
+			if (ClassDB::class_exists(class_name)) {
+				output += class_or_path;
+				StringName parent = ClassDB::get_parent_class(class_name);
+				if (parent != StringName()) {
+					output += " (extends " + String(parent) + ")";
+				}
+				output += "\n";
+
+				// Properties via ClassDB
+				List<PropertyInfo> props;
+				ClassDB::get_property_list(class_name, &props, true);
+				bool has_public_props = false;
+				for (const PropertyInfo &pi : props) {
+					if (pi.usage & PROPERTY_USAGE_CATEGORY || pi.usage & PROPERTY_USAGE_GROUP || pi.usage & PROPERTY_USAGE_SUBGROUP) {
+						continue;
+					}
+					if (!(pi.usage & PROPERTY_USAGE_EDITOR) && !(pi.usage & PROPERTY_USAGE_SCRIPT_VARIABLE)) {
+						continue;
+					}
+					if (pi.name.begins_with("_") && !include_private) {
+						private_count++;
+						continue;
+					}
+					if (!has_public_props) {
+						output += "\nProperties:\n";
+						has_public_props = true;
+					}
+					output += "  " + pi.name + ": " + Variant::get_type_name(pi.type) + "\n";
+				}
+
+				// Methods via ClassDB
+				List<MethodInfo> methods;
+				ClassDB::get_method_list(class_name, &methods, true);
+				bool has_public_methods = false;
+				for (const MethodInfo &mi : methods) {
+					if (mi.name.begins_with("_") && !include_private) {
+						private_count++;
+						continue;
+					}
+					if (!has_public_methods) {
+						output += "\nMethods:\n";
+						has_public_methods = true;
+					}
+					output += "  " + mi.name + "(";
+					for (int i = 0; i < mi.arguments.size(); i++) {
+						if (i > 0) {
+							output += ", ";
+						}
+						output += mi.arguments[i].name + ": " + Variant::get_type_name(mi.arguments[i].type);
+					}
+					output += ")";
+					if (mi.return_val.type != Variant::NIL) {
+						output += " -> " + Variant::get_type_name(mi.return_val.type);
+					}
+					output += "\n";
+				}
+
+				// Signals via ClassDB
+				List<MethodInfo> signals;
+				ClassDB::get_signal_list(class_name, &signals, true);
+				bool has_public_signals = false;
+				for (const MethodInfo &si : signals) {
+					if (si.name.begins_with("_") && !include_private) {
+						private_count++;
+						continue;
+					}
+					if (!has_public_signals) {
+						output += "\nSignals:\n";
+						has_public_signals = true;
+					}
+					output += "  " + si.name + "(";
+					for (int i = 0; i < si.arguments.size(); i++) {
+						if (i > 0) {
+							output += ", ";
+						}
+						output += si.arguments[i].name + ": " + Variant::get_type_name(si.arguments[i].type);
+					}
+					output += ")\n";
+				}
+
+				if (private_count > 0 && !include_private) {
+					output += vformat("\n[%d private members hidden — use include_private: true]\n", private_count);
+				}
+			} else {
+				result["success"] = false;
+				output = "Class not found: " + class_or_path + ". Use a script path (res://...) or native class name.";
+			}
+		}
+
+		result["text"] = output;
+		Array msg;
+		msg.push_back(result.get("success", false));
+		msg.push_back(output);
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+		return OK;
+	}
+
+	// --- debug_get_property ---
+	// Data: [path: String, property: String, options_json: String]
+	if (p_msg == "debug_get_property") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+		String path_pattern = p_data[0];
+		String property = p_data[1];
+		String options_json = p_data.size() > 2 ? String(p_data[2]) : "";
+
+		Dictionary options;
+		if (!options_json.is_empty()) {
+			JSON json;
+			if (json.parse(options_json) == OK) {
+				options = json.get_data();
+			}
+		}
+
+		bool include_private = options.get("include_private", false);
+		bool summarize = options.get("summarize", false);
+		bool group_by_value = options.get("group_by_value", false);
+		String where_clause = options.get("where", "");
+
+		// Check private access.
+		if (property.begins_with("_") && !include_private) {
+			Array msg;
+			msg.push_back(false);
+			msg.push_back("Property '" + property + "' is private. Use include_private: true to access.");
+			EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+			return OK;
+		}
+
+		// Resolve glob pattern to matching nodes.
+		Vector<Node *> matches;
+		if (path_pattern.contains("*")) {
+			// Glob expansion.
+			PackedStringArray segments = path_pattern.split("/");
+			Node *root = scene_tree->get_root();
+			// Walk tree matching segments.
+			List<Pair<Node *, int>> walk_stack;
+			walk_stack.push_back({ root, 1 }); // Start after empty first segment.
+
+			while (!walk_stack.is_empty()) {
+				Pair<Node *, int> current = walk_stack.front()->get();
+				walk_stack.pop_front();
+				Node *node = current.first;
+				int seg_idx = current.second;
+
+				if (seg_idx >= segments.size()) {
+					// Matched all segments — this node matches.
+					matches.push_back(node);
+					continue;
+				}
+
+				String seg = segments[seg_idx];
+				if (seg == "*") {
+					// Match any direct child.
+					for (int i = 0; i < node->get_child_count(); i++) {
+						walk_stack.push_back({ node->get_child(i), seg_idx + 1 });
+					}
+				} else {
+					// Match specific name.
+					Node *child = node->get_node_or_null(NodePath(seg));
+					if (child) {
+						walk_stack.push_back({ child, seg_idx + 1 });
+					}
+				}
+			}
+		} else {
+			// Single node.
+			Node *node = scene_tree->get_root()->get_node_or_null(NodePath(path_pattern));
+			if (node) {
+				matches.push_back(node);
+			}
+		}
+
+		if (matches.is_empty()) {
+			Array msg;
+			msg.push_back(false);
+			msg.push_back("No nodes found matching: " + path_pattern);
+			EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+			return OK;
+		}
+
+		// Apply where clause filter.
+		if (!where_clause.is_empty()) {
+			// Parse simple condition: "property op value"
+			String where_prop;
+			String where_op;
+			String where_val_str;
+
+			// Find operator.
+			for (const String &op : { ">=", "<=", "!=", "==", ">", "<" }) {
+				int pos = where_clause.find(op);
+				if (pos >= 0) {
+					where_prop = where_clause.substr(0, pos).strip_edges();
+					where_op = op;
+					where_val_str = where_clause.substr(pos + op.length()).strip_edges();
+					break;
+				}
+			}
+
+			if (!where_op.is_empty()) {
+				Vector<Node *> filtered;
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(where_prop), &valid);
+					if (!valid) {
+						continue;
+					}
+
+					// Parse comparison value.
+					Variant cmp_val;
+					if (where_val_str == "true") {
+						cmp_val = true;
+					} else if (where_val_str == "false") {
+						cmp_val = false;
+					} else if (where_val_str.is_valid_float()) {
+						cmp_val = where_val_str.to_float();
+					} else if (where_val_str.is_valid_int()) {
+						cmp_val = where_val_str.to_int();
+					} else {
+						cmp_val = where_val_str;
+					}
+
+					bool pass = false;
+					if (where_op == "==") {
+						pass = (val == cmp_val);
+					} else if (where_op == "!=") {
+						pass = (val != cmp_val);
+					} else if (where_op == "<") {
+						pass = (val < cmp_val);
+					} else if (where_op == ">") {
+						pass = (val > cmp_val);
+					} else if (where_op == "<=") {
+						pass = (val <= cmp_val);
+					} else if (where_op == ">=") {
+						pass = (val >= cmp_val);
+					}
+
+					if (pass) {
+						filtered.push_back(n);
+					}
+				}
+				int total_before = matches.size();
+				matches = filtered;
+
+				// Note filtering in output.
+				if (matches.is_empty()) {
+					Array msg;
+					msg.push_back(true);
+					msg.push_back(vformat("0 nodes matched where clause '%s' (of %d total)", where_clause, total_before));
+					EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+					return OK;
+				}
+			}
+		}
+
+		// Build output.
+		String output;
+		// Handle multiple properties (comma-separated).
+		PackedStringArray props = property.split(",");
+		for (int p_idx = 0; p_idx < props.size(); p_idx++) {
+			props.write[p_idx] = props[p_idx].strip_edges();
+		}
+
+		if (matches.size() == 1) {
+			// Single node — show all requested properties.
+			Node *node = matches[0];
+			String node_path = node->get_path();
+			for (const String &prop : props) {
+				bool valid = false;
+				Variant val = node->get(StringName(prop), &valid);
+				if (valid) {
+					output += vformat("%s.%s = %s (%s)\n", node_path, prop, String(val), Variant::get_type_name(val.get_type()));
+				} else {
+					output += vformat("%s.%s — property not found\n", node_path, prop);
+				}
+			}
+		} else if (summarize || group_by_value) {
+			// Multiple nodes — produce summary.
+			output += vformat("%d nodes matched %s\n", matches.size(), path_pattern);
+
+			for (const String &prop : props) {
+				// Collect values.
+				HashMap<String, int> value_groups;
+				double val_min = 1e30, val_max = -1e30, val_sum = 0;
+				int numeric_count = 0;
+				int valid_count = 0;
+
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(prop), &valid);
+					if (!valid) {
+						continue;
+					}
+					valid_count++;
+
+					String val_str = String(val);
+					if (value_groups.has(val_str)) {
+						value_groups[val_str]++;
+					} else {
+						value_groups[val_str] = 1;
+					}
+
+					if (val.get_type() == Variant::INT || val.get_type() == Variant::FLOAT) {
+						double d = (double)val;
+						val_min = MIN(val_min, d);
+						val_max = MAX(val_max, d);
+						val_sum += d;
+						numeric_count++;
+					}
+				}
+
+				if (numeric_count > 0) {
+					output += vformat("%s: range [%s, %s], mean %.1f\n", prop,
+							String::num(val_min), String::num(val_max),
+							val_sum / numeric_count);
+				}
+
+				if (group_by_value || value_groups.size() <= 10) {
+					for (const KeyValue<String, int> &kv : value_groups) {
+						output += vformat("  %s: %d nodes\n", kv.key, kv.value);
+					}
+				}
+			}
+		} else {
+			// Multiple nodes — list first 20.
+			int total = matches.size();
+			output += vformat("%d nodes matched %s\n", total, path_pattern);
+			int show_count = MIN(total, 20);
+			for (int i = 0; i < show_count; i++) {
+				Node *node = matches[i];
+				for (const String &prop : props) {
+					bool valid = false;
+					Variant val = node->get(StringName(prop), &valid);
+					if (valid) {
+						output += vformat("  %s.%s = %s\n", node->get_name(), prop, String(val));
+					}
+				}
+			}
+			if (total > 20) {
+				output += vformat("  ... and %d more\n", total - 20);
+			}
+		}
+
+		Array msg;
+		msg.push_back(true);
+		msg.push_back(output.strip_edges());
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+		return OK;
+	}
+
+	// --- debug_set_property ---
+	// Data: [path: String, property: String, value_json: String, options_json: String]
+	if (p_msg == "debug_set_property") {
+		ERR_FAIL_COND_V(p_data.size() < 3, ERR_INVALID_DATA);
+		String path_pattern = p_data[0];
+		String property = p_data[1];
+		String value_json = p_data[2];
+		String options_json = p_data.size() > 3 ? String(p_data[3]) : "";
+
+		// Parse value.
+		Variant value;
+		{
+			JSON json;
+			if (json.parse(value_json) == OK) {
+				value = json.get_data();
+			} else {
+				value = value_json;
+			}
+		}
+
+		Dictionary options;
+		if (!options_json.is_empty()) {
+			JSON json;
+			if (json.parse(options_json) == OK) {
+				options = json.get_data();
+			}
+		}
+		String where_clause = options.get("where", "");
+
+		// Resolve nodes (same glob logic as get_property — send the implementation inline).
+		Vector<Node *> matches;
+		if (path_pattern.contains("*")) {
+			PackedStringArray segments = path_pattern.split("/");
+			Node *root = scene_tree->get_root();
+			List<Pair<Node *, int>> walk_stack;
+			walk_stack.push_back({ root, 1 });
+			while (!walk_stack.is_empty()) {
+				Pair<Node *, int> current = walk_stack.front()->get();
+				walk_stack.pop_front();
+				Node *node = current.first;
+				int seg_idx = current.second;
+				if (seg_idx >= segments.size()) {
+					matches.push_back(node);
+					continue;
+				}
+				String seg = segments[seg_idx];
+				if (seg == "*") {
+					for (int i = 0; i < node->get_child_count(); i++) {
+						walk_stack.push_back({ node->get_child(i), seg_idx + 1 });
+					}
+				} else {
+					Node *child = node->get_node_or_null(NodePath(seg));
+					if (child) {
+						walk_stack.push_back({ child, seg_idx + 1 });
+					}
+				}
+			}
+		} else {
+			Node *node = scene_tree->get_root()->get_node_or_null(NodePath(path_pattern));
+			if (node) {
+				matches.push_back(node);
+			}
+		}
+
+		// Apply where clause (same logic as get_property).
+		int total_glob_matches = matches.size();
+		if (!where_clause.is_empty()) {
+			String where_prop, where_op, where_val_str;
+			for (const String &op : { ">=", "<=", "!=", "==", ">", "<" }) {
+				int pos = where_clause.find(op);
+				if (pos >= 0) {
+					where_prop = where_clause.substr(0, pos).strip_edges();
+					where_op = op;
+					where_val_str = where_clause.substr(pos + op.length()).strip_edges();
+					break;
+				}
+			}
+			if (!where_op.is_empty()) {
+				Vector<Node *> filtered;
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(where_prop), &valid);
+					if (!valid) continue;
+					Variant cmp_val;
+					if (where_val_str == "true") cmp_val = true;
+					else if (where_val_str == "false") cmp_val = false;
+					else if (where_val_str.is_valid_float()) cmp_val = where_val_str.to_float();
+					else if (where_val_str.is_valid_int()) cmp_val = where_val_str.to_int();
+					else cmp_val = where_val_str;
+					bool pass = false;
+					if (where_op == "==") pass = (val == cmp_val);
+					else if (where_op == "!=") pass = (val != cmp_val);
+					else if (where_op == "<") pass = (val < cmp_val);
+					else if (where_op == ">") pass = (val > cmp_val);
+					else if (where_op == "<=") pass = (val <= cmp_val);
+					else if (where_op == ">=") pass = (val >= cmp_val);
+					if (pass) filtered.push_back(n);
+				}
+				matches = filtered;
+			}
+		}
+
+		// Set property on all matches.
+		int set_count = 0;
+		for (Node *n : matches) {
+			n->set(StringName(property), value);
+			set_count++;
+		}
+
+		String output;
+		if (!where_clause.is_empty()) {
+			output = vformat("Set %s = %s on %d nodes (of %d matched by glob, filtered by '%s')",
+					property, String(value), set_count, total_glob_matches, where_clause);
+		} else {
+			output = vformat("Set %s = %s on %d node(s)", property, String(value), set_count);
+		}
+
+		Array msg;
+		msg.push_back(true);
+		msg.push_back(output);
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+		return OK;
+	}
+
+	// --- debug_call_method ---
+	// Data: [path: String, method: String, args_json: String, options_json: String]
+	if (p_msg == "debug_call_method") {
+		ERR_FAIL_COND_V(p_data.size() < 2, ERR_INVALID_DATA);
+		String path_pattern = p_data[0];
+		String method = p_data[1];
+		String args_json = p_data.size() > 2 ? String(p_data[2]) : "";
+		String options_json = p_data.size() > 3 ? String(p_data[3]) : "";
+
+		// Parse args.
+		Array args;
+		if (!args_json.is_empty()) {
+			JSON json;
+			if (json.parse(args_json) == OK) {
+				Variant parsed = json.get_data();
+				if (parsed.get_type() == Variant::ARRAY) {
+					args = parsed;
+				}
+			}
+		}
+
+		Dictionary options;
+		if (!options_json.is_empty()) {
+			JSON json;
+			if (json.parse(options_json) == OK) {
+				options = json.get_data();
+			}
+		}
+		String where_clause = options.get("where", "");
+
+		// Resolve nodes (same glob logic).
+		Vector<Node *> matches;
+		if (path_pattern.contains("*")) {
+			PackedStringArray segments = path_pattern.split("/");
+			Node *root = scene_tree->get_root();
+			List<Pair<Node *, int>> walk_stack;
+			walk_stack.push_back({ root, 1 });
+			while (!walk_stack.is_empty()) {
+				Pair<Node *, int> current = walk_stack.front()->get();
+				walk_stack.pop_front();
+				Node *node = current.first;
+				int seg_idx = current.second;
+				if (seg_idx >= segments.size()) {
+					matches.push_back(node);
+					continue;
+				}
+				String seg = segments[seg_idx];
+				if (seg == "*") {
+					for (int i = 0; i < node->get_child_count(); i++) {
+						walk_stack.push_back({ node->get_child(i), seg_idx + 1 });
+					}
+				} else {
+					Node *child = node->get_node_or_null(NodePath(seg));
+					if (child) {
+						walk_stack.push_back({ child, seg_idx + 1 });
+					}
+				}
+			}
+		} else {
+			Node *node = scene_tree->get_root()->get_node_or_null(NodePath(path_pattern));
+			if (node) {
+				matches.push_back(node);
+			}
+		}
+
+		// Apply where clause.
+		int total_glob_matches = matches.size();
+		if (!where_clause.is_empty()) {
+			String where_prop, where_op, where_val_str;
+			for (const String &op : { ">=", "<=", "!=", "==", ">", "<" }) {
+				int pos = where_clause.find(op);
+				if (pos >= 0) {
+					where_prop = where_clause.substr(0, pos).strip_edges();
+					where_op = op;
+					where_val_str = where_clause.substr(pos + op.length()).strip_edges();
+					break;
+				}
+			}
+			if (!where_op.is_empty()) {
+				Vector<Node *> filtered;
+				for (Node *n : matches) {
+					bool valid = false;
+					Variant val = n->get(StringName(where_prop), &valid);
+					if (!valid) continue;
+					Variant cmp_val;
+					if (where_val_str == "true") cmp_val = true;
+					else if (where_val_str == "false") cmp_val = false;
+					else if (where_val_str.is_valid_float()) cmp_val = where_val_str.to_float();
+					else if (where_val_str.is_valid_int()) cmp_val = where_val_str.to_int();
+					else cmp_val = where_val_str;
+					bool pass = false;
+					if (where_op == "==") pass = (val == cmp_val);
+					else if (where_op == "!=") pass = (val != cmp_val);
+					else if (where_op == "<") pass = (val < cmp_val);
+					else if (where_op == ">") pass = (val > cmp_val);
+					else if (where_op == "<=") pass = (val <= cmp_val);
+					else if (where_op == ">=") pass = (val >= cmp_val);
+					if (pass) filtered.push_back(n);
+				}
+				matches = filtered;
+			}
+		}
+
+		// Call method on all matches.
+		String output;
+		if (matches.size() == 1) {
+			// Single node — show return value.
+			Node *node = matches[0];
+			Variant ret;
+			if (args.is_empty()) {
+				ret = node->call(StringName(method));
+			} else {
+				// Build Variant args array for callv.
+				ret = node->callv(StringName(method), args);
+			}
+			output = vformat("Called %s.%s() on %s", node->get_path(), method, node->get_name());
+			if (ret.get_type() != Variant::NIL) {
+				output += vformat(" → %s", String(ret));
+			}
+		} else {
+			// Multiple nodes.
+			int call_count = 0;
+			for (Node *n : matches) {
+				if (args.is_empty()) {
+					n->call(StringName(method));
+				} else {
+					n->callv(StringName(method), args);
+				}
+				call_count++;
+			}
+			if (!where_clause.is_empty()) {
+				output = vformat("Called %s() on %d nodes (of %d matched by glob, filtered by '%s')",
+						method, call_count, total_glob_matches, where_clause);
+			} else {
+				output = vformat("Called %s() on %d node(s)", method, call_count);
+			}
+		}
+
+		Array msg;
+		msg.push_back(true);
+		msg.push_back(output);
+		EngineDebugger::get_singleton()->send_message("mcp:debug_result", msg);
+		return OK;
+	}
+
+	// Unknown mcp message -- not captured.
+	r_captured = false;
+	return OK;
+}
+
+#endif // MODULE_MCP_SERVER_ENABLED
 
 #endif // DEBUG_ENABLED
