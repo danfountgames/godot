@@ -43,7 +43,6 @@
 #include "scene/animation/animation_tree.h"
 #include "scene/animation/tween.h"
 #include "scene/audio/audio_stream_player.h"
-#include "scene/debugger/debug_semantic_registry.h"
 #include "scene/debugger/scene_debugger.h"
 #include "scene/gui/aspect_ratio_container.h"
 #include "scene/gui/box_container.h"
@@ -1422,10 +1421,6 @@ void register_scene_types() {
 void unregister_scene_types() {
 	OS::get_singleton()->benchmark_begin_measure("Scene", "Unregister Types");
 
-	if (DebugSemanticRegistry::get_singleton()) {
-		memdelete(DebugSemanticRegistry::get_singleton());
-	}
-
 	SceneDebugger::deinitialize();
 
 	if constexpr (GD_IS_CLASS_ENABLED(TextureLayered)) {
@@ -1487,10 +1482,8 @@ void register_scene_singletons() {
 	OS::get_singleton()->benchmark_begin_measure("Scene", "Register Singletons");
 
 	GDREGISTER_CLASS(ThemeDB);
-	GDREGISTER_CLASS(DebugSemanticRegistry);
 
 	Engine::get_singleton()->add_singleton(Engine::Singleton("ThemeDB", ThemeDB::get_singleton()));
-	Engine::get_singleton()->add_singleton(Engine::Singleton("Debug", memnew(DebugSemanticRegistry)));
 
 	OS::get_singleton()->benchmark_end_measure("Scene", "Register Singletons");
 }
