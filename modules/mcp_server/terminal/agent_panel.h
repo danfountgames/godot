@@ -35,6 +35,7 @@
 #include "scene/gui/box_container.h"
 
 class Button;
+class CheckBox;
 class ScrollContainer;
 class TerminalWidget;
 class MCPServerPlugin;
@@ -51,6 +52,12 @@ private:
 	ScrollContainer *scroll_container = nullptr;
 	Button *to_bottom_button = nullptr;
 
+	// Runtime tools toggle.
+	CheckBox *runtime_toggle = nullptr;
+
+	// Per-agent identity token (used as Bearer token and agent_id in MCPProtocol).
+	String agent_token;
+
 	// Title tracking.
 	String current_title;
 
@@ -60,6 +67,7 @@ private:
 	void _on_to_bottom_pressed();
 	void _on_scroll_changed(double p_value);
 	void _on_scroll_container_resized();
+	void _on_runtime_toggle_changed(bool p_enabled);
 	void _update_status();
 
 	String _find_claude_binary() const;

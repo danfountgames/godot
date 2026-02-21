@@ -160,6 +160,83 @@ MCPProtocol::~MCPProtocol() {
 }
 
 // ---------------------------------------------------------------------------
+// Per-Agent Token Management & Runtime Tool Gating
+// ---------------------------------------------------------------------------
+
+void MCPProtocol::register_agent_token(const String &p_agent_token) {
+	agent_tokens[p_agent_token] = true;
+	print_verbose("[MCP] Agent token registered: " + p_agent_token.substr(0, 12) + "...");
+}
+
+void MCPProtocol::unregister_agent_token(const String &p_agent_token) {
+	agent_tokens.erase(p_agent_token);
+	print_verbose("[MCP] Agent token unregistered: " + p_agent_token.substr(0, 12) + "...");
+}
+
+void MCPProtocol::set_runtime_tools_enabled(const String &p_agent_token, bool p_enabled) {
+	// Find the session that has this agent_id and flip the flag.
+	for (KeyValue<String, MCPSessionState> &kv : sessions) {
+		if (kv.value.agent_id == p_agent_token) {
+			kv.value.runtime_tools_enabled = p_enabled;
+			print_verbose(vformat("[MCP] Runtime tools %s for agent %s (session %s)",
+					p_enabled ? "enabled" : "disabled",
+					p_agent_token.substr(0, 12) + "...",
+					kv.key.substr(0, 8) + "..."));
+
+			// Notify the agent that the tool list changed so it re-fetches.
+			notify_tools_changed();
+			return;
+		}
+	}
+	// Session not yet established — store the preference on the token.
+	// It'll be applied when the session initializes (see process_request).
+	// We use a side map for deferred preferences.
+	_deferred_runtime_prefs[p_agent_token] = p_enabled;
+}
+
+bool MCPProtocol::get_runtime_tools_enabled(const String &p_agent_token) const {
+	for (const KeyValue<String, MCPSessionState> &kv : sessions) {
+		if (kv.value.agent_id == p_agent_token) {
+			return kv.value.runtime_tools_enabled;
+		}
+	}
+	// Check deferred prefs.
+	if (_deferred_runtime_prefs.has(p_agent_token)) {
+		return _deferred_runtime_prefs[p_agent_token];
+	}
+	return true; // Default: enabled.
+}
+
+bool MCPProtocol::is_runtime_tool(const String &p_name) {
+	// Tools that require a running game and should be gated by the toggle.
+	// debug/describe_class is exempt — it reads parser data, no game needed.
+	if (p_name.begins_with("runtime/")) {
+		return true;
+	}
+	if (p_name.begins_with("automation/")) {
+		return true;
+	}
+	// debug/* introspection tools that need a running game.
+	if (p_name == "debug/browse_tree" ||
+			p_name == "debug/get" ||
+			p_name == "debug/set" ||
+			p_name == "debug/call" ||
+			p_name == "console/execute") {
+		return true;
+	}
+	// debug/ debugger tools.
+	if (p_name == "debug/get_break_state" ||
+			p_name == "debug/step" ||
+			p_name == "debug/continue" ||
+			p_name == "debug/get_breakpoints" ||
+			p_name == "debug/set_breakpoint" ||
+			p_name == "debug/remove_breakpoint") {
+		return true;
+	}
+	return false;
+}
+
+// ---------------------------------------------------------------------------
 // Binding
 // ---------------------------------------------------------------------------
 
@@ -521,22 +598,49 @@ void MCPProtocol::process_request(int p_client_id) {
 	}
 
 	// ── Step 4b: Bearer token authentication ─────────────────────────────
-	if (!auth_token.is_empty()) {
+	// Accept either the global auth_token or a registered per-agent token.
+	String request_agent_id; // Populated if this request uses an agent token.
+	if (!auth_token.is_empty() || !agent_tokens.is_empty()) {
 		String auth_header = session->headers.has("authorization")
 				? session->headers["authorization"]
 				: String();
-		// Constant-time comparison to prevent timing side-channel attacks.
-		String expected = "Bearer " + auth_token;
-		bool token_valid = (auth_header.length() == expected.length());
-		int diff = 0;
-		int len = MIN(auth_header.length(), expected.length());
-		for (int i = 0; i < len; i++) {
-			diff |= auth_header[i] ^ expected[i];
-		}
-		token_valid = token_valid && (diff == 0);
-		if (auth_header.is_empty() || !token_valid) {
+		if (auth_header.is_empty()) {
 			session->queue_response(MCP_HTTP_401,
-					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid or missing Bearer token"),
+					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: missing Bearer token"),
+					origin_header);
+			return;
+		}
+
+		// Extract the token value after "Bearer ".
+		String presented_token;
+		if (auth_header.begins_with("Bearer ")) {
+			presented_token = auth_header.substr(7);
+		}
+
+		bool token_valid = false;
+
+		// Check against global token (constant-time comparison).
+		if (!auth_token.is_empty()) {
+			bool len_match = (presented_token.length() == auth_token.length());
+			int diff = 0;
+			int len = MIN(presented_token.length(), auth_token.length());
+			for (int i = 0; i < len; i++) {
+				diff |= presented_token[i] ^ auth_token[i];
+			}
+			if (len_match && diff == 0) {
+				token_valid = true;
+			}
+		}
+
+		// Check against registered agent tokens.
+		if (!token_valid && agent_tokens.has(presented_token)) {
+			token_valid = true;
+			request_agent_id = presented_token;
+		}
+
+		if (!token_valid) {
+			session->queue_response(MCP_HTTP_401,
+					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid Bearer token"),
 					origin_header);
 			return;
 		}
@@ -645,6 +749,18 @@ void MCPProtocol::process_request(int p_client_id) {
 		new_state.init_response_sent = true;
 		new_state.initialized = false;
 		new_state.last_activity = OS::get_singleton()->get_ticks_usec();
+
+		// Link agent identity from the Bearer token (if this is an agent session).
+		if (!request_agent_id.is_empty()) {
+			new_state.agent_id = request_agent_id;
+			// Apply deferred runtime preference if one was set before the session existed.
+			if (_deferred_runtime_prefs.has(request_agent_id)) {
+				new_state.runtime_tools_enabled = _deferred_runtime_prefs[request_agent_id];
+				_deferred_runtime_prefs.erase(request_agent_id);
+			}
+			print_verbose("[MCP] Session " + new_session_id.substr(0, 8) + "... linked to agent " + request_agent_id.substr(0, 12) + "...");
+		}
+
 		sessions[new_session_id] = new_state;
 
 		HashMap<String, String> extra_headers;
@@ -739,6 +855,31 @@ void MCPProtocol::process_request(int p_client_id) {
 		return;
 	}
 
+	// ── Step 9a½: Per-agent runtime tool permission check ────────────────
+	// If this session has runtime tools disabled (via the agent panel toggle),
+	// reject tool calls to runtime/* and related namespaces with a clear error.
+	if (method == "tools/call") {
+		Dictionary tc_params = json_request.get("params", Dictionary());
+		String tool_name = tc_params.get("name", "");
+
+		if (is_runtime_tool(tool_name) && sessions.has(session_id_header) &&
+				!sessions[session_id_header].runtime_tools_enabled) {
+			String body = make_error_body(JSONRPC::INVALID_REQUEST,
+					vformat("Tool '%s' is blocked: runtime tools are disabled for this agent session. "
+							"Enable the runtime toggle in the agent panel to allow game control.",
+							tool_name),
+					request_id);
+			session->queue_response(MCP_HTTP_200, body, origin_header);
+
+			uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+			_emit_request_event("tools/call", session_id_header, client_ip, 403,
+					duration_usec, session->request_body, body, tool_name);
+
+			session->reset_request();
+			return;
+		}
+	}
+
 	// ── Step 9b: SSE negotiation for tools/call ─────────────────────────
 	// If the client accepts SSE and the request has a progressToken or the
 	// tool is known to be long-running, use POST SSE streaming.
@@ -784,7 +925,9 @@ void MCPProtocol::process_request(int p_client_id) {
 	// Returns a Dictionary: either {"jsonrpc":"2.0","result":...,"id":...}
 	// or {"jsonrpc":"2.0","error":...,"id":...}.
 	// Returns Variant::NIL for notifications (no "id").
+	_current_request_session_id = session_id_header;
 	Variant result = process_action(json_request);
+	_current_request_session_id = String();
 
 	// Extract tool name for tools/call events.
 	String event_tool_name;
@@ -916,7 +1059,25 @@ Dictionary MCPProtocol::handle_ping() {
 // ---------------------------------------------------------------------------
 
 Dictionary MCPProtocol::_handle_tools_list(const Dictionary &p_params) {
-	return tool_registry.list_tools(p_params);
+	Dictionary result = tool_registry.list_tools(p_params);
+
+	// Filter out runtime tools if the requesting session has them disabled.
+	if (!_current_request_session_id.is_empty() &&
+			sessions.has(_current_request_session_id) &&
+			!sessions[_current_request_session_id].runtime_tools_enabled) {
+		Array tools = result.get("tools", Array());
+		Array filtered;
+		for (int i = 0; i < tools.size(); i++) {
+			Dictionary tool = tools[i];
+			String name = tool.get("name", "");
+			if (!is_runtime_tool(name)) {
+				filtered.push_back(tool);
+			}
+		}
+		result["tools"] = filtered;
+	}
+
+	return result;
 }
 
 Dictionary MCPProtocol::_handle_tools_call(const Dictionary &p_params) {
