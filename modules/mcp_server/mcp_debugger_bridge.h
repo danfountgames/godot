@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/object/script_language.h"
 #include "editor/debugger/editor_debugger_plugin.h"
 
 #include "editor/mcp_status_data.h"

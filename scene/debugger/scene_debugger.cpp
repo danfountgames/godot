@@ -6138,18 +6138,23 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 					}
 
 					bool pass = false;
+					bool cmp_valid = false;
+					Variant result;
 					if (where_op == "==") {
-						pass = (val == cmp_val);
+						Variant::evaluate(Variant::OP_EQUAL, val, cmp_val, result, cmp_valid);
 					} else if (where_op == "!=") {
-						pass = (val != cmp_val);
+						Variant::evaluate(Variant::OP_NOT_EQUAL, val, cmp_val, result, cmp_valid);
 					} else if (where_op == "<") {
-						pass = (val < cmp_val);
+						Variant::evaluate(Variant::OP_LESS, val, cmp_val, result, cmp_valid);
 					} else if (where_op == ">") {
-						pass = (val > cmp_val);
+						Variant::evaluate(Variant::OP_GREATER, val, cmp_val, result, cmp_valid);
 					} else if (where_op == "<=") {
-						pass = (val <= cmp_val);
+						Variant::evaluate(Variant::OP_LESS_EQUAL, val, cmp_val, result, cmp_valid);
 					} else if (where_op == ">=") {
-						pass = (val >= cmp_val);
+						Variant::evaluate(Variant::OP_GREATER_EQUAL, val, cmp_val, result, cmp_valid);
+					}
+					if (cmp_valid) {
+						pass = result.operator bool();
 					}
 
 					if (pass) {
@@ -6181,7 +6186,7 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 		if (matches.size() == 1) {
 			// Single node — show all requested properties.
 			Node *node = matches[0];
-			String node_path = node->get_path();
+			String node_path = String(node->get_path());
 			for (const String &prop : props) {
 				bool valid = false;
 				Variant val = node->get(StringName(prop), &valid);
@@ -6355,13 +6360,15 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 					else if (where_val_str.is_valid_int()) cmp_val = where_val_str.to_int();
 					else cmp_val = where_val_str;
 					bool pass = false;
-					if (where_op == "==") pass = (val == cmp_val);
-					else if (where_op == "!=") pass = (val != cmp_val);
-					else if (where_op == "<") pass = (val < cmp_val);
-					else if (where_op == ">") pass = (val > cmp_val);
-					else if (where_op == "<=") pass = (val <= cmp_val);
-					else if (where_op == ">=") pass = (val >= cmp_val);
-					if (pass) filtered.push_back(n);
+					bool cmp_valid = false;
+					Variant result;
+					if (where_op == "==") Variant::evaluate(Variant::OP_EQUAL, val, cmp_val, result, cmp_valid);
+					else if (where_op == "!=") Variant::evaluate(Variant::OP_NOT_EQUAL, val, cmp_val, result, cmp_valid);
+					else if (where_op == "<") Variant::evaluate(Variant::OP_LESS, val, cmp_val, result, cmp_valid);
+					else if (where_op == ">") Variant::evaluate(Variant::OP_GREATER, val, cmp_val, result, cmp_valid);
+					else if (where_op == "<=") Variant::evaluate(Variant::OP_LESS_EQUAL, val, cmp_val, result, cmp_valid);
+					else if (where_op == ">=") Variant::evaluate(Variant::OP_GREATER_EQUAL, val, cmp_val, result, cmp_valid);
+					if (cmp_valid && result.operator bool()) filtered.push_back(n);
 				}
 				matches = filtered;
 			}
@@ -6480,13 +6487,15 @@ Error SceneDebugger::_mcp_capture(void *p_user, const String &p_msg, const Array
 					else if (where_val_str.is_valid_int()) cmp_val = where_val_str.to_int();
 					else cmp_val = where_val_str;
 					bool pass = false;
-					if (where_op == "==") pass = (val == cmp_val);
-					else if (where_op == "!=") pass = (val != cmp_val);
-					else if (where_op == "<") pass = (val < cmp_val);
-					else if (where_op == ">") pass = (val > cmp_val);
-					else if (where_op == "<=") pass = (val <= cmp_val);
-					else if (where_op == ">=") pass = (val >= cmp_val);
-					if (pass) filtered.push_back(n);
+					bool cmp_valid = false;
+					Variant result;
+					if (where_op == "==") Variant::evaluate(Variant::OP_EQUAL, val, cmp_val, result, cmp_valid);
+					else if (where_op == "!=") Variant::evaluate(Variant::OP_NOT_EQUAL, val, cmp_val, result, cmp_valid);
+					else if (where_op == "<") Variant::evaluate(Variant::OP_LESS, val, cmp_val, result, cmp_valid);
+					else if (where_op == ">") Variant::evaluate(Variant::OP_GREATER, val, cmp_val, result, cmp_valid);
+					else if (where_op == "<=") Variant::evaluate(Variant::OP_LESS_EQUAL, val, cmp_val, result, cmp_valid);
+					else if (where_op == ">=") Variant::evaluate(Variant::OP_GREATER_EQUAL, val, cmp_val, result, cmp_valid);
+					if (cmp_valid && result.operator bool()) filtered.push_back(n);
 				}
 				matches = filtered;
 			}
