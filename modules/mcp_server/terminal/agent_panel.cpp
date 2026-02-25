@@ -38,8 +38,8 @@
 #include "../agent_prompts.gen.h"
 
 #include "core/config/project_settings.h"
-#include "core/crypto/crypto_core.h"
 #include "core/io/json.h"
+#include "core/math/math_funcs.h"
 #include "core/os/os.h"
 #include "core/version.h"
 #include "scene/gui/button.h"
@@ -338,12 +338,9 @@ void AgentPanel::launch() {
 	// This token is used as the Bearer auth token in the MCP config so the
 	// server can identify this agent's session and apply permissions.
 	{
-		uint8_t token_bytes[16];
-		Error err = CryptoCore::RandomGenerator().get_random_bytes(token_bytes, 16);
-		ERR_FAIL_COND_MSG(err != OK, "[MCP] Failed to generate agent token.");
 		agent_token = "agent_";
 		for (int i = 0; i < 16; i++) {
-			agent_token += String::num_int64(token_bytes[i], 16).lpad(2, "0");
+			agent_token += String::num_int64(Math::random(0, 255), 16).lpad(2, "0");
 		}
 	}
 
