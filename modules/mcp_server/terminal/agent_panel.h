@@ -88,6 +88,11 @@ public:
 	void launch();
 	void stop();
 
+	// Runtime tools toggle — called by MCPServerPlugin to enforce mutual exclusivity.
+	bool is_runtime_tools_enabled() const;
+	void set_runtime_tools_enabled(bool p_enabled);
+	String get_agent_token() const { return agent_token; }
+
 	AgentPanel();
 	~AgentPanel();
 };

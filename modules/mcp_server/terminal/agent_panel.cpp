@@ -419,6 +419,28 @@ void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
 	if (protocol) {
 		protocol->set_runtime_tools_enabled(agent_token, p_enabled);
 	}
+	// Notify server plugin for mutual exclusivity across agent tabs.
+	if (server_plugin) {
+		server_plugin->on_agent_runtime_changed(this, p_enabled);
+	}
+}
+
+bool AgentPanel::is_runtime_tools_enabled() const {
+	return runtime_toggle && runtime_toggle->is_pressed();
+}
+
+void AgentPanel::set_runtime_tools_enabled(bool p_enabled) {
+	if (runtime_toggle) {
+		// Use set_pressed_no_signal to avoid re-triggering _on_runtime_toggle_changed.
+		runtime_toggle->set_pressed_no_signal(p_enabled);
+	}
+	// Apply to MCPProtocol if agent is running.
+	if (!agent_token.is_empty()) {
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			protocol->set_runtime_tools_enabled(agent_token, p_enabled);
+		}
+	}
 }
 
 void AgentPanel::_bind_methods() {
