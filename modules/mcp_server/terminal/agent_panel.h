@@ -58,6 +58,9 @@ private:
 	// Per-agent identity token (used as Bearer token and agent_id in MCPProtocol).
 	String agent_token;
 
+	// Temp file for MCP config (--mcp-config expects a file path, not inline JSON).
+	String mcp_config_path;
+
 	// Title tracking.
 	String current_title;
 

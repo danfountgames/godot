@@ -38,6 +38,8 @@
 #include "../agent_prompts.gen.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/io/json.h"
 #include "core/math/math_funcs.h"
 #include "core/os/os.h"
@@ -265,11 +267,12 @@ String AgentPanel::_build_agents_json() const {
 Vector<String> AgentPanel::_build_claude_args() const {
 	Vector<String> args;
 
-	// MCP server configuration.
-	String mcp_config = _build_mcp_config_json();
-	args.push_back("--mcp-config");
-	args.push_back(mcp_config);
-	args.push_back("--strict-mcp-config");
+	// MCP server configuration written to a temp file.
+	if (!mcp_config_path.is_empty()) {
+		args.push_back("--mcp-config");
+		args.push_back(mcp_config_path);
+		args.push_back("--strict-mcp-config");
+	}
 
 	// Pre-authorize all tools from the Godot MCP server.
 	args.push_back("--allowedTools");
@@ -351,6 +354,19 @@ void AgentPanel::launch() {
 		protocol->set_runtime_tools_enabled(agent_token, runtime_toggle->is_pressed());
 	}
 
+	// Write MCP config to a temp file (--mcp-config expects a file path).
+	{
+		String mcp_json = _build_mcp_config_json();
+		mcp_config_path = OS::get_singleton()->get_cache_path().path_join("godot_mcp_" + agent_token + ".json");
+		Ref<FileAccess> f = FileAccess::open(mcp_config_path, FileAccess::WRITE);
+		if (f.is_valid()) {
+			f->store_string(mcp_json);
+		} else {
+			ERR_PRINT("[MCP] Failed to write MCP config to " + mcp_config_path);
+			mcp_config_path = String();
+		}
+	}
+
 	String binary = _find_claude_binary();
 	Vector<String> args = _build_claude_args();
 	Vector<String> env = _build_claude_env();
@@ -379,6 +395,15 @@ void AgentPanel::stop() {
 			protocol->unregister_agent_token(agent_token);
 		}
 		agent_token = String();
+	}
+
+	// Remove the temp MCP config file.
+	if (!mcp_config_path.is_empty()) {
+		Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+		if (da.is_valid()) {
+			da->remove(mcp_config_path);
+		}
+		mcp_config_path = String();
 	}
 }
 
