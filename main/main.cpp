@@ -62,7 +62,6 @@
 #include "main/splash.gen.h"
 #include "modules/register_module_types.h"
 #include "platform/register_platform_apis.h"
-#include "scene/debugger/debug_console.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
 #include "scene/property_list_helper.h"
@@ -4351,10 +4350,6 @@ int Main::start() {
 			AudioServer::get_singleton()->set_debug_mute(true);
 		}
 
-		// Create the debug console (renderer lazy-inits when first drawn).
-		if (!editor && !project_manager) {
-			memnew(DebugConsole);
-		}
 #endif
 
 		if (single_threaded_scene) {
@@ -5034,12 +5029,6 @@ bool Main::iteration() {
 		EngineDebugger::get_singleton()->iteration(frame_time, process_ticks, physics_process_ticks, physics_step);
 	}
 
-#ifdef DEBUG_ENABLED
-	if (DebugConsole::get_singleton()) {
-		DebugConsole::get_singleton()->poll(process_step);
-	}
-#endif
-
 	frames++;
 	Engine::get_singleton()->_process_frames++;
 
@@ -5150,9 +5139,6 @@ void Main::cleanup(bool p_force) {
 		input->flush_frame_parsed_events();
 	}
 
-	if (DebugConsole::get_singleton()) {
-		memdelete(DebugConsole::get_singleton());
-	}
 #endif
 
 	GDExtensionManager::get_singleton()->shutdown();
