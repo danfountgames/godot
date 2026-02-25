@@ -62,7 +62,7 @@ void AgentPanel::_build_ui() {
 	runtime_toggle = memnew(CheckBox);
 	runtime_toggle->set_text("Runtime tools");
 	runtime_toggle->set_tooltip_text("Allow this agent to start/stop and control the running game.");
-	runtime_toggle->set_pressed(true);
+	runtime_toggle->set_pressed(false);
 	runtime_toggle->connect("toggled", callable_mp(this, &AgentPanel::_on_runtime_toggle_changed));
 	toolbar->add_child(runtime_toggle);
 

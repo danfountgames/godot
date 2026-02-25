@@ -157,8 +157,8 @@ void MCPServerPlugin::_create_agent_tab() {
 
 	panel->connect("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed));
 
-	// Mutual exclusivity: if any existing panel already has runtime tools
-	// enabled, disable on this new tab (the first tab keeps its default ON).
+	// Mutual exclusivity: runtime tools default to off; if any existing panel
+	// already has them enabled, ensure this new tab stays off.
 	for (AgentPanel *existing : agent_panels) {
 		if (existing->is_runtime_tools_enabled()) {
 			panel->set_runtime_tools_enabled(false);
