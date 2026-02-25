@@ -157,6 +157,15 @@ void MCPServerPlugin::_create_agent_tab() {
 
 	panel->connect("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed));
 
+	// Mutual exclusivity: if any existing panel already has runtime tools
+	// enabled, disable on this new tab (the first tab keeps its default ON).
+	for (AgentPanel *existing : agent_panels) {
+		if (existing->is_runtime_tools_enabled()) {
+			panel->set_runtime_tools_enabled(false);
+			break;
+		}
+	}
+
 	// Insert before the "+" tab if it exists, otherwise just add.
 	if (new_tab_placeholder) {
 		int plus_child_idx = new_tab_placeholder->get_index();
@@ -168,6 +177,7 @@ void MCPServerPlugin::_create_agent_tab() {
 
 	agent_panels.push_back(panel);
 	_update_close_buttons();
+	_update_runtime_tab_icons();
 
 	// Switch to the new tab.
 	int new_tab = ai_tab_container->get_tab_idx_from_control(panel);
@@ -213,6 +223,7 @@ void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
 	}
 
 	_update_close_buttons();
+	_update_runtime_tab_icons();
 
 	// Switch to the first agent tab.
 	if (!agent_panels.is_empty()) {
@@ -257,6 +268,30 @@ void MCPServerPlugin::_on_agent_title_changed(const String &p_title) {
 
 		String default_name = "Agent " + itos(i + 1);
 		ai_tab_container->set_tab_title(tab_idx, title.is_empty() ? default_name : title);
+	}
+}
+
+void MCPServerPlugin::on_agent_runtime_changed(AgentPanel *p_panel, bool p_enabled) {
+	if (p_enabled) {
+		// Mutual exclusivity: disable runtime tools on all other panels.
+		for (AgentPanel *panel : agent_panels) {
+			if (panel != p_panel && panel->is_runtime_tools_enabled()) {
+				panel->set_runtime_tools_enabled(false);
+			}
+		}
+	}
+	_update_runtime_tab_icons();
+}
+
+void MCPServerPlugin::_update_runtime_tab_icons() {
+	Ref<Texture2D> play_icon = ai_tab_container->get_theme_icon("MainPlay", "EditorIcons");
+	for (int i = 0; i < agent_panels.size(); i++) {
+		int tab_idx = ai_tab_container->get_tab_idx_from_control(agent_panels[i]);
+		if (agent_panels[i]->is_runtime_tools_enabled()) {
+			ai_tab_container->set_tab_icon(tab_idx, play_icon);
+		} else {
+			ai_tab_container->set_tab_icon(tab_idx, Ref<Texture2D>());
+		}
 	}
 }
 

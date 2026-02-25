@@ -33,14 +33,17 @@
 #include "agent_panel.h"
 
 #include "terminal_widget.h"
+#include "../mcp_protocol.h"
 #include "../mcp_server_plugin.h"
 #include "../agent_prompts.gen.h"
 
 #include "core/config/project_settings.h"
+#include "core/crypto/crypto_core.h"
 #include "core/io/json.h"
 #include "core/os/os.h"
 #include "core/version.h"
 #include "scene/gui/button.h"
+#include "scene/gui/check_box.h"
 #include "scene/gui/scroll_bar.h"
 #include "scene/gui/scroll_container.h"
 
@@ -52,6 +55,17 @@ AgentPanel::~AgentPanel() {
 }
 
 void AgentPanel::_build_ui() {
+	// Toolbar row with runtime toggle.
+	HBoxContainer *toolbar = memnew(HBoxContainer);
+	add_child(toolbar);
+
+	runtime_toggle = memnew(CheckBox);
+	runtime_toggle->set_text("Runtime tools");
+	runtime_toggle->set_tooltip_text("Allow this agent to start/stop and control the running game.");
+	runtime_toggle->set_pressed(true);
+	runtime_toggle->connect("toggled", callable_mp(this, &AgentPanel::_on_runtime_toggle_changed));
+	toolbar->add_child(runtime_toggle);
+
 	// Terminal container (holds scroll + to-bottom button).
 	terminal_container = memnew(Control);
 	terminal_container->set_v_size_flags(SIZE_EXPAND_FILL);
@@ -118,11 +132,13 @@ String AgentPanel::_find_claude_binary() const {
 String AgentPanel::_build_mcp_config_json() const {
 	String host = server_plugin->get_host();
 	int port = server_plugin->get_port();
-	String token = server_plugin->get_auth_token();
 
+	// Use the per-agent token (registered with MCPProtocol) instead of the
+	// global auth token. This lets the server identify which agent panel
+	// owns each MCP session and apply per-agent permissions.
 	Dictionary headers;
-	if (!token.is_empty()) {
-		headers["Authorization"] = "Bearer " + token;
+	if (!agent_token.is_empty()) {
+		headers["Authorization"] = "Bearer " + agent_token;
 	}
 
 	Dictionary godot_server;
@@ -318,6 +334,26 @@ void AgentPanel::launch() {
 		return;
 	}
 
+	// Generate a unique per-agent token and register it with the MCP server.
+	// This token is used as the Bearer auth token in the MCP config so the
+	// server can identify this agent's session and apply permissions.
+	{
+		uint8_t token_bytes[16];
+		Error err = CryptoCore::RandomGenerator().get_random_bytes(token_bytes, 16);
+		ERR_FAIL_COND_MSG(err != OK, "[MCP] Failed to generate agent token.");
+		agent_token = "agent_";
+		for (int i = 0; i < 16; i++) {
+			agent_token += String::num_int64(token_bytes[i], 16).lpad(2, "0");
+		}
+	}
+
+	MCPProtocol *protocol = MCPProtocol::get_singleton();
+	if (protocol) {
+		protocol->register_agent_token(agent_token);
+		// Apply the current toggle state (in case it was changed before launch).
+		protocol->set_runtime_tools_enabled(agent_token, runtime_toggle->is_pressed());
+	}
+
 	String binary = _find_claude_binary();
 	Vector<String> args = _build_claude_args();
 	Vector<String> env = _build_claude_env();
@@ -338,6 +374,15 @@ void AgentPanel::stop() {
 		terminal->stop_process();
 	}
 	claude_running = false;
+
+	// Unregister the agent token so stale sessions don't accumulate.
+	if (!agent_token.is_empty()) {
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			protocol->unregister_agent_token(agent_token);
+		}
+		agent_token = String();
+	}
 }
 
 void AgentPanel::_on_to_bottom_pressed() {
@@ -363,6 +408,38 @@ void AgentPanel::_on_scroll_changed(double p_value) {
 void AgentPanel::_on_scroll_container_resized() {
 	if (terminal) {
 		terminal->update_pty_size();
+	}
+}
+
+void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
+	if (agent_token.is_empty()) {
+		return; // No agent launched yet.
+	}
+	MCPProtocol *protocol = MCPProtocol::get_singleton();
+	if (protocol) {
+		protocol->set_runtime_tools_enabled(agent_token, p_enabled);
+	}
+	// Notify server plugin for mutual exclusivity across agent tabs.
+	if (server_plugin) {
+		server_plugin->on_agent_runtime_changed(this, p_enabled);
+	}
+}
+
+bool AgentPanel::is_runtime_tools_enabled() const {
+	return runtime_toggle && runtime_toggle->is_pressed();
+}
+
+void AgentPanel::set_runtime_tools_enabled(bool p_enabled) {
+	if (runtime_toggle) {
+		// Use set_pressed_no_signal to avoid re-triggering _on_runtime_toggle_changed.
+		runtime_toggle->set_pressed_no_signal(p_enabled);
+	}
+	// Apply to MCPProtocol if agent is running.
+	if (!agent_token.is_empty()) {
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			protocol->set_runtime_tools_enabled(agent_token, p_enabled);
+		}
 	}
 }
 

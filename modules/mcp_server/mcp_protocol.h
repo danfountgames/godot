@@ -56,6 +56,12 @@ struct MCPSessionState {
 	// Queued server-initiated notifications (JSON-RPC strings).
 	// These are delivered to connected GET SSE streams during poll().
 	Vector<String> notification_queue;
+
+	// Per-session agent identity and permissions.
+	// agent_id is extracted from the Bearer token (prefix "agent_") during
+	// the first request. Used by AgentPanel to toggle runtime tool access.
+	String agent_id;
+	bool runtime_tools_enabled = true; // When false, runtime/* tools are blocked.
 };
 
 class MCPProtocol : public JSONRPC {
@@ -86,11 +92,22 @@ private:
 	Vector<String> allowed_origin_prefixes;
 
 	// Bearer token for authentication (empty = no auth required).
+	// The global token authenticates external clients. Agent tokens
+	// (prefix "agent_") are per-AgentPanel and carry an agent_id that
+	// maps to per-session permissions.
 	String auth_token;
+	HashMap<String, bool> agent_tokens; // agent token → accepted (always true).
+	HashMap<String, bool> _deferred_runtime_prefs; // agent_id → enabled (set before session exists).
 
 	// Configuration.
 	int session_timeout_sec = MCP_DEFAULT_SESSION_TIMEOUT_SEC;
 	int max_clients = MCP_MAX_CLIENTS;
+
+	// Session ID for the current request being processed by process_action().
+	// Set before dispatch, cleared after. Allows _handle_tools_list to filter
+	// tools based on per-session permissions without threading session state
+	// through the JSONRPC dispatch layer.
+	String _current_request_session_id;
 
 	// Active request tracking for cancellation (Phase B).
 	// Key is String(request_id) to avoid Variant-as-key issues.
@@ -228,6 +245,21 @@ public:
 	void set_session_timeout(int p_seconds);
 	void set_max_clients(int p_max);
 	void set_auth_token(const String &p_token) { auth_token = p_token; }
+
+	// Per-agent token management. AgentPanel registers a unique token
+	// before launching Claude Code. The token doubles as the agent_id.
+	void register_agent_token(const String &p_agent_token);
+	void unregister_agent_token(const String &p_agent_token);
+
+	// Toggle runtime tool access for a specific agent (identified by token).
+	// When disabled, tools in runtime/*, automation/*, debug/* (runtime-only
+	// subset) are blocked with a clear error message.
+	void set_runtime_tools_enabled(const String &p_agent_token, bool p_enabled);
+	bool get_runtime_tools_enabled(const String &p_agent_token) const;
+
+	// Returns true if the tool requires a running game and should be gated
+	// by the runtime_tools_enabled permission flag.
+	static bool is_runtime_tool(const String &p_name);
 
 	MCPToolRegistry *get_tool_registry() { return &tool_registry; }
 	const MCPToolRegistry *get_tool_registry() const { return &tool_registry; }

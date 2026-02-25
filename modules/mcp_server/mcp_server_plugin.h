@@ -76,6 +76,7 @@ private:
 	void _on_tab_close_pressed(int p_tab);
 	void _on_agent_title_changed(const String &p_title);
 	void _update_close_buttons();
+	void _update_runtime_tab_icons();
 #endif
 #endif
 
@@ -107,6 +108,13 @@ public:
 
 	MCPProtocol *get_protocol() { return protocol; }
 	Ref<MCPDebuggerBridge> get_debugger_bridge() { return debugger_bridge; }
+
+#ifdef MCP_TERMINAL_ENABLED
+	// Called by AgentPanel when its runtime toggle changes.
+	// Enforces mutual exclusivity: only one agent tab may have runtime tools
+	// enabled at a time. Updates tab icons to reflect the active agent.
+	void on_agent_runtime_changed(AgentPanel *p_panel, bool p_enabled);
+#endif
 
 	// Called by the panel's Start/Stop button.
 	void toggle_server();
