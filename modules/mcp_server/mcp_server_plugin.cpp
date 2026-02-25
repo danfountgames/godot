@@ -238,21 +238,19 @@ void MCPServerPlugin::_on_agent_title_changed(const String &p_title) {
 		int tab_idx = ai_tab_container->get_tab_idx_from_control(panel);
 		String raw_title = panel->get_current_title().strip_edges();
 
-		// Claude Code title format: "Folder - {icon} Description - claude - 80x24"
-		// Extract just the descriptive segment.
+		// Claude Code title format: "Folder - Claude Code - custom name - 80x24"
+		// Extract the custom name segment (after "Claude Code", before dimensions).
 		String title;
 		PackedStringArray parts = raw_title.split(" - ");
 		if (parts.size() >= 3) {
-			// Skip first (folder) and last segments ("claude", "NxM").
-			// The descriptive part is typically the second segment.
 			for (int p = 1; p < parts.size(); p++) {
 				String seg = parts[p].strip_edges();
-				// Skip "claude" and dimension strings like "80x24".
-				if (seg.to_lower() == "claude") {
+				// Skip known non-custom segments.
+				if (seg.to_lower() == "claude" || seg.to_lower() == "claude code") {
 					continue;
 				}
-				if (seg.contains("x") && seg.is_valid_int() == false) {
-					// Check if it looks like dimensions (digits x digits).
+				// Skip dimension strings like "80x24".
+				if (seg.contains("x")) {
 					PackedStringArray dims = seg.split("x");
 					if (dims.size() == 2 && dims[0].is_valid_int() && dims[1].is_valid_int()) {
 						continue;
