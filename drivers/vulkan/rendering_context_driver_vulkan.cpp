@@ -440,6 +440,11 @@ Error RenderingContextDriverVulkan::_initialize_instance_extensions() {
 	_register_requested_instance_extension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, true);
 #endif
 
+#if defined(MACOS_ENABLED) || defined(IOS_ENABLED)
+	// Extended colorspace support for EDR/HDR output via MoltenVK.
+	_register_requested_instance_extension(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME, false);
+#endif
+
 	// Only enable debug utils in verbose mode or DEV_ENABLED.
 	// End users would get spammed with messages of varying verbosity due to the
 	// mess that thirdparty layers/extensions and drivers seem to leave in their

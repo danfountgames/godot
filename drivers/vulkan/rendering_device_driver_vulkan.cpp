@@ -3284,15 +3284,29 @@ RenderingDeviceDriver::SwapChainID RenderingDeviceDriverVulkan::swap_chain_creat
 		format = VK_FORMAT_B8G8R8A8_UNORM;
 		color_space = formats[0].colorSpace;
 	} else if (format_count > 0) {
-		// Use one of the supported formats, prefer B8G8R8A8_UNORM.
-		const VkFormat preferred_format = VK_FORMAT_B8G8R8A8_UNORM;
-		const VkFormat second_format = VK_FORMAT_R8G8B8A8_UNORM;
+#if defined(MACOS_ENABLED) || defined(IOS_ENABLED)
+		// On Apple platforms, prefer 16-bit float + extended sRGB for EDR output.
+		// MoltenVK maps this to MTLPixelFormatRGBA16Float + kCGColorSpaceExtendedSRGB
+		// and enables wantsExtendedDynamicRangeContent on the CAMetalLayer.
 		for (uint32_t i = 0; i < format_count; i++) {
-			if (formats[i].format == preferred_format || formats[i].format == second_format) {
+			if (formats[i].format == VK_FORMAT_R16G16B16A16_SFLOAT &&
+					formats[i].colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT) {
 				format = formats[i].format;
-				if (formats[i].format == preferred_format) {
-					// This is the preferred format, stop searching.
-					break;
+				color_space = formats[i].colorSpace;
+				break;
+			}
+		}
+#endif
+		// Fallback: 8-bit BGRA (SDR). Also used on non-Apple platforms.
+		if (format == VK_FORMAT_UNDEFINED) {
+			const VkFormat preferred_format = VK_FORMAT_B8G8R8A8_UNORM;
+			const VkFormat second_format = VK_FORMAT_R8G8B8A8_UNORM;
+			for (uint32_t i = 0; i < format_count; i++) {
+				if (formats[i].format == preferred_format || formats[i].format == second_format) {
+					format = formats[i].format;
+					if (formats[i].format == preferred_format) {
+						break;
+					}
 				}
 			}
 		}
