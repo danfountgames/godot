@@ -68,6 +68,13 @@ void AgentPanel::_build_ui() {
 	runtime_toggle->connect("toggled", callable_mp(this, &AgentPanel::_on_runtime_toggle_changed));
 	toolbar->add_child(runtime_toggle);
 
+	editor_toggle = memnew(CheckBox);
+	editor_toggle->set_text("Editor controls");
+	editor_toggle->set_tooltip_text("Allow this agent to navigate and modify scenes in the editor.");
+	editor_toggle->set_pressed(false);
+	editor_toggle->connect("toggled", callable_mp(this, &AgentPanel::_on_editor_toggle_changed));
+	toolbar->add_child(editor_toggle);
+
 	// Terminal container (holds scroll + to-bottom button).
 	terminal_container = memnew(Control);
 	terminal_container->set_v_size_flags(SIZE_EXPAND_FILL);
@@ -108,6 +115,39 @@ void AgentPanel::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			_update_status();
+		} break;
+
+		case NOTIFICATION_PREDELETE: {
+			// Disconnect all signals that target this panel before children
+			// are freed — prevents deferred callbacks from accessing freed
+			// terminal/scroll_container pointers.
+			set_process_internal(false);
+
+			if (to_bottom_button && to_bottom_button->is_connected("pressed", callable_mp(this, &AgentPanel::_on_to_bottom_pressed))) {
+				to_bottom_button->disconnect("pressed", callable_mp(this, &AgentPanel::_on_to_bottom_pressed));
+			}
+			if (scroll_container) {
+				ScrollBar *vbar = scroll_container->get_v_scroll_bar();
+				if (vbar && vbar->is_connected("value_changed", callable_mp(this, &AgentPanel::_on_scroll_changed))) {
+					vbar->disconnect("value_changed", callable_mp(this, &AgentPanel::_on_scroll_changed));
+				}
+				if (scroll_container->is_connected("resized", callable_mp(this, &AgentPanel::_on_scroll_container_resized))) {
+					scroll_container->disconnect("resized", callable_mp(this, &AgentPanel::_on_scroll_container_resized));
+				}
+			}
+			if (runtime_toggle && runtime_toggle->is_connected("toggled", callable_mp(this, &AgentPanel::_on_runtime_toggle_changed))) {
+				runtime_toggle->disconnect("toggled", callable_mp(this, &AgentPanel::_on_runtime_toggle_changed));
+			}
+			if (editor_toggle && editor_toggle->is_connected("toggled", callable_mp(this, &AgentPanel::_on_editor_toggle_changed))) {
+				editor_toggle->disconnect("toggled", callable_mp(this, &AgentPanel::_on_editor_toggle_changed));
+			}
+
+			// Null out child pointers so any stray deferred calls bail out.
+			terminal = nullptr;
+			scroll_container = nullptr;
+			to_bottom_button = nullptr;
+			runtime_toggle = nullptr;
+			editor_toggle = nullptr;
 		} break;
 	}
 }
@@ -352,6 +392,7 @@ void AgentPanel::launch() {
 		protocol->register_agent_token(agent_token);
 		// Apply the current toggle state (in case it was changed before launch).
 		protocol->set_runtime_tools_enabled(agent_token, runtime_toggle->is_pressed());
+		protocol->set_editor_controls_enabled(agent_token, editor_toggle->is_pressed());
 	}
 
 	// Write MCP config to a temp file (--mcp-config expects a file path).
@@ -383,6 +424,10 @@ void AgentPanel::launch() {
 }
 
 void AgentPanel::stop() {
+	// Stop internal processing first — prevents _update_status() from accessing
+	// terminal/scroll_container after the PTY is torn down.
+	set_process_internal(false);
+
 	if (terminal) {
 		terminal->stop_process();
 	}
@@ -433,6 +478,14 @@ void AgentPanel::_on_scroll_container_resized() {
 	}
 }
 
+void AgentPanel::_inject_pty_message(const String &p_message) {
+	if (!terminal || !terminal->is_process_running()) {
+		return;
+	}
+	CharString utf8 = (p_message + "\n").utf8();
+	terminal->get_pty()->write_pty((const uint8_t *)utf8.get_data(), utf8.length());
+}
+
 void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
 	if (agent_token.is_empty()) {
 		return; // No agent launched yet.
@@ -444,6 +497,31 @@ void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
 	// Notify server plugin for mutual exclusivity across agent tabs.
 	if (server_plugin) {
 		server_plugin->on_agent_runtime_changed(this, p_enabled);
+	}
+	// Inform the AI of the permission change.
+	if (claude_running) {
+		_inject_pty_message(p_enabled
+				? "[Permission] Runtime tools enabled. You can now use runtime/*, debug/*, and automation/* tools."
+				: "[Permission] Runtime tools disabled. runtime/*, debug/*, and automation/* tools are no longer available.");
+	}
+}
+
+void AgentPanel::_on_editor_toggle_changed(bool p_enabled) {
+	if (agent_token.is_empty()) {
+		return;
+	}
+	MCPProtocol *protocol = MCPProtocol::get_singleton();
+	if (protocol) {
+		protocol->set_editor_controls_enabled(agent_token, p_enabled);
+	}
+	if (server_plugin) {
+		server_plugin->on_agent_editor_changed(this, p_enabled);
+	}
+	// Inform the AI of the permission change.
+	if (claude_running) {
+		_inject_pty_message(p_enabled
+				? "[Permission] Editor controls enabled. You can now use scene/* tools."
+				: "[Permission] Editor controls disabled. scene/* tools are no longer available.");
 	}
 }
 
@@ -461,6 +539,22 @@ void AgentPanel::set_runtime_tools_enabled(bool p_enabled) {
 		MCPProtocol *protocol = MCPProtocol::get_singleton();
 		if (protocol) {
 			protocol->set_runtime_tools_enabled(agent_token, p_enabled);
+		}
+	}
+}
+
+bool AgentPanel::is_editor_controls_enabled() const {
+	return editor_toggle && editor_toggle->is_pressed();
+}
+
+void AgentPanel::set_editor_controls_enabled(bool p_enabled) {
+	if (editor_toggle) {
+		editor_toggle->set_pressed_no_signal(p_enabled);
+	}
+	if (!agent_token.is_empty()) {
+		MCPProtocol *protocol = MCPProtocol::get_singleton();
+		if (protocol) {
+			protocol->set_editor_controls_enabled(agent_token, p_enabled);
 		}
 	}
 }

@@ -177,7 +177,7 @@ void MCPServerPlugin::_create_agent_tab() {
 
 	agent_panels.push_back(panel);
 	_update_close_buttons();
-	_update_runtime_tab_icons();
+	_update_tab_icons();
 
 	// Switch to the new tab.
 	int new_tab = ai_tab_container->get_tab_idx_from_control(panel);
@@ -188,7 +188,7 @@ void MCPServerPlugin::_create_agent_tab() {
 }
 
 void MCPServerPlugin::_on_tab_changed(int p_tab) {
-	if (!new_tab_placeholder) {
+	if (!new_tab_placeholder || _closing_tab) {
 		return;
 	}
 	int plus_tab = ai_tab_container->get_tab_idx_from_control(new_tab_placeholder);
@@ -205,8 +205,18 @@ void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
 		return;
 	}
 
+	// Guard: prevent _on_tab_changed from creating new tabs while we're
+	// tearing down this one (remove_child / set_current_tab fire signals).
+	_closing_tab = true;
+
 	// Stop any running process.
 	panel->stop();
+
+	// Disconnect signals targeting us before deletion — prevents deferred
+	// title_changed callbacks from iterating a stale agent_panels vector.
+	if (panel->is_connected("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed))) {
+		panel->disconnect("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed));
+	}
 
 	// Find and remove from our vector.
 	int vec_idx = agent_panels.find(panel);
@@ -217,13 +227,15 @@ void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
 	ai_tab_container->remove_child(panel);
 	memdelete(panel);
 
+	_closing_tab = false;
+
 	// If no agent tabs remain, create a fresh one.
 	if (agent_panels.is_empty()) {
 		_create_agent_tab();
 	}
 
 	_update_close_buttons();
-	_update_runtime_tab_icons();
+	_update_tab_icons();
 
 	// Switch to the first agent tab.
 	if (!agent_panels.is_empty()) {
@@ -278,15 +290,30 @@ void MCPServerPlugin::on_agent_runtime_changed(AgentPanel *p_panel, bool p_enabl
 			}
 		}
 	}
-	_update_runtime_tab_icons();
+	_update_tab_icons();
 }
 
-void MCPServerPlugin::_update_runtime_tab_icons() {
+void MCPServerPlugin::on_agent_editor_changed(AgentPanel *p_panel, bool p_enabled) {
+	if (p_enabled) {
+		// Mutual exclusivity: disable editor controls on all other panels.
+		for (AgentPanel *panel : agent_panels) {
+			if (panel != p_panel && panel->is_editor_controls_enabled()) {
+				panel->set_editor_controls_enabled(false);
+			}
+		}
+	}
+	_update_tab_icons();
+}
+
+void MCPServerPlugin::_update_tab_icons() {
 	Ref<Texture2D> play_icon = ai_tab_container->get_theme_icon("MainPlay", "EditorIcons");
+	Ref<Texture2D> edit_icon = ai_tab_container->get_theme_icon("Edit", "EditorIcons");
 	for (int i = 0; i < agent_panels.size(); i++) {
 		int tab_idx = ai_tab_container->get_tab_idx_from_control(agent_panels[i]);
 		if (agent_panels[i]->is_runtime_tools_enabled()) {
 			ai_tab_container->set_tab_icon(tab_idx, play_icon);
+		} else if (agent_panels[i]->is_editor_controls_enabled()) {
+			ai_tab_container->set_tab_icon(tab_idx, edit_icon);
 		} else {
 			ai_tab_container->set_tab_icon(tab_idx, Ref<Texture2D>());
 		}

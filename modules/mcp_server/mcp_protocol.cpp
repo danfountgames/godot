@@ -207,6 +207,49 @@ bool MCPProtocol::get_runtime_tools_enabled(const String &p_agent_token) const {
 	return true; // Default: enabled.
 }
 
+void MCPProtocol::set_editor_controls_enabled(const String &p_agent_token, bool p_enabled) {
+	// Find the session that has this agent_id and flip the flag.
+	for (KeyValue<String, MCPSessionState> &kv : sessions) {
+		if (kv.value.agent_id == p_agent_token) {
+			kv.value.editor_controls_enabled = p_enabled;
+			print_verbose(vformat("[MCP] Editor controls %s for agent %s (session %s)",
+					p_enabled ? "enabled" : "disabled",
+					p_agent_token.substr(0, 12) + "...",
+					kv.key.substr(0, 8) + "..."));
+
+			// Notify the agent that the tool list changed so it re-fetches.
+			notify_tools_changed();
+			return;
+		}
+	}
+	// Session not yet established — store the preference on the token.
+	_deferred_editor_prefs[p_agent_token] = p_enabled;
+}
+
+bool MCPProtocol::get_editor_controls_enabled(const String &p_agent_token) const {
+	for (const KeyValue<String, MCPSessionState> &kv : sessions) {
+		if (kv.value.agent_id == p_agent_token) {
+			return kv.value.editor_controls_enabled;
+		}
+	}
+	// Check deferred prefs.
+	if (_deferred_editor_prefs.has(p_agent_token)) {
+		return _deferred_editor_prefs[p_agent_token];
+	}
+	return true; // Default: enabled.
+}
+
+bool MCPProtocol::is_editor_control_tool(const String &p_name) {
+	// Tools that modify the editor's scene tree or navigate editor UI.
+	if (p_name.begins_with("scene/")) {
+		return true;
+	}
+	if (p_name == "editor/execute_script") {
+		return true;
+	}
+	return false;
+}
+
 bool MCPProtocol::is_runtime_tool(const String &p_name) {
 	// Tools that require a running game and should be gated by the toggle.
 	// debug/describe_class is exempt — it reads parser data, no game needed.
@@ -758,6 +801,11 @@ void MCPProtocol::process_request(int p_client_id) {
 				new_state.runtime_tools_enabled = _deferred_runtime_prefs[request_agent_id];
 				_deferred_runtime_prefs.erase(request_agent_id);
 			}
+			// Apply deferred editor controls preference.
+			if (_deferred_editor_prefs.has(request_agent_id)) {
+				new_state.editor_controls_enabled = _deferred_editor_prefs[request_agent_id];
+				_deferred_editor_prefs.erase(request_agent_id);
+			}
 			print_verbose("[MCP] Session " + new_session_id.substr(0, 8) + "... linked to agent " + request_agent_id.substr(0, 12) + "...");
 		}
 
@@ -867,6 +915,23 @@ void MCPProtocol::process_request(int p_client_id) {
 			String body = make_error_body(JSONRPC::INVALID_REQUEST,
 					vformat("Tool '%s' is blocked: runtime tools are disabled for this agent session. "
 							"Enable the runtime toggle in the agent panel to allow game control.",
+							tool_name),
+					request_id);
+			session->queue_response(MCP_HTTP_200, body, origin_header);
+
+			uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
+			_emit_request_event("tools/call", session_id_header, client_ip, 403,
+					duration_usec, session->request_body, body, tool_name);
+
+			session->reset_request();
+			return;
+		}
+
+		if (is_editor_control_tool(tool_name) && sessions.has(session_id_header) &&
+				!sessions[session_id_header].editor_controls_enabled) {
+			String body = make_error_body(JSONRPC::INVALID_REQUEST,
+					vformat("Tool '%s' is blocked: editor controls are disabled for this agent session. "
+							"Enable the editor controls toggle in the agent panel to allow scene tree modifications.",
 							tool_name),
 					request_id);
 			session->queue_response(MCP_HTTP_200, body, origin_header);
@@ -1061,20 +1126,29 @@ Dictionary MCPProtocol::handle_ping() {
 Dictionary MCPProtocol::_handle_tools_list(const Dictionary &p_params) {
 	Dictionary result = tool_registry.list_tools(p_params);
 
-	// Filter out runtime tools if the requesting session has them disabled.
+	// Filter out tools based on per-session permission flags.
 	if (!_current_request_session_id.is_empty() &&
-			sessions.has(_current_request_session_id) &&
-			!sessions[_current_request_session_id].runtime_tools_enabled) {
-		Array tools = result.get("tools", Array());
-		Array filtered;
-		for (int i = 0; i < tools.size(); i++) {
-			Dictionary tool = tools[i];
-			String name = tool.get("name", "");
-			if (!is_runtime_tool(name)) {
+			sessions.has(_current_request_session_id)) {
+		const MCPSessionState &state = sessions[_current_request_session_id];
+		bool filter_runtime = !state.runtime_tools_enabled;
+		bool filter_editor = !state.editor_controls_enabled;
+
+		if (filter_runtime || filter_editor) {
+			Array tools = result.get("tools", Array());
+			Array filtered;
+			for (int i = 0; i < tools.size(); i++) {
+				Dictionary tool = tools[i];
+				String name = tool.get("name", "");
+				if (filter_runtime && is_runtime_tool(name)) {
+					continue;
+				}
+				if (filter_editor && is_editor_control_tool(name)) {
+					continue;
+				}
 				filtered.push_back(tool);
 			}
+			result["tools"] = filtered;
 		}
-		result["tools"] = filtered;
 	}
 
 	return result;

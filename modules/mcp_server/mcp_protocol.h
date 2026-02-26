@@ -62,6 +62,7 @@ struct MCPSessionState {
 	// the first request. Used by AgentPanel to toggle runtime tool access.
 	String agent_id;
 	bool runtime_tools_enabled = true; // When false, runtime/* tools are blocked.
+	bool editor_controls_enabled = true; // When false, scene/* editor tools are blocked.
 };
 
 class MCPProtocol : public JSONRPC {
@@ -98,6 +99,7 @@ private:
 	String auth_token;
 	HashMap<String, bool> agent_tokens; // agent token → accepted (always true).
 	HashMap<String, bool> _deferred_runtime_prefs; // agent_id → enabled (set before session exists).
+	HashMap<String, bool> _deferred_editor_prefs; // agent_id → enabled (set before session exists).
 
 	// Configuration.
 	int session_timeout_sec = MCP_DEFAULT_SESSION_TIMEOUT_SEC;
@@ -260,6 +262,15 @@ public:
 	// Returns true if the tool requires a running game and should be gated
 	// by the runtime_tools_enabled permission flag.
 	static bool is_runtime_tool(const String &p_name);
+
+	// Toggle editor control tool access for a specific agent (identified by token).
+	// When disabled, tools in scene/* and editor/execute_script are blocked.
+	void set_editor_controls_enabled(const String &p_agent_token, bool p_enabled);
+	bool get_editor_controls_enabled(const String &p_agent_token) const;
+
+	// Returns true if the tool modifies the editor's scene tree or navigates
+	// editor UI and should be gated by the editor_controls_enabled flag.
+	static bool is_editor_control_tool(const String &p_name);
 
 	MCPToolRegistry *get_tool_registry() { return &tool_registry; }
 	const MCPToolRegistry *get_tool_registry() const { return &tool_registry; }

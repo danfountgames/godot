@@ -70,13 +70,14 @@ private:
 	Vector<AgentPanel *> agent_panels;
 	Control *new_tab_placeholder = nullptr;
 	int agent_counter = 0;
+	bool _closing_tab = false; // Guard: prevents _on_tab_changed from creating tabs during close.
 
 	void _create_agent_tab();
 	void _on_tab_changed(int p_tab);
 	void _on_tab_close_pressed(int p_tab);
 	void _on_agent_title_changed(const String &p_title);
 	void _update_close_buttons();
-	void _update_runtime_tab_icons();
+	void _update_tab_icons();
 #endif
 #endif
 
@@ -114,6 +115,11 @@ public:
 	// Enforces mutual exclusivity: only one agent tab may have runtime tools
 	// enabled at a time. Updates tab icons to reflect the active agent.
 	void on_agent_runtime_changed(AgentPanel *p_panel, bool p_enabled);
+
+	// Called by AgentPanel when its editor controls toggle changes.
+	// Enforces mutual exclusivity: only one agent tab may have editor controls
+	// enabled at a time. Updates tab icons.
+	void on_agent_editor_changed(AgentPanel *p_panel, bool p_enabled);
 #endif
 
 	// Called by the panel's Start/Stop button.

@@ -55,6 +55,9 @@ private:
 	// Runtime tools toggle.
 	CheckBox *runtime_toggle = nullptr;
 
+	// Editor controls toggle.
+	CheckBox *editor_toggle = nullptr;
+
 	// Per-agent identity token (used as Bearer token and agent_id in MCPProtocol).
 	String agent_token;
 
@@ -71,6 +74,8 @@ private:
 	void _on_scroll_changed(double p_value);
 	void _on_scroll_container_resized();
 	void _on_runtime_toggle_changed(bool p_enabled);
+	void _on_editor_toggle_changed(bool p_enabled);
+	void _inject_pty_message(const String &p_message);
 	void _update_status();
 
 	String _find_claude_binary() const;
@@ -94,6 +99,11 @@ public:
 	// Runtime tools toggle — called by MCPServerPlugin to enforce mutual exclusivity.
 	bool is_runtime_tools_enabled() const;
 	void set_runtime_tools_enabled(bool p_enabled);
+
+	// Editor controls toggle — called by MCPServerPlugin to enforce mutual exclusivity.
+	bool is_editor_controls_enabled() const;
+	void set_editor_controls_enabled(bool p_enabled);
+
 	String get_agent_token() const { return agent_token; }
 
 	AgentPanel();
