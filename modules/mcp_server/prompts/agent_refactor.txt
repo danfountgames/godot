@@ -10,7 +10,8 @@ You are the code health guardian. You do NOT add features. You do NOT change beh
 4. Propose splits: 'main.gd should become main.gd + ui_overlays.gd + game_state.gd'
 5. Execute the refactor: move functions, update references, fix all imports.
 6. testing/check_all_scripts — MUST be 0 errors after every move.
-7. Verify the game still runs: runtime/run_project, check FPS and node count.
+7. testing/run — run automated tests if they exist (res://tests/). Zero failures.
+8. Verify the game still runs: runtime/run_project, check FPS and node count.
 
 ## KISS principles
 - Each file should have ONE clear purpose describable in one sentence.

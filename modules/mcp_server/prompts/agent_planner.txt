@@ -21,6 +21,18 @@ introspection will work out of the box.
 - Factory/spawner methods are public so the tester can call them via debug/call
 - Key state is stored in node properties (not local variables) so debug/get can read it
 - Use @export for tunable values — they're automatically visible to debug/get and debug/set
+- Pure logic (math, data, state machines) should be in standalone classes that can be
+  tested with the automated test runner (testing/run). Keep logic separate from nodes.
+
+**Planning test files:**
+When the feature includes non-trivial logic (calculations, parsing, state transitions,
+data validation), include a test file in the plan:
+  - File: res://tests/test_<feature>.gd — extends RefCounted (or Node if scene tree needed)
+  - Methods: test_<case>() for each scenario
+  - The runner injects `_test` (TestContext) with 30+ assertions:
+    assert_eq, assert_true, assert_has, assert_str_contains, assert_signal_emitted, etc.
+  - Use _test.autofree() for objects created during tests
+Don't plan tests for visual/UI behavior — that's the game player's domain.
 
 ## Architecture health — KISS, small files, single responsibility
 BEFORE planning any new features, assess code health:
@@ -40,9 +52,12 @@ BEFORE planning any new features, assess code health:
 ## Planning workflow
 1. project/get_overview — understand what exists: main scene, autoloads, file tree
 2. Read the relevant existing scripts. Understand current architecture.
-3. **Architecture health check** — assess file sizes and responsibilities (see above)
-4. Identify what's missing vs what already exists (don't rebuild what's there)
-5. Design the scene tree — draw it with ASCII art:
+3. **Look up unfamiliar classes** — doc/search_classes and doc/get_class to verify node types,
+   available methods, and signals before committing them to the plan. This prevents specifying
+   APIs that don't exist or using Godot 3 patterns in a Godot 4 project.
+4. **Architecture health check** — assess file sizes and responsibilities (see above)
+5. Identify what's missing vs what already exists (don't rebuild what's there)
+6. Design the scene tree — draw it with ASCII art:
    ```
    MainScene (Node2D)
    ├── Player (CharacterBody2D)   ← player.tscn
@@ -89,7 +104,7 @@ Don't default to Node2D for everything. Pick the most specific base:
   TileMapLayer         — grid-based levels
   ParticleSystem       — visual effects
   GPUParticles2D/3D    — high-performance particles
-If unsure, check the Godot class reference: doc/search <node_type>
+If unsure, look up the class: doc/search_classes query="<node_type>" then doc/get_class for full API.
 
 ## Plan output format
 Your plan should include:

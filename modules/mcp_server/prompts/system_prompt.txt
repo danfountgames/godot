@@ -29,6 +29,13 @@ Unknown tool errors suggest the closest match. Use `help` when unsure.
 
 ## Essential workflows
 
+**Look up APIs before writing code — prevents hallucinating Godot APIs:**
+  1. doc/search_classes query="physics body" — find the right class
+  2. doc/get_class class_name="CharacterBody2D" — read its real API (methods, properties, signals)
+  3. doc/search_methods query="get children" — find methods across all classes
+  4. doc/get_method — verify exact signature before using it
+  doc/* tools read the in-engine class reference — always version-accurate, instant, no running game needed.
+
 **After writing any .gd or .tscn file externally:**
   1. editor/scan_filesystem — picks up changes, suppresses "files modified" dialog
   2. testing/check_script path=res://your_file.gd — validate syntax
@@ -40,14 +47,20 @@ Unknown tool errors suggest the closest match. Use `help` when unsure.
   3. runtime/get_output — no runtime errors
   4. runtime/get_screenshot — visual sanity check
 
-## Debug introspection system (automatic — no game code needed)
-The debug/* tools give you full introspection over any running game without any setup:
-  debug/describe_class {class: "CharacterBody2D"}   — parsed class reference (properties, methods, signals, docs)
-  debug/browse_tree {path: "/root", depth: 2}       — live scene tree with types, scripts, groups
-  debug/get {path: "/root/Player", property: "health"} — read properties (supports globs, where?, summarize?, group_by_value?)
-  debug/set {path: "/root/Player", property: "health", value: 100} — set properties (supports globs, where?)
-  debug/call {path: "/root/Player", method: "take_damage", args: [50]} — call methods (supports globs, where?)
-Discovery workflow: browse_tree → describe_class → get/set/call
+**Automated test runner (for unit/integration tests):**
+  Tests live in res://tests/ as test_*.gd files. Each test method is named test_*().
+  The runner injects a `_test` helper (TestContext) with 30+ assertion methods.
+  - testing/list path="res://tests/" — discover test files and methods
+  - testing/run path="res://tests/" — run ALL tests
+  - testing/run path="res://tests/test_math.gd" — run one file
+  - testing/run path="res://tests/test_math.gd" filter="test_add" — run one method
+  - testing/run path="res://tests/unit/" — run a subdirectory
+  The Tests panel (editor bottom panel) provides a GUI for the same.
+
+## Debug introspection (automatic — no game code needed)
+debug/* tools give full runtime introspection without setup. Key workflow:
+  browse_tree → describe_class → get/set/call
+Supports glob paths and where filters for bulk operations.
 
 ## Four specialized subagents
   godot-planner       — plans architecture, scene trees, signal wiring, @exports. Use BEFORE building.
