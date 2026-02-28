@@ -146,6 +146,110 @@ func assert_no_new_orphans(msg := ""):
 		_record_failure(_fmt("Test leaked %d orphan node(s)", [new_orphans], msg))
 
 
+# --- Collection Assertions ---
+
+func assert_contains_all(collection: Array, items: Array, msg := ""):
+	var missing: Array = []
+	for item in items:
+		if item not in collection:
+			missing.append(item)
+	if not missing.is_empty():
+		_record_failure(_fmt("Array missing elements: %s", [missing], msg))
+
+
+func assert_contains_none(collection: Array, items: Array, msg := ""):
+	var found: Array = []
+	for item in items:
+		if item in collection:
+			found.append(item)
+	if not found.is_empty():
+		_record_failure(_fmt("Array should not contain: %s", [found], msg))
+
+
+func assert_array_size(collection: Array, expected_size: int, msg := ""):
+	if collection.size() != expected_size:
+		_record_failure(_fmt("Expected array size %d, got %d", [expected_size, collection.size()], msg))
+
+
+func assert_empty(collection, msg := ""):
+	if collection is Array:
+		if not collection.is_empty():
+			_record_failure(_fmt("Expected empty array, got %d elements", [collection.size()], msg))
+	elif collection is Dictionary:
+		if not collection.is_empty():
+			_record_failure(_fmt("Expected empty dictionary, got %d entries", [collection.size()], msg))
+	elif collection is String:
+		if not collection.is_empty():
+			_record_failure(_fmt("Expected empty string, got length %d", [collection.length()], msg))
+	else:
+		_record_failure(_fmt("assert_empty: unsupported type %d", [typeof(collection)], msg))
+
+
+func assert_not_empty(collection, msg := ""):
+	if collection is Array:
+		if collection.is_empty():
+			_record_failure(_fmt("Expected non-empty array", [], msg))
+	elif collection is Dictionary:
+		if collection.is_empty():
+			_record_failure(_fmt("Expected non-empty dictionary", [], msg))
+	elif collection is String:
+		if collection.is_empty():
+			_record_failure(_fmt("Expected non-empty string", [], msg))
+	else:
+		_record_failure(_fmt("assert_not_empty: unsupported type %d", [typeof(collection)], msg))
+
+
+# --- Dictionary Assertions ---
+
+func assert_has_key(dict: Dictionary, key, msg := ""):
+	if not dict.has(key):
+		_record_failure(_fmt("Dictionary missing key: %s (keys: %s)", [key, dict.keys()], msg))
+
+
+func assert_has_entry(dict: Dictionary, key, value, msg := ""):
+	if not dict.has(key):
+		_record_failure(_fmt("Dictionary missing key: %s", [key], msg))
+	elif dict[key] != value:
+		_record_failure(_fmt("Key '%s': expected %s, got %s", [key, value, dict[key]], msg))
+
+
+# --- String Assertions ---
+
+func assert_str_contains(text: String, substr: String, msg := ""):
+	if text.find(substr) == -1:
+		_record_failure(_fmt("String does not contain '%s': '%s'", [substr, _truncate(text, 80)], msg))
+
+
+func assert_str_starts_with(text: String, prefix: String, msg := ""):
+	if not text.begins_with(prefix):
+		_record_failure(_fmt("String does not start with '%s': '%s'", [prefix, _truncate(text, 80)], msg))
+
+
+func assert_str_ends_with(text: String, suffix: String, msg := ""):
+	if not text.ends_with(suffix):
+		_record_failure(_fmt("String does not end with '%s': '%s'", [suffix, _truncate(text, 80)], msg))
+
+
+func assert_str_matches(text: String, pattern: String, msg := ""):
+	if not text.match(pattern):
+		_record_failure(_fmt("String '%s' does not match pattern '%s'", [_truncate(text, 80), pattern], msg))
+
+
+# --- Type / Instance Assertions ---
+
+func assert_is(value, class_name_str: String, msg := ""):
+	if value is Object:
+		if not (value as Object).is_class(class_name_str):
+			_record_failure(_fmt("Expected instance of '%s', got '%s'", [class_name_str, (value as Object).get_class()], msg))
+	else:
+		_record_failure(_fmt("Expected Object instance of '%s', got non-Object type %d", [class_name_str, typeof(value)], msg))
+
+
+func assert_in_range(value, min_val, max_val, msg := ""):
+	if value < min_val or value > max_val:
+		_record_failure(_fmt("Expected %s in range [%s, %s]", [value, min_val, max_val], msg))
+
+
 # --- Signals ---
 
 func watch_signals(obj: Object):
@@ -286,3 +390,9 @@ func _fmt(template: String, args: Array, msg: String) -> String:
 	if not msg.is_empty():
 		m += " | " + msg
 	return m
+
+
+func _truncate(text: String, max_len: int) -> String:
+	if text.length() <= max_len:
+		return text
+	return text.substr(0, max_len) + "..."

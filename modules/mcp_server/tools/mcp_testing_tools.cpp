@@ -349,6 +349,97 @@ func assert_no_new_orphans(msg := "") -> void:
 	if new_orphans > 0:
 		_record_failure(_fmt("Test leaked %d orphan node(s)", [new_orphans], msg))
 
+# --- Collection Assertions ---
+
+func assert_contains_all(collection: Array, items: Array, msg := "") -> void:
+	var missing: Array = []
+	for item: Variant in items:
+		if item not in collection:
+			missing.append(item)
+	if not missing.is_empty():
+		_record_failure(_fmt("Array missing elements: %s", [missing], msg))
+
+func assert_contains_none(collection: Array, items: Array, msg := "") -> void:
+	var found: Array = []
+	for item: Variant in items:
+		if item in collection:
+			found.append(item)
+	if not found.is_empty():
+		_record_failure(_fmt("Array should not contain: %s", [found], msg))
+
+func assert_array_size(collection: Array, expected_size: int, msg := "") -> void:
+	if collection.size() != expected_size:
+		_record_failure(_fmt("Expected array size %d, got %d", [expected_size, collection.size()], msg))
+
+func assert_empty(collection: Variant, msg := "") -> void:
+	if collection is Array:
+		if not (collection as Array).is_empty():
+			_record_failure(_fmt("Expected empty array, got %d elements", [(collection as Array).size()], msg))
+	elif collection is Dictionary:
+		if not (collection as Dictionary).is_empty():
+			_record_failure(_fmt("Expected empty dictionary, got %d entries", [(collection as Dictionary).size()], msg))
+	elif collection is String:
+		if not (collection as String).is_empty():
+			_record_failure(_fmt("Expected empty string, got length %d", [(collection as String).length()], msg))
+	else:
+		_record_failure(_fmt("assert_empty: unsupported type %d", [typeof(collection)], msg))
+
+func assert_not_empty(collection: Variant, msg := "") -> void:
+	if collection is Array:
+		if (collection as Array).is_empty():
+			_record_failure(_fmt("Expected non-empty array", [], msg))
+	elif collection is Dictionary:
+		if (collection as Dictionary).is_empty():
+			_record_failure(_fmt("Expected non-empty dictionary", [], msg))
+	elif collection is String:
+		if (collection as String).is_empty():
+			_record_failure(_fmt("Expected non-empty string", [], msg))
+	else:
+		_record_failure(_fmt("assert_not_empty: unsupported type %d", [typeof(collection)], msg))
+
+# --- Dictionary Assertions ---
+
+func assert_has_key(dict: Dictionary, key: Variant, msg := "") -> void:
+	if not dict.has(key):
+		_record_failure(_fmt("Dictionary missing key: %s (keys: %s)", [key, dict.keys()], msg))
+
+func assert_has_entry(dict: Dictionary, key: Variant, value: Variant, msg := "") -> void:
+	if not dict.has(key):
+		_record_failure(_fmt("Dictionary missing key: %s", [key], msg))
+	elif dict[key] != value:
+		_record_failure(_fmt("Key '%s': expected %s, got %s", [key, value, dict[key]], msg))
+
+# --- String Assertions ---
+
+func assert_str_contains(text: String, substr: String, msg := "") -> void:
+	if text.find(substr) == -1:
+		_record_failure(_fmt("String does not contain '%s': '%s'", [substr, _truncate(text, 80)], msg))
+
+func assert_str_starts_with(text: String, prefix: String, msg := "") -> void:
+	if not text.begins_with(prefix):
+		_record_failure(_fmt("String does not start with '%s': '%s'", [prefix, _truncate(text, 80)], msg))
+
+func assert_str_ends_with(text: String, suffix: String, msg := "") -> void:
+	if not text.ends_with(suffix):
+		_record_failure(_fmt("String does not end with '%s': '%s'", [suffix, _truncate(text, 80)], msg))
+
+func assert_str_matches(text: String, pattern: String, msg := "") -> void:
+	if not text.match(pattern):
+		_record_failure(_fmt("String '%s' does not match pattern '%s'", [_truncate(text, 80), pattern], msg))
+
+# --- Type / Instance Assertions ---
+
+func assert_is(value: Variant, class_name_str: String, msg := "") -> void:
+	if value is Object:
+		if not (value as Object).is_class(class_name_str):
+			_record_failure(_fmt("Expected instance of '%s', got '%s'", [class_name_str, (value as Object).get_class()], msg))
+	else:
+		_record_failure(_fmt("Expected Object instance of '%s', got non-Object type %d", [class_name_str, typeof(value)], msg))
+
+func assert_in_range(value: Variant, min_val: Variant, max_val: Variant, msg := "") -> void:
+	if value < min_val or value > max_val:
+		_record_failure(_fmt("Expected %s in range [%s, %s]", [value, min_val, max_val], msg))
+
 # --- Signals ---
 
 func watch_signals(obj: Object) -> void:
@@ -464,6 +555,11 @@ func _fmt(template: String, args: Array, msg: String) -> String:
 	if not msg.is_empty():
 		m += " | " + msg
 	return m
+
+func _truncate(text: String, max_len: int) -> String:
+	if text.length() <= max_len:
+		return text
+	return text.substr(0, max_len) + "..."
 )GD";
 
 static const char *GDIGNORE_CONTENT = "";
@@ -644,7 +740,7 @@ Dictionary MCPTestingTools::handle_run(const Dictionary &p_args) {
 					"Directory not found: " + dir_path + "\n\n"
 					"Create it and add test files named 'test_*.gd'.");
 		}
-		test_files = _collect_test_files(dir_path);
+		test_files = collect_test_files(dir_path);
 		if (test_files.is_empty()) {
 			return make_tool_error(
 					"No test files found in " + dir_path +
@@ -657,7 +753,7 @@ Dictionary MCPTestingTools::handle_run(const Dictionary &p_args) {
 	Array compile_results;
 	bool any_compile_fail = false;
 	for (const String &file : test_files) {
-		Dictionary validation = _validate_single_file(file);
+		Dictionary validation = validate_single_file(file);
 		if (!(bool)validation["valid"]) {
 			any_compile_fail = true;
 		}
@@ -711,7 +807,7 @@ Dictionary MCPTestingTools::handle_run(const Dictionary &p_args) {
 	}
 
 	// 7. Copy runner files into the project.
-	_copy_runner_files_to_project();
+	copy_runner_files_to_project();
 
 	// 8. Set launching state and reset test run state.
 	bridge->set_game_launching();
@@ -734,7 +830,7 @@ Dictionary MCPTestingTools::handle_run(const Dictionary &p_args) {
 	Dictionary result = bridge->wait_for_pending(req, (timeout + 15) * 1000);
 
 	// 12. Cleanup runner files from the project.
-	_cleanup_runner_files();
+	cleanup_runner_files();
 
 	// 13. Build and return the structured response.
 	return _build_test_results_response(result, verbose);
@@ -775,7 +871,7 @@ Dictionary MCPTestingTools::handle_list(const Dictionary &p_args) {
 				structured);
 	}
 
-	Vector<String> test_files = _collect_test_files(dir_path);
+	Vector<String> test_files = collect_test_files(dir_path);
 
 	if (test_files.is_empty()) {
 		Dictionary structured;
@@ -798,7 +894,7 @@ Dictionary MCPTestingTools::handle_list(const Dictionary &p_args) {
 
 		if (include_methods) {
 			// Parse file to extract test_* method names.
-			Vector<String> methods = _extract_test_methods(file_path);
+			Vector<String> methods = extract_test_methods(file_path);
 			Array method_arr;
 			for (const String &m : methods) {
 				method_arr.push_back(m);
@@ -872,7 +968,7 @@ Dictionary MCPTestingTools::handle_check_script(const Dictionary &p_args) {
 		return make_tool_error(vformat("File not found: %s", path));
 	}
 
-	Dictionary file_result = _validate_single_file(path);
+	Dictionary file_result = validate_single_file(path);
 
 	// Build text output.
 	bool valid = file_result["valid"];
@@ -970,7 +1066,7 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 			p_ctx->report_progress(i, total, "Checking " + gd_files[i]);
 		}
 
-		Dictionary result = _validate_single_file(gd_files[i]);
+		Dictionary result = validate_single_file(gd_files[i]);
 		Array errors = result["errors"];
 		Array warnings = result["warnings"];
 
@@ -1077,7 +1173,7 @@ Dictionary MCPTestingTools::handle_check_all_scripts_with_progress(
 // Internal: Collect test files recursively
 // ============================================================================
 
-Vector<String> MCPTestingTools::_collect_test_files(const String &p_dir_path) {
+Vector<String> MCPTestingTools::collect_test_files(const String &p_dir_path) {
 	Vector<String> result;
 
 	Ref<DirAccess> da = DirAccess::open(p_dir_path);
@@ -1090,7 +1186,7 @@ Vector<String> MCPTestingTools::_collect_test_files(const String &p_dir_path) {
 	while (!item.is_empty()) {
 		if (da->current_is_dir()) {
 			if (!is_skip_directory(item) && !item.begins_with(".")) {
-				Vector<String> sub_files = _collect_test_files(p_dir_path + item + "/");
+				Vector<String> sub_files = collect_test_files(p_dir_path + item + "/");
 				result.append_array(sub_files);
 			}
 		} else {
@@ -1112,7 +1208,7 @@ Vector<String> MCPTestingTools::_collect_test_files(const String &p_dir_path) {
 // error_count/warning_count fields -- used by both test and check_script tools)
 // ============================================================================
 
-Dictionary MCPTestingTools::_validate_single_file(const String &p_path) {
+Dictionary MCPTestingTools::validate_single_file(const String &p_path) {
 	Dictionary result;
 	result["path"] = p_path;
 	result["valid"] = true;
@@ -1201,7 +1297,7 @@ Dictionary MCPTestingTools::_validate_single_file(const String &p_path) {
 // Internal: Extract test method names from a GDScript file
 // ============================================================================
 
-Vector<String> MCPTestingTools::_extract_test_methods(const String &p_path) {
+Vector<String> MCPTestingTools::extract_test_methods(const String &p_path) {
 	Vector<String> methods;
 
 	// Read and validate the file to get the function list.
@@ -1537,7 +1633,7 @@ Dictionary MCPTestingTools::_build_test_results_response(const Dictionary &p_raw
 // Internal: Copy runner files to project
 // ============================================================================
 
-void MCPTestingTools::_copy_runner_files_to_project() {
+void MCPTestingTools::copy_runner_files_to_project() {
 	// Create the addons/mcp_test/ directory if it does not exist.
 	String addon_dir = "res://addons/mcp_test/";
 
@@ -1591,7 +1687,7 @@ void MCPTestingTools::_copy_runner_files_to_project() {
 // Internal: Cleanup runner files from project
 // ============================================================================
 
-void MCPTestingTools::_cleanup_runner_files() {
+void MCPTestingTools::cleanup_runner_files() {
 	String addon_dir = "res://addons/mcp_test/";
 
 	Ref<DirAccess> da = DirAccess::open(addon_dir);
