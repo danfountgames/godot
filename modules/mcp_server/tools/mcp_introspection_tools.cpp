@@ -32,6 +32,8 @@
 
 #include "mcp_debug_tools.h"
 
+#include "core/object/script_language.h"
+
 #include "../mcp_debugger_bridge.h"
 #include "../mcp_tool_registry.h"
 #include "../mcp_types.h"
