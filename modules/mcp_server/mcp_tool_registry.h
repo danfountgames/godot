@@ -45,6 +45,11 @@ public:
 	// so we use a raw function pointer for the progress-aware path.
 	typedef Dictionary (*ProgressHandler)(const Dictionary &, ProgressContext *);
 
+	// Permission check callback. Called before every tool execution and during
+	// list_tools() to filter tools the current session may not access.
+	// Returns true if the tool is allowed; false to deny (sets r_deny_reason).
+	typedef bool (*PermissionCheckFn)(const String &p_tool_name, void *p_userdata, String &r_deny_reason);
+
 	struct ToolDef {
 		String name;
 		String title;
@@ -58,6 +63,10 @@ public:
 private:
 	HashMap<String, ToolDef> tools;
 	HashMap<String, String> aliases; // alias name → canonical tool name.
+
+	// Permission check (set by MCPProtocol to enforce per-session tool access).
+	PermissionCheckFn permission_check = nullptr;
+	void *permission_check_userdata = nullptr;
 
 	// Find the closest matching tool name for "did you mean?" suggestions.
 	String _find_closest_tool(const String &p_name) const;
@@ -114,4 +123,10 @@ public:
 
 	bool has_tool(const String &p_name) const;
 	int get_tool_count() const;
+
+	// Install a permission check that gates every tool call and filters
+	// list_tools(). The check is called with the resolved tool name.
+	// Caller is responsible for setting/clearing any per-request context
+	// that the callback reads (e.g. session ID).
+	void set_permission_check(PermissionCheckFn p_fn, void *p_userdata);
 };

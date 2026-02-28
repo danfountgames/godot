@@ -39,6 +39,7 @@
 #include "tools/mcp_analysis_tools.h"
 #include "tools/mcp_automation_tools.h"
 #include "tools/mcp_breakpoint_tools.h"
+#include "tools/mcp_code_intelligence_tools.h"
 #include "tools/mcp_debug_tools.h"
 #include "tools/mcp_doc_tools.h"
 #include "tools/mcp_editor_tools.h"
@@ -116,6 +117,7 @@ MCPProtocol::MCPProtocol() {
 	MCPAnalysisTools::register_tools(&tool_registry);
 	MCPShaderTools::register_tools(&tool_registry);
 	MCPIntrospectionTools::register_tools(&tool_registry);
+	MCPCodeIntelligenceTools::register_tools(&tool_registry);
 	// Register common aliases for tools that agents frequently guess wrong.
 	// These cover every hallucinated name observed in production agent sessions.
 	// tool_registry.register_alias("runtime/take_screenshot", "runtime/get_screenshot"); // DISABLED: screenshot tools commented out
@@ -131,6 +133,19 @@ MCPProtocol::MCPProtocol() {
 	tool_registry.register_alias("script/check_all", "testing/check_all_scripts");
 	tool_registry.register_alias("script/validate", "testing/check_script");
 	tool_registry.register_alias("editor/get_project_path", "project/get_overview");
+	tool_registry.register_alias("analysis/describe", "analysis/describe_script");
+	tool_registry.register_alias("analysis/references", "analysis/find_references");
+	tool_registry.register_alias("analysis/definition", "analysis/goto_definition");
+	tool_registry.register_alias("analysis/rename", "analysis/rename_symbol");
+	tool_registry.register_alias("code/find_references", "analysis/find_references");
+	tool_registry.register_alias("code/goto_definition", "analysis/goto_definition");
+	tool_registry.register_alias("code/rename", "analysis/rename_symbol");
+
+	// Install the permission check. This runs inside call_tool(),
+	// call_tool_with_progress(), and list_tools() — every code path
+	// that touches a tool goes through the registry, so permissions
+	// are enforced regardless of how the call arrives.
+	tool_registry.set_permission_check(&MCPProtocol::_check_tool_permission, this);
 
 	// Resource methods (Phase 5).
 	set_method("resources/list",
@@ -170,11 +185,17 @@ void MCPProtocol::register_agent_token(const String &p_agent_token) {
 
 void MCPProtocol::unregister_agent_token(const String &p_agent_token) {
 	agent_tokens.erase(p_agent_token);
+	_deferred_runtime_prefs.erase(p_agent_token);
 	print_verbose("[MCP] Agent token unregistered: " + p_agent_token.substr(0, 12) + "...");
 }
 
 void MCPProtocol::set_runtime_tools_enabled(const String &p_agent_token, bool p_enabled) {
-	// Find the session that has this agent_id and flip the flag.
+	// Always persist the preference so it survives session reconnections.
+	// When a session expires and the agent reconnects with a new initialize,
+	// the new session picks up this value from _deferred_runtime_prefs.
+	_deferred_runtime_prefs[p_agent_token] = p_enabled;
+
+	// Also apply to any live session that already has this agent_id.
 	for (KeyValue<String, MCPSessionState> &kv : sessions) {
 		if (kv.value.agent_id == p_agent_token) {
 			kv.value.runtime_tools_enabled = p_enabled;
@@ -188,10 +209,6 @@ void MCPProtocol::set_runtime_tools_enabled(const String &p_agent_token, bool p_
 			return;
 		}
 	}
-	// Session not yet established — store the preference on the token.
-	// It'll be applied when the session initializes (see process_request).
-	// We use a side map for deferred preferences.
-	_deferred_runtime_prefs[p_agent_token] = p_enabled;
 }
 
 bool MCPProtocol::get_runtime_tools_enabled(const String &p_agent_token) const {
@@ -277,6 +294,31 @@ bool MCPProtocol::is_runtime_tool(const String &p_name) {
 		return true;
 	}
 	return false;
+}
+
+// Static callback installed on the tool registry. Runs inside call_tool(),
+// call_tool_with_progress(), and list_tools() — so no matter how a tool
+// invocation reaches the registry, this check fires.
+bool MCPProtocol::_check_tool_permission(const String &p_tool_name, void *p_userdata, String &r_deny_reason) {
+	MCPProtocol *self = static_cast<MCPProtocol *>(p_userdata);
+
+	if (self->_current_request_session_id.is_empty()) {
+		return true; // No session context (internal call or pre-session).
+	}
+	if (!is_runtime_tool(p_tool_name)) {
+		return true; // Not a runtime tool — always allowed.
+	}
+	if (!self->sessions.has(self->_current_request_session_id)) {
+		return true; // Unknown session (shouldn't happen — allow defensively).
+	}
+	if (!self->sessions[self->_current_request_session_id].runtime_tools_enabled) {
+		r_deny_reason = vformat(
+				"Tool '%s' is blocked: runtime tools are disabled for this agent session. "
+				"Enable the runtime toggle in the agent panel to allow game control.",
+				p_tool_name);
+		return false;
+	}
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -796,10 +838,11 @@ void MCPProtocol::process_request(int p_client_id) {
 		// Link agent identity from the Bearer token (if this is an agent session).
 		if (!request_agent_id.is_empty()) {
 			new_state.agent_id = request_agent_id;
-			// Apply deferred runtime preference if one was set before the session existed.
+			// Apply persisted runtime preference (survives reconnections).
+			// Don't erase — the preference lives for the lifetime of the agent token
+			// so subsequent reconnections inherit the same toggle state.
 			if (_deferred_runtime_prefs.has(request_agent_id)) {
 				new_state.runtime_tools_enabled = _deferred_runtime_prefs[request_agent_id];
-				_deferred_runtime_prefs.erase(request_agent_id);
 			}
 			// Apply deferred editor controls preference.
 			if (_deferred_editor_prefs.has(request_agent_id)) {
@@ -903,47 +946,11 @@ void MCPProtocol::process_request(int p_client_id) {
 		return;
 	}
 
-	// ── Step 9a½: Per-agent runtime tool permission check ────────────────
-	// If this session has runtime tools disabled (via the agent panel toggle),
-	// reject tool calls to runtime/* and related namespaces with a clear error.
-	if (method == "tools/call") {
-		Dictionary tc_params = json_request.get("params", Dictionary());
-		String tool_name = tc_params.get("name", "");
-
-		if (is_runtime_tool(tool_name) && sessions.has(session_id_header) &&
-				!sessions[session_id_header].runtime_tools_enabled) {
-			String body = make_error_body(JSONRPC::INVALID_REQUEST,
-					vformat("Tool '%s' is blocked: runtime tools are disabled for this agent session. "
-							"Enable the runtime toggle in the agent panel to allow game control.",
-							tool_name),
-					request_id);
-			session->queue_response(MCP_HTTP_200, body, origin_header);
-
-			uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
-			_emit_request_event("tools/call", session_id_header, client_ip, 403,
-					duration_usec, session->request_body, body, tool_name);
-
-			session->reset_request();
-			return;
-		}
-
-		if (is_editor_control_tool(tool_name) && sessions.has(session_id_header) &&
-				!sessions[session_id_header].editor_controls_enabled) {
-			String body = make_error_body(JSONRPC::INVALID_REQUEST,
-					vformat("Tool '%s' is blocked: editor controls are disabled for this agent session. "
-							"Enable the editor controls toggle in the agent panel to allow scene tree modifications.",
-							tool_name),
-					request_id);
-			session->queue_response(MCP_HTTP_200, body, origin_header);
-
-			uint64_t duration_usec = OS::get_singleton()->get_ticks_usec() - request_start_usec;
-			_emit_request_event("tools/call", session_id_header, client_ip, 403,
-					duration_usec, session->request_body, body, tool_name);
-
-			session->reset_request();
-			return;
-		}
-	}
+	// ── Set session context for permission checks ──────────────────────
+	// The tool registry's permission callback reads _current_request_session_id
+	// to enforce per-session tool access. Set it once here so all dispatch
+	// paths (SSE and standard) are covered.
+	_current_request_session_id = session_id_header;
 
 	// ── Step 9b: SSE negotiation for tools/call ─────────────────────────
 	// If the client accepts SSE and the request has a progressToken or the
@@ -975,11 +982,13 @@ void MCPProtocol::process_request(int p_client_id) {
 
 		if (accepts_sse && (has_progress_token || tool_is_long_running)) {
 			// SSE path: stream progress + final result.
+			// Permission check happens inside tool_registry.call_tool_with_progress().
 			session->begin_sse_response(session_id_header, origin_header);
 
 			dispatch_tool_with_progress(session, json_request, progress_token,
 					request_id, origin_header);
 
+			_current_request_session_id = String();
 			// DO NOT call reset_request() here. end_sse_stream() handles it.
 			return;
 		}
@@ -990,7 +999,7 @@ void MCPProtocol::process_request(int p_client_id) {
 	// Returns a Dictionary: either {"jsonrpc":"2.0","result":...,"id":...}
 	// or {"jsonrpc":"2.0","error":...,"id":...}.
 	// Returns Variant::NIL for notifications (no "id").
-	_current_request_session_id = session_id_header;
+	// Permission check happens inside tool_registry.call_tool() via the callback.
 	Variant result = process_action(json_request);
 	_current_request_session_id = String();
 
@@ -1124,34 +1133,9 @@ Dictionary MCPProtocol::handle_ping() {
 // ---------------------------------------------------------------------------
 
 Dictionary MCPProtocol::_handle_tools_list(const Dictionary &p_params) {
-	Dictionary result = tool_registry.list_tools(p_params);
-
-	// Filter out tools based on per-session permission flags.
-	if (!_current_request_session_id.is_empty() &&
-			sessions.has(_current_request_session_id)) {
-		const MCPSessionState &state = sessions[_current_request_session_id];
-		bool filter_runtime = !state.runtime_tools_enabled;
-		bool filter_editor = !state.editor_controls_enabled;
-
-		if (filter_runtime || filter_editor) {
-			Array tools = result.get("tools", Array());
-			Array filtered;
-			for (int i = 0; i < tools.size(); i++) {
-				Dictionary tool = tools[i];
-				String name = tool.get("name", "");
-				if (filter_runtime && is_runtime_tool(name)) {
-					continue;
-				}
-				if (filter_editor && is_editor_control_tool(name)) {
-					continue;
-				}
-				filtered.push_back(tool);
-			}
-			result["tools"] = filtered;
-		}
-	}
-
-	return result;
+	// Permission filtering is handled by the registry's permission callback
+	// (set via set_permission_check), which reads _current_request_session_id.
+	return tool_registry.list_tools(p_params);
 }
 
 Dictionary MCPProtocol::_handle_tools_call(const Dictionary &p_params) {

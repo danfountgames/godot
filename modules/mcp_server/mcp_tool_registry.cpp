@@ -149,6 +149,14 @@ Dictionary MCPToolRegistry::list_tools(const Dictionary &p_params) {
 	for (const KeyValue<String, ToolDef> &kv : tools) {
 		const ToolDef &def = kv.value;
 
+		// Filter out tools the current session is not permitted to call.
+		if (permission_check) {
+			String deny_reason;
+			if (!permission_check(def.name, permission_check_userdata, deny_reason)) {
+				continue;
+			}
+		}
+
 		Dictionary tool_dict;
 		tool_dict["name"] = def.name;
 		tool_dict["title"] = def.title;
@@ -200,6 +208,19 @@ Dictionary MCPToolRegistry::call_tool(const Dictionary &p_params) {
 		Dictionary response;
 		response["error"] = err;
 		return response;
+	}
+
+	// Permission check: reject calls the current session is not allowed to make.
+	if (permission_check) {
+		String deny_reason;
+		if (!permission_check(tool_name, permission_check_userdata, deny_reason)) {
+			Dictionary err;
+			err["code"] = JSONRPC::INVALID_REQUEST;
+			err["message"] = deny_reason;
+			Dictionary response;
+			response["error"] = err;
+			return response;
+		}
 	}
 
 	// Extract arguments (default to empty Dictionary if not provided).
@@ -315,6 +336,19 @@ Dictionary MCPToolRegistry::call_tool_with_progress(
 	// Resolve aliases before dispatch.
 	String resolved = _resolve_alias(p_name);
 
+	// Permission check: reject calls the current session is not allowed to make.
+	if (permission_check) {
+		String deny_reason;
+		if (!permission_check(resolved, permission_check_userdata, deny_reason)) {
+			Dictionary err;
+			err["code"] = JSONRPC::INVALID_REQUEST;
+			err["message"] = deny_reason;
+			Dictionary response;
+			response["error"] = err;
+			return response;
+		}
+	}
+
 	// Use the registered progress handler if available.
 	if (tools.has(resolved) && tools[resolved].progress_handler) {
 		return tools[resolved].progress_handler(p_arguments, p_ctx);
@@ -337,4 +371,9 @@ bool MCPToolRegistry::has_tool(const String &p_name) const {
 
 int MCPToolRegistry::get_tool_count() const {
 	return tools.size();
+}
+
+void MCPToolRegistry::set_permission_check(PermissionCheckFn p_fn, void *p_userdata) {
+	permission_check = p_fn;
+	permission_check_userdata = p_userdata;
 }

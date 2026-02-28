@@ -105,11 +105,14 @@ private:
 	int session_timeout_sec = MCP_DEFAULT_SESSION_TIMEOUT_SEC;
 	int max_clients = MCP_MAX_CLIENTS;
 
-	// Session ID for the current request being processed by process_action().
-	// Set before dispatch, cleared after. Allows _handle_tools_list to filter
-	// tools based on per-session permissions without threading session state
-	// through the JSONRPC dispatch layer.
+	// Session ID for the current request being processed. Set before any tool
+	// registry call (both standard and SSE paths), cleared after. The tool
+	// registry's permission callback reads this to check per-session permissions.
 	String _current_request_session_id;
+
+	// Permission callback installed on tool_registry. Checks whether the tool
+	// is allowed for the session identified by _current_request_session_id.
+	static bool _check_tool_permission(const String &p_tool_name, void *p_userdata, String &r_deny_reason);
 
 	// Active request tracking for cancellation (Phase B).
 	// Key is String(request_id) to avoid Variant-as-key issues.
