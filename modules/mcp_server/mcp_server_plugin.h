@@ -37,10 +37,12 @@
 #include "core/templates/safe_refcount.h"
 #include "editor/plugins/editor_plugin.h"
 
+class Script;
 class TabContainer;
 
 #ifdef TOOLS_ENABLED
 class MCPStatusPanel;
+class MCPTestPanel;
 #ifdef MCP_TERMINAL_ENABLED
 class AgentPanel;
 #endif
@@ -66,6 +68,15 @@ private:
 #ifdef TOOLS_ENABLED
 	TabContainer *ai_tab_container = nullptr;
 	MCPStatusPanel *status_panel = nullptr;
+	MCPTestPanel *test_panel = nullptr;
+
+	// Phase 4: Editor integration.
+	String current_script_path; // Tracked via script editor signal.
+	void _on_script_changed(const Ref<Script> &p_script);
+	void _on_run_current_test();
+	void _on_run_all_tests();
+	void _on_rerun_failed_tests();
+
 #ifdef MCP_TERMINAL_ENABLED
 	Vector<AgentPanel *> agent_panels;
 	Control *new_tab_placeholder = nullptr;

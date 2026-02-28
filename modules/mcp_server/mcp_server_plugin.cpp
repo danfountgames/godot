@@ -32,6 +32,7 @@
 
 #ifdef TOOLS_ENABLED
 #include "editor/mcp_status_panel.h"
+#include "editor/mcp_test_panel.h"
 #include "scene/gui/tab_container.h"
 #ifdef MCP_TERMINAL_ENABLED
 #include "terminal/agent_panel.h"
@@ -42,13 +43,16 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/object/script_language.h"
 #include "core/os/os.h"
 #include "core/string/print_string.h"
 #include "core/version.h"
 #include "editor/debugger/editor_debugger_node.h"
+#include "editor/editor_interface.h"
 #include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/file_system/editor_paths.h"
+#include "editor/script/script_editor_plugin.h"
 #include "editor/settings/editor_settings.h"
 
 // ---------------------------------------------------------------------------
@@ -63,6 +67,12 @@ MCPServerPlugin::MCPServerPlugin() {
 	_EDITOR_DEF("network/mcp_server/use_thread", true);
 	_EDITOR_DEF("network/mcp_server/max_clients", MCP_MAX_CLIENTS);
 	_EDITOR_DEF("network/mcp_server/session_timeout_sec", MCP_DEFAULT_SESSION_TIMEOUT_SEC);
+	_EDITOR_DEF("network/mcp_server/test_root", String("res://tests/"));
+
+	// Register keyboard shortcuts for test operations.
+	ED_SHORTCUT("mcp_server/run_all_tests", TTRC("Run All Tests"), KeyModifierMask::ALT | KeyModifierMask::SHIFT | Key::T);
+	ED_SHORTCUT("mcp_server/run_current_test", TTRC("Run Current Test File"), KeyModifierMask::ALT | Key::T);
+	ED_SHORTCUT("mcp_server/rerun_failed", TTRC("Rerun Failed Tests"), KeyModifierMask::ALT | KeyModifierMask::SHIFT | Key::R);
 
 	// Heap-allocate the protocol (Object-derived, must use memnew).
 	protocol = memnew(MCPProtocol);
@@ -103,6 +113,25 @@ MCPServerPlugin::MCPServerPlugin() {
 	EditorNode::get_singleton()->get_editor_main_screen()->get_control()->add_child(ai_tab_container);
 	ai_tab_container->set_anchors_and_offsets_preset(Control::PRESET_FULL_RECT);
 	ai_tab_container->hide();
+
+	// Create the Test panel and add it as an editor bottom panel.
+	test_panel = memnew(MCPTestPanel);
+	test_panel->set_debugger_bridge(debugger_bridge.ptr());
+
+	// Apply test root from settings.
+	String test_root = String(_EDITOR_GET("network/mcp_server/test_root"));
+	if (!test_root.is_empty()) {
+		test_panel->set_test_root(test_root);
+	}
+
+	add_control_to_bottom_panel(test_panel, TTR("Tests"));
+
+	// Connect to script editor for "Run Current Test" integration.
+	ScriptEditor *script_editor = ScriptEditor::get_singleton();
+	if (script_editor) {
+		script_editor->connect("editor_script_changed",
+				callable_mp(this, &MCPServerPlugin::_on_script_changed));
+	}
 #endif
 
 	set_process_internal(true);
@@ -114,6 +143,12 @@ MCPServerPlugin::~MCPServerPlugin() {
 	}
 
 #ifdef TOOLS_ENABLED
+	if (test_panel) {
+		remove_control_from_bottom_panel(test_panel);
+		memdelete(test_panel);
+		test_panel = nullptr;
+	}
+
 	if (ai_tab_container) {
 		if (ai_tab_container->get_parent()) {
 			ai_tab_container->get_parent()->remove_child(ai_tab_container);
@@ -360,6 +395,59 @@ void MCPServerPlugin::make_visible(bool p_visible) {
 }
 
 // ---------------------------------------------------------------------------
+// Script Editor Integration
+// ---------------------------------------------------------------------------
+
+#ifdef TOOLS_ENABLED
+void MCPServerPlugin::_on_script_changed(const Ref<Script> &p_script) {
+	if (p_script.is_null()) {
+		current_script_path = "";
+		return;
+	}
+
+	current_script_path = p_script->get_path();
+
+	if (!test_panel) {
+		return;
+	}
+
+	String test_root = test_panel->get_test_root();
+
+	// Auto-show the Tests bottom panel when a test file is opened.
+	if (current_script_path.begins_with(test_root) && current_script_path.get_file().begins_with("test_")) {
+		make_bottom_panel_item_visible(test_panel);
+	}
+}
+
+void MCPServerPlugin::_on_run_current_test() {
+	if (!test_panel || current_script_path.is_empty()) {
+		return;
+	}
+
+	if (current_script_path.get_file().begins_with("test_") && current_script_path.ends_with(".gd")) {
+		make_bottom_panel_item_visible(test_panel);
+		test_panel->run_file(current_script_path);
+	}
+}
+
+void MCPServerPlugin::_on_run_all_tests() {
+	if (!test_panel) {
+		return;
+	}
+	make_bottom_panel_item_visible(test_panel);
+	test_panel->run_all_tests();
+}
+
+void MCPServerPlugin::_on_rerun_failed_tests() {
+	if (!test_panel) {
+		return;
+	}
+	make_bottom_panel_item_visible(test_panel);
+	test_panel->rerun_failed_tests();
+}
+#endif // TOOLS_ENABLED
+
+// ---------------------------------------------------------------------------
 // Binding
 // ---------------------------------------------------------------------------
 
@@ -417,7 +505,16 @@ void MCPServerPlugin::_notification(int p_what) {
 					protocol->set_session_timeout(new_session_timeout);
 				}
 			}
+
+#ifdef TOOLS_ENABLED
+			// Update test root if changed.
+			if (test_panel) {
+				String new_test_root = String(_EDITOR_GET("network/mcp_server/test_root"));
+				test_panel->set_test_root(new_test_root);
+			}
+#endif
 		} break;
+
 	}
 }
 
