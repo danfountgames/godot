@@ -34,6 +34,8 @@
 
 #include "core/input/input_event.h"
 #include "core/os/keyboard.h"
+#include "editor/settings/editor_settings.h"
+#include "editor/themes/editor_theme_manager.h"
 #include "scene/theme/theme_db.h"
 #include "servers/display/display_server.h"
 
@@ -78,10 +80,20 @@ void TerminalWidget::_notification(int p_what) {
 
 			_calculate_cell_size();
 
+			// Derive terminal colors from the editor theme before init
+			// so the emulator starts with the correct palette.
+			_update_theme_colors();
+
 			// Initial emulator size — will be resized by update_pty_size() once the scroll container is sized.
 			emulator.init(24, 80);
 
 			set_process_internal(true);
+		} break;
+
+		case NOTIFICATION_THEME_CHANGED: {
+			// Re-derive terminal colors when the editor theme changes.
+			_update_theme_colors();
+			queue_redraw();
 		} break;
 
 		case NOTIFICATION_INTERNAL_PROCESS: {
@@ -148,6 +160,97 @@ void TerminalWidget::_calculate_cell_size() {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Theme color derivation
+///////////////////////////////////////////////////////////////////////////////
+
+void TerminalWidget::_update_theme_colors() {
+	EditorSettings *settings = EditorSettings::get_singleton();
+	if (!settings) {
+		return;
+	}
+
+	// Read the script editor's background and text colors.
+	Color bg_color = EDITOR_GET("text_editor/theme/highlighting/background_color");
+	Color text_color = EDITOR_GET("text_editor/theme/highlighting/text_color");
+	Color caret_color = EDITOR_GET("text_editor/theme/highlighting/caret_color");
+	Color selection_color = EDITOR_GET("text_editor/theme/highlighting/selection_color");
+
+	// Read syntax highlighting colors for the ANSI palette.
+	Color keyword_color = EDITOR_GET("text_editor/theme/highlighting/keyword_color");
+	Color control_flow_color = EDITOR_GET("text_editor/theme/highlighting/control_flow_keyword_color");
+	Color base_type_color = EDITOR_GET("text_editor/theme/highlighting/base_type_color");
+	Color engine_type_color = EDITOR_GET("text_editor/theme/highlighting/engine_type_color");
+	Color string_color = EDITOR_GET("text_editor/theme/highlighting/string_color");
+	Color function_color = EDITOR_GET("text_editor/theme/highlighting/function_color");
+	Color number_color = EDITOR_GET("text_editor/theme/highlighting/number_color");
+	Color symbol_color = EDITOR_GET("text_editor/theme/highlighting/symbol_color");
+	Color comment_color = EDITOR_GET("text_editor/theme/highlighting/comment_color");
+
+	bool dark = EditorThemeManager::is_dark_theme();
+
+	// Store widget-level colors.
+	theme_bg = bg_color;
+	theme_cursor_color = Color(caret_color.r, caret_color.g, caret_color.b, 0.7f);
+
+	// Selection: use the editor's selection color but ensure it's opaque enough
+	// to be clearly visible as a filled background.
+	theme_selection_bg = Color(selection_color.r, selection_color.g, selection_color.b, MAX(selection_color.a, 0.45f));
+	theme_selection_fg = dark ? Color(1.0f, 1.0f, 1.0f) : Color(0.0f, 0.0f, 0.0f);
+
+	// Build the 16-color ANSI palette from editor syntax colors.
+	// The mapping aligns terminal color semantics with the editor's aesthetic:
+	//   Red     ← keyword_color          (errors, important items)
+	//   Green   ← number_color           (success, paths — a cool mint green)
+	//   Yellow  ← string_color           (warnings, string-like output)
+	//   Blue    ← function_color         (links, directories, tool names)
+	//   Magenta ← control_flow_color     (emphasis, special)
+	//   Cyan    ← engine_type_color      (info, types, headers)
+	Color ansi16[16];
+
+	if (dark) {
+		// --- Dark theme ---
+		ansi16[0] = bg_color.lerp(Color(0, 0, 0), 0.35f); // Black: darker than bg
+		ansi16[1] = keyword_color; // Red
+		ansi16[2] = number_color; // Green (Godot's mint-green number color)
+		ansi16[3] = Color(string_color.r, string_color.g, string_color.b * 0.7f); // Yellow: warm up the string color
+		ansi16[4] = function_color; // Blue
+		ansi16[5] = control_flow_color; // Magenta
+		ansi16[6] = engine_type_color; // Cyan
+		ansi16[7] = Color(text_color.r, text_color.g, text_color.b, 1.0f).lerp(Color(0.75f, 0.75f, 0.75f), 0.5f); // White: blended text
+
+		ansi16[8] = Color(comment_color.r, comment_color.g, comment_color.b, 1.0f); // Bright Black: comment-dim
+		ansi16[9] = Color(1.0f, 0.47f, 0.42f); // Bright Red: error_color
+		ansi16[10] = base_type_color; // Bright Green
+		ansi16[11] = string_color; // Bright Yellow: full string color
+		ansi16[12] = symbol_color; // Bright Blue
+		ansi16[13] = Color(0.64f, 0.64f, 0.96f); // Bright Magenta: global_function_color
+		ansi16[14] = Color(0.4f, 0.9f, 1.0f); // Bright Cyan: function_definition_color
+		ansi16[15] = Color(1.0f, 1.0f, 1.0f); // Bright White
+	} else {
+		// --- Light theme ---
+		ansi16[0] = Color(0.0f, 0.0f, 0.0f); // Black
+		ansi16[1] = keyword_color; // Red
+		ansi16[2] = number_color; // Green
+		ansi16[3] = Color(0.6f, 0.42f, 0.0f); // Yellow: darkened for light bg
+		ansi16[4] = function_color; // Blue
+		ansi16[5] = control_flow_color; // Magenta
+		ansi16[6] = engine_type_color; // Cyan
+		ansi16[7] = Color(0.35f, 0.35f, 0.35f); // White (dim gray for light theme)
+
+		ansi16[8] = Color(comment_color.r, comment_color.g, comment_color.b, 1.0f); // Bright Black
+		ansi16[9] = Color(0.8f, 0.22f, 0.22f); // Bright Red: error on light
+		ansi16[10] = base_type_color; // Bright Green
+		ansi16[11] = string_color; // Bright Yellow
+		ansi16[12] = symbol_color; // Bright Blue
+		ansi16[13] = Color(0.36f, 0.18f, 0.72f); // Bright Magenta: global_function on light
+		ansi16[14] = Color(0.0f, 0.6f, 0.6f); // Bright Cyan: function_def on light
+		ansi16[15] = Color(text_color.r, text_color.g, text_color.b, 1.0f); // Bright White: full text
+	}
+
+	emulator.set_theme_colors(text_color, bg_color, ansi16);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // PTY polling / output
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -174,8 +277,7 @@ void TerminalWidget::_send_output_to_pty() {
 ///////////////////////////////////////////////////////////////////////////////
 
 void TerminalWidget::_draw_terminal() {
-	Color default_bg(0.12f, 0.12f, 0.15f);
-	draw_rect(Rect2(Vector2(), get_size()), default_bg);
+	draw_rect(Rect2(Vector2(), get_size()), theme_bg);
 
 	int sb_len = emulator.get_scrollback_length();
 	int screen_rows = emulator.get_rows();
@@ -210,19 +312,16 @@ void TerminalWidget::_draw_terminal() {
 
 void TerminalWidget::_draw_cell(int p_row, int p_col, const TerminalEmulator::Cell &p_cell) {
 	Vector2 pos(p_col * cell_width, p_row * cell_height);
-	Color default_bg(0.12f, 0.12f, 0.15f);
 
 	Color fg = _effective_fg(p_cell);
 	Color bg = _effective_bg(p_cell);
 
-	// If cell is selected, invert fg/bg.
+	// If cell is selected, use themed selection colors.
 	bool selected = _is_cell_selected(p_row, p_col);
 	if (selected) {
-		Color sel_bg(0.35f, 0.55f, 0.85f);
-		Color sel_fg(1.0f, 1.0f, 1.0f);
-		draw_rect(Rect2(pos, Size2(cell_width * p_cell.width, cell_height)), sel_bg);
-		fg = sel_fg;
-	} else if (bg != default_bg) {
+		draw_rect(Rect2(pos, Size2(cell_width * p_cell.width, cell_height)), theme_selection_bg);
+		fg = theme_selection_fg;
+	} else if (bg != theme_bg) {
 		draw_rect(Rect2(pos, Size2(cell_width * p_cell.width, cell_height)), bg);
 	}
 
@@ -260,22 +359,21 @@ void TerminalWidget::_draw_cursor() {
 
 	int sb_len = emulator.get_scrollback_length();
 	Vector2 pos(cs.col * cell_width, (sb_len + cs.row) * cell_height);
-	Color cursor_color(0.8f, 0.8f, 0.8f, 0.7f);
 
 	switch (cs.shape) {
 		case 1: {
 			// Block cursor.
-			draw_rect(Rect2(pos, Size2(cell_width, cell_height)), cursor_color);
+			draw_rect(Rect2(pos, Size2(cell_width, cell_height)), theme_cursor_color);
 		} break;
 
 		case 2: {
 			// Underline cursor.
-			draw_rect(Rect2(Vector2(pos.x, pos.y + cell_height - 2), Size2(cell_width, 2)), cursor_color);
+			draw_rect(Rect2(Vector2(pos.x, pos.y + cell_height - 2), Size2(cell_width, 2)), theme_cursor_color);
 		} break;
 
 		case 3: {
 			// Bar cursor.
-			draw_rect(Rect2(pos, Size2(2, cell_height)), cursor_color);
+			draw_rect(Rect2(pos, Size2(2, cell_height)), theme_cursor_color);
 		} break;
 	}
 }

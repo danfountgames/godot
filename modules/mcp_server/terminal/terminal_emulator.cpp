@@ -85,14 +85,48 @@ void TerminalEmulator::init(int p_rows, int p_cols) {
 	vterm_screen_set_damage_merge(vterm_screen, VTERM_DAMAGE_SCROLL);
 	vterm_screen_reset(vterm_screen, 1);
 
-	// Set default foreground (light gray) and background (dark).
+	// Apply default and palette colors to libvterm.
 	VTermState *state = vterm_obtain_state(vterm);
-	VTermColor fg, bg;
-	vterm_color_rgb(&fg, 230, 230, 230);
-	vterm_color_rgb(&bg, 30, 30, 38);
-	vterm_state_set_default_colors(state, &fg, &bg);
+	VTermColor vt_fg, vt_bg;
+	vterm_color_rgb(&vt_fg, (uint8_t)(default_fg.r * 255), (uint8_t)(default_fg.g * 255), (uint8_t)(default_fg.b * 255));
+	vterm_color_rgb(&vt_bg, (uint8_t)(default_bg.r * 255), (uint8_t)(default_bg.g * 255), (uint8_t)(default_bg.b * 255));
+	vterm_state_set_default_colors(state, &vt_fg, &vt_bg);
+
+	for (int i = 0; i < 16; i++) {
+		VTermColor vc;
+		vterm_color_rgb(&vc, (uint8_t)(ansi_colors[i].r * 255), (uint8_t)(ansi_colors[i].g * 255), (uint8_t)(ansi_colors[i].b * 255));
+		vterm_state_set_palette_color(state, i, &vc);
+	}
 
 	dirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// Theme Colors
+// ---------------------------------------------------------------------------
+
+void TerminalEmulator::set_theme_colors(const Color &p_fg, const Color &p_bg, const Color *p_ansi16) {
+	default_fg = p_fg;
+	default_bg = p_bg;
+	for (int i = 0; i < 16; i++) {
+		ansi_colors[i] = p_ansi16[i];
+	}
+
+	// If vterm is already initialized, update its state.
+	if (vterm) {
+		VTermState *state = vterm_obtain_state(vterm);
+		VTermColor vt_fg, vt_bg;
+		vterm_color_rgb(&vt_fg, (uint8_t)(default_fg.r * 255), (uint8_t)(default_fg.g * 255), (uint8_t)(default_fg.b * 255));
+		vterm_color_rgb(&vt_bg, (uint8_t)(default_bg.r * 255), (uint8_t)(default_bg.g * 255), (uint8_t)(default_bg.b * 255));
+		vterm_state_set_default_colors(state, &vt_fg, &vt_bg);
+
+		for (int i = 0; i < 16; i++) {
+			VTermColor vc;
+			vterm_color_rgb(&vc, (uint8_t)(ansi_colors[i].r * 255), (uint8_t)(ansi_colors[i].g * 255), (uint8_t)(ansi_colors[i].b * 255));
+			vterm_state_set_palette_color(state, i, &vc);
+		}
+		dirty = true;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -194,8 +228,8 @@ TerminalEmulator::Cell TerminalEmulator::get_cell(int p_row, int p_col) const {
 
 TerminalEmulator::Cell TerminalEmulator::get_scrollback_cell(int p_scrollback_idx, int p_col) const {
 	Cell cell;
-	cell.fg = Color(0.9f, 0.9f, 0.9f);
-	cell.bg = Color(0.12f, 0.12f, 0.15f);
+	cell.fg = default_fg;
+	cell.bg = default_bg;
 
 	if (p_scrollback_idx < 0 || p_scrollback_idx >= scrollback.size()) {
 		return cell;
@@ -238,56 +272,41 @@ TerminalEmulator::Cell TerminalEmulator::get_scrollback_cell(int p_scrollback_id
 
 Color TerminalEmulator::_vterm_color_to_godot(VTermColor col) const {
 	if (VTERM_COLOR_IS_DEFAULT_FG(&col)) {
-		return Color(0.9f, 0.9f, 0.9f);
+		return default_fg;
 	}
 	if (VTERM_COLOR_IS_DEFAULT_BG(&col)) {
-		return Color(0.12f, 0.12f, 0.15f);
+		return default_bg;
 	}
 	if (VTERM_COLOR_IS_INDEXED(&col)) {
-		// Try to resolve via libvterm first.
+		int idx = col.indexed.idx;
+		// Use our themed palette for the base 16 ANSI colors.
+		if (idx < 16) {
+			return ansi_colors[idx];
+		}
+		// For extended colors (16-255), try libvterm conversion first.
 		VTermColor resolved = col;
 		vterm_screen_convert_color_to_rgb(vterm_screen, &resolved);
 		if (VTERM_COLOR_IS_RGB(&resolved)) {
 			return Color(resolved.rgb.red / 255.0f, resolved.rgb.green / 255.0f, resolved.rgb.blue / 255.0f);
 		}
-		// Fallback to our own palette.
-		return _index_to_color(col.indexed.idx);
+		// Fallback to our own 256-color computation.
+		return _extended_index_to_color(idx);
 	}
 	if (VTERM_COLOR_IS_RGB(&col)) {
 		return Color(col.rgb.red / 255.0f, col.rgb.green / 255.0f, col.rgb.blue / 255.0f);
 	}
 
-	// Fallback: white.
-	return Color(1.0f, 1.0f, 1.0f);
+	// Fallback: default foreground.
+	return default_fg;
 }
 
-Color TerminalEmulator::_index_to_color(int idx) {
-	// Standard 16 ANSI colors.
-	static const Color ansi16[16] = {
-		Color(0.0f, 0.0f, 0.0f),       // 0  Black
-		Color(0.67f, 0.0f, 0.0f),      // 1  Red
-		Color(0.0f, 0.67f, 0.0f),      // 2  Green
-		Color(0.67f, 0.67f, 0.0f),     // 3  Yellow
-		Color(0.0f, 0.0f, 0.67f),      // 4  Blue
-		Color(0.67f, 0.0f, 0.67f),     // 5  Magenta
-		Color(0.0f, 0.67f, 0.67f),     // 6  Cyan
-		Color(0.67f, 0.67f, 0.67f),    // 7  White
-		Color(0.33f, 0.33f, 0.33f),    // 8  Bright Black
-		Color(1.0f, 0.33f, 0.33f),     // 9  Bright Red
-		Color(0.33f, 1.0f, 0.33f),     // 10 Bright Green
-		Color(1.0f, 1.0f, 0.33f),      // 11 Bright Yellow
-		Color(0.33f, 0.33f, 1.0f),     // 12 Bright Blue
-		Color(1.0f, 0.33f, 1.0f),      // 13 Bright Magenta
-		Color(0.33f, 1.0f, 1.0f),      // 14 Bright Cyan
-		Color(1.0f, 1.0f, 1.0f),       // 15 Bright White
-	};
-
-	if (idx < 0) {
-		return Color(1.0f, 1.0f, 1.0f);
-	}
+Color TerminalEmulator::_extended_index_to_color(int idx) {
+	// This handles extended colors only (indices 16-255).
+	// ANSI 0-15 are handled by the themed ansi_colors[] palette.
 
 	if (idx < 16) {
-		return ansi16[idx];
+		// Should not be reached; handled by ansi_colors[].
+		return Color(1.0f, 1.0f, 1.0f);
 	}
 
 	// 216-color cube (indices 16-231): 6x6x6 RGB.

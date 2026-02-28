@@ -72,6 +72,28 @@ private:
 	CursorState cursor;
 	String title;
 
+	// Configurable default and ANSI palette colors (set by the widget from the editor theme).
+	Color default_fg = Color(0.9f, 0.9f, 0.9f);
+	Color default_bg = Color(0.12f, 0.12f, 0.15f);
+	Color ansi_colors[16] = {
+		Color(0.0f, 0.0f, 0.0f), // 0  Black
+		Color(0.67f, 0.0f, 0.0f), // 1  Red
+		Color(0.0f, 0.67f, 0.0f), // 2  Green
+		Color(0.67f, 0.67f, 0.0f), // 3  Yellow
+		Color(0.0f, 0.0f, 0.67f), // 4  Blue
+		Color(0.67f, 0.0f, 0.67f), // 5  Magenta
+		Color(0.0f, 0.67f, 0.67f), // 6  Cyan
+		Color(0.67f, 0.67f, 0.67f), // 7  White
+		Color(0.33f, 0.33f, 0.33f), // 8  Bright Black
+		Color(1.0f, 0.33f, 0.33f), // 9  Bright Red
+		Color(0.33f, 1.0f, 0.33f), // 10 Bright Green
+		Color(1.0f, 1.0f, 0.33f), // 11 Bright Yellow
+		Color(0.33f, 0.33f, 1.0f), // 12 Bright Blue
+		Color(1.0f, 0.33f, 1.0f), // 13 Bright Magenta
+		Color(0.33f, 1.0f, 1.0f), // 14 Bright Cyan
+		Color(1.0f, 1.0f, 1.0f), // 15 Bright White
+	};
+
 	// Output buffer -- data libvterm wants sent to the PTY (e.g. key responses).
 	Vector<uint8_t> output_buffer;
 
@@ -97,8 +119,8 @@ private:
 	// Helper: convert VTermColor to Godot Color.
 	Color _vterm_color_to_godot(VTermColor col) const;
 
-	// 256-color palette (standard xterm).
-	static Color _index_to_color(int idx);
+	// 256-color cube and grayscale (indices 16-255).
+	static Color _extended_index_to_color(int idx);
 
 public:
 	TerminalEmulator();
@@ -106,6 +128,14 @@ public:
 
 	// Initialize with given size. Must be called before use.
 	void init(int p_rows, int p_cols);
+
+	// Set theme colors. Call after init() to apply editor-derived palette.
+	// p_fg/p_bg are default foreground/background. p_ansi16 is an array of 16 ANSI colors.
+	void set_theme_colors(const Color &p_fg, const Color &p_bg, const Color *p_ansi16);
+
+	// Accessors for default colors (used by the widget for background fill, etc.).
+	Color get_default_fg() const { return default_fg; }
+	Color get_default_bg() const { return default_bg; }
 
 	// Feed raw bytes from PTY into the terminal.
 	void process_input(const uint8_t *p_data, int p_len);

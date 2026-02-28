@@ -53,6 +53,12 @@ private:
 	int cell_width = 0;   // Computed from font.
 	int cell_height = 0;  // Computed from font.
 
+	// Theme-derived colors (updated from EditorSettings).
+	Color theme_bg = Color(0.12f, 0.12f, 0.15f);
+	Color theme_selection_bg = Color(0.35f, 0.55f, 0.85f);
+	Color theme_selection_fg = Color(1.0f, 1.0f, 1.0f);
+	Color theme_cursor_color = Color(0.8f, 0.8f, 0.8f, 0.7f);
+
 	// Blink state for cursor.
 	float cursor_blink_timer = 0.0f;
 	bool cursor_visible_blink = true;
@@ -75,6 +81,7 @@ private:
 
 	// Methods.
 	void _calculate_cell_size();
+	void _update_theme_colors();
 	void _poll_pty();
 	void _send_output_to_pty();
 	void _draw_terminal();
