@@ -194,28 +194,28 @@ void MCPAutomationTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPAutomationTools::handle_spawn_instance));
 	}
 
-	// runtime/get_screenshot
-	{
-		Dictionary props;
-		Array required;
-		props["save_path"] = make_prop("string",
-				"Optional absolute file path to save the PNG to disk (e.g. '/tmp/screenshot.png'). "
-				"When provided, the image is saved to disk AND returned inline. "
-				"Useful for archiving screenshots or sharing with external tools.");
-		p_registry->register_tool(
-				"runtime/get_screenshot", "Get Screenshot",
-				"IMPORTANT: Screenshots are expensive and rarely needed. In almost all cases, "
-				"you should use runtime/get_scene_tree or runtime/get_node_properties instead "
-				"to inspect game state programmatically — this is faster, cheaper, and gives you "
-				"structured data you can actually reason about. Only use screenshots when you "
-				"specifically need to verify VISUAL appearance (rendering, layout, animations) "
-				"that cannot be determined from the scene tree. "
-				"Captures the running game's viewport as a base64-encoded PNG image. Game must be running. "
-				"Optionally saves to disk via save_path.",
-				make_schema(props, required),
-				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
-				callable_mp_static(&MCPAutomationTools::handle_get_screenshot));
-	}
+	// runtime/get_screenshot — DISABLED: screenshot tools commented out
+	// {
+	// 	Dictionary props;
+	// 	Array required;
+	// 	props["save_path"] = make_prop("string",
+	// 			"Optional absolute file path to save the PNG to disk (e.g. '/tmp/screenshot.png'). "
+	// 			"When provided, the image is saved to disk AND returned inline. "
+	// 			"Useful for archiving screenshots or sharing with external tools.");
+	// 	p_registry->register_tool(
+	// 			"runtime/get_screenshot", "Get Screenshot",
+	// 			"IMPORTANT: Screenshots are expensive and rarely needed. In almost all cases, "
+	// 			"you should use runtime/get_scene_tree or runtime/get_node_properties instead "
+	// 			"to inspect game state programmatically — this is faster, cheaper, and gives you "
+	// 			"structured data you can actually reason about. Only use screenshots when you "
+	// 			"specifically need to verify VISUAL appearance (rendering, layout, animations) "
+	// 			"that cannot be determined from the scene tree. "
+	// 			"Captures the running game's viewport as a base64-encoded PNG image. Game must be running. "
+	// 			"Optionally saves to disk via save_path.",
+	// 			make_schema(props, required),
+	// 			make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
+	// 			callable_mp_static(&MCPAutomationTools::handle_get_screenshot));
+	// }
 }
 
 // ============================================================================

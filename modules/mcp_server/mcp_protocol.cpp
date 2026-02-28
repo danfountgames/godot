@@ -118,8 +118,8 @@ MCPProtocol::MCPProtocol() {
 	MCPIntrospectionTools::register_tools(&tool_registry);
 	// Register common aliases for tools that agents frequently guess wrong.
 	// These cover every hallucinated name observed in production agent sessions.
-	tool_registry.register_alias("runtime/take_screenshot", "runtime/get_screenshot");
-	tool_registry.register_alias("editor/take_screenshot", "editor/get_screenshot");
+	// tool_registry.register_alias("runtime/take_screenshot", "runtime/get_screenshot"); // DISABLED: screenshot tools commented out
+	// tool_registry.register_alias("editor/take_screenshot", "editor/get_screenshot"); // DISABLED: screenshot tools commented out
 	tool_registry.register_alias("runtime/play", "runtime/run_project");
 	tool_registry.register_alias("runtime/start", "runtime/run_project");
 	tool_registry.register_alias("runtime/run", "runtime/run_project");

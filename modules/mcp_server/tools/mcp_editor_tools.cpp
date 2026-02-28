@@ -218,23 +218,23 @@ void MCPEditorTools::register_tools(MCPToolRegistry *p_registry) {
 				callable_mp_static(&MCPEditorTools::handle_execute_script));
 	}
 
-	// ---- editor/get_screenshot ----
-	{
-		Dictionary props;
-		Array required;
-		props["save_path"] = make_prop("string",
-				"Optional absolute file path to save the PNG to disk (e.g. '/tmp/editor.png'). "
-				"When provided, the image is saved to disk AND returned inline.");
-		p_registry->register_tool(
-				"editor/get_screenshot", "Get Editor Screenshot",
-				"Capture the Godot editor window as a PNG image. Shows the current state "
-				"of the editor including open panels, scene tree, inspector, and any "
-				"visible errors. Use runtime/get_screenshot for the running game viewport. "
-				"Optionally saves to disk via save_path.",
-				make_schema(props, required),
-				make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
-				callable_mp_static(&MCPEditorTools::handle_get_editor_screenshot));
-	}
+	// ---- editor/get_screenshot ---- DISABLED: screenshot tools commented out
+	// {
+	// 	Dictionary props;
+	// 	Array required;
+	// 	props["save_path"] = make_prop("string",
+	// 			"Optional absolute file path to save the PNG to disk (e.g. '/tmp/editor.png'). "
+	// 			"When provided, the image is saved to disk AND returned inline.");
+	// 	p_registry->register_tool(
+	// 			"editor/get_screenshot", "Get Editor Screenshot",
+	// 			"Capture the Godot editor window as a PNG image. Shows the current state "
+	// 			"of the editor including open panels, scene tree, inspector, and any "
+	// 			"visible errors. Use runtime/get_screenshot for the running game viewport. "
+	// 			"Optionally saves to disk via save_path.",
+	// 			make_schema(props, required),
+	// 			make_annotations(/*readOnly=*/true, /*destructive=*/false, /*idempotent=*/false),
+	// 			callable_mp_static(&MCPEditorTools::handle_get_editor_screenshot));
+	// }
 }
 
 // ============================================================================
