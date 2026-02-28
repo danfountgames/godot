@@ -38,6 +38,7 @@
 #include "../agent_prompts.gen.h"
 
 #include "core/config/project_settings.h"
+#include "core/crypto/crypto_core.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
@@ -223,6 +224,17 @@ String AgentPanel::_build_system_prompt() const {
 	p = p.replace("{{GODOT_VERSION}}", GODOT_VERSION_FULL_CONFIG);
 	p = p.replace("{{PROJECT_NAME}}", project_name);
 	p = p.replace("{{PROJECT_PATH}}", project_path);
+
+	// Inject game architecture docs if they exist in the project.
+	String arch_path = "res://docs/architecture.md";
+	String arch_content;
+	if (FileAccess::exists(arch_path)) {
+		arch_content = FileAccess::get_file_as_string(arch_path);
+	} else {
+		arch_content = "No architecture docs found. Use project/init_docs to create them when the game has enough structure.";
+	}
+	p = p.replace("{{PROJECT_ARCHITECTURE}}", arch_content);
+
 	return p;
 }
 

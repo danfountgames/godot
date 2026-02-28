@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/load-architecture.sh",
+            "statusMessage": "Loading game architecture..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__godot.*__scene/add_node|mcp__godot.*__scene/remove_node|mcp__godot.*__scene/connect_signal|mcp__godot.*__scene/save",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"You made a structural scene change. If this affects the game architecture, update res://docs/ when done.\"}}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Review this session: $ARGUMENTS\n\nDid the agent create new scenes, add new game systems, implement a plan from res://docs/plans/, or make architectural changes? If so, were res://docs/ files updated (architecture.md, system specs, changelog)?\n\nRespond {\"ok\": true} if no doc updates are needed or if docs were already updated.\nRespond {\"ok\": false, \"reason\": \"You added [describe change] but didn't update res://docs/\"} if structural changes were made without doc updates.",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

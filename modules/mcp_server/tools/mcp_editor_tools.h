@@ -51,8 +51,11 @@ public:
 	static Dictionary handle_resolve_uid(const Dictionary &p_args);
 	static Dictionary handle_execute_script(const Dictionary &p_args);
 	static Dictionary handle_get_editor_screenshot(const Dictionary &p_args);
+	static Dictionary handle_init_docs(const Dictionary &p_args);
 
 private:
+	// Helper: generate architecture.md content from a project scan.
+	static String _generate_architecture_md();
 	// Helper: recursively list files from a DirAccess.
 	static void _list_files_recursive(const String &p_dir,
 			const String &p_extension, Vector<String> &r_files);

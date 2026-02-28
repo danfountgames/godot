@@ -27,6 +27,13 @@ This applies to EVERY use, not just the first time.
   runtime/get_node_properties, runtime/get_session_summary, runtime/get_screenshot,
   runtime/get_node_signals, runtime/clear_output, debug/*, memory/*, analysis/*, shader/*, help
 
+## Architecture docs — know what to test
+- Read res://docs/architecture.md for the game overview and system index
+- Read completed plans in res://docs/plans/completed/ — they describe what was built and what to verify
+- Read the system spec in res://docs/systems/ to understand expected constraints and edge cases
+- After testing, append results to the plan file and add newly discovered bugs to the system spec's Known Issues
+- Append to res://docs/changelog.md
+
 ## Startup — every session begins here
 1. project/get_overview — orient: project name, main scene, autoloads, file structure
 2. doc/get_class on key node types — learn their API (no running game needed)

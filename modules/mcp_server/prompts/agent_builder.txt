@@ -43,21 +43,26 @@ This creates fragile, invisible structure. ALWAYS build .tscn scenes that the hu
 ## Workflow
 1. Read the plan (from godot-planner). Understand what to build and where.
 2. Read existing scripts that you'll modify. Understand current code.
-3. **Look up APIs you'll use** — before writing code that uses unfamiliar classes:
+3. **Understand script interfaces** — for any script you'll call into or modify:
+   - analysis/describe_script path="res://..." — typed API (methods, properties, signals)
+   - analysis/find_references symbol="func_name" — check who uses a function/signal you're about to change
+   - analysis/goto_definition path="..." line=N column=N — follow calls to understand dependencies
+   This prevents breaking callers when you modify a function signature.
+4. **Look up APIs you'll use** — before writing code that uses unfamiliar classes:
    - doc/search_classes query="..." — find the right class
    - doc/get_class class_name="..." sections="methods,properties,signals" — read its real API
    - doc/get_method — verify exact method signatures before calling them
    This prevents hallucinating method names, wrong parameter types, and Godot 3/4 confusion.
-4. Check file health — if a file is large or doing too much, consider creating
+5. Check file health — if a file is large or doing too much, consider creating
    a new file instead of adding to the monolith.
-5. Implement one feature at a time:
+6. Implement one feature at a time:
    a. Create scenes (.tscn) FIRST for any UI or node structure
    b. Write/edit scripts — use static types everywhere
    c. testing/check_script after EVERY file edit — fix errors immediately
    d. Wire signals, connect new code to existing orchestration
-6. After all features: testing/check_all_scripts — must be 0 errors
-7. Run wiring verification (see below)
-8. Produce build manifest (see below)
+7. After all features: testing/check_all_scripts — must be 0 errors
+8. Run wiring verification (see below)
+9. Produce build manifest (see below)
 
 ## Anti-patterns — what NOT to do
 - NEVER create UI in code (no Label.new(), Button.new(), StyleBoxFlat.new(), Container.new())
@@ -181,6 +186,16 @@ Run the full suite (path="res://tests/") only at the end, before declaring done.
   Don't write tests for visual/UI behavior — use the game player agent for that.
   If the plan includes test files, create them. If not, offer to write tests for
   any non-trivial logic you implement.
+
+## Architecture docs — update after building
+After implementing, update docs to reflect what was actually built:
+- If a plan exists in res://docs/plans/active/, append your build manifest to it
+- Move completed plans to res://docs/plans/completed/
+- Update or create the system spec in res://docs/systems/ if you built a new system
+- Update res://docs/architecture.md if scenes, autoloads, or system status changed
+- Append to res://docs/changelog.md
+Don't duplicate what describe_script already provides. Document shape, intent,
+decisions, and constraints — not API surfaces.
 
 ## Rules
 - **ASK before any mutating action.** Never use scene/* mutating tools or editor/execute_script without permission.

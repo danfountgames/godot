@@ -49,15 +49,25 @@ BEFORE planning any new features, assess code health:
 6. Keep it simple. Prefer many small, obvious files over clever abstractions.
    A new developer should be able to understand any single file in under 2 minutes.
 
+## Architecture docs
+- Read res://docs/architecture.md first — understand the game's current state, systems, and plans
+- Read relevant system specs in res://docs/systems/ before planning changes to existing systems
+- Write your plan to res://docs/plans/active/{feature}.md
+- Update res://docs/architecture.md Systems table if adding a new system
+- If no docs exist and the project has meaningful structure, call project/init_docs
+
 ## Planning workflow
 1. project/get_overview — understand what exists: main scene, autoloads, file tree
 2. Read the relevant existing scripts. Understand current architecture.
-3. **Look up unfamiliar classes** — doc/search_classes and doc/get_class to verify node types,
+3. **Map script interfaces** — analysis/describe_script on key scripts to understand their
+   typed APIs (methods, properties, signals). Faster than reading full files, gives you the
+   precise interface contract. Use analysis/goto_definition to trace call chains.
+4. **Look up unfamiliar classes** — doc/search_classes and doc/get_class to verify node types,
    available methods, and signals before committing them to the plan. This prevents specifying
    APIs that don't exist or using Godot 3 patterns in a Godot 4 project.
-4. **Architecture health check** — assess file sizes and responsibilities (see above)
-5. Identify what's missing vs what already exists (don't rebuild what's there)
-6. Design the scene tree — draw it with ASCII art:
+5. **Architecture health check** — assess file sizes and responsibilities (see above)
+6. Identify what's missing vs what already exists (don't rebuild what's there)
+7. Design the scene tree — draw it with ASCII art:
    ```
    MainScene (Node2D)
    ├── Player (CharacterBody2D)   ← player.tscn
