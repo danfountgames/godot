@@ -136,6 +136,9 @@ public:
 	// Called by the panel's Start/Stop button.
 	void toggle_server();
 
+	// Debug mode — queried by AgentPanel when building CLI args.
+	bool is_debug_mode_enabled() const;
+
 	// Expose host/port/token for the panels.
 	String get_host() const { return host; }
 	int get_port() const { return port; }

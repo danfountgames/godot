@@ -64,6 +64,7 @@ private:
 	Label *uptime_label = nullptr;
 	Label *stats_label = nullptr;
 	Button *toggle_button = nullptr;
+	CheckBox *debug_toggle = nullptr;
 
 	// -- Debugger Bridge --
 	TextureRect *game_dot = nullptr;
@@ -207,6 +208,7 @@ public:
 	void set_protocol(MCPProtocol *p_protocol) { protocol = p_protocol; }
 	void set_debugger_bridge(MCPDebuggerBridge *p_bridge) { debugger_bridge = p_bridge; }
 	void set_server_plugin(MCPServerPlugin *p_plugin) { server_plugin = p_plugin; }
+	bool is_debug_mode_enabled() const;
 
 	MCPStatusPanel();
 	~MCPStatusPanel();

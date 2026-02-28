@@ -319,6 +319,11 @@ String AgentPanel::_build_agents_json() const {
 Vector<String> AgentPanel::_build_claude_args() const {
 	Vector<String> args;
 
+	// Debug mode — queried from the MCP Status panel (global setting).
+	if (server_plugin && server_plugin->is_debug_mode_enabled()) {
+		args.push_back("--debug");
+	}
+
 	// MCP server configuration written to a temp file.
 	if (!mcp_config_path.is_empty()) {
 		args.push_back("--mcp-config");

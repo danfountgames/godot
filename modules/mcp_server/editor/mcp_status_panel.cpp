@@ -74,6 +74,10 @@ void MCPStatusPanel::_bind_methods() {
 	// No GDScript-exposed methods needed.
 }
 
+bool MCPStatusPanel::is_debug_mode_enabled() const {
+	return debug_toggle && debug_toggle->is_pressed();
+}
+
 // =========================================================================
 // Dot Texture Generation
 // =========================================================================
@@ -154,6 +158,12 @@ void MCPStatusPanel::_build_ui() {
 	toggle_button->set_text(TTR("Start Server"));
 	toggle_button->connect("pressed", callable_mp(this, &MCPStatusPanel::_on_toggle_button_pressed));
 	server_status_panel->add_child(toggle_button);
+
+	debug_toggle = memnew(CheckBox);
+	debug_toggle->set_text(TTR("Debug mode"));
+	debug_toggle->set_tooltip_text(TTR("Launch Claude with --debug flag for verbose diagnostic output."));
+	debug_toggle->set_pressed(false);
+	server_status_panel->add_child(debug_toggle);
 
 	// -- VSeparator --
 	top_bar->add_child(memnew(VSeparator));

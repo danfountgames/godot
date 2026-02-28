@@ -630,6 +630,10 @@ void MCPServerPlugin::toggle_server() {
 	}
 }
 
+bool MCPServerPlugin::is_debug_mode_enabled() const {
+	return status_panel && status_panel->is_debug_mode_enabled();
+}
+
 // ---------------------------------------------------------------------------
 // Discovery File
 // ---------------------------------------------------------------------------
