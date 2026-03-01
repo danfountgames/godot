@@ -3,7 +3,10 @@
 #  godot-kickoff.sh — Bootstrap a Godot 4 game project for AI-assisted dev
 # ============================================================================
 #
-#  Creates a new Godot 4 project with:
+#  Run this INSIDE your project folder (or an empty folder).
+#  It writes all scaffolding files into the current directory.
+#
+#  Creates:
 #    - Architecture docs structure (docs/)
 #    - Claude Code configuration (.claude/)
 #    - Hooks for doc-awareness (load-architecture, post-tool nudges, stop gate)
@@ -14,24 +17,28 @@
 #    - Initial git commit
 #
 #  Usage:
-#    ./godot-kickoff.sh my_game
-#    ./godot-kickoff.sh my_game "A roguelike deckbuilder with tactical combat"
-#    ./godot-kickoff.sh                  # defaults to "my_game"
+#    mkdir my_game && cd my_game
+#    curl -O https://raw.githubusercontent.com/.../godot-kickoff.sh
+#    bash godot-kickoff.sh "My Game" "A roguelike deckbuilder with tactical combat"
+#
+#    # or just:
+#    bash godot-kickoff.sh              # defaults to folder name
 #
 # ============================================================================
 set -euo pipefail
 
-PROJECT_NAME="${1:-my_game}"
+PROJECT_DIR="$(pwd)"
+PROJECT_NAME="${1:-$(basename "$PROJECT_DIR")}"
 DESCRIPTION="${2:-}"
-PROJECT_DIR="$(pwd)/$PROJECT_NAME"
 
 # ── Guard ───────────────────────────────────────────────────────────────────
-if [ -d "$PROJECT_DIR" ]; then
-    echo "Error: directory '$PROJECT_DIR' already exists."
+if [ -f "$PROJECT_DIR/project.godot" ]; then
+    echo "Error: project.godot already exists in this directory."
+    echo "This script is for bootstrapping new projects."
     exit 1
 fi
 
-echo "Creating Godot 4 project: $PROJECT_NAME"
+echo "Bootstrapping Godot 4 project: $PROJECT_NAME"
 echo "Location: $PROJECT_DIR"
 echo ""
 
@@ -414,10 +421,11 @@ The next session can pick up the plan and start building with full context.
 KICKOFF_EOF
 
 # ── Git init ────────────────────────────────────────────────────────────────
-cd "$PROJECT_DIR"
-git init -q
-git add -A
-git commit -q -m "$(cat <<'COMMIT_EOF'
+if [ ! -d "$PROJECT_DIR/.git" ]; then
+    git init -q "$PROJECT_DIR"
+fi
+git -C "$PROJECT_DIR" add -A
+git -C "$PROJECT_DIR" commit -q -m "$(cat <<'COMMIT_EOF'
 Bootstrap project with architecture docs and Claude Code config
 
 Sets up documentation-first workflow:
@@ -431,21 +439,24 @@ No game code yet — run a planning session first.
 COMMIT_EOF
 )"
 
+# ── Self-clean ──────────────────────────────────────────────────────────────
+# Remove the kickoff script itself from the project — it's done its job.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+if [ -f "$PROJECT_DIR/$(basename "$0")" ]; then
+    rm "$PROJECT_DIR/$(basename "$0")"
+fi
+
 # ── Done ────────────────────────────────────────────────────────────────────
 echo ""
 echo "================================================"
-echo "  $PROJECT_NAME created successfully"
+echo "  $PROJECT_NAME — ready"
 echo "================================================"
 echo ""
-echo "  Project:    $PROJECT_DIR"
-echo "  Git:        initialized with initial commit"
-echo ""
 echo "  Next steps:"
-echo "    1. cd $PROJECT_NAME"
-echo "    2. Open in Claude Code (or Godot agent panel)"
-echo "    3. Paste: \"Read KickoffPlanningPrompt.md and follow it\""
-echo "    4. Plan your game architecture through conversation"
-echo "    5. Then build — every future agent session loads docs automatically"
+echo "    1. Open Claude Code in this directory"
+echo "    2. Say: \"Read KickoffPlanningPrompt.md and follow it\""
+echo "    3. Plan your game architecture through conversation"
+echo "    4. Every future agent session loads docs automatically"
 echo ""
 echo "  Structure:"
 echo "    docs/architecture.md        ← fill during planning"
