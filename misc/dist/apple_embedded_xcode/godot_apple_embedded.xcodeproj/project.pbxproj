@@ -263,7 +263,7 @@
 				"LD_CLASSIC_1500" = "-ld_classic";
 				"LD_CLASSIC_1501" = "-ld_classic";
 				"LD_CLASSIC_1510" = "-ld_classic";
-				OTHER_LDFLAGS = "$(LD_CLASSIC_$(XCODE_VERSION_ACTUAL)) $linker_flags";
+				OTHER_LDFLAGS = "$(LD_CLASSIC_$(XCODE_VERSION_ACTUAL)) -weak_framework MetalFX $linker_flags";
 				SDKROOT = $sdkroot;
 				TARGETED_DEVICE_FAMILY = "$targeted_device_family";
 			};
@@ -304,7 +304,7 @@
 				"LD_CLASSIC_1500" = "-ld_classic";
 				"LD_CLASSIC_1501" = "-ld_classic";
 				"LD_CLASSIC_1510" = "-ld_classic";
-				OTHER_LDFLAGS = "$(LD_CLASSIC_$(XCODE_VERSION_ACTUAL)) $linker_flags";
+				OTHER_LDFLAGS = "$(LD_CLASSIC_$(XCODE_VERSION_ACTUAL)) -weak_framework MetalFX $linker_flags";
 				SDKROOT = $sdkroot;
 				TARGETED_DEVICE_FAMILY = "$targeted_device_family";
 				VALIDATE_PRODUCT = YES;

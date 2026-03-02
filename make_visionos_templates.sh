@@ -1,35 +1,37 @@
 #!/bin/bash
 set -e
 
-# Godot Engine [FI] — visionOS Export Templates (device + simulator)
+# Godot Engine [FI] — visionOS Export Templates (device only)
 # No extra_suffix on templates — the editor expects standard filenames.
 
-# Build device templates
-BUILD_NAME=fi scons platform=visionos target=template_debug arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
-BUILD_NAME=fi scons platform=visionos target=template_release arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+# Load PCK encryption key (godot.gdkey, gitignored)
+GDKEY_FILE="$(dirname "$0")/godot.gdkey"
+if [ -f "$GDKEY_FILE" ]; then
+    export SCRIPT_AES256_ENCRYPTION_KEY=$(cat "$GDKEY_FILE" | tr -d '[:space:]')
+    echo "*** Encryption key loaded from godot.gdkey"
+else
+    echo "WARNING: godot.gdkey not found — building WITHOUT encryption support"
+fi
 
-# Build simulator templates
-BUILD_NAME=fi scons platform=visionos target=template_debug simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
-BUILD_NAME=fi scons platform=visionos target=template_release simulator=yes arch=arm64 vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=visionos target=template_debug arch=arm64 -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=visionos target=template_release arch=arm64 -j$(sysctl -n hw.ncpu)
 
 # Assemble export templates
 mkdir -p templates
 rm -rf templates/visionos
 cp -r misc/dist/apple_embedded_xcode templates/visionos
 
-# Device
 cp bin/libgodot.visionos.template_debug.arm64.a \
     templates/visionos/libgodot.visionos.debug.xcframework/xros-arm64/libgodot.a
 cp bin/libgodot.visionos.template_release.arm64.a \
     templates/visionos/libgodot.visionos.release.xcframework/xros-arm64/libgodot.a
 
-# Simulator
-cp bin/libgodot.visionos.template_debug.arm64.simulator.a \
-    templates/visionos/libgodot.visionos.debug.xcframework/xros-arm64-simulator/libgodot.a
-cp bin/libgodot.visionos.template_release.arm64.simulator.a \
-    templates/visionos/libgodot.visionos.release.xcframework/xros-arm64-simulator/libgodot.a
+# MoltenVK for Vulkan support
+cp -R thirdparty/moltenvk/MoltenVK.xcframework templates/visionos/
 
-# Remove iOS frameworks (visionOS-only zip)
+# Remove simulator slices and iOS frameworks
+rm -rf templates/visionos/libgodot.visionos.debug.xcframework/xros-arm64-simulator
+rm -rf templates/visionos/libgodot.visionos.release.xcframework/xros-arm64-simulator
 rm -rf templates/visionos/libgodot.ios.debug.xcframework
 rm -rf templates/visionos/libgodot.ios.release.xcframework
 

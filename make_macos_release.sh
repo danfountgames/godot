@@ -2,7 +2,7 @@
 set -e
 
 # Godot Engine [FI] — macOS Editor Release (arm64)
-BUILD_NAME=fi scons platform=macos arch=arm64 target=editor extra_suffix=fi vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=macos arch=arm64 target=editor extra_suffix=fi vulkan_sdk_path=thirdparty/moltenvk/MoltenVK.xcframework -j$(sysctl -n hw.ncpu)
 
 rm -rf "./Godot FI.app"
 cp -r misc/dist/macos_tools.app "./Godot FI.app"

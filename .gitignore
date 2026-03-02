@@ -23,6 +23,7 @@
 ###########################
 
 /custom.py
+/godot.gdkey
 misc/hooks/pre-commit-custom-*
 
 #############################

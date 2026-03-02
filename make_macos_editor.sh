@@ -3,7 +3,7 @@ set -e
 
 # Godot Engine [FI] — macOS Editor (arm64)
 # Production editor build: speed_trace optimization, no DEV_ENABLED.
-BUILD_NAME=fi scons platform=macos arch=arm64 extra_suffix=fi vulkan=no -j$(sysctl -n hw.ncpu)
+BUILD_NAME=fi scons platform=macos arch=arm64 extra_suffix=fi vulkan_sdk_path=thirdparty/moltenvk/MoltenVK.xcframework -j$(sysctl -n hw.ncpu)
 
 # Bundle as "Godot FI.app" so it sits alongside stock Godot.app
 rm -rf "./Godot FI.app"
