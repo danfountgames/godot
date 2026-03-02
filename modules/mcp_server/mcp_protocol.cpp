@@ -684,15 +684,23 @@ void MCPProtocol::process_request(int p_client_id) {
 
 	// ── Step 4b: Bearer token authentication ─────────────────────────────
 	// Accept either the global auth_token or a registered per-agent token.
+	//
+	// All 401 responses include WWW-Authenticate: Bearer (RFC 6750 §3).
+	// This signals to MCP clients (e.g. Claude Code) that this server uses
+	// static Bearer token auth — not OAuth — preventing them from initiating
+	// an OAuth discovery flow that the server does not implement.
 	String request_agent_id; // Populated if this request uses an agent token.
 	if (!auth_token.is_empty() || !agent_tokens.is_empty()) {
+		HashMap<String, String> www_auth;
+		www_auth["WWW-Authenticate"] = "Bearer realm=\"Godot MCP\"";
+
 		String auth_header = session->headers.has("authorization")
 				? session->headers["authorization"]
 				: String();
 		if (auth_header.is_empty()) {
 			session->queue_response(MCP_HTTP_401,
 					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: missing Bearer token"),
-					origin_header);
+					origin_header, www_auth);
 			return;
 		}
 
@@ -726,7 +734,7 @@ void MCPProtocol::process_request(int p_client_id) {
 		if (!token_valid) {
 			session->queue_response(MCP_HTTP_401,
 					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid Bearer token"),
-					origin_header);
+					origin_header, www_auth);
 			return;
 		}
 	}

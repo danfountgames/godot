@@ -283,32 +283,30 @@ void MCPServerPlugin::_on_agent_title_changed(const String &p_title) {
 	for (int i = 0; i < agent_panels.size(); i++) {
 		AgentPanel *panel = agent_panels[i];
 		int tab_idx = ai_tab_container->get_tab_idx_from_control(panel);
-		String raw_title = panel->get_current_title().strip_edges();
 
-		// Claude Code title format: "Folder - Claude Code - custom name - 80x24"
-		// Extract the custom name segment (after "Claude Code", before dimensions).
+		// Normalize em-dash separators (Claude Code uses " — " in some versions).
+		String raw_title = panel->get_current_title().strip_edges();
+		raw_title = raw_title.replace(" \xe2\x80\x94 ", " - "); // U+2014 EM DASH
+
+		// Claude Code title format: "Claude Code - <description> - 80x24"
+		// Skip the first segment (always "Claude Code" / "claude"), then take
+		// the next segment that isn't a terminal dimension string (e.g. "80x24").
 		String title;
 		PackedStringArray parts = raw_title.split(" - ");
-		if (parts.size() >= 3) {
-			for (int p = 1; p < parts.size(); p++) {
-				String seg = parts[p].strip_edges();
-				// Skip known non-custom segments.
-				if (seg.to_lower() == "claude" || seg.to_lower() == "claude code") {
+		for (int p = 1; p < parts.size(); p++) {
+			String seg = parts[p].strip_edges();
+			if (seg.is_empty()) {
+				continue;
+			}
+			// Skip terminal dimension strings like "80x24".
+			if (seg.contains("x")) {
+				PackedStringArray dims = seg.split("x");
+				if (dims.size() == 2 && dims[0].is_valid_int() && dims[1].is_valid_int()) {
 					continue;
 				}
-				// Skip dimension strings like "80x24".
-				if (seg.contains("x")) {
-					PackedStringArray dims = seg.split("x");
-					if (dims.size() == 2 && dims[0].is_valid_int() && dims[1].is_valid_int()) {
-						continue;
-					}
-				}
-				title = seg;
-				break;
 			}
-		}
-		if (title.is_empty()) {
-			title = raw_title;
+			title = seg;
+			break;
 		}
 
 		String default_name = "Agent " + itos(i + 1);
