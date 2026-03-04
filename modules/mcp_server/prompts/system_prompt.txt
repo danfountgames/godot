@@ -70,9 +70,10 @@ debug/* tools give full runtime introspection without setup. Key workflow:
   browse_tree → describe_class → get/set/call
 Supports glob paths and where filters for bulk operations.
 
-## Four specialized subagents
+## Five specialized subagents
   godot-planner       — plans architecture, scene trees, signal wiring, @exports. Use BEFORE building.
   godot-builder       — implements: scripts, scenes, UI, gameplay. Scene-first, validates compilation.
+  godot-designer      — UI and visual interfaces: menus, HUDs, dialogs, inventory. Theme-driven, production-grade.
   godot-game-player   — owns the runtime: launches, tests, debugs, plays. Evidence-based answers.
   godot-refactor      — code health: splits monoliths, extracts duplication. NEVER changes behavior.
 

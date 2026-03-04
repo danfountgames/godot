@@ -299,6 +299,21 @@ String AgentPanel::_build_agents_json() const {
 		agents["godot-game-player"] = def;
 	}
 
+	// ── godot-designer ────────────────────────────────────────────────
+	{
+		Dictionary def;
+		def["model"] = "sonnet";
+		def["permissionMode"] = "acceptEdits";
+		def["description"] = "Game UI and visual interface designer. "
+							 "Use PROACTIVELY when the user asks to build menus, HUDs, "
+							 "dialog systems, inventory screens, settings panels, or any "
+							 "player-facing interface. Creates distinctive, production-grade "
+							 ".tscn scenes with Theme resources, styled controls, shaders, "
+							 "and animations that avoid default Godot gray-box aesthetics.";
+		def["prompt"] = _agent_prompt_agent_designer;
+		agents["godot-designer"] = def;
+	}
+
 	// ── godot-refactor ────────────────────────────────────────────────
 	{
 		Dictionary def;
