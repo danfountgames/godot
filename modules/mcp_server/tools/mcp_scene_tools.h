@@ -87,6 +87,7 @@ private:
 	static Dictionary _handle_connect_signal_impl(const Dictionary &p_args);
 	static Dictionary _handle_disconnect_signal_impl(const Dictionary &p_args);
 	static Dictionary _handle_attach_script_impl(const Dictionary &p_args);
+	static Dictionary _handle_browse_tree_impl(const Dictionary &p_args);
 	static Dictionary _handle_save_impl(const Dictionary &p_args);
 	static Dictionary _handle_set_anchor_preset_impl(const Dictionary &p_args);
 };

@@ -820,8 +820,12 @@ Dictionary MCPTestingTools::handle_run(const Dictionary &p_args) {
 	PendingRequest *req = bridge->create_pending("test_run");
 
 	// 10. Launch the test runner scene via EditorRunBar (deferred to main thread).
-	callable_mp(EditorRunBar::get_singleton(),
-			&EditorRunBar::play_custom_scene)
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (!run_bar) {
+		cleanup_runner_files();
+		return make_tool_error("Editor not fully initialized — EditorRunBar unavailable.");
+	}
+	callable_mp(run_bar, &EditorRunBar::play_custom_scene)
 			.bind(String("res://addons/mcp_test/runner.tscn"), Vector<String>())
 			.call_deferred();
 

@@ -672,6 +672,10 @@ Variant MCPSceneTools::_coerce_json_to_variant(const Variant &p_json_value,
 // ============================================================================
 
 Dictionary MCPSceneTools::handle_browse_tree(const Dictionary &p_args) {
+	return _run_on_main_thread(&MCPSceneTools::_handle_browse_tree_impl, p_args);
+}
+
+Dictionary MCPSceneTools::_handle_browse_tree_impl(const Dictionary &p_args) {
 	Node *scene_root = _get_scene_root();
 	if (!scene_root) {
 		return make_tool_error(

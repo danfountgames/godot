@@ -59,7 +59,8 @@ public:
 	void resize(int p_rows, int p_cols);
 
 	// Check if child is alive via waitpid(WNOHANG).
-	bool is_running() const;
+	// Non-const: reaps the child and clears child_pid when it exits.
+	bool is_running();
 
 	// Returns exit code after child exits. -1 if still running.
 	int get_exit_code();

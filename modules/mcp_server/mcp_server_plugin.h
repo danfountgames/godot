@@ -86,6 +86,7 @@ private:
 	void _create_agent_tab();
 	void _on_tab_changed(int p_tab);
 	void _on_tab_close_pressed(int p_tab);
+	void _deferred_free_panel(ObjectID p_id);
 	void _on_agent_title_changed(const String &p_title);
 	void _update_close_buttons();
 	void _update_tab_icons();

@@ -171,7 +171,11 @@ Dictionary MCPBreakpointTools::handle_set_breakpoint(const Dictionary &p_args) {
 	}
 
 	// Dispatch to main thread.
-	callable_mp(EditorDebuggerNode::get_singleton(), &EditorDebuggerNode::set_breakpoint)
+	EditorDebuggerNode *dbg = EditorDebuggerNode::get_singleton();
+	if (!dbg) {
+		return make_tool_error("Editor not fully initialized — debugger unavailable.");
+	}
+	callable_mp(dbg, &EditorDebuggerNode::set_breakpoint)
 			.call_deferred(path, line, enabled);
 
 	String action_text = enabled ? "set" : "removed";
@@ -370,7 +374,11 @@ Dictionary MCPBreakpointTools::handle_step(const Dictionary &p_args) {
 			return make_tool_error("Game is already paused. Use 'continue', 'into', or 'over' instead.");
 		}
 
-		callable_mp(EditorDebuggerNode::get_singleton(), &EditorDebuggerNode::debug_break)
+		EditorDebuggerNode *dbg = EditorDebuggerNode::get_singleton();
+		if (!dbg) {
+			return make_tool_error("Editor not fully initialized — debugger unavailable.");
+		}
+		callable_mp(dbg, &EditorDebuggerNode::debug_break)
 				.call_deferred();
 
 		Dictionary structured;
@@ -386,7 +394,11 @@ Dictionary MCPBreakpointTools::handle_step(const Dictionary &p_args) {
 			return make_tool_error("Game is not paused. Use 'break' to pause the game first.");
 		}
 
-		callable_mp(EditorDebuggerNode::get_singleton(), &EditorDebuggerNode::debug_continue)
+		EditorDebuggerNode *dbg = EditorDebuggerNode::get_singleton();
+		if (!dbg) {
+			return make_tool_error("Editor not fully initialized — debugger unavailable.");
+		}
+		callable_mp(dbg, &EditorDebuggerNode::debug_continue)
 				.call_deferred();
 
 		Dictionary structured;
@@ -402,7 +414,11 @@ Dictionary MCPBreakpointTools::handle_step(const Dictionary &p_args) {
 			return make_tool_error("Game is not paused. Use 'break' to pause the game first.");
 		}
 
-		callable_mp(EditorDebuggerNode::get_singleton(), &EditorDebuggerNode::debug_next)
+		EditorDebuggerNode *dbg = EditorDebuggerNode::get_singleton();
+		if (!dbg) {
+			return make_tool_error("Editor not fully initialized — debugger unavailable.");
+		}
+		callable_mp(dbg, &EditorDebuggerNode::debug_next)
 				.call_deferred();
 
 		// Wait for the game to re-pause at the next line.
@@ -444,7 +460,11 @@ Dictionary MCPBreakpointTools::handle_step(const Dictionary &p_args) {
 			return make_tool_error("Game is not paused. Use 'break' to pause the game first.");
 		}
 
-		callable_mp(EditorDebuggerNode::get_singleton(), &EditorDebuggerNode::debug_step)
+		EditorDebuggerNode *dbg = EditorDebuggerNode::get_singleton();
+		if (!dbg) {
+			return make_tool_error("Editor not fully initialized — debugger unavailable.");
+		}
+		callable_mp(dbg, &EditorDebuggerNode::debug_step)
 				.call_deferred();
 
 		// Wait for the game to re-pause.

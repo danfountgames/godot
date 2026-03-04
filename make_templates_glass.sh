@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# Godot Engine [FI] — iOS Export Templates "Glass" (stripped-down, LTO)
+# Godot Engine [FI] — Export Templates "Glass" (stripped-down, LTO)
 # Release only, device only. 3D enabled, but no physics, no deprecated APIs, no unused modules.
+# Targets: iOS (device), macOS.
 
 # Load PCK encryption key (godot.gdkey, gitignored)
 GDKEY_FILE="$(dirname "$0")/godot.gdkey"
@@ -26,9 +27,13 @@ GLASS_OPTS="extra_suffix=glass \
     module_webrtc_enabled=no \
     module_mono_enabled=no"
 
+echo "=== iOS (arm64) ==="
 BUILD_NAME=fi scons platform=ios target=template_release arch=arm64 $GLASS_OPTS -j$(sysctl -n hw.ncpu)
 
-# Assemble export templates
+echo "=== macOS (arm64) ==="
+BUILD_NAME=fi scons platform=macos target=template_release arch=arm64 vulkan_sdk_path=thirdparty/moltenvk/MoltenVK.xcframework $GLASS_OPTS -j$(sysctl -n hw.ncpu)
+
+# --- iOS xcframework ---
 mkdir -p templates
 rm -rf templates/ios_glass
 cp -r misc/dist/apple_embedded_xcode templates/ios_glass
@@ -52,5 +57,23 @@ zip -0 -r ../ios_glass.zip *
 cd ../../
 rm -rf templates/ios_glass
 
+# --- macOS .app bundle ---
+rm -rf bin/macos_template.app
+cp -r misc/dist/macos_template.app bin/macos_template.app
+mkdir -p bin/macos_template.app/Contents/MacOS
+cp bin/godot.macos.template_release.arm64.glass \
+    bin/macos_template.app/Contents/MacOS/godot_macos_release.arm64
+# Use release binary for debug slot too (release-only build)
+cp bin/godot.macos.template_release.arm64.glass \
+    bin/macos_template.app/Contents/MacOS/godot_macos_debug.arm64
+
+rm -f templates/macos_glass.zip
+cd bin
+zip -r ../templates/macos_glass.zip macos_template.app
+cd ..
+rm -rf bin/macos_template.app
+
 echo ""
-echo "Build complete: templates/ios_glass.zip"
+echo "Build complete:"
+echo "  iOS:     templates/ios_glass.zip"
+echo "  macOS:   templates/macos_glass.zip"

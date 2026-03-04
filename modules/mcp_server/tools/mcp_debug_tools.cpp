@@ -394,8 +394,11 @@ Dictionary MCPDebugTools::handle_run_project(const Dictionary &p_args) {
 
 	// Dispatch to main thread. EditorRunBar::play_main_scene() must run
 	// on the main thread because it modifies editor UI state.
-	callable_mp(EditorRunBar::get_singleton(),
-			&EditorRunBar::play_main_scene)
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (!run_bar) {
+		return make_tool_error("Editor not fully initialized — EditorRunBar unavailable.");
+	}
+	callable_mp(run_bar, &EditorRunBar::play_main_scene)
 			.bind(false, Vector<String>())
 			.call_deferred();
 
@@ -460,8 +463,11 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 	bridge->set_game_launching(suspended);
 
 	// Dispatch to main thread.
-	callable_mp(EditorRunBar::get_singleton(),
-			&EditorRunBar::play_custom_scene)
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (!run_bar) {
+		return make_tool_error("Editor not fully initialized — EditorRunBar unavailable.");
+	}
+	callable_mp(run_bar, &EditorRunBar::play_custom_scene)
 			.bind(scene, Vector<String>())
 			.call_deferred();
 
@@ -481,8 +487,11 @@ Dictionary MCPDebugTools::handle_run_scene(const Dictionary &p_args) {
 
 Dictionary MCPDebugTools::handle_stop(const Dictionary &p_args) {
 	// Stop is a no-op if no game is running -- returns success either way.
-	callable_mp(EditorRunBar::get_singleton(),
-			&EditorRunBar::stop_playing)
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (!run_bar) {
+		return make_tool_error("Editor not fully initialized — EditorRunBar unavailable.");
+	}
+	callable_mp(run_bar, &EditorRunBar::stop_playing)
 			.call_deferred();
 
 	String text = "Game stop queued.";

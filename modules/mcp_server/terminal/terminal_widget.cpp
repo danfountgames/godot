@@ -90,6 +90,16 @@ void TerminalWidget::_notification(int p_what) {
 			set_process_internal(true);
 		} break;
 
+		case NOTIFICATION_EXIT_TREE: {
+			// Stop processing immediately so no further INTERNAL_PROCESS
+			// ticks fire after this node leaves the tree.
+			set_process_internal(false);
+			// Null the scroll container pointer — it may be freed before us
+			// in the destruction cascade, and deferred _do_scroll_to_bottom
+			// calls must not dereference it.
+			scroll_container = nullptr;
+		} break;
+
 		case NOTIFICATION_THEME_CHANGED: {
 			// Re-derive terminal colors when the editor theme changes.
 			_update_theme_colors();
@@ -719,7 +729,7 @@ void TerminalWidget::stop_process() {
 	}
 }
 
-bool TerminalWidget::is_process_running() const {
+bool TerminalWidget::is_process_running() {
 	return running && pty.is_running();
 }
 

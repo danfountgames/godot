@@ -205,20 +205,28 @@ bool PTYManager::write_pty(const uint8_t *p_data, int p_len) {
 	}
 
 	int total_written = 0;
+	int retries = 0;
+	static const int MAX_RETRIES = 50; // ~50ms max stall at 1ms per retry.
+
 	while (total_written < p_len) {
 		ssize_t n = ::write(master_fd, p_data + total_written, p_len - total_written);
 
 		if (n > 0) {
 			total_written += (int)n;
+			retries = 0; // Reset on progress.
 			continue;
 		}
 
 		if (n < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-				// Retry.
+			if (errno == EINTR) {
+				continue; // Interrupted — retry immediately.
+			}
+			if ((errno == EAGAIN || errno == EWOULDBLOCK) && retries < MAX_RETRIES) {
+				retries++;
+				usleep(1000); // 1ms backoff to avoid busy-spinning.
 				continue;
 			}
-			// Actual write error.
+			// Actual error or too many retries — PTY buffer is full.
 			return false;
 		}
 	}
@@ -242,7 +250,7 @@ void PTYManager::resize(int p_rows, int p_cols) {
 	ioctl(master_fd, TIOCSWINSZ, &ws);
 }
 
-bool PTYManager::is_running() const {
+bool PTYManager::is_running() {
 	if (child_pid <= 0) {
 		return false;
 	}
@@ -255,7 +263,9 @@ bool PTYManager::is_running() const {
 		return true;
 	}
 
-	// Child has exited or an error occurred.
+	// Child was reaped or error — mark as done so kill_child() won't
+	// send signals to a potentially-reused PID.
+	child_pid = -1;
 	return false;
 }
 
@@ -274,8 +284,12 @@ int PTYManager::get_exit_code() {
 
 	if (result < 0) {
 		// Error or already reaped.
+		child_pid = -1;
 		return -1;
 	}
+
+	// Child was reaped — clear pid so kill_child() won't signal a reused PID.
+	child_pid = -1;
 
 	if (WIFEXITED(status)) {
 		return WEXITSTATUS(status);
@@ -296,18 +310,32 @@ void PTYManager::kill_child() {
 	// Try SIGTERM first.
 	::kill(child_pid, SIGTERM);
 
-	// Wait briefly for the child to exit.
-	usleep(100000); // 100ms
-
+	// Poll for exit with bounded retries (max ~50ms total, non-blocking).
 	int status = 0;
-	pid_t result = waitpid(child_pid, &status, WNOHANG);
-
-	if (result == 0) {
-		// Child still alive after SIGTERM; escalate to SIGKILL.
-		::kill(child_pid, SIGKILL);
-		waitpid(child_pid, &status, 0);
+	for (int i = 0; i < 10; i++) {
+		pid_t result = waitpid(child_pid, &status, WNOHANG);
+		if (result != 0) {
+			child_pid = -1;
+			return; // Reaped (or error — either way, done).
+		}
+		usleep(5000); // 5ms per attempt.
 	}
 
+	// Child still alive after ~50ms; escalate to SIGKILL.
+	::kill(child_pid, SIGKILL);
+
+	// SIGKILL can't be caught — poll a few more times rather than blocking.
+	for (int i = 0; i < 10; i++) {
+		pid_t result = waitpid(child_pid, &status, WNOHANG);
+		if (result != 0) {
+			child_pid = -1;
+			return;
+		}
+		usleep(5000); // 5ms per attempt.
+	}
+
+	// Last resort: child is in uninterruptible I/O. Don't block the editor.
+	// The zombie will be reaped when close_pty detects it or on editor exit.
 	child_pid = -1;
 }
 

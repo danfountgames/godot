@@ -124,6 +124,14 @@ private:
 	// the MCP poll thread (flush_sse_notifications).
 	Mutex notification_mutex;
 
+	// State mutex: protects `clients`, `sessions`, `agent_tokens`,
+	// `_deferred_runtime_prefs`, and `_deferred_editor_prefs` HashMaps from
+	// concurrent structural mutations (insert/erase/clear) vs reads/iterations
+	// across the poll thread and main thread. Lock scopes are kept small to
+	// avoid deadlocks with _run_on_main_thread() blocking calls.
+	// Lock ordering: state_mutex → notification_mutex (if both needed).
+	mutable Mutex state_mutex;
+
 	// Logging severity filter (Phase C). RFC 5424: 0=emergency .. 7=debug.
 	// Default: 6 (info) -- send levels 0-6, suppress debug.
 	SafeNumeric<int> min_log_severity; // Atomic for cross-thread reads.

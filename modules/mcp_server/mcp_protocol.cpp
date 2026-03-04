@@ -179,39 +179,47 @@ MCPProtocol::~MCPProtocol() {
 // ---------------------------------------------------------------------------
 
 void MCPProtocol::register_agent_token(const String &p_agent_token) {
+	MutexLock lock(state_mutex);
 	agent_tokens[p_agent_token] = true;
 	print_verbose("[MCP] Agent token registered: " + p_agent_token.substr(0, 12) + "...");
 }
 
 void MCPProtocol::unregister_agent_token(const String &p_agent_token) {
+	MutexLock lock(state_mutex);
 	agent_tokens.erase(p_agent_token);
 	_deferred_runtime_prefs.erase(p_agent_token);
 	print_verbose("[MCP] Agent token unregistered: " + p_agent_token.substr(0, 12) + "...");
 }
 
 void MCPProtocol::set_runtime_tools_enabled(const String &p_agent_token, bool p_enabled) {
-	// Always persist the preference so it survives session reconnections.
-	// When a session expires and the agent reconnects with a new initialize,
-	// the new session picks up this value from _deferred_runtime_prefs.
-	_deferred_runtime_prefs[p_agent_token] = p_enabled;
+	bool found = false;
+	{
+		MutexLock lock(state_mutex);
+		// Always persist the preference so it survives session reconnections.
+		_deferred_runtime_prefs[p_agent_token] = p_enabled;
 
-	// Also apply to any live session that already has this agent_id.
-	for (KeyValue<String, MCPSessionState> &kv : sessions) {
-		if (kv.value.agent_id == p_agent_token) {
-			kv.value.runtime_tools_enabled = p_enabled;
-			print_verbose(vformat("[MCP] Runtime tools %s for agent %s (session %s)",
-					p_enabled ? "enabled" : "disabled",
-					p_agent_token.substr(0, 12) + "...",
-					kv.key.substr(0, 8) + "..."));
-
-			// Notify the agent that the tool list changed so it re-fetches.
-			notify_tools_changed();
-			return;
+		// Also apply to any live session that already has this agent_id.
+		for (KeyValue<String, MCPSessionState> &kv : sessions) {
+			if (kv.value.agent_id == p_agent_token) {
+				kv.value.runtime_tools_enabled = p_enabled;
+				print_verbose(vformat("[MCP] Runtime tools %s for agent %s (session %s)",
+						p_enabled ? "enabled" : "disabled",
+						p_agent_token.substr(0, 12) + "...",
+						kv.key.substr(0, 8) + "..."));
+				found = true;
+				break;
+			}
 		}
+	}
+	// Notify outside lock — notify_tools_changed() calls queue_notification_all()
+	// which also takes state_mutex.
+	if (found) {
+		notify_tools_changed();
 	}
 }
 
 bool MCPProtocol::get_runtime_tools_enabled(const String &p_agent_token) const {
+	MutexLock lock(state_mutex);
 	for (const KeyValue<String, MCPSessionState> &kv : sessions) {
 		if (kv.value.agent_id == p_agent_token) {
 			return kv.value.runtime_tools_enabled;
@@ -225,25 +233,35 @@ bool MCPProtocol::get_runtime_tools_enabled(const String &p_agent_token) const {
 }
 
 void MCPProtocol::set_editor_controls_enabled(const String &p_agent_token, bool p_enabled) {
-	// Find the session that has this agent_id and flip the flag.
-	for (KeyValue<String, MCPSessionState> &kv : sessions) {
-		if (kv.value.agent_id == p_agent_token) {
-			kv.value.editor_controls_enabled = p_enabled;
-			print_verbose(vformat("[MCP] Editor controls %s for agent %s (session %s)",
-					p_enabled ? "enabled" : "disabled",
-					p_agent_token.substr(0, 12) + "...",
-					kv.key.substr(0, 8) + "..."));
-
-			// Notify the agent that the tool list changed so it re-fetches.
-			notify_tools_changed();
-			return;
+	bool found = false;
+	{
+		MutexLock lock(state_mutex);
+		// Find the session that has this agent_id and flip the flag.
+		for (KeyValue<String, MCPSessionState> &kv : sessions) {
+			if (kv.value.agent_id == p_agent_token) {
+				kv.value.editor_controls_enabled = p_enabled;
+				print_verbose(vformat("[MCP] Editor controls %s for agent %s (session %s)",
+						p_enabled ? "enabled" : "disabled",
+						p_agent_token.substr(0, 12) + "...",
+						kv.key.substr(0, 8) + "..."));
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			// Session not yet established — store the preference on the token.
+			_deferred_editor_prefs[p_agent_token] = p_enabled;
 		}
 	}
-	// Session not yet established — store the preference on the token.
-	_deferred_editor_prefs[p_agent_token] = p_enabled;
+	// Notify outside lock — notify_tools_changed() calls queue_notification_all()
+	// which also takes state_mutex.
+	if (found) {
+		notify_tools_changed();
+	}
 }
 
 bool MCPProtocol::get_editor_controls_enabled(const String &p_agent_token) const {
+	MutexLock lock(state_mutex);
 	for (const KeyValue<String, MCPSessionState> &kv : sessions) {
 		if (kv.value.agent_id == p_agent_token) {
 			return kv.value.editor_controls_enabled;
@@ -308,6 +326,7 @@ bool MCPProtocol::_check_tool_permission(const String &p_tool_name, void *p_user
 	if (!is_runtime_tool(p_tool_name)) {
 		return true; // Not a runtime tool — always allowed.
 	}
+	MutexLock lock(self->state_mutex);
 	if (!self->sessions.has(self->_current_request_session_id)) {
 		return true; // Unknown session (shouldn't happen — allow defensively).
 	}
@@ -343,14 +362,17 @@ Error MCPProtocol::start(int p_port, const IPAddress &p_bind_ip) {
 }
 
 void MCPProtocol::stop() {
-	for (const KeyValue<int, Ref<MCPSession>> &E : clients) {
-		Ref<MCPSession> session = E.value;
-		if (session.is_valid() && session->connection.is_valid()) {
-			session->connection->disconnect_from_host();
+	{
+		MutexLock lock(state_mutex);
+		for (const KeyValue<int, Ref<MCPSession>> &E : clients) {
+			Ref<MCPSession> session = E.value;
+			if (session.is_valid() && session->connection.is_valid()) {
+				session->connection->disconnect_from_host();
+			}
 		}
+		clients.clear();
+		sessions.clear();
 	}
-	clients.clear();
-	sessions.clear();
 	server->stop();
 	server_start_time_usec = 0;
 }
@@ -438,12 +460,14 @@ String MCPProtocol::make_result_body(const Dictionary &p_result, const Variant &
 
 Error MCPProtocol::on_client_connected() {
 	Ref<StreamPeerTCP> tcp_peer = server->take_connection();
-	ERR_FAIL_COND_V_MSG((int)clients.size() >= max_clients, FAILED,
-			"MCP: Max client limit reached (" + itos(max_clients) + ").");
 
 	Ref<MCPSession> session;
 	session.instantiate();
 	session->connection = tcp_peer;
+
+	MutexLock lock(state_mutex);
+	ERR_FAIL_COND_V_MSG((int)clients.size() >= max_clients, FAILED,
+			"MCP: Max client limit reached (" + itos(max_clients) + ").");
 
 	int client_id = next_client_id++;
 	if (next_client_id < 0) {
@@ -463,6 +487,7 @@ Error MCPProtocol::on_client_connected() {
 }
 
 void MCPProtocol::on_client_disconnected(int p_client_id) {
+	MutexLock lock(state_mutex);
 	if (clients.has(p_client_id)) {
 		// NOTE: We do NOT remove from `sessions` here.
 		// MCP Streamable HTTP sessions persist across TCP connections.
@@ -524,7 +549,12 @@ void MCPProtocol::gc_stale_sessions() {
 	for (int i = 0; i < sessions_to_remove.size(); i++) {
 		print_verbose("[MCP] Session expired: " + sessions_to_remove[i].substr(0, 8) + "...");
 		resource_registry.unsubscribe_all(sessions_to_remove[i]);
-		sessions.erase(sessions_to_remove[i]);
+	}
+	if (!sessions_to_remove.is_empty()) {
+		MutexLock lock(state_mutex);
+		for (int i = 0; i < sessions_to_remove.size(); i++) {
+			sessions.erase(sessions_to_remove[i]);
+		}
 	}
 }
 
@@ -690,52 +720,56 @@ void MCPProtocol::process_request(int p_client_id) {
 	// static Bearer token auth — not OAuth — preventing them from initiating
 	// an OAuth discovery flow that the server does not implement.
 	String request_agent_id; // Populated if this request uses an agent token.
-	if (!auth_token.is_empty() || !agent_tokens.is_empty()) {
-		HashMap<String, String> www_auth;
-		www_auth["WWW-Authenticate"] = "Bearer realm=\"Godot MCP\"";
+	{
+		// Lock scope for agent_tokens reads.
+		MutexLock lock(state_mutex);
+		if (!auth_token.is_empty() || !agent_tokens.is_empty()) {
+			HashMap<String, String> www_auth;
+			www_auth["WWW-Authenticate"] = "Bearer realm=\"Godot MCP\"";
 
-		String auth_header = session->headers.has("authorization")
-				? session->headers["authorization"]
-				: String();
-		if (auth_header.is_empty()) {
-			session->queue_response(MCP_HTTP_401,
-					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: missing Bearer token"),
-					origin_header, www_auth);
-			return;
-		}
-
-		// Extract the token value after "Bearer ".
-		String presented_token;
-		if (auth_header.begins_with("Bearer ")) {
-			presented_token = auth_header.substr(7);
-		}
-
-		bool token_valid = false;
-
-		// Check against global token (constant-time comparison).
-		if (!auth_token.is_empty()) {
-			bool len_match = (presented_token.length() == auth_token.length());
-			int diff = 0;
-			int len = MIN(presented_token.length(), auth_token.length());
-			for (int i = 0; i < len; i++) {
-				diff |= presented_token[i] ^ auth_token[i];
+			String auth_header = session->headers.has("authorization")
+					? session->headers["authorization"]
+					: String();
+			if (auth_header.is_empty()) {
+				session->queue_response(MCP_HTTP_401,
+						make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: missing Bearer token"),
+						origin_header, www_auth);
+				return;
 			}
-			if (len_match && diff == 0) {
+
+			// Extract the token value after "Bearer ".
+			String presented_token;
+			if (auth_header.begins_with("Bearer ")) {
+				presented_token = auth_header.substr(7);
+			}
+
+			bool token_valid = false;
+
+			// Check against global token (constant-time comparison).
+			if (!auth_token.is_empty()) {
+				bool len_match = (presented_token.length() == auth_token.length());
+				int diff = 0;
+				int len = MIN(presented_token.length(), auth_token.length());
+				for (int i = 0; i < len; i++) {
+					diff |= presented_token[i] ^ auth_token[i];
+				}
+				if (len_match && diff == 0) {
+					token_valid = true;
+				}
+			}
+
+			// Check against registered agent tokens.
+			if (!token_valid && agent_tokens.has(presented_token)) {
 				token_valid = true;
+				request_agent_id = presented_token;
 			}
-		}
 
-		// Check against registered agent tokens.
-		if (!token_valid && agent_tokens.has(presented_token)) {
-			token_valid = true;
-			request_agent_id = presented_token;
-		}
-
-		if (!token_valid) {
-			session->queue_response(MCP_HTTP_401,
-					make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid Bearer token"),
-					origin_header, www_auth);
-			return;
+			if (!token_valid) {
+				session->queue_response(MCP_HTTP_401,
+						make_error_body(JSONRPC::INVALID_REQUEST, "Unauthorized: invalid Bearer token"),
+						origin_header, www_auth);
+				return;
+			}
 		}
 	}
 
@@ -844,23 +878,23 @@ void MCPProtocol::process_request(int p_client_id) {
 		new_state.last_activity = OS::get_singleton()->get_ticks_usec();
 
 		// Link agent identity from the Bearer token (if this is an agent session).
-		if (!request_agent_id.is_empty()) {
-			new_state.agent_id = request_agent_id;
-			// Apply persisted runtime preference (survives reconnections).
-			// Don't erase — the preference lives for the lifetime of the agent token
-			// so subsequent reconnections inherit the same toggle state.
-			if (_deferred_runtime_prefs.has(request_agent_id)) {
-				new_state.runtime_tools_enabled = _deferred_runtime_prefs[request_agent_id];
+		{
+			MutexLock lock(state_mutex);
+			if (!request_agent_id.is_empty()) {
+				new_state.agent_id = request_agent_id;
+				// Apply persisted runtime preference (survives reconnections).
+				if (_deferred_runtime_prefs.has(request_agent_id)) {
+					new_state.runtime_tools_enabled = _deferred_runtime_prefs[request_agent_id];
+				}
+				// Apply deferred editor controls preference.
+				if (_deferred_editor_prefs.has(request_agent_id)) {
+					new_state.editor_controls_enabled = _deferred_editor_prefs[request_agent_id];
+					_deferred_editor_prefs.erase(request_agent_id);
+				}
+				print_verbose("[MCP] Session " + new_session_id.substr(0, 8) + "... linked to agent " + request_agent_id.substr(0, 12) + "...");
 			}
-			// Apply deferred editor controls preference.
-			if (_deferred_editor_prefs.has(request_agent_id)) {
-				new_state.editor_controls_enabled = _deferred_editor_prefs[request_agent_id];
-				_deferred_editor_prefs.erase(request_agent_id);
-			}
-			print_verbose("[MCP] Session " + new_session_id.substr(0, 8) + "... linked to agent " + request_agent_id.substr(0, 12) + "...");
+			sessions[new_session_id] = new_state;
 		}
-
-		sessions[new_session_id] = new_state;
 
 		HashMap<String, String> extra_headers;
 		extra_headers["Mcp-Session-Id"] = new_session_id;
@@ -1127,6 +1161,7 @@ Dictionary MCPProtocol::handle_initialize(const Dictionary &p_params) {
 }
 
 void MCPProtocol::handle_notifications_initialized(const String &p_session_id) {
+	MutexLock lock(state_mutex);
 	ERR_FAIL_COND(!sessions.has(p_session_id));
 	sessions[p_session_id].initialized = true;
 	print_verbose("[MCP] Session initialized: " + p_session_id.substr(0, 8) + "...");
@@ -1186,7 +1221,10 @@ void MCPProtocol::terminate_session(int p_client_id, const String &p_origin) {
 	resource_registry.unsubscribe_all(session_id_header);
 
 	// Remove the session from the protocol-level sessions map.
-	sessions.erase(session_id_header);
+	{
+		MutexLock lock(state_mutex);
+		sessions.erase(session_id_header);
+	}
 
 	session->queue_response(MCP_HTTP_204, "", p_origin);
 
@@ -1331,6 +1369,7 @@ void MCPProtocol::flush_sse_notifications() {
 }
 
 void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
+	MutexLock state_lock(state_mutex);
 	MutexLock lock(notification_mutex);
 	for (KeyValue<String, MCPSessionState> &E : sessions) {
 		if (E.value.initialized) {
@@ -1342,6 +1381,7 @@ void MCPProtocol::queue_notification_all(const String &p_json_rpc_message) {
 }
 
 void MCPProtocol::queue_notification(const String &p_session_id, const String &p_json_rpc_message) {
+	MutexLock state_lock(state_mutex);
 	MutexLock lock(notification_mutex);
 	if (sessions.has(p_session_id) && sessions[p_session_id].initialized) {
 		if (sessions[p_session_id].notification_queue.size() < MCP_MAX_EVENT_QUEUE_SIZE) {
@@ -2240,12 +2280,7 @@ void MCPProtocol::_update_tool_stats(const String &p_tool_name, uint64_t p_durat
 }
 
 Vector<MCPClientSnapshot> MCPProtocol::get_client_snapshots() const {
-	// NOTE: This is called from the main (UI) thread. The clients HashMap is
-	// only modified on the poll thread. We snapshot under no lock because the
-	// worst case is a slightly stale read (the panel updates every 500ms anyway).
-	// In threaded mode, there is a small race window, but the data is non-critical
-	// display data and the HashMap iteration is safe as long as no mutations happen
-	// concurrently. This is acceptable per the design doc's threading model.
+	MutexLock lock(state_mutex);
 	Vector<MCPClientSnapshot> result;
 	uint64_t now_usec = OS::get_singleton()->get_ticks_usec();
 
@@ -2307,10 +2342,12 @@ uint64_t MCPProtocol::get_start_time_usec() const {
 }
 
 int MCPProtocol::get_session_count() const {
+	MutexLock lock(state_mutex);
 	return sessions.size();
 }
 
 int MCPProtocol::get_client_count() const {
+	MutexLock lock(state_mutex);
 	return clients.size();
 }
 

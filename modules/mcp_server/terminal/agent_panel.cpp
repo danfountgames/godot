@@ -446,6 +446,10 @@ void AgentPanel::stop() {
 	set_process_internal(false);
 
 	if (terminal) {
+		// Stop the terminal's own internal processing too — it runs
+		// independently of the AgentPanel's and would keep polling the
+		// PTY / scrolling to bottom on a dead session.
+		terminal->set_process_internal(false);
 		terminal->stop_process();
 	}
 	claude_running = false;
@@ -476,7 +480,7 @@ void AgentPanel::_on_to_bottom_pressed() {
 }
 
 void AgentPanel::_on_scroll_changed(double p_value) {
-	if (!terminal || !scroll_container) {
+	if (!terminal || !scroll_container || !to_bottom_button) {
 		return;
 	}
 	ScrollBar *vbar = scroll_container->get_v_scroll_bar();

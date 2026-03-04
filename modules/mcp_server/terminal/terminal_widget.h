@@ -119,7 +119,7 @@ public:
 	void stop_process();
 
 	// Is a process running?
-	bool is_process_running() const;
+	bool is_process_running();
 
 	// Access to sub-components.
 	TerminalEmulator *get_emulator() { return &emulator; }

@@ -150,6 +150,13 @@ MCPServerPlugin::~MCPServerPlugin() {
 	}
 
 	if (ai_tab_container) {
+#ifdef MCP_TERMINAL_ENABLED
+		// Stop all agent panels before destruction — unregisters MCP tokens,
+		// cleans up temp config files, and kills child processes gracefully.
+		for (AgentPanel *panel : agent_panels) {
+			panel->stop();
+		}
+#endif
 		if (ai_tab_container->get_parent()) {
 			ai_tab_container->get_parent()->remove_child(ai_tab_container);
 		}
@@ -244,10 +251,11 @@ void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
 	// tearing down this one (remove_child / set_current_tab fire signals).
 	_closing_tab = true;
 
-	// Stop any running process.
+	// Stop any running process and halt all processing on the panel +
+	// its TerminalWidget so nothing ticks between now and the deferred free.
 	panel->stop();
 
-	// Disconnect signals targeting us before deletion — prevents deferred
+	// Disconnect signals targeting us before removal — prevents deferred
 	// title_changed callbacks from iterating a stale agent_panels vector.
 	if (panel->is_connected("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed))) {
 		panel->disconnect("title_changed", callable_mp(this, &MCPServerPlugin::_on_agent_title_changed));
@@ -259,15 +267,22 @@ void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
 		agent_panels.remove_at(vec_idx);
 	}
 
+	// Remove from the tree immediately (stops processing, hides the tab)
+	// but defer the actual memory deallocation — we're inside TabContainer's
+	// tab_button_pressed signal, and synchronous memdelete here corrupts
+	// its internal state when control returns to the TabContainer.
 	ai_tab_container->remove_child(panel);
-	memdelete(panel);
-
-	_closing_tab = false;
+	callable_mp(this, &MCPServerPlugin::_deferred_free_panel).call_deferred(panel->get_instance_id());
 
 	// If no agent tabs remain, create a fresh one.
+	// Keep _closing_tab = true through this — _create_agent_tab calls
+	// set_current_tab which fires tab_selected, and we must prevent
+	// _on_tab_changed from interpreting that as a "+" click.
 	if (agent_panels.is_empty()) {
 		_create_agent_tab();
 	}
+
+	_closing_tab = false;
 
 	_update_close_buttons();
 	_update_tab_icons();
@@ -279,34 +294,58 @@ void MCPServerPlugin::_on_tab_close_pressed(int p_tab) {
 	}
 }
 
+void MCPServerPlugin::_deferred_free_panel(ObjectID p_id) {
+	Object *obj = ObjectDB::get_instance(p_id);
+	if (obj) {
+		memdelete(obj);
+	}
+}
+
 void MCPServerPlugin::_on_agent_title_changed(const String &p_title) {
 	for (int i = 0; i < agent_panels.size(); i++) {
 		AgentPanel *panel = agent_panels[i];
 		int tab_idx = ai_tab_container->get_tab_idx_from_control(panel);
-
-		// Normalize em-dash separators (Claude Code uses " — " in some versions).
+		if (tab_idx < 0) {
+			continue; // Panel removed from tree but not yet freed.
+		}
 		String raw_title = panel->get_current_title().strip_edges();
-		raw_title = raw_title.replace(" \xe2\x80\x94 ", " - "); // U+2014 EM DASH
 
-		// Claude Code title format: "Claude Code - <description> - 80x24"
-		// Skip the first segment (always "Claude Code" / "claude"), then take
-		// the next segment that isn't a terminal dimension string (e.g. "80x24").
+		// Normalize em-dash (U+2014) and en-dash (U+2013) separators to
+		// plain " - " so we can split uniformly.
+		raw_title = raw_title.replace(String::chr(0x2014), "-");
+		raw_title = raw_title.replace(String::chr(0x2013), "-");
+		raw_title = raw_title.replace(" -- ", " - ");
+
+		// Claude Code title format (varies by version):
+		//   "Folder - {emoji} Description - Claude Code - 80x24"
+		//   "Claude Code - {emoji} Description - 80x24"
+		//   "{emoji} Description - Claude Code - 80x24"
+		// Strategy: split on " - ", skip known non-descriptive segments
+		// (folder at index 0, "claude"/"claude code", dimension strings),
+		// take the first remaining segment which includes the emoji.
 		String title;
 		PackedStringArray parts = raw_title.split(" - ");
-		for (int p = 1; p < parts.size(); p++) {
-			String seg = parts[p].strip_edges();
-			if (seg.is_empty()) {
-				continue;
-			}
-			// Skip terminal dimension strings like "80x24".
-			if (seg.contains("x")) {
-				PackedStringArray dims = seg.split("x");
-				if (dims.size() == 2 && dims[0].is_valid_int() && dims[1].is_valid_int()) {
+		if (parts.size() >= 2) {
+			for (int p = 1; p < parts.size(); p++) {
+				String seg = parts[p].strip_edges();
+				if (seg.is_empty()) {
 					continue;
 				}
+				// Skip "claude" or "Claude Code" segments.
+				String lower = seg.to_lower();
+				if (lower == "claude" || lower == "claude code") {
+					continue;
+				}
+				// Skip terminal dimension strings like "80x24".
+				if (seg.contains("x")) {
+					PackedStringArray dims = seg.split("x");
+					if (dims.size() == 2 && dims[0].strip_edges().is_valid_int() && dims[1].strip_edges().is_valid_int()) {
+						continue;
+					}
+				}
+				title = seg;
+				break;
 			}
-			title = seg;
-			break;
 		}
 
 		String default_name = "Agent " + itos(i + 1);
