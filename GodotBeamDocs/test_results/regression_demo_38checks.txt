@@ -1,0 +1,85 @@
+============================================================
+  DevPlayer 11-Step Regression Demo
+============================================================
+
+--- Step 1: Launch DevPlayer shell ---
+  PASS: Shell UI created
+  PASS: Shell reports ready
+  PASS: Project discovery ran
+  PASS: No project auto-launched
+
+--- Step 2: Mount project A (minimal_2d) ---
+  PASS: Project A launched
+  PASS: Project A GDScript executed
+  PASS: Shell UI still created alongside project
+
+--- Step 3: Verify project A runtime ---
+  PASS: Project path contains minimal_2d
+  PASS: ResourceDomainManager tracking active
+
+--- Step 4: Mount then unmount project A ---
+  PASS: Mount call succeeded
+  PASS: Unmount succeeded
+  PASS: Zero leaked references
+
+--- Step 5: Mount project B (autoload_reset_test) ---
+  PASS: Project B launched
+  PASS: Autoload session built
+  PASS: Project B GDScript executed
+
+--- Step 6: Verify project B autoload behavior ---
+  PASS: TestManager autoload referenced
+  PASS: Project path is autoload_reset_test
+
+--- Step 7: A→B→A cycle isolation ---
+  PASS: Cycle 2 unmount clean
+  PASS: Cycle 2 zero leaks
+  PASS: A→B→A remount succeeded
+  PASS: A remounted cleanly
+  PASS: Cycle 3 zero leaks
+
+--- Step 8: Git branch switch ---
+  PASS: Main branch GDScript executed
+  PASS: Project name correct
+  PASS: Feature branch GDScript executed after switch
+  PASS: No main branch contamination
+
+--- Step 9: Switch back to main branch ---
+  PASS: Main branch restored
+  PASS: No feature branch contamination
+
+--- Step 10: SyncServer live sync ---
+  PASS: SyncServer started
+  PASS: WebSocket hello handshake
+  PASS: File written via sync
+  PASS: Correct byte count (25)
+  PASS: Reload tier 1 acknowledged
+  PASS: Sync demo completed
+  PASS: Synced file content verified on disk
+
+--- Step 11: Clean shutdown ---
+  PASS: Final project launched
+  PASS: No ERROR lines in final run
+  PASS: No LEAK messages in final run
+
+============================================================
+  REGRESSION DEMO RESULTS
+  38 passed, 0 failed out of 38 checks
+============================================================
+
+  Steps exercised:
+    1. Launch shell (no project)
+    2. Mount project A (minimal_2d)
+    3. Verify project A runtime
+    4. Unmount project A
+    5. Mount project B (autoload_reset_test)
+    6. Verify project B autoloads
+    7. A→B→A cycle isolation
+    8. Git branch switch
+    9. Git branch restore
+   10. SyncServer live sync
+   11. Clean shutdown
+
+  STATUS: ALL STEPS PASSED
+
+Cleaning up /tmp/tmp.C3An8YkiLS ...

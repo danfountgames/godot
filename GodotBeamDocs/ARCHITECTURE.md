@@ -380,13 +380,27 @@ The following Godot editor subsystem is **not usable** by DevPlayer:
 
 | Milestone | Description | Linux | iOS |
 |-----------|------------|-------|-----|
-| A | Autoload contamination fix: project-added properties cleaned on unmount | **Proven** — tested in domain test suite, zero autoload leaks across 56 cycles | Untested |
-| B | Real leak instrumentation: measured post-unmount counters | **Proven** — counters verified at zero across all test cycles | Untested |
-| C | ImportSessionManager: lightweight import cache validator | **Proven** — scans importable files, detects missing `.import` metadata, warns without blocking | Untested |
+| A | Autoload contamination fix: project-added properties cleaned on unmount | **Proven** — tested in domain test suite, measured counters at zero across 56 cycles | Untested |
+| B | Leak instrumentation: measured post-unmount counters for tracked metrics | **Proven** — counters for res:// resources, autoloads, and ProjectSettings autoload entries verified at zero across all test cycles. Does not measure native allocations or global state. | Untested |
+| C | ImportSessionManager: lightweight import cache validator (NOT a full importer) | **Proven** — scans importable files, detects missing `.import` metadata, warns without blocking. Not equivalent to a full editor import session. | Untested |
 | D | GitManager + SyncServer functional tests | **Proven** — 19/19 GitManager checks, 23/23 SyncServer checks | Untested (GitManager disabled on iOS) |
-| E | iOS safety guards: `APPLE_EMBEDDED_ENABLED` compile guards | **Proven** — compiles on Linux, guards present in code | Untested on actual iOS |
+| E | iOS safety guards: `APPLE_EMBEDDED_ENABLED` compile guards | Code present and compiles on Linux | Untested on actual iOS hardware or simulator |
 | F | Interactive Linux shell: project list, git, sync, log, F12 toggle | **Proven** — 38/38 regression demo checks, interactive UI operational | Untested |
 | G | 11-step regression demo: automated end-to-end lifecycle test | **Proven** — shell launch, mount A, unmount, mount B, A→B→A, git branch switch, sync write | N/A (Linux-only test infrastructure) |
+| H | Linux baseline freeze + iOS handoff pack | **This document** | See `IOS_HANDOFF.md` |
+
+### Import Status Clarification
+
+`ImportSessionManager` is a **validator**, not an **importer**. It does not replicate `EditorFileSystem` functionality.
+
+- It scans project directories for files with importable extensions (png, wav, ttf, etc.)
+- It checks whether each file has a corresponding `.import` sidecar metadata file
+- It reports gaps as warnings
+- It does **not** perform actual imports, generate `.import` files, or produce cached imported assets
+
+Projects must be pre-imported by opening them in the full Godot editor at least once. This is an architectural limitation, not a planned future feature for DevPlayer — the full import pipeline requires `EditorFileSystem`, which has 9+ hard dependencies on `EditorNode` (see `subsystems/import_session_manager.md` for the full dependency table).
+
+The Linux prototype validates the project-domain shell flow. It does not prove editor parity for asset importing. iOS-side importer/runtime parity remains an open engineering problem.
 
 ## Test Infrastructure
 
