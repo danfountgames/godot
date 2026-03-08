@@ -258,7 +258,24 @@ void LaunchController::stop_project() {
 	// Step 7: Unmount project domain.
 	project_domain_manager->unmount_project();
 
-	// Update debug metrics.
+	// Measure real leak counts after teardown.
+	int remaining_res = resource_domain_manager->get_tracked_resource_count();
+	int remaining_autoloads = autoload_session_manager->get_active_autoload_count();
+
+	// Count autoload entries still in ProjectSettings (should be 0 after clear).
+	int remaining_ps_autoloads = 0;
+	{
+		const HashMap<StringName, ProjectSettings::AutoloadInfo> &al = ProjectSettings::get_singleton()->get_autoload_list();
+		remaining_ps_autoloads = al.size();
+	}
+
+	int total_leaked = remaining_res + remaining_autoloads + remaining_ps_autoloads;
+	print_line("[LaunchController] Post-unmount leak check: res://" + itos(remaining_res) +
+			" cached, " + itos(remaining_autoloads) + " autoloads, " +
+			itos(remaining_ps_autoloads) + " PS autoload entries → " +
+			itos(total_leaked) + " total leaked");
+
+	// Update debug metrics with real values.
 	uint64_t elapsed = OS::get_singleton()->get_ticks_usec() - start_time;
 	double unmount_duration = elapsed / 1000000.0;
 
@@ -266,8 +283,9 @@ void LaunchController::stop_project() {
 		debug->set_last_unmount_duration(unmount_duration);
 		debug->set_mounted_project_path(String());
 		debug->set_target_scene(String());
-		debug->set_active_autoload_count(0);
-		debug->set_tracked_resource_count(0);
+		debug->set_active_autoload_count(remaining_autoloads);
+		debug->set_tracked_resource_count(remaining_res);
+		debug->set_leaked_references_after_unmount(total_leaked);
 	}
 
 	print_line("[LaunchController] === PROJECT STOPPED in " + rtos(unmount_duration) + "s ===");

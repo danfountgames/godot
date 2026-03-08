@@ -133,9 +133,36 @@ void ProjectSettingsLayerManager::clear_project_settings() {
 		ps->set_resource_path(original_resource_path);
 	}
 
+	// Step 1: Remove any properties that were ADDED by the mounted project
+	// (i.e., exist now but were not in the base backup). Setting to NIL
+	// triggers ProjectSettings::_set's cleanup paths, which call
+	// remove_autoload() for "autoload/*" keys, remove_global_group()
+	// for "global_group/*" keys, etc. Without this, autoload entries
+	// from one project leak into the next mount.
+	List<PropertyInfo> current_props;
+	ps->get_property_list(&current_props);
+
+	int removed_count = 0;
+	for (const PropertyInfo &pi : current_props) {
+		if (pi.name.begins_with("_") || pi.name.is_empty()) {
+			continue;
+		}
+		if (!base_settings_backup.has(pi.name)) {
+			ps->set(pi.name, Variant()); // Sets to NIL → erases from props + autoloads
+			removed_count++;
+		}
+	}
+	if (removed_count > 0) {
+		print_line("[ProjectSettingsLayerManager] Removed " + itos(removed_count) + " project-added properties.");
+	}
+
+	// Step 2: Restore all backed-up base properties to their original values.
 	for (const KeyValue<StringName, Variant> &E : base_settings_backup) {
 		ps->set(E.key, E.value);
 	}
+
+	// Reset captured flag so we capture fresh base state on next mount.
+	base_captured = false;
 
 	print_line("[ProjectSettingsLayerManager] Base settings restored (" + itos(base_settings_backup.size()) + " properties).");
 }

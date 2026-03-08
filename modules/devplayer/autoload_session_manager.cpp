@@ -77,6 +77,7 @@ void AutoloadSessionManager::build_autoloads_from_project() {
 			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
 				ScriptServer::get_language(i)->add_named_global_constant(info.name, node);
 			}
+			registered_global_names.push_back(info.name);
 		}
 
 		print_line("[AutoloadSessionManager] Autoload added: " + String(info.name));
@@ -88,15 +89,15 @@ void AutoloadSessionManager::build_autoloads_from_project() {
 void AutoloadSessionManager::destroy_autoloads() {
 	print_line("[AutoloadSessionManager] Destroying " + itos(active_autoloads.size()) + " autoloads...");
 
-	// Remove global constants first.
-	const HashMap<StringName, ProjectSettings::AutoloadInfo> &autoloads = ProjectSettings::get_singleton()->get_autoload_list();
-	for (const KeyValue<StringName, ProjectSettings::AutoloadInfo> &E : autoloads) {
-		if (E.value.is_singleton) {
-			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
-				ScriptServer::get_language(i)->remove_named_global_constant(E.value.name);
-			}
+	// Remove global constants that WE registered (not ones from ProjectSettings
+	// that may have failed to load). This avoids the "!named_globals.has(p_name)"
+	// error when trying to unregister a constant we never added.
+	for (const StringName &name : registered_global_names) {
+		for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+			ScriptServer::get_language(i)->remove_named_global_constant(name);
 		}
 	}
+	registered_global_names.clear();
 
 	// Use memdelete (not queue_free) to free autoload nodes immediately.
 	// This mirrors the pattern in LaunchController::stop_project() for the

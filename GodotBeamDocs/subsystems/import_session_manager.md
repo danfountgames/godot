@@ -2,50 +2,98 @@
 
 ## Purpose
 
-ImportSessionManager handles resource reimporting for mounted projects. Godot uses an import pipeline (managed by `EditorFileSystem`) to process assets like textures, audio, and 3D models into engine-optimized formats stored in `.import/`. When a project is mounted in the DevPlayer, the import system must be pointed at the project's directory and triggered to scan for assets that need importing or re-importing.
+ImportSessionManager validates the import readiness of mounted projects. When a Godot project uses importable assets (textures, audio, 3D models, fonts), those assets must pass through Godot's import pipeline to be converted into engine-optimized formats. The import pipeline is normally driven by `EditorFileSystem`, which is only available inside the full Godot editor.
 
-This subsystem is only functional when the engine is compiled with `TOOLS_ENABLED`. In template (export) builds, the scan and import methods are no-ops that log informational messages.
+**DevPlayer runs without the full editor**, so ImportSessionManager cannot perform actual imports. Instead, it scans the project filesystem to verify that importable assets have been pre-imported (i.e., have corresponding `.import` metadata files) and reports any gaps.
 
 **Source files:** `modules/devplayer/import_session_manager.h`, `modules/devplayer/import_session_manager.cpp`
+
+## EditorFileSystem Architectural Blocker
+
+`EditorFileSystem` (from `editor/file_system/editor_file_system.h`) **cannot be instantiated outside of EditorNode**. It has at least 9 hard dependencies on editor singletons:
+
+| Dependency | Used In | Impact |
+|---|---|---|
+| `EditorNode::get_editor_data()` | `_first_scan_filesystem()`, `_update_script_classes()`, `_register_global_class_script()` | Null dereference crash |
+| `EditorNode::get_singleton()` | `_first_scan_filesystem()`, `_update_scan_actions()`, `_reimport_group()`, `_copy_file()` | Null dereference crash |
+| `EditorPaths::get_singleton()` | `_scan_filesystem()`, `_save_filesystem_cache()` | Null dereference crash |
+| `EditorProgress` / `EditorProgressBG` | Nearly every major operation | Calls EditorNode static methods |
+| `ProjectSettingsEditor::get_singleton()` | `_first_scan_filesystem()` | Null dereference crash |
+| `ScriptEditor::get_singleton()` | `_update_script_documentation()`, `_should_reload_script()` | Null dereference crash |
+| `EditorResourcePreview::get_singleton()` | `_scan_fs_changes()`, `_reimport_file()` | Null dereference crash |
+| `EditorHelp` (static methods) | `_update_script_documentation()` | Crash |
+| `DisplayServer::get_singleton()` | `reimport_files()` | Potential crash in headless mode |
+
+EditorFileSystem is also a `Node` subclass that must be added to the SceneTree to function (it relies on `NOTIFICATION_PROCESS` to consume threaded scan results).
+
+**Conclusion:** A lightweight reimplementation would be needed to run the full import pipeline outside the editor. This is tracked as a future enhancement. For now, projects must be pre-imported by opening them in the Godot editor at least once.
+
+## Current Implementation: Import Cache Validation
+
+Instead of attempting actual imports, ImportSessionManager performs useful validation:
+
+### What It Does
+
+1. **Checks for `.godot/imported/` directory** — This is Godot 4.x's import cache directory. If missing, the project has never been opened in the editor.
+
+2. **Scans for importable files** — Recursively walks the project directory looking for files with importable extensions (png, jpg, wav, ogg, mp3, gltf, glb, fbx, ttf, otf, svg, etc.).
+
+3. **Checks for `.import` metadata** — For each importable file, checks if a corresponding `.import` sidecar file exists. This file tells ResourceLoader where to find the imported/cached version.
+
+4. **Reports gaps** — Logs warnings for any importable assets missing their `.import` metadata, listing up to 50 specific files.
+
+### Scan Results
+
+After `scan_filesystem()`, the following are available:
+
+| Accessor | Description |
+|---|---|
+| `get_total_importable_files()` | Count of files with importable extensions |
+| `get_files_with_import_metadata()` | Count of files that have `.import` sidecar files |
+| `get_files_missing_import_metadata()` | Count of files missing `.import` metadata |
+| `has_import_cache()` | Whether `.godot/imported/` directory exists |
+| `get_missing_imports()` | Vector of relative paths to files missing imports |
 
 ## Key APIs
 
 | Method | Description |
 |--------|-------------|
-| `bind_project_root(path)` | Records the project root path and marks the manager as bound. Must be called before `scan_filesystem()` or `import_pending_assets()`. |
-| `scan_filesystem()` | Triggers `EditorFileSystem::scan()` to perform a full filesystem scan of the mounted project. Only works with `TOOLS_ENABLED`. |
-| `import_pending_assets()` | Triggers `EditorFileSystem::scan_changes()` to detect and import assets that have changed since the last scan. Only works with `TOOLS_ENABLED`. |
-| `clear_import_state()` | Clears the project root and resets the bound state. Called during unmount. |
+| `bind_project_root(path)` | Records the project root path. Must be called before `scan_filesystem()`. |
+| `scan_filesystem()` | Scans project directory for importable assets and validates import metadata. |
+| `import_pending_assets()` | Reports missing imports as warnings. Cannot perform actual imports without EditorFileSystem. |
+| `clear_import_state()` | Clears the project root, bound flag, and all scan results. Called during unmount. |
 
-## Architecture
+## Importable Extensions
 
-### Binding and Scanning
+The scan checks for these common file extensions:
 
-The import workflow follows a simple bind-then-scan pattern:
+- **Images:** png, jpg, jpeg, bmp, svg, webp, tga, hdr, exr
+- **Audio:** wav, ogg, mp3
+- **3D Models:** gltf, glb, fbx, obj, dae, blend
+- **Fonts:** ttf, otf, woff, woff2
+- **Translations:** csv, po
 
-1. **`bind_project_root(path)`** -- Stores the project root path and sets `bound = true`. This is a prerequisite for all other operations.
-
-2. **`scan_filesystem()`** -- If `TOOLS_ENABLED` is defined and `EditorFileSystem::get_singleton()` returns a valid instance, calls `efs->scan()`. This triggers a full directory walk that discovers all importable assets and processes any that are new or have changed.
-
-3. **`import_pending_assets()`** -- Similar to `scan_filesystem()`, but calls `efs->scan_changes()` instead, which is a lighter-weight scan that only processes changed files.
-
-### Template Build Behavior
-
-When compiled without `TOOLS_ENABLED` (i.e., export template builds), the `#ifdef` guards cause `scan_filesystem()` and `import_pending_assets()` to skip their `EditorFileSystem` calls entirely. They log messages indicating that the functionality is unavailable. This means DevPlayer running as an export template will rely on pre-imported assets and will not be able to process new imports at runtime.
-
-### State Management
-
-The manager's state is minimal: a `String project_root` and a `bool bound` flag. The `clear_import_state()` method resets both to their defaults, preparing the manager for a new mount session.
+This is a subset of what Godot supports (plugins/GDExtensions can add more), but covers the vast majority of real-world project assets.
 
 ## Integration
 
 - **LaunchController** calls `bind_project_root()` and `scan_filesystem()` at step 7 during mount. Calls `clear_import_state()` at step 5 during unmount.
-- Depends on **EditorFileSystem** (from `editor/file_system/editor_file_system.h`) for the actual import pipeline. This dependency only exists in editor/tools builds.
-- The `import_pending_assets()` method is available for use by other subsystems (e.g., SyncServer could call it after receiving new files) but is not currently called during the standard mount sequence.
+- Projects with missing imports will still mount and launch — the warnings are informational. Assets that were never imported will fail to load at runtime (ResourceLoader will return null).
 
-## Critical Notes
+## Implications for DevPlayer Users
 
-- The `scan_filesystem()` call may be asynchronous depending on Godot's internal implementation of `EditorFileSystem::scan()`. The LaunchController does not wait for it to complete before proceeding to step 8.
-- In export template builds (no `TOOLS_ENABLED`), projects must have their `.import/` directory pre-populated. Any assets that have not been imported will fail to load.
-- The manager does not track which assets were imported during a session. The `clear_import_state()` method only resets the binding, not any import artifacts on disk.
-- Calling `scan_filesystem()` or `import_pending_assets()` without first calling `bind_project_root()` will trigger an error.
+- **Pre-imported projects work fully.** If a project has been opened in the Godot editor, all assets have `.import` files and `.godot/imported/` cache. DevPlayer loads them via ResourceLoader normally.
+- **Scripts-only projects work fully.** Projects that only use .gd scripts, .tscn scenes, and .tres resources don't need the import pipeline at all.
+- **New/unimported assets won't load.** If a PNG texture is added to a project but never imported, DevPlayer cannot import it. The scan will warn about this, but loading the texture will fail.
+
+## Future Work
+
+If DevPlayer needs to support projects with unimported assets, the options are:
+
+1. **Build a lightweight `DevPlayerFileSystem`** — Reuse the core scanning logic from EditorFileSystem (`_scan_new_dir`, `_process_file_system`) and call `ResourceFormatImporter` directly for reimports. Skip all UI concerns (EditorProgress, icons, confirmation dialogs) and all editor concerns (plugin init, script docs, ScriptEditor).
+
+2. **Null-guard EditorFileSystem** — Patch `editor_file_system.cpp` with `if (EditorNode::get_singleton())` guards on all ~15 editor-dependent code paths. Fragile and upstream-hostile.
+
+3. **Initialize a minimal EditorNode** — EditorNode's constructor is ~1000 lines and creates the entire editor UI. Impractical.
+
+Option 1 is the recommended approach if this becomes a priority.

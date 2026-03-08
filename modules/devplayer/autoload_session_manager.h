@@ -19,6 +19,10 @@ class AutoloadSessionManager : public Object {
 	static AutoloadSessionManager *singleton;
 
 	Vector<Node *> active_autoloads;
+	// Track which autoloads were registered as named global constants,
+	// so we only unregister ones we actually added (not ones from ProjectSettings
+	// that failed to load).
+	Vector<StringName> registered_global_names;
 
 protected:
 	static void _bind_methods();

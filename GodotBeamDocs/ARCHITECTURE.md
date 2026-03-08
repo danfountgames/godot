@@ -61,7 +61,7 @@ DevPlayer is built as a Godot module (`modules/devplayer/`) consisting of 10 sin
 | 4  | `AutoloadSessionManager`       | Builds and destroys autoload nodes from project settings |
 | 5  | `ProjectSettingsLayerManager`  | Captures/restores base settings, loads mounted project's `project.godot`, remaps `res://` |
 | 6  | `ResourceDomainManager`        | Tracks and purges `res://` resources from `ResourceCache` on unmount |
-| 7  | `ImportSessionManager`         | Binds to project root, triggers `EditorFileSystem` scan for asset imports |
+| 7  | `ImportSessionManager`         | Validates import readiness: scans for `.import` metadata, reports missing assets |
 | 8  | `LaunchController`             | Orchestrates mount/unmount sequences across all managers |
 | 9  | `GitManager`                   | Git CLI wrapper (clone, fetch, checkout) with orchestrated branch-switch-and-remount |
 | 10 | `SyncServer`                   | WebSocket server (port 6850) for receiving file pushes and reload hints from a host |
@@ -105,7 +105,10 @@ Step  6: ResourceDomainManager::begin_tracking(path)
 
 Step  7: ImportSessionManager::bind_project_root(path)
          ImportSessionManager::scan_filesystem()
-         - Binds to project, triggers EditorFileSystem::scan()
+         - Binds to project root
+         - Scans for importable assets (png, wav, ttf, etc.)
+         - Checks each for .import metadata sidecar file
+         - Reports missing imports (project must be pre-imported in editor)
 
 Step  8: AutoloadSessionManager::build_autoloads_from_project()
          - Reads autoload list from ProjectSettings
@@ -138,9 +141,11 @@ Step 1: Remove and free mounted scene node
 
 Step 2: AutoloadSessionManager::destroy_autoloads()
         - Removes named global constants from ScriptServer languages
+          (only those we actually registered, tracked in registered_global_names)
         - Removes each autoload node from its parent
-        - Calls queue_free() on each autoload node
-        - Clears the active_autoloads list
+        - Calls memdelete() on each autoload node (NOT queue_free -- same reason
+          as mounted scene: script refs must be released before cache flush)
+        - Clears the active_autoloads and registered_global_names lists
 
 Step 3: ScriptDomainManager::shutdown_project_scripts()
         - Calls GDScriptCache::flush_project_caches() [NOT clear() -- see design decisions]
@@ -158,13 +163,21 @@ Step 5: ImportSessionManager::clear_import_state()
 
 Step 6: ProjectSettingsLayerManager::clear_project_settings()
         - Restores original resource_path (res:// maps back to engine root)
+        - Removes properties ADDED by the mounted project (not in base backup)
+          - Setting to NIL triggers ProjectSettings::remove_autoload() for
+            "autoload/*" keys, preventing autoload contamination across mounts
         - Restores all base settings from backup snapshot
+        - Resets base_captured flag for fresh capture on next mount
 
 Step 7: ProjectDomainManager::unmount_project()
         - Clears project_path, target_scene
         - Sets mounted=false
 
-        DevPlayerDebug metrics updated: unmount duration, counts reset to 0
+        Post-unmount leak check: measures remaining res:// resources in
+        ResourceCache, remaining autoloads, and remaining ProjectSettings
+        autoload entries. All should be 0 after clean unmount.
+
+        DevPlayerDebug metrics updated: unmount duration, leak counts
 ```
 
 ## Engine Modifications

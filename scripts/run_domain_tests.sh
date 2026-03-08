@@ -22,7 +22,9 @@ fail() {
 }
 
 check() {
-    if echo "$OUTPUT" | grep -q "$2"; then
+    # Use grep without -q to avoid SIGPIPE issues with pipefail.
+    # Redirect output to /dev/null instead.
+    if echo "$OUTPUT" | grep "$2" > /dev/null 2>&1; then
         pass "$1"
     else
         fail "$1"
@@ -31,7 +33,7 @@ check() {
 }
 
 check_not() {
-    if echo "$OUTPUT" | grep -q "$2"; then
+    if echo "$OUTPUT" | grep "$2" > /dev/null 2>&1; then
         fail "$1"
         echo "    Should NOT contain: $2"
     else
@@ -110,11 +112,12 @@ check "Autoloads built" "Built.*autoload"
 echo ""
 
 # ========================
-# Test 6: Automated mount/unmount/remount cycling test
+# Test 6: Automated cycling test + autoload contamination regression
+# Run the full cycling test once (6 named + 50 stress cycles) and
+# check both pass/fail results AND autoload contamination regression.
 # ========================
 TEST_NUM=$((TEST_NUM + 1))
-echo "--- Test $TEST_NUM: Automated cycling test (11 cycles + 50-cycle stress) ---"
-# 50-cycle domain switch stress test requires extended timeout
+echo "--- Test $TEST_NUM: Automated cycling test (6 named + 50-cycle stress) ---"
 OUTPUT=$(timeout 300 "$BINARY" --devplayer-test --headless 2>&1 || true)
 check "All cycling tests passed" "\[TEST PASS\] ALL TESTS PASSED"
 check_not "No test failures" "\[TEST FAIL\]"
@@ -122,6 +125,63 @@ check_not "No test failures" "\[TEST FAIL\]"
 # Count individual passes from cycling test
 CYCLE_PASSES=$(echo "$OUTPUT" | grep -c "\[TEST PASS\]" || true)
 echo "  (Cycling test reported $CYCLE_PASSES individual [TEST PASS] checks)"
+echo ""
+
+# ========================
+# Test 7: Autoload contamination regression (same output as test 6)
+# After the autoload project (cycle 5+6), the stress cycles mount
+# minimal_2d and class_name_collision_test_a, neither of which has
+# TestManager. If autoloads leak, the mount will try to load
+# res://test_manager.gd and produce ERROR lines.
+# ========================
+TEST_NUM=$((TEST_NUM + 1))
+echo "--- Test $TEST_NUM: Autoload contamination regression ---"
+check_not "No phantom autoload load" "Attempt to open script.*test_manager"
+check_not "No named_globals error" "named_globals.has"
+check "Project-added properties cleaned on unmount" "Removed 1 project-added properties"
+# Zero ERROR lines in the entire 56-cycle run
+ERROR_COUNT=$(echo "$OUTPUT" | grep -c "^ERROR:" || true)
+if [ "$ERROR_COUNT" -eq 0 ]; then
+    pass "Zero ERROR lines in cycling test"
+else
+    fail "Found $ERROR_COUNT ERROR lines in cycling test"
+fi
+# Verify real leak measurements are all zero (not a stub)
+LEAK_LINES=$(echo "$OUTPUT" | grep -c "Post-unmount leak check" || true)
+NONZERO_LEAKS=$(echo "$OUTPUT" | grep "Post-unmount leak check" | grep -cv "0 total leaked" || true)
+if [ "$LEAK_LINES" -gt 0 ] && [ "$NONZERO_LEAKS" -eq 0 ]; then
+    pass "Real leak measurements: $LEAK_LINES cycles, all zero"
+else
+    fail "Leak measurement: $LEAK_LINES cycles measured, $NONZERO_LEAKS had non-zero leaks"
+fi
+echo ""
+
+# ========================
+# Test 8: Import session validation (import_test project)
+# Verifies that ImportSessionManager scans the filesystem and detects
+# importable assets that are missing .import metadata.
+# ========================
+TEST_NUM=$((TEST_NUM + 1))
+echo "--- Test $TEST_NUM: Import session validation (import_test project) ---"
+OUTPUT=$("$BINARY" --devplayer --headless --devplayer-mount "$ROOT_DIR/test_projects/import_test" --quit-after 5000 2>&1 || true)
+check "Import cache directory detected" "Import cache directory found"
+check "Importable files scanned" "importable files found"
+check "Missing import metadata detected" "missing .import metadata"
+check "Missing file listed" "Missing:.*icon.png"
+check "Project launched despite missing imports" "PROJECT LAUNCHED"
+check "GDScript executed" "Import test project loaded"
+echo ""
+
+# ========================
+# Test 9: Import validation on minimal_2d (scripts-only project)
+# Verifies that a project with no importable assets (only .gd and .tscn)
+# reports clean import status.
+# ========================
+TEST_NUM=$((TEST_NUM + 1))
+echo "--- Test $TEST_NUM: Import validation on scripts-only project ---"
+OUTPUT=$("$BINARY" --devplayer --headless --devplayer-mount "$ROOT_DIR/test_projects/minimal_2d" --quit-after 5000 2>&1 || true)
+check "Scripts-only project scan" "Scan complete"
+check "SVG detected as importable" "importable files found"
 echo ""
 
 # ========================
