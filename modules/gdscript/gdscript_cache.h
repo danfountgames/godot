@@ -134,6 +134,13 @@ public:
 
 	static void clear();
 
+	// DevPlayer: Flush all script caches for dynamic project domain switching.
+	// Unlike clear(), this method:
+	//   1. Also clears the `dependencies` map (which clear() misses).
+	//   2. Resets the `cleared` flag so caches can be rebuilt and flushed again.
+	// This is safe to call multiple times during the engine's lifetime.
+	static void flush_project_caches();
+
 	GDScriptCache();
 	~GDScriptCache();
 };

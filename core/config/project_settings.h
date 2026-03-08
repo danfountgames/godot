@@ -185,6 +185,7 @@ public:
 	String get_project_data_dir_name() const;
 	String get_project_data_path() const;
 	String get_resource_path() const;
+	void set_resource_path(const String &p_path); // DevPlayer: allow project domain to set resource path for mounting.
 	String get_imported_files_path() const;
 
 	static ProjectSettings *get_singleton();

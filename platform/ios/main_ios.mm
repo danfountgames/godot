@@ -34,6 +34,7 @@
 #import "drivers/apple_embedded/godot_app_delegate.h"
 #import "drivers/apple_embedded/main_utilities.h"
 #include "main/main.h"
+#include "modules/modules_enabled.gen.h"
 
 #import <UIKit/UIKit.h>
 #include <cstdio>
@@ -55,6 +56,23 @@ int apple_embedded_main(int argc, char **argv) {
 
 	char *fargv[64];
 	argc = process_args(argc, argv, fargv);
+
+#ifdef MODULE_DEVPLAYER_ENABLED
+	// In DevPlayer builds, automatically inject --devplayer flag
+	// to boot into the custom shell instead of the standard editor UI.
+	bool has_devplayer_flag = false;
+	for (int i = 0; i < argc; i++) {
+		if (strcmp(fargv[i], "--devplayer") == 0) {
+			has_devplayer_flag = true;
+			break;
+		}
+	}
+	if (!has_devplayer_flag) {
+		fargv[argc] = (char *)"--devplayer";
+		argc++;
+		fargv[argc] = nullptr;
+	}
+#endif // MODULE_DEVPLAYER_ENABLED
 
 	godot_init_profiler();
 

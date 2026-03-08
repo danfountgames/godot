@@ -149,6 +149,11 @@
 #endif // TOOLS_ENABLED && !GDSCRIPT_NO_LSP
 #endif // MODULE_GDSCRIPT_ENABLED
 
+#ifdef MODULE_DEVPLAYER_ENABLED
+#include "modules/devplayer/dev_player_shell.h"
+#include "modules/devplayer/launch_controller.h"
+#endif // MODULE_DEVPLAYER_ENABLED
+
 /* Static members */
 
 // Singletons
@@ -209,6 +214,10 @@ static bool single_window = false;
 static bool editor = false;
 static bool project_manager = false;
 static bool cmdline_tool = false;
+static bool devplayer_mode = false;
+static bool devplayer_test_mode = false;
+static String devplayer_mount_path;
+static String devplayer_mount_scene;
 static String locale;
 static String log_file;
 static bool show_help = false;
@@ -1538,6 +1547,29 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 #ifdef TOOLS_ENABLED
 		} else if (arg == "-e" || arg == "--editor") { // starts editor
 
+			editor = true;
+		} else if (arg == "--devplayer") { // starts DevPlayer shell mode
+			devplayer_mode = true;
+			editor = true; // Need editor subsystems (import pipeline, etc.)
+		} else if (arg == "--devplayer-mount") { // auto-mount a project at startup
+			if (N) {
+				devplayer_mount_path = N->get();
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing devplayer-mount path argument, aborting.\n");
+				goto error;
+			}
+		} else if (arg == "--devplayer-scene") { // override target scene for auto-mount
+			if (N) {
+				devplayer_mount_scene = N->get();
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing devplayer-scene argument, aborting.\n");
+				goto error;
+			}
+		} else if (arg == "--devplayer-test") { // run automated mount/unmount/remount tests
+			devplayer_test_mode = true;
+			devplayer_mode = true;
 			editor = true;
 		} else if (arg == "-p" || arg == "--project-manager") { // starts project manager
 			project_manager = true;
@@ -3936,6 +3968,23 @@ int Main::start() {
 #endif // DISABLE_DEPRECATED
 		} else if (E->get() == "-e" || E->get() == "--editor") {
 			editor = true;
+		} else if (E->get() == "--devplayer") {
+			devplayer_mode = true;
+			editor = true;
+		} else if (E->get() == "--devplayer-mount") {
+			E = E->next();
+			if (E) {
+				devplayer_mount_path = E->get();
+			}
+		} else if (E->get() == "--devplayer-scene") {
+			E = E->next();
+			if (E) {
+				devplayer_mount_scene = E->get();
+			}
+		} else if (E->get() == "--devplayer-test") {
+			devplayer_test_mode = true;
+			devplayer_mode = true;
+			editor = true;
 		} else if (E->get() == "-p" || E->get() == "--project-manager") {
 			project_manager = true;
 		} else if (E->get() == "--recovery-mode") {
@@ -4470,6 +4519,51 @@ int Main::start() {
 #endif // MODULE_GDSCRIPT_ENABLED
 
 		EditorNode *editor_node = nullptr;
+#ifdef MODULE_DEVPLAYER_ENABLED
+		if (devplayer_mode) {
+			// DevPlayer shell mode: bypass standard editor UI entirely.
+			// Keep editor subsystems alive (import pipeline, settings, etc.)
+			// but show our custom shell instead.
+			OS::get_singleton()->benchmark_begin_measure("Startup", "DevPlayer");
+			print_line("DevPlayer: Initializing shell mode...");
+
+			Engine::get_singleton()->set_editor_hint(true);
+
+			// Initialize EditorSettings - needed by many UI widgets (LineEdit, etc.)
+			// that use EDITOR_GET for caret and other settings when TOOLS_ENABLED.
+			if (!EditorSettings::get_singleton()) {
+				EditorSettings::create();
+				print_line("DevPlayer: EditorSettings created.");
+			}
+
+			DevPlayerShell *shell = memnew(DevPlayerShell);
+			sml->get_root()->add_child(shell);
+
+			print_line("DevPlayer: Shell UI created and added to scene tree.");
+
+			// Enable automated test mode if --devplayer-test was specified.
+			if (devplayer_test_mode) {
+				print_line("DevPlayer: Automated test mode enabled via --devplayer-test.");
+				shell->set_automated_test_mode(true);
+			}
+
+			// Auto-mount if --devplayer-mount was specified on command line.
+			if (!devplayer_mount_path.is_empty()) {
+				print_line("DevPlayer: Auto-mounting project from command line: " + devplayer_mount_path);
+				LaunchController *lc = LaunchController::get_singleton();
+				if (lc) {
+					Error mount_err = lc->launch_project(devplayer_mount_path, devplayer_mount_scene);
+					if (mount_err == OK) {
+						print_line("DevPlayer: Auto-mount successful.");
+					} else {
+						ERR_PRINT("DevPlayer: Auto-mount FAILED for path: " + devplayer_mount_path);
+					}
+				}
+			}
+
+			OS::get_singleton()->benchmark_end_measure("Startup", "DevPlayer");
+		} else
+#endif // MODULE_DEVPLAYER_ENABLED
 		if (editor) {
 			OS::get_singleton()->benchmark_begin_measure("Startup", "Editor");
 
@@ -4605,7 +4699,7 @@ int Main::start() {
 		}
 
 #ifdef TOOLS_ENABLED
-		if (editor) {
+		if (editor && !devplayer_mode) {
 			bool editor_embed_subwindows = EDITOR_GET("interface/editor/single_window_mode");
 
 			if (editor_embed_subwindows) {
@@ -4649,7 +4743,7 @@ int Main::start() {
 			local_game_path = ProjectSettings::get_singleton()->localize_path(local_game_path);
 
 #ifdef TOOLS_ENABLED
-			if (editor) {
+			if (editor && !devplayer_mode) {
 				if (!recovery_mode && (game_path != ResourceUID::ensure_path(String(GLOBAL_GET("application/run/main_scene"))) || !editor_node->has_scenes_in_session())) {
 					Error serr = editor_node->load_scene(local_game_path);
 					if (serr != OK) {
@@ -4734,7 +4828,7 @@ int Main::start() {
 			OS::get_singleton()->benchmark_end_measure("Startup", "Project Manager");
 		}
 
-		if (project_manager || editor) {
+		if ((project_manager || editor) && !devplayer_mode) {
 			// Load SSL Certificates from Editor Settings (or builtin)
 			Crypto::load_default_certificates(
 					EditorSettings::get_singleton()->get_setting("network/tls/editor_tls_certificates").operator String());

@@ -1,0 +1,19 @@
+[package]
+name = "godotbeam-sync-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop sync agent for GodotBeam DevPlayer - watches files and syncs to device via WebSocket"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+notify = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+log = "0.4"
+env_logger = "0.11"

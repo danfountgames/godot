@@ -56,6 +56,13 @@ def get_flags():
     }
 
 
+# Note: iOS does not list "editor" in supported by default, but the
+# GodotBeam DevPlayer fork allows building with target=editor on iOS.
+# The "supported" list in get_flags() only blocks "library" builds
+# (checked in SConstruct), not editor builds. Passing target=editor
+# on the command line will override the default and enable TOOLS_ENABLED.
+
+
 def configure(env: "SConsEnvironment"):
     # Validate arch.
     supported_arches = ["x86_64", "arm64"]

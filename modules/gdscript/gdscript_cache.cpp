@@ -495,6 +495,52 @@ void GDScriptCache::clear() {
 	singleton->static_gdscript_cache.clear();
 }
 
+void GDScriptCache::flush_project_caches() {
+	if (singleton == nullptr) {
+		return;
+	}
+
+	MutexLock lock(singleton->mutex);
+
+	// Clear all parser refs.
+	singleton->parser_inverse_dependencies.clear();
+
+	for (const KeyValue<String, Vector<ObjectID>> &KV : singleton->abandoned_parser_map) {
+		for (ObjectID parser_ref_id : KV.value) {
+			Ref<GDScriptParserRef> parser_ref = { ObjectDB::get_instance(parser_ref_id) };
+			if (parser_ref.is_valid()) {
+				parser_ref->clear();
+			}
+		}
+	}
+
+	singleton->abandoned_parser_map.clear();
+
+	RBSet<Ref<GDScriptParserRef>> parser_map_refs;
+	for (KeyValue<String, GDScriptParserRef *> &E : singleton->parser_map) {
+		parser_map_refs.insert(E.value);
+	}
+
+	singleton->parser_map.clear();
+
+	for (Ref<GDScriptParserRef> &E : parser_map_refs) {
+		if (E.is_valid()) {
+			E->clear();
+		}
+	}
+
+	parser_map_refs.clear();
+	singleton->shallow_gdscript_cache.clear();
+	singleton->full_gdscript_cache.clear();
+	singleton->static_gdscript_cache.clear();
+
+	// Also clear dependencies (which clear() misses).
+	singleton->dependencies.clear();
+
+	// Reset the cleared flag so this can be called again for the next domain switch.
+	singleton->cleared = false;
+}
+
 GDScriptCache::GDScriptCache() {
 	singleton = this;
 }
