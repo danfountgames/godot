@@ -128,19 +128,42 @@ The same `modules/devplayer/` code that passes headless tests also runs in a win
 
 ### How to reproduce
 
+**Build:**
 ```bash
-# Build
 scons platform=linuxbsd target=editor module_devplayer_enabled=yes -j$(nproc)
+```
 
-# Run all test suites
+**36/36 domain tests** (mount/unmount lifecycle, class_name isolation, autoload reset, stress cycling, import validation):
+```bash
 bash scripts/run_domain_tests.sh
-bash scripts/test_git_manager.sh
-bash scripts/test_sync_server.sh
+```
+Expected last line: `RESULTS: 36 passed, 0 failed out of 36 checks`
+Exit code: 0
+
+**38/38 regression demo** (11-step end-to-end: shell, mount A/B, A→B→A, git branch switch, SyncServer sync, shutdown):
+```bash
 bash scripts/regression_demo.sh
 ```
+Expected last line: `STATUS: ALL STEPS PASSED`
+Exit code: 0
+
+**19/19 GitManager tests** (GDScript API: branch listing, commit info, checkout):
+```bash
+bash scripts/test_git_manager.sh
+```
+Expected last line: `RESULTS: 19 passed, 0 failed out of 19 checks`
+Exit code: 0
+
+**23/23 SyncServer tests** (WebSocket protocol, path traversal, disk write):
+```bash
+bash scripts/test_sync_server.sh
+```
+Expected last line: `RESULTS: 23 passed, 0 failed out of 23 checks`
+Exit code: 0
+Prerequisite: `pip3 install websockets`
 
 All four scripts exit 0 on success, non-zero on any failure.
 
 ### Raw regression demo output
 
-See `GodotBeamDocs/test_results/regression_demo_38checks.txt` for the full captured output of the 38-check regression demo.
+See `GodotBeamDocs/test_results/regression_demo_38checks.txt` for the full captured output of the 38-check regression demo. See `GodotBeamDocs/REGRESSION_CHECKS.md` for what each of the 38 checks asserts.

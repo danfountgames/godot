@@ -2,12 +2,21 @@
 
 This document is for a developer with access to a macOS machine and Xcode who will attempt the first real iOS build and test of GodotBeam DevPlayer.
 
+## Start Here
+
+1. Read `WALKTHROUGH.md` first — it covers build, shell, mount, git, sync on Linux
+2. Build on Linux and run `bash scripts/regression_demo.sh` to confirm 38/38 baseline
+3. Then attempt the iOS build on macOS using the commands in this document
+4. Follow the 5-phase test plan at the bottom, reporting results for each phase
+
+The Linux build is the known-good reference. If something fails on iOS, compare against Linux behavior to isolate platform-specific issues.
+
 ## Prerequisites
 
 - macOS with Xcode installed (iOS SDK 14.0+)
 - Python 3 and SCons (`pip3 install scons`)
 - The GodotBeam repository checked out on the `GodotBeamDev` branch
-- Commit `28f79b3aca` or later
+- Commit `1e25311c5e` or later (Milestone H)
 
 ## Engine Patches (7 files outside modules/devplayer/)
 
@@ -82,29 +91,44 @@ This is the command that produces the known-good Linux binary.
 
 ## Expected Outcomes
 
+### Category 1: Fixes Already Applied (in code, tested on Linux only)
+
+These problems were identified by code review and fixed with compile guards. The fixes compile and work on Linux. They have **not** been tested on actual iOS.
+
+| ID | Problem | Fix in code | File | Tested on iOS? |
+|----|---------|------------|------|---------------|
+| R1 | `GitManager::_run_git()` calls `fork()` which crashes on iOS | `#ifdef APPLE_EMBEDDED_ENABLED` returns `ERR_UNAVAILABLE` immediately | `git_manager.cpp` | **No** |
+| R2 | GitManager default `repos_base_path` is inside read-only `.app` bundle | Defaults to `OS::get_user_data_dir().path_join("repos")` on `APPLE_EMBEDDED_ENABLED` | `git_manager.cpp` | **No** |
+| R4 | DevPlayerShell default project path is inside read-only `.app` bundle | Defaults to `get_user_data_dir().path_join("projects/minimal_2d")` on `APPLE_EMBEDDED_ENABLED` | `dev_player_shell.cpp` | **No** |
+
+### Category 2: Hypotheses (untested predictions based on code review)
+
+| Hypothesis | Basis | Risk |
+|-----------|-------|------|
+| The module will compile on iOS | All DevPlayer code uses Godot platform abstractions (`DirAccess`, `FileAccess`, `OS`, `TCPServer`, `WebSocketPeer`), no raw platform headers | Low — but iOS SDK headers may have surprises |
+| `EditorSettings::create()` works on iOS | It's a pure C++ singleton with no platform-specific code | Low |
+| UI widgets (Label, LineEdit, Button, ItemList) render on iOS | These are Godot's standard scene/gui widgets, used by the editor on macOS | Low — but touch vs mouse input may need work |
+| `WebSocketPeer`/`TCPServer` work on iOS | Godot's networking uses platform-abstracted sockets | Medium — may need network entitlement in Info.plist |
+| `ResourceLoader::load()` works within the iOS sandbox | File paths within the app bundle and Documents directory should be accessible via `DirAccess`/`FileAccess` | Low |
+
+### Category 3: Untested Assumptions (things that might not work at all)
+
+| Assumption | Why it might fail | Impact |
+|-----------|------------------|--------|
+| SyncServer is reachable from host Mac | Binds to `127.0.0.1` — unreachable over WiFi. USB requires `iproxy` forwarding. | Workaround: `iproxy 6850 6850`. May need `0.0.0.0` bind option for WiFi. |
+| TCP server doesn't need entitlement | iOS may require `com.apple.developer.networking.multicast` or local network permission | May need Info.plist entries |
+| Touch input works with the shell UI | Shell UI was built for mouse/keyboard. No touch-specific adaptations. | Buttons should work via Godot's touch→mouse emulation. ItemList scrolling may need work. |
+| `memdelete()` in unmount doesn't trigger iOS memory warnings | Rapid allocation/deallocation of scene trees may behave differently under iOS memory pressure | May need memory profiling on device |
+| Bundled test projects load from the app bundle | `res://` remapping to an app bundle resource path hasn't been tested | May need a different path strategy for bundled content |
+
 ### Compilation
 
-**Hypothesis:** The build should succeed. All DevPlayer code uses platform-abstracted Godot APIs. No iOS-specific compile errors are predicted.
+**Hypothesis:** The build should succeed (see Category 2 above).
 
 **If it fails:** Capture the full error output. Most likely causes:
 - iOS SDK header differences (unlikely — we use Godot abstractions, not platform headers)
 - Linker errors from WebSocket dependencies (check that the `websocket` module is enabled)
 - Missing `TOOLS_ENABLED` guards (check that `target=editor` is specified)
-
-### Runtime — Known Blockers (already addressed in code)
-
-| Blocker | Problem | Fix Applied |
-|---------|---------|-------------|
-| R1. `GitManager::_run_git()` | `fork()` crashes on iOS | `#ifdef APPLE_EMBEDDED_ENABLED` guard returns `ERR_UNAVAILABLE` |
-| R2. GitManager default path | Inside read-only `.app` bundle | Defaults to `OS::get_user_data_dir().path_join("repos")` on iOS |
-| R4. DevPlayerShell default path | Inside read-only `.app` bundle | Defaults to `get_user_data_dir().path_join("projects/minimal_2d")` on iOS |
-
-### Runtime — Remaining Concern
-
-| Concern | Detail | Mitigation |
-|---------|--------|------------|
-| R3. SyncServer binds to `127.0.0.1` | Host Mac cannot connect over WiFi | Use `iproxy 6850 6850` over USB, or add `0.0.0.0` bind option |
-| Network entitlement | TCP server on iOS may need entitlement | Add `com.apple.developer.networking.multicast` to Info.plist if needed |
 
 ## Platform-Specific Files Touched
 

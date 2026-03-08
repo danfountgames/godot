@@ -269,4 +269,29 @@ This introspection serves two consumers:
 
 ---
 
+### DevPlayer — Dynamic project mounting module (`GodotBeamDev` branch)
+
+Runtime shell that mounts, runs, and unmounts Godot projects without
+recompiling. Built as `modules/devplayer/` with 10 singleton subsystems.
+Proven on Linux; iOS unbuilt.
+
+| Doc | What it covers |
+|-----|---------------|
+| [WALKTHROUGH](GodotBeamDocs/WALKTHROUGH.md) | **Start here.** Build, launch shell, mount projects, git branch switch, live sync — step by step. |
+| [LINUX_BASELINE](GodotBeamDocs/LINUX_BASELINE.md) | Frozen baseline: binary hash, build env, what's proven, what's not. |
+| [ARCHITECTURE](GodotBeamDocs/ARCHITECTURE.md) | System design: 10 singletons, mount/unmount sequences, design decisions, milestone table. |
+| [REGRESSION_CHECKS](GodotBeamDocs/REGRESSION_CHECKS.md) | All 38 regression demo checks explained: grep pattern, what each asserts. |
+| [TESTING](GodotBeamDocs/TESTING.md) | Test projects, test scripts, how to add new tests. |
+| [IOS_HANDOFF](GodotBeamDocs/IOS_HANDOFF.md) | For the first iOS attempt: patches, build commands, blockers, 5-phase test plan. |
+| [IOS_BUILD](GodotBeamDocs/IOS_BUILD.md) | iOS blocker analysis (code review only, untested). |
+
+Quick start:
+```bash
+git checkout GodotBeamDev
+scons platform=linuxbsd target=editor module_devplayer_enabled=yes -j$(nproc)
+./bin/godot.linuxbsd.editor.x86_64 --devplayer
+```
+
+---
+
 Based on Godot 4.6.1-stable. MIT license.
