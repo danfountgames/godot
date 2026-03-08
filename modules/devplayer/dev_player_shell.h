@@ -8,45 +8,128 @@
 #pragma once
 
 #include "scene/gui/control.h"
+#include "core/input/input_event.h"
+#include "core/templates/vector.h"
 
 class Label;
 class Button;
 class LineEdit;
 class VBoxContainer;
+class HBoxContainer;
+class HSeparator;
+class ItemList;
+class RichTextLabel;
+class ScrollContainer;
 class LaunchController;
 class ProjectDomainManager;
 class AutoloadSessionManager;
 class ResourceDomainManager;
+class ImportSessionManager;
 class DevPlayerDebug;
+class GitManager;
+class SyncServer;
 
 class DevPlayerShell : public Control {
 	GDCLASS(DevPlayerShell, Control);
 
+	// Manager references.
 	LaunchController *launch_controller = nullptr;
 	ProjectDomainManager *project_domain_manager = nullptr;
 	AutoloadSessionManager *autoload_session_manager = nullptr;
 	ResourceDomainManager *resource_domain_manager = nullptr;
+	ImportSessionManager *import_session_manager = nullptr;
 	DevPlayerDebug *debug = nullptr;
+	GitManager *git_manager = nullptr;
+	SyncServer *sync_server = nullptr;
 
-	// UI elements.
-	Label *title_label = nullptr;
-	VBoxContainer *info_container = nullptr;
-	Label *status_label = nullptr;
-	Label *project_path_label = nullptr;
-	Label *resource_count_label = nullptr;
-	Label *autoload_count_label = nullptr;
-	Label *mount_duration_label = nullptr;
-	LineEdit *path_line_edit = nullptr;
-	Button *mount_button = nullptr;
-	Button *unmount_button = nullptr;
-
-	// Container for the shell UI so we can hide/show it.
+	// ---- Shell UI elements ----
 	VBoxContainer *shell_ui_root = nullptr;
 
+	// Status section.
+	Label *title_label = nullptr;
+	Label *status_label = nullptr;
+	Label *project_path_label = nullptr;
+	Label *metrics_label = nullptr;
+
+	// Project list section.
+	ItemList *project_list = nullptr;
+	Button *mount_selected_button = nullptr;
+	Button *refresh_button = nullptr;
+
+	// Custom path section.
+	LineEdit *path_line_edit = nullptr;
+	Button *mount_custom_button = nullptr;
+
+	// Mounted project controls.
+	Button *unmount_button = nullptr;
+	Button *relaunch_button = nullptr;
+
+	// Git section.
+	Label *git_status_label = nullptr;
+	LineEdit *git_repo_line_edit = nullptr;
+	LineEdit *git_branch_line_edit = nullptr;
+	Button *git_switch_button = nullptr;
+	Button *git_list_branches_button = nullptr;
+	Label *git_branches_label = nullptr;
+
+	// Sync section.
+	Label *sync_status_label = nullptr;
+	LineEdit *sync_port_line_edit = nullptr;
+	Button *sync_start_button = nullptr;
+	Button *sync_stop_button = nullptr;
+
+	// Log section.
+	RichTextLabel *log_output = nullptr;
+
+	// Back-to-shell overlay (visible when project is running).
+	Button *back_to_shell_button = nullptr;
+
+	// ---- Project discovery ----
+	struct ProjectEntry {
+		String name;
+		String path;
+		bool operator<(const ProjectEntry &p_other) const {
+			return name.naturalcasecmp_to(p_other.name) < 0;
+		}
+	};
+	Vector<ProjectEntry> discovered_projects;
+
+	// ---- Build UI methods ----
 	void _build_ui();
-	void _update_debug_display();
-	void _on_mount_pressed();
+	void _build_status_section();
+	void _build_project_section();
+	void _build_git_section();
+	void _build_sync_section();
+	void _build_log_section();
+	void _build_overlay();
+
+	// ---- UI callbacks ----
+	void _on_mount_selected_pressed();
+	void _on_mount_custom_pressed();
 	void _on_unmount_pressed();
+	void _on_relaunch_pressed();
+	void _on_refresh_pressed();
+	void _on_project_item_activated(int p_index);
+	void _on_git_switch_pressed();
+	void _on_git_list_branches_pressed();
+	void _on_sync_start_pressed();
+	void _on_sync_stop_pressed();
+	void _on_back_to_shell_pressed();
+
+	// ---- Runtime updates ----
+	void _update_status_display();
+	void _update_sync_display();
+	void _update_button_states();
+	void _scan_projects();
+	void _populate_project_list();
+	void _log(const String &p_message);
+	void _mount_project(const String &p_path);
+
+	// ---- Shell visibility ----
+	bool ui_built = false;
+	bool shell_visible = true;
+	void _show_shell();
+	void _hide_shell();
 
 	// Engine root path — captured once at startup before any mount changes
 	// the engine's resource_path. Used to construct test project paths.
@@ -54,7 +137,7 @@ class DevPlayerShell : public Control {
 	bool engine_root_captured = false;
 	void _capture_engine_root();
 
-	// Automated test mode (--devplayer-test).
+	// ---- Automated test mode (--devplayer-test) ----
 	bool automated_test_mode = false;
 	int test_step = 0;
 	double test_timer = 0.0;
@@ -69,6 +152,7 @@ class DevPlayerShell : public Control {
 	String _test_project_path(const String &p_project_name) const;
 
 protected:
+	virtual void unhandled_key_input(const Ref<InputEvent> &p_event) override;
 	void _notification(int p_what);
 	static void _bind_methods();
 

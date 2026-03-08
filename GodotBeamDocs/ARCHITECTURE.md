@@ -2,11 +2,24 @@
 
 ## System Overview
 
-GodotBeam DevPlayer is a fork of the Godot Engine that replaces the standard editor UI with a developer shell designed for running Godot projects on iOS devices during development. Instead of shipping the full Godot editor to a device, DevPlayer provides a lightweight shell that can **mount**, **run**, and **unmount** arbitrary Godot projects at runtime without recompiling or restarting the engine.
+GodotBeam DevPlayer is a fork of the Godot Engine that replaces the standard editor UI with a developer shell for dynamically running Godot projects at runtime. Instead of shipping the full Godot editor, DevPlayer provides a lightweight shell that can **mount**, **run**, and **unmount** arbitrary Godot projects without recompiling or restarting the engine.
+
+**Platform status:**
+- **Linux:** Proven. The interactive shell, mount/unmount lifecycle, Git integration, and SyncServer protocol are all built and tested on Linux. The 11-step regression demo passes all 38 checks. The automated domain test suite passes all 36 checks across 56 mount/unmount cycles.
+- **iOS:** Not yet proven. The code compiles with safety guards (`APPLE_EMBEDDED_ENABLED`) but has not been built or tested on iOS hardware. See `IOS_BUILD.md` for the detailed blocker analysis.
 
 The core concept is **project domain isolation**: the engine boots once with its own minimal `project.godot`, then dynamically redirects `res://` to point at a target project's directory, loads that project's settings/scripts/scenes/autoloads, runs the project, and later tears everything down cleanly so a different project can be mounted in its place.
 
-DevPlayer is built as a Godot module (`modules/devplayer/`) consisting of 10 singleton subsystems that together handle the full lifecycle of mounting, running, and unmounting guest projects.
+DevPlayer is built as a Godot module (`modules/devplayer/`) consisting of 10 singleton subsystems that together handle the full lifecycle of mounting, running, and unmounting guest projects. All module code lives in `modules/devplayer/` and is shared across platforms — the same C++ code runs on Linux and iOS.
+
+### Shared Core vs Platform Shell
+
+The DevPlayer architecture separates **shared core** (platform-independent subsystems) from **platform shell** (platform-specific entry points):
+
+- **Shared core** (`modules/devplayer/`): All 10 singletons, the mount/unmount lifecycle, Git integration, SyncServer, import validation, and the DevPlayerShell UI. This code is identical on all platforms.
+- **Platform entry points**: `main/main.cpp` (CLI flags, shell creation) and `platform/ios/main_ios.mm` (auto-inject `--devplayer` flag). These are thin integration layers.
+
+Linux is the proving ground for the shared core. Any bug found and fixed on Linux is fixed for all platforms.
 
 ## Component Diagram
 
@@ -19,7 +32,7 @@ DevPlayer is built as a Godot module (`modules/devplayer/`) consisting of 10 sin
                              v
 +------------------------------------------------------------------+
 |                      DevPlayerShell                              |
-|  (Control node: shell UI + automated test state machine)         |
+|  (Interactive shell: project list, git, sync, log, test runner)  |
 +----------------------------+-------------------------------------+
                              |
                              v
@@ -55,7 +68,7 @@ DevPlayer is built as a Godot module (`modules/devplayer/`) consisting of 10 sin
 
 | #  | Singleton                      | Responsibility |
 |----|--------------------------------|----------------|
-| 1  | `DevPlayerDebug`               | Metrics and telemetry (mount/unmount timing, resource counts, leak detection) |
+| 1  | `DevPlayerDebug`               | Measured post-unmount counters: mount duration, resource counts, residual references |
 | 2  | `ProjectDomainManager`         | Tracks mount state: project path, target scene, mounted flag |
 | 3  | `ScriptDomainManager`          | GDScript cache lifecycle, global class (`class_name`) scanning and registration |
 | 4  | `AutoloadSessionManager`       | Builds and destroys autoload nodes from project settings |
@@ -310,3 +323,77 @@ When loading the target scene, `ResourceLoader::load()` is called with `CACHE_MO
 - All sub-resources (scripts, textures, materials) are also loaded fresh
 - This is critical for project switching: `res://main.tscn` from project A must not be reused when mounting project B, even though both resolve to the same `res://` path
 - Without this flag, the second mount would silently reuse the first project's cached scene
+
+## Interactive Shell (DevPlayerShell)
+
+The `DevPlayerShell` is a `Control` node that provides the interactive user interface for the DevPlayer. It is created in `main/main.cpp` and added directly to the SceneTree root.
+
+### Shell Sections
+
+| Section | UI Elements | Purpose |
+|---------|------------|---------|
+| Status  | Title, status label, project path, metrics | Shows mount state, resource counts, and measured post-unmount counters |
+| Projects | ItemList, Mount/Refresh/Unmount/Relaunch buttons, custom path LineEdit | Discovers projects in `test_projects/`, mounts by selection or custom path |
+| Git | Repo path, branch name, Switch & Remount, List Branches | Exercises GitManager: switch branch and remount in one operation |
+| Sync | Port input, Start/Stop buttons, status label | Controls the SyncServer WebSocket server |
+| Log | RichTextLabel | Scrollable log of all shell operations, mirrors to stdout |
+| Overlay | "Back to Shell (F12)" button | Visible only when a project is running and shell is hidden |
+
+### Input Handling
+
+- **F12**: Toggles shell visibility when a project is mounted. Uses `unhandled_key_input` (C++ virtual override) so it works regardless of which control has focus.
+- **Double-click**: On project list item, mounts immediately.
+- **Shell/project coexistence**: The shell UI and mounted project scene coexist in the same SceneTree. The shell hides itself when a project launches and shows an overlay button to return.
+
+### Engine Root Capture
+
+The shell captures the engine's `resource_path` in its constructor, before any project mount changes `res://`. This preserved path is used to locate `test_projects/` for the project discovery scan. Without this, mounting a project would change `res://` and break project discovery.
+
+## Leak Measurement
+
+`DevPlayerDebug` measures post-unmount counters — **not** a proof of zero leaks overall. After each unmount:
+
+- **Residual res:// resources**: Counts remaining `res://` entries in `ResourceCache`. Should be 0 after clean unmount. Measured, not inferred.
+- **Residual autoloads**: Counts remaining autoload nodes. Should be 0 after clean unmount.
+- **Residual project settings**: Counts remaining `autoload/*` keys in ProjectSettings. Should be 0 after clean unmount.
+
+These counters are verified to reach zero across 56 mount/unmount cycles (36-check test suite). This demonstrates that the unmount sequence is thorough, but it does not prove the absence of all possible memory leaks (e.g., native engine allocations, global state side effects).
+
+## Editor Coupling Dependencies
+
+The following Godot editor subsystems are **required** by DevPlayer at runtime:
+
+| Dependency | Why Needed | Impact |
+|-----------|-----------|--------|
+| `EditorSettings` | Many UI widgets (`LineEdit`, `TextEdit`) call `EDITOR_GET()` for caret settings when `TOOLS_ENABLED` is defined. Without EditorSettings, these crash. | Created at shell startup via `EditorSettings::create()` |
+| `GDScriptCache` | `flush_project_caches()` is our custom method. Only available in editor/tools builds. | Requires `target=editor` build |
+| `ScriptServer::add_global_class` / `global_classes_clear` | Needed for `class_name` registration/deregistration. Available in all builds. | No special requirement |
+| `ResourceCache` | Needed for resource tracking and eviction. Available in all builds. | No special requirement |
+
+The following Godot editor subsystem is **not usable** by DevPlayer:
+
+| Blocked Dependency | Why Blocked | Workaround |
+|-------------------|------------|------------|
+| `EditorFileSystem` | 9+ hard dependencies on `EditorNode` and its singletons (`EditorPaths`, `ProjectSettingsEditor`, `ScriptEditor`, `EditorResourcePreview`, `EditorHelp`, `DisplayServer`, `EditorProgress`). Cannot be instantiated outside the full editor. | `ImportSessionManager` validates import readiness by scanning for `.import` metadata files instead. Projects must be pre-imported in the full Godot editor. |
+
+## Milestone Status
+
+| Milestone | Description | Linux | iOS |
+|-----------|------------|-------|-----|
+| A | Autoload contamination fix: project-added properties cleaned on unmount | **Proven** — tested in domain test suite, zero autoload leaks across 56 cycles | Untested |
+| B | Real leak instrumentation: measured post-unmount counters | **Proven** — counters verified at zero across all test cycles | Untested |
+| C | ImportSessionManager: lightweight import cache validator | **Proven** — scans importable files, detects missing `.import` metadata, warns without blocking | Untested |
+| D | GitManager + SyncServer functional tests | **Proven** — 19/19 GitManager checks, 23/23 SyncServer checks | Untested (GitManager disabled on iOS) |
+| E | iOS safety guards: `APPLE_EMBEDDED_ENABLED` compile guards | **Proven** — compiles on Linux, guards present in code | Untested on actual iOS |
+| F | Interactive Linux shell: project list, git, sync, log, F12 toggle | **Proven** — 38/38 regression demo checks, interactive UI operational | Untested |
+| G | 11-step regression demo: automated end-to-end lifecycle test | **Proven** — shell launch, mount A, unmount, mount B, A→B→A, git branch switch, sync write | N/A (Linux-only test infrastructure) |
+
+## Test Infrastructure
+
+| Script | Checks | What It Tests |
+|--------|--------|---------------|
+| `scripts/run_domain_tests.sh` | 36 | Mount/unmount lifecycle, class_name isolation, autoload reset, resource cache, stress cycling, import validation |
+| `scripts/test_git_manager.sh` | 19 | GitManager GDScript API: branch listing, commit info, checkout, switch |
+| `scripts/test_sync_server.sh` | 23 | SyncServer WebSocket protocol: hello, manifest, write, reload_hint, sync_complete, path traversal rejection |
+| `scripts/regression_demo.sh` | 38 | 11-step end-to-end: shell launch, mount A/B, A→B→A isolation, git branch switch, SyncServer live sync, clean shutdown |
+| `--devplayer-test` (in-engine) | 36 | Same as `run_domain_tests.sh` but running inside the engine's automated test mode |

@@ -23,9 +23,9 @@ DevPlayer requires `TOOLS_ENABLED` to access `EditorFileSystem` APIs, the GDScri
 
 ## Current Status (as of 2026-03-08)
 
-**The module will compile cleanly on iOS.** No platform-specific compile errors are expected — all DevPlayer code uses platform-abstracted Godot APIs (`DirAccess`, `FileAccess`, `OS`, `TCPServer`, `WebSocketPeer`, etc.).
+**Hypothesis: the module should compile on iOS.** All DevPlayer code uses platform-abstracted Godot APIs (`DirAccess`, `FileAccess`, `OS`, `TCPServer`, `WebSocketPeer`, etc.), so no platform-specific compile errors are predicted. This is an untested hypothesis.
 
-**The module has NOT been built or tested on iOS.** The development machine is Linux. The analysis below is based on code review.
+**The module has NOT been built or tested on iOS.** The development machine is Linux. The entire analysis below is based on code review, not empirical testing. Until the module is actually compiled, linked, and run on an iOS device (or simulator), iOS support is unproven.
 
 ## iOS Build Attempt: Blocker Analysis
 
@@ -37,9 +37,9 @@ No Xcode, no OSXCROSS_IOS
 scons platform=ios → "Invalid target platform"
 ```
 
-### Predicted Blockers
+### Predicted Blockers (untested — based on code review only)
 
-#### RUNTIME: Will compile but fail at runtime
+#### RUNTIME: Predicted to compile but fail at runtime without the applied fixes
 
 **R1. GitManager — `fork()` is prohibited on iOS (FIXED)**
 

@@ -24,6 +24,16 @@ All test projects live under `test_projects/`. Each is a minimal Godot project w
 | 6 | `resource_cache_test_b` | Companion to `resource_cache_test_a` for A/B resource cache testing |
 | 7 | `branch_switch_test` | Tests the `GitManager::switch_and_remount()` workflow (unmount, checkout branch, remount) |
 | 8 | `live_reload_test` | Tests the `SyncServer` live reload workflow (file sync, tiered reload hints) |
+| 9 | `import_test` | Contains a PNG texture to test ImportSessionManager's import cache validation |
+
+## Test Scripts
+
+| Script | Checks | Description |
+|--------|--------|-------------|
+| `scripts/run_domain_tests.sh` | 36 | Core test suite: mount/unmount lifecycle, class_name isolation, autoload reset, stress cycling, import validation |
+| `scripts/test_git_manager.sh` | 19 | GitManager GDScript API: branch listing, commit info, checkout, branch switch |
+| `scripts/test_sync_server.sh` | 23 | SyncServer WebSocket protocol: all 5 message types, path traversal rejection, disk write verification |
+| `scripts/regression_demo.sh` | 38 | 11-step end-to-end regression: shell launch, mount A/B, A→B→A, git branch switch, SyncServer live sync, clean shutdown |
 
 ## Test Categories
 
@@ -231,7 +241,14 @@ For interactive testing (with a visible window), omit `--headless`:
 ./bin/godot.linuxbsd.editor.x86_64 --devplayer
 ```
 
-This opens the DevPlayerShell UI where you can type a project path and click "Mount Project" / "Unmount Project" manually.
+This opens the interactive DevPlayerShell UI with:
+- **Project list**: Discovers projects in `test_projects/`, mount by selection or double-click
+- **Custom path**: Enter any absolute path to mount a project
+- **Git controls**: Enter a repo path, list branches, switch branch and remount
+- **Sync controls**: Start/stop the SyncServer on a configurable port
+- **Log panel**: Scrollable log of all operations
+- **F12**: Toggle between shell and running project
+- **Unmount/Relaunch**: Return to shell or restart the mounted project
 
 ## Adding New Test Projects
 
