@@ -14,6 +14,7 @@
 #include "resource_domain_manager.h"
 
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "core/string/print_string.h"
 #include "scene/gui/box_container.h"
 #include "scene/main/scene_tree.h"
@@ -139,9 +140,14 @@ void DevPlayerShell::_build_ui() {
 	shell_ui_root->add_child(path_label);
 
 	path_line_edit = memnew(LineEdit);
+#ifdef APPLE_EMBEDDED_ENABLED
+	// On iOS, the engine root is inside the read-only .app bundle.
+	// Default to a Documents-relative project path instead.
+	path_line_edit->set_text(OS::get_singleton()->get_user_data_dir().path_join("projects").path_join("minimal_2d"));
+#else
 	// Default to the minimal_2d test project path, derived from engine root.
-	// On iOS this could be set to a Documents-relative path instead.
 	path_line_edit->set_text(_test_project_path("minimal_2d"));
+#endif
 	path_line_edit->set_placeholder("Enter absolute path to project directory...");
 	shell_ui_root->add_child(path_line_edit);
 

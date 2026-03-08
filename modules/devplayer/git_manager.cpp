@@ -55,6 +55,14 @@ String GitManager::get_repos_base_path() const {
 // ---------------------------------------------------------------------------
 
 Error GitManager::_run_git(const String &p_repo_path, const Vector<String> &p_args, String &r_output) {
+#ifdef APPLE_EMBEDDED_ENABLED
+	// On iOS (Apple Embedded), fork() and popen() are prohibited by the
+	// sandbox. Attempting to call OS::execute() will crash the process.
+	// Return an error instead.
+	r_output = "Git operations are not available on iOS.";
+	ERR_FAIL_V_MSG(ERR_UNAVAILABLE, "[GitManager] Git operations are not supported on iOS (fork() is prohibited).");
+#endif
+
 	// Build the argument list. We always pass -C <repo_path> first so that
 	// the command runs inside the repository directory, except when the
 	// caller passes an empty repo_path (used for clone where the repo does
@@ -356,8 +364,14 @@ Error GitManager::switch_and_remount(const String &p_repo_path, const String &p_
 GitManager::GitManager() {
 	singleton = this;
 
+#ifdef APPLE_EMBEDDED_ENABLED
+	// On iOS, the executable directory is inside the read-only .app bundle.
+	// Use the user data directory (Documents/) for writable storage instead.
+	repos_base_path = OS::get_singleton()->get_user_data_dir().path_join("repos");
+#else
 	// Default repos base path: next to the engine executable.
 	repos_base_path = OS::get_singleton()->get_executable_path().get_base_dir().path_join("repos");
+#endif
 	print_line("[GitManager] Default repos base path: " + repos_base_path);
 }
 
