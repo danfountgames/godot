@@ -32,6 +32,7 @@ def get_opts():
         (("apple_target_triple", "ios_triple"), "Triple for the corresponding target Apple platform toolchain", ""),
         BoolVariable(("simulator", "ios_simulator"), "Build for Simulator", False),
         BoolVariable("generate_bundle", "Generate an APP bundle after building iOS/macOS binaries", False),
+        BoolVariable("apple_embedded_app_entry", "Include app.swift entry point in libgodot.a (set to no when the Xcode project provides its own)", True),
     ]
 
 
