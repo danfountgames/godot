@@ -34,3 +34,6 @@
 #import "godot_app_delegate.h"
 #import "godot_view_apple_embedded.h"
 #import "godot_view_controller.h"
+
+// LiveMount C bridge — exposes engine singletons to Swift.
+#include "modules/livemount/livemount_ios_bridge.h"

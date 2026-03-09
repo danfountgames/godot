@@ -149,6 +149,12 @@
 #endif // TOOLS_ENABLED && !GDSCRIPT_NO_LSP
 #endif // MODULE_GDSCRIPT_ENABLED
 
+#ifdef MODULE_LIVEMOUNT_ENABLED
+#include "modules/livemount/livemount_shell.h"
+#include "modules/livemount/launch_controller.h"
+#include "modules/livemount/sync_server.h"
+#endif // MODULE_LIVEMOUNT_ENABLED
+
 /* Static members */
 
 // Singletons
@@ -209,6 +215,11 @@ static bool single_window = false;
 static bool editor = false;
 static bool project_manager = false;
 static bool cmdline_tool = false;
+static bool livemount_mode = false;
+static bool livemount_test_mode = false;
+static bool livemount_sync_autostart = false;
+static String livemount_mount_path;
+static String livemount_mount_scene;
 static String locale;
 static String log_file;
 static bool show_help = false;
@@ -1537,6 +1548,33 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		} else if (arg == "-e" || arg == "--editor") { // starts editor
 
 			editor = true;
+		} else if (arg == "--livemount") { // starts LiveMount shell mode
+			livemount_mode = true;
+			editor = true; // Need editor subsystems (import pipeline, etc.)
+		} else if (arg == "--livemount-mount") { // auto-mount a project at startup
+			if (N) {
+				livemount_mount_path = N->get();
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing livemount-mount path argument, aborting.\n");
+				goto error;
+			}
+		} else if (arg == "--livemount-scene") { // override target scene for auto-mount
+			if (N) {
+				livemount_mount_scene = N->get();
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing livemount-scene argument, aborting.\n");
+				goto error;
+			}
+		} else if (arg == "--livemount-test") { // run automated mount/unmount/remount tests
+			livemount_test_mode = true;
+			livemount_mode = true;
+			editor = true;
+		} else if (arg == "--livemount-sync") { // auto-start SyncServer on boot
+			livemount_sync_autostart = true;
+			livemount_mode = true;
+			editor = true;
 		} else if (arg == "-p" || arg == "--project-manager") { // starts project manager
 			project_manager = true;
 		} else if (arg == "--recovery-mode") { // Enables recovery mode.
@@ -2030,8 +2068,17 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		found_project = true;
 #endif
 	} else {
+
 #ifdef TOOLS_ENABLED
+#ifdef MODULE_LIVEMOUNT_ENABLED
+		// LiveMount mounts projects dynamically at runtime, so not finding
+		// a project at boot is expected. Keep editor subsystems alive.
+		if (!livemount_mode) {
+			editor = false;
+		}
+#else
 		editor = false;
+#endif
 #else
 		String error_msg = "Error: Couldn't load project data at path \"" + (project_path == "." ? OS::get_singleton()->get_cwd() : project_path) + "\". Is the .pck file missing?\n\n";
 #if !defined(OVERRIDE_PATH_ENABLED) && !defined(TOOLS_ENABLED)
@@ -3934,6 +3981,27 @@ int Main::start() {
 #endif // DISABLE_DEPRECATED
 		} else if (E->get() == "-e" || E->get() == "--editor") {
 			editor = true;
+		} else if (E->get() == "--livemount") {
+			livemount_mode = true;
+			editor = true;
+		} else if (E->get() == "--livemount-mount") {
+			E = E->next();
+			if (E) {
+				livemount_mount_path = E->get();
+			}
+		} else if (E->get() == "--livemount-scene") {
+			E = E->next();
+			if (E) {
+				livemount_mount_scene = E->get();
+			}
+		} else if (E->get() == "--livemount-test") {
+			livemount_test_mode = true;
+			livemount_mode = true;
+			editor = true;
+		} else if (E->get() == "--livemount-sync") {
+			livemount_sync_autostart = true;
+			livemount_mode = true;
+			editor = true;
 		} else if (E->get() == "-p" || E->get() == "--project-manager") {
 			project_manager = true;
 		} else if (E->get() == "--recovery-mode") {
@@ -4467,6 +4535,77 @@ int Main::start() {
 #endif // MODULE_GDSCRIPT_ENABLED
 
 		EditorNode *editor_node = nullptr;
+#ifdef MODULE_LIVEMOUNT_ENABLED
+		if (livemount_mode) {
+			// LiveMount shell mode: bypass standard editor UI entirely.
+			// Keep editor subsystems alive (import pipeline, settings, etc.)
+			// but show our custom shell instead.
+			OS::get_singleton()->benchmark_begin_measure("Startup", "LiveMount");
+			print_line("LiveMount: Initializing shell mode...");
+
+			Engine::get_singleton()->set_editor_hint(true);
+
+			// LiveMount needs continuous rendering (not low-processor mode which
+			// skips frames when nothing changes via RenderingServer::has_changed).
+			OS::get_singleton()->set_low_processor_usage_mode(false);
+
+			// Initialize EditorSettings - needed by many UI widgets (LineEdit, etc.)
+			// that use EDITOR_GET for caret and other settings when TOOLS_ENABLED.
+			if (!EditorSettings::get_singleton()) {
+				EditorSettings::create();
+				print_line("LiveMount: EditorSettings created.");
+			}
+
+			LiveMountShell *shell = memnew(LiveMountShell);
+			sml->get_root()->add_child(shell);
+
+			print_line("LiveMount: Shell UI created and added to scene tree.");
+
+			// Enable automated test mode if --livemount-test was specified.
+			if (livemount_test_mode) {
+				print_line("LiveMount: Automated test mode enabled via --livemount-test.");
+				shell->set_automated_test_mode(true);
+			}
+
+			// Auto-start SyncServer if --livemount-sync was specified.
+			if (livemount_sync_autostart) {
+				SyncServer *ss = SyncServer::get_singleton();
+				if (ss) {
+					Error sync_err = ss->start_server(6850);
+					if (sync_err == OK) {
+						print_line("LiveMount: SyncServer auto-started on port 6850.");
+					} else {
+						ERR_PRINT("LiveMount: SyncServer auto-start FAILED (error " + itos(sync_err) + ").");
+					}
+				}
+			}
+
+			// Auto-mount if --livemount-mount was specified on command line.
+			if (!livemount_mount_path.is_empty()) {
+				// If it's not a full path, resolve as a project name in the projects directory.
+				String resolved_path = livemount_mount_path;
+				if (!resolved_path.contains("/") && !resolved_path.contains("\\")) {
+					String projects_dir = OS::get_singleton()->get_user_data_dir().path_join("projects");
+					String candidate = projects_dir.path_join(resolved_path);
+					if (DirAccess::exists(candidate)) {
+						resolved_path = candidate;
+					}
+				}
+				print_line("LiveMount: Auto-mounting project: " + resolved_path);
+				LaunchController *lc = LaunchController::get_singleton();
+				if (lc) {
+					Error mount_err = lc->launch_project(resolved_path, livemount_mount_scene);
+					if (mount_err == OK) {
+						print_line("LiveMount: Auto-mount successful.");
+					} else {
+						ERR_PRINT("LiveMount: Auto-mount FAILED for path: " + resolved_path);
+					}
+				}
+			}
+
+			OS::get_singleton()->benchmark_end_measure("Startup", "LiveMount");
+		} else
+#endif // MODULE_LIVEMOUNT_ENABLED
 		if (editor) {
 			OS::get_singleton()->benchmark_begin_measure("Startup", "Editor");
 
@@ -4559,7 +4698,7 @@ int Main::start() {
 		}
 
 #ifdef TOOLS_ENABLED
-		if (editor) {
+		if (editor && !livemount_mode) {
 			bool editor_embed_subwindows = EDITOR_GET("interface/editor/single_window_mode");
 
 			if (editor_embed_subwindows) {
@@ -4603,7 +4742,7 @@ int Main::start() {
 			local_game_path = ProjectSettings::get_singleton()->localize_path(local_game_path);
 
 #ifdef TOOLS_ENABLED
-			if (editor) {
+			if (editor && !livemount_mode) {
 				if (!recovery_mode && (game_path != ResourceUID::ensure_path(String(GLOBAL_GET("application/run/main_scene"))) || !editor_node->has_scenes_in_session())) {
 					Error serr = editor_node->load_scene(local_game_path);
 					if (serr != OK) {
@@ -4671,7 +4810,11 @@ int Main::start() {
 		}
 
 #ifdef TOOLS_ENABLED
-		if (project_manager) {
+		if (project_manager
+#ifdef MODULE_LIVEMOUNT_ENABLED
+				&& !livemount_mode
+#endif
+		) {
 			OS::get_singleton()->benchmark_begin_measure("Startup", "Project Manager");
 			Engine::get_singleton()->set_editor_hint(true);
 
@@ -4688,7 +4831,7 @@ int Main::start() {
 			OS::get_singleton()->benchmark_end_measure("Startup", "Project Manager");
 		}
 
-		if (project_manager || editor) {
+		if ((project_manager || editor) && !livemount_mode) {
 			// Load SSL Certificates from Editor Settings (or builtin)
 			Crypto::load_default_certificates(
 					EditorSettings::get_singleton()->get_setting("network/tls/editor_tls_certificates").operator String());
@@ -4754,6 +4897,14 @@ int Main::start() {
 	OS::get_singleton()->benchmark_end_measure("Startup", "Main::Start");
 	OS::get_singleton()->benchmark_dump();
 
+#ifdef MODULE_LIVEMOUNT_ENABLED
+	if (livemount_mode) {
+		// Must be done at the very end of start() because EditorSettings::create()
+		// or scene tree operations re-enable low_processor_usage_mode after our
+		// earlier set in the LiveMount block.
+		OS::get_singleton()->set_low_processor_usage_mode(false);
+	}
+#endif
 	return EXIT_SUCCESS;
 }
 
