@@ -1,0 +1,4 @@
+module CGodotAVPBridge {
+    header "../../../drivers/avp/avp_bridge.h"
+    export *
+}
