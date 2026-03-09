@@ -49,22 +49,14 @@ struct GodotSwiftUIViewController: UIViewControllerRepresentable {
 struct SwiftUIApp: App {
 	@UIApplicationDelegateAdaptor(GDTApplicationDelegate.self) var appDelegate
 	@Environment(\.scenePhase) private var scenePhase
-	@ObservedObject var overlay = LiveMountOverlay.shared
 
 	var body: some Scene {
 		WindowGroup {
-			ZStack {
-				GodotSwiftUIViewController()
-					.ignoresSafeArea()
-
-				if let content = overlay.content {
-					content
-						.ignoresSafeArea(.keyboard)
-				}
-			}
-			// UIViewControllerRepresentable does not call viewWillDisappear() nor viewDidDisappear() when
-			// backgrounding the app, or closing the app's main window, update the renderer here.
-			.onChange(of: scenePhase) { phase in
+			GodotSwiftUIViewController()
+				.ignoresSafeArea()
+				// UIViewControllerRepresentable does not call viewWillDisappear() nor viewDidDisappear() when
+				// backgrounding the app, or closing the app's main window, update the renderer here.
+				.onChange(of: scenePhase) { phase in
 					// For some reason UIViewControllerRepresentable is not calling viewWillDisappear()
 					// nor viewDidDisappear when closing the app's main window, call it here so we
 					// stop the renderer.
