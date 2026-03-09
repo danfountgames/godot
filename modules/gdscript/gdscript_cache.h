@@ -134,6 +134,11 @@ public:
 
 	static void clear();
 
+	// Flush all script caches for dynamic project domain switching.
+	// Unlike clear(), also clears the dependencies map and resets
+	// the cleared flag so caches can be rebuilt and flushed again.
+	static void flush_project_caches();
+
 	GDScriptCache();
 	~GDScriptCache();
 };
