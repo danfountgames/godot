@@ -1,4 +1,70 @@
-# Godot Engine
+# Godot Engine — LiveMount Fork
+
+This is a Godot engine fork that adds the **LiveMount** module (`modules/livemount/`), enabling dynamic project mounting, running, and unmounting at runtime without restarting the engine.
+
+## LiveMount Module
+
+LiveMount replaces the standard editor UI with a lightweight shell that can load any Godot project on the fly. This is designed for iOS development workflows where rebuilding the app for each project change is impractical.
+
+### Features
+
+- **Dynamic mounting** — load a Godot project (scenes, scripts, resources, autoloads) at runtime
+- **Clean unmounting** — tear down all project state and return to the shell
+- **Hot remounting** — swap projects without restarting the engine
+- **WebSocket sync** — receive file updates from a development server
+- **C bridge API** — pure C interface (`livemount_ios_bridge.h`) for Swift/ObjC integration
+- **Automated tests** — 226-check regression suite via `--livemount-test`
+
+### Building
+
+```bash
+# iOS Simulator
+scons platform=ios target=editor arch=arm64 simulator=yes module_livemount_enabled=yes -j$(sysctl -n hw.ncpu)
+
+# iOS Device
+scons platform=ios target=editor arch=arm64 module_livemount_enabled=yes -j$(sysctl -n hw.ncpu)
+
+# Linux (for testing)
+scons platform=linuxbsd target=editor module_livemount_enabled=yes -j$(nproc)
+```
+
+### CLI Flags
+
+| Flag | Description |
+|---|---|
+| `--livemount` | Boot into LiveMount shell instead of the editor |
+| `--livemount-mount <path>` | Auto-mount a project at startup |
+| `--livemount-scene <scene>` | Override the target scene |
+| `--livemount-test` | Run the automated regression test suite |
+| `--livemount-sync` | Auto-start the WebSocket sync server |
+
+### Module Structure
+
+```
+modules/livemount/
+  register_types.cpp/h      Module registration (10 singletons)
+  livemount_shell.cpp/h      Interactive shell UI + test runner
+  livemount_debug.cpp/h      Runtime metrics tracking
+  livemount_ios_bridge.cpp/h Pure C API for Swift/ObjC callers
+  launch_controller.cpp/h    Mount/unmount orchestration
+  project_domain_manager.*   Project lifecycle
+  script_domain_manager.*    Script cache management
+  resource_domain_manager.*  Resource tracking
+  autoload_session_manager.* Autoload lifecycle
+  project_settings_layer_manager.*  Settings isolation
+  import_session_manager.*   Import pipeline state
+  git_manager.*              Git operations
+  sync_server.*              WebSocket file sync
+  config.py / SCsub          Build configuration
+```
+
+### Integration Points
+
+- `main/main.cpp` — CLI flag parsing, shell creation, editor bypass
+- `platform/ios/main_ios.mm` — auto-inject `--livemount` on iOS, log bridging
+- `drivers/apple_embedded/bridging_header_apple_embedded.h` — exposes C bridge to Swift
+
+---
 
 <p align="center">
   <a href="https://godotengine.org">
