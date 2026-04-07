@@ -64,7 +64,9 @@ private:
 	Label *uptime_label = nullptr;
 	Label *stats_label = nullptr;
 	Button *toggle_button = nullptr;
+	OptionButton *agent_cli_select = nullptr;
 	CheckBox *debug_toggle = nullptr;
+	CheckBox *dangerously_toggle = nullptr;
 
 	// -- Debugger Bridge --
 	TextureRect *game_dot = nullptr;
@@ -160,11 +162,17 @@ private:
 	void _update_tool_summary();
 
 	void _on_toggle_button_pressed();
+	void _on_agent_cli_selected(int p_index);
+	void _on_setting_toggled(bool p_enabled);
 	void _on_clear_pressed();
 	void _on_export_pressed();
 	void _on_filter_changed(int p_index);
 	void _on_search_changed(const String &p_text);
 	void _on_log_item_activated();
+
+	String _get_project_settings_path() const;
+	void _load_project_settings();
+	void _save_project_settings() const;
 
 	bool _event_matches_filters(const MCPRequestEvent &p_event) const;
 	String _format_timestamp(uint64_t p_usec) const;
@@ -208,7 +216,9 @@ public:
 	void set_protocol(MCPProtocol *p_protocol) { protocol = p_protocol; }
 	void set_debugger_bridge(MCPDebuggerBridge *p_bridge) { debugger_bridge = p_bridge; }
 	void set_server_plugin(MCPServerPlugin *p_plugin) { server_plugin = p_plugin; }
+	String get_agent_cli() const;
 	bool is_debug_mode_enabled() const;
+	bool is_dangerously_mode_enabled() const;
 
 	MCPStatusPanel();
 	~MCPStatusPanel();

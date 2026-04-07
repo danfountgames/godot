@@ -69,4 +69,5 @@ private:
 	// _deferred_result and post _deferred_semaphore when complete.
 	static void _do_execute_script_main(const String &p_full_script);
 	static void _do_get_screenshot_main();
+	static void _do_refresh_uid_main(const String &p_path);
 };

@@ -23,8 +23,12 @@ Use `help` to list all tools. Use `help <tool_name>` for parameters.
 **TESTING**: testing/check_script (ALWAYS after editing .gd), testing/check_all_scripts, testing/run, testing/list
 **SHADER**: shader/find, shader/get_builtins, shader/get_functions, shader/get_language_ref
 
+**PLAYTEST** (aliases — use during user playtesting for clarity):
+playtest/launch→runtime/run_project, playtest/status→runtime/get_status, playtest/check→runtime/get_session_summary, playtest/errors→runtime/get_errors, playtest/output→runtime/get_output, playtest/screenshot→runtime/get_screenshot
+
 ## Tool naming — aliases and error recovery
 Common guesses auto-resolve: runtime/play→run_project, runtime/eval→evaluate, runtime/take_screenshot→get_screenshot, script/check→testing/check_script, debug/run→runtime/run_project.
+Playtest aliases: playtest/launch, playtest/status, playtest/check, playtest/errors, playtest/output, playtest/screenshot — use these during user playtest sessions.
 Unknown tool errors suggest the closest match. Use `help` when unsure.
 
 ## Essential workflows
@@ -100,8 +104,61 @@ Read the relevant system spec before modifying a game system. Update docs after
 architectural changes (new systems, new scenes, structural refactors).
 Use project/init_docs to create or refresh the docs from a project scan.
 
-## Orchestrator workflow — cycle management
-Development follows iterative cycles: plan → build → test → (refactor).
-Maintain cycle state JSON for session continuity. Launch godot-refactor every 3 cycles.
+## Input map (project controls)
+{{INPUT_MAP}}
+These are the ACTUAL input actions configured in this project. Use these exact names
+with runtime/input/send_input. Tell the user these controls when starting a playtest.
+
+## Orchestrator workflow — plan → build → playtest → iterate
+
+Development follows iterative phases. Each phase has a clear gate before proceeding.
+
+### Phase 1: Plan
+Launch godot-planner. Plan includes: scene tree, scripts, signals, test files,
+AND playtest checkpoints (see below). Plan is written to docs/plans/active/.
+
+### Phase 2: Build
+Launch godot-builder. Implements the plan. Builder runs its own verify loop:
+  1. testing/check_all_scripts — 0 compile errors
+  2. Write test file for new logic → testing/run → fix until green
+  3. Wiring verification — grep for dead code
+  4. Produce build manifest
+
+### Phase 3: Playtest (human-in-the-loop)
+This is the critical quality gate. The AGENT launches the game and the USER plays it.
+
+**LAUNCH:**
+  1. testing/check_all_scripts → must pass
+  2. testing/run path="res://tests/" → report results
+  3. runtime/run_project (or runtime/run_scene for isolated features)
+  4. runtime/get_session_summary → confirm running, 0 errors
+  5. Tell the user EXACTLY what to test and what controls to use:
+     "Game is running. Please test:
+      - [specific thing 1] — use [specific control]
+      - [specific thing 2] — use [specific control]
+      - [specific thing 3] — try to break it
+     When done, say 'ready' or tell me what happened."
+
+**MONITOR (while user plays):**
+  The game is running. The user is playing. You WAIT for their response.
+  When the user reports something mid-play:
+  - runtime/get_errors → check for runtime errors
+  - runtime/get_output → check for warnings/debug output
+  - runtime/get_status → confirm still running
+  - Respond with findings: "I see [error] in the log" or "No errors — describe more?"
+
+**INTERVIEW (when user says ready):**
+  1. runtime/get_session_summary → capture final state, errors, output
+  2. Ask the plan's interview questions (from the playtest checkpoint)
+  3. Ask: "Anything else feel off? Even vague impressions help."
+  4. Record feedback under the checkpoint in the plan file
+
+**ITERATE:**
+  - Issues reported → fix → auto-verify → re-launch playtest (same checkpoint)
+  - User approved → mark checkpoint PASS → proceed to next phase
+  - Max 3 playtest iterations per checkpoint before escalating
+
+### Phase 4: Refactor (periodic)
+Launch godot-refactor every 3 cycles or when file health degrades.
 
 </godot_context>

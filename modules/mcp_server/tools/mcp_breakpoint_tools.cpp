@@ -308,6 +308,28 @@ Dictionary MCPBreakpointTools::handle_get_break_state(const Dictionary &p_args) 
 		}
 	}
 
+	// Recent errors — surface errors from the error buffer that the agent
+	// might not have seen yet (e.g. the error that triggered the break).
+	{
+		Vector<OutputEntry> recent_errors = bridge->get_errors_since(0, 5);
+		if (recent_errors.size() > 0) {
+			text += "\n\nRecent errors:";
+			Array errors_array;
+			for (int i = 0; i < recent_errors.size(); i++) {
+				const OutputEntry &e = recent_errors[i];
+				String type_tag = (e.type == 1) ? "[warning]" : "[error]";
+				text += "\n  " + type_tag + " " + e.text;
+				Dictionary err;
+				err["text"] = e.text;
+				err["type"] = e.type;
+				err["is_warning"] = (e.type == 1);
+				errors_array.push_back(err);
+			}
+			break_state["recent_errors"] = errors_array;
+		}
+		break_state["error_count"] = bridge->get_error_count();
+	}
+
 	// Variables (if frame >= 0 and variables were fetched).
 	// The break_state snapshot returns "locals", "members", "globals" arrays.
 	if (frame >= 0 && break_state.has("locals")) {

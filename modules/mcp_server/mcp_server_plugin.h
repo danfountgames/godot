@@ -60,6 +60,7 @@ private:
 	bool start_attempted = false;
 	bool started = false;
 	bool use_thread = true;
+	bool agent_files_synced = false;
 
 	String host = MCP_DEFAULT_HOST;
 	int port = MCP_DEFAULT_PORT;
@@ -137,8 +138,13 @@ public:
 	// Called by the panel's Start/Stop button.
 	void toggle_server();
 
+	// Ensures generated Codex context/agent files are current for the open project.
+	void sync_project_agent_files();
+
 	// Debug mode — queried by AgentPanel when building CLI args.
+	String get_agent_cli() const;
 	bool is_debug_mode_enabled() const;
+	bool is_dangerously_mode_enabled() const;
 
 	// Expose host/port/token for the panels.
 	String get_host() const { return host; }

@@ -6,54 +6,71 @@
 #  Run this INSIDE your project folder (or an empty folder).
 #  It writes all scaffolding files into the current directory.
 #
+#  Two modes:
+#    NEW PROJECT (no project.godot):
+#      Creates everything from scratch — project.godot, .gitignore, docs,
+#      Claude config, hooks, templates, and KickoffPlanningPrompt.md.
+#
+#    EXISTING PROJECT (project.godot found):
+#      Adds the AI-assisted dev layer — docs structure, Claude config, hooks,
+#      templates, CLAUDE.md — without touching existing project files.
+#      Generates an UpgradePlanningPrompt.md that guides an agent through
+#      documenting the existing architecture.
+#
 #  Creates:
 #    - Architecture docs structure (docs/)
 #    - Claude Code configuration (.claude/)
 #    - Hooks for doc-awareness (load-architecture, post-tool nudges, stop gate)
 #    - Templates for system specs and feature plans
 #    - CLAUDE.md with permanent project conventions
-#    - KickoffPlanningPrompt.md — paste into your first Claude session
-#    - Minimal project.godot and .gitignore
-#    - Initial git commit
+#    - KickoffPlanningPrompt.md or UpgradePlanningPrompt.md
+#    - (new projects only) Minimal project.godot and .gitignore
+#    - Git commit with all scaffolding
 #
 #  Usage:
+#    # New project:
 #    mkdir my_game && cd my_game
-#    curl -O https://raw.githubusercontent.com/.../godot-kickoff.sh
-#    bash godot-kickoff.sh "My Game" "A roguelike deckbuilder with tactical combat"
+#    bash godot-kickoff.sh "My Game" "A roguelike deckbuilder"
 #
-#    # or just:
-#    bash godot-kickoff.sh              # defaults to folder name
+#    # Existing project:
+#    cd my_existing_game
+#    bash godot-kickoff.sh
 #
 # ============================================================================
 set -euo pipefail
 
 PROJECT_DIR="$(pwd)"
-PROJECT_NAME="${1:-$(basename "$PROJECT_DIR")}"
 DESCRIPTION="${2:-}"
 
-# ── Guard ───────────────────────────────────────────────────────────────────
+# ── Detect existing project ───────────────────────────────────────────────
+EXISTING_PROJECT=false
 if [ -f "$PROJECT_DIR/project.godot" ]; then
-    echo "Error: project.godot already exists in this directory."
-    echo "This script is for bootstrapping new projects."
-    exit 1
+    EXISTING_PROJECT=true
+    # Read project name from project.godot
+    DETECTED_NAME=$(grep -oP 'config/name="\K[^"]+' "$PROJECT_DIR/project.godot" 2>/dev/null || true)
+    PROJECT_NAME="${1:-${DETECTED_NAME:-$(basename "$PROJECT_DIR")}}"
+    echo "Existing Godot project detected: $PROJECT_NAME"
+    echo "Adding AI-assisted development scaffolding..."
+else
+    PROJECT_NAME="${1:-$(basename "$PROJECT_DIR")}"
+    echo "Bootstrapping new Godot 4 project: $PROJECT_NAME"
 fi
-
-echo "Bootstrapping Godot 4 project: $PROJECT_NAME"
 echo "Location: $PROJECT_DIR"
 echo ""
 
-# ── Directory skeleton ──────────────────────────────────────────────────────
+# ── Directory skeleton ────────────────────────────────────────────────────
 mkdir -p "$PROJECT_DIR"/{docs/{systems,plans/{active,completed},templates},.claude/hooks}
 
-# ── .gdignore — prevent Godot from importing docs ──────────────────────────
+# ── .gdignore — prevent Godot from importing docs ────────────────────────
 touch "$PROJECT_DIR/docs/.gdignore"
 
-# ── .gitkeep files ──────────────────────────────────────────────────────────
+# ── .gitkeep files ────────────────────────────────────────────────────────
 touch "$PROJECT_DIR/docs/systems/.gitkeep"
 touch "$PROJECT_DIR/docs/plans/active/.gitkeep"
 touch "$PROJECT_DIR/docs/plans/completed/.gitkeep"
 
-# ── project.godot ───────────────────────────────────────────────────────────
+# ── project.godot (new projects only) ────────────────────────────────────
+if [ "$EXISTING_PROJECT" = false ]; then
 cat > "$PROJECT_DIR/project.godot" << GODOT_EOF
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
@@ -74,9 +91,11 @@ config/features=PackedStringArray("4.4")
 
 renderer/rendering_method="forward_plus"
 GODOT_EOF
+fi
 
-# ── .gitignore ──────────────────────────────────────────────────────────────
-cat > "$PROJECT_DIR/.gitignore" << 'GITIGNORE_EOF'
+# ── .gitignore (new projects only, or append if missing key entries) ─────
+if [ "$EXISTING_PROJECT" = false ]; then
+    cat > "$PROJECT_DIR/.gitignore" << 'GITIGNORE_EOF'
 # Godot 4
 .godot/
 *.import
@@ -95,13 +114,27 @@ Thumbs.db
 build/
 export/
 GITIGNORE_EOF
-
-# ── docs/architecture.md (template) ────────────────────────────────────────
-if [ -n "$DESCRIPTION" ]; then
-    OVERVIEW_PLACEHOLDER="$DESCRIPTION"
 else
-    OVERVIEW_PLACEHOLDER="<!-- Describe your game in 2-3 sentences: genre, player role, core loop -->"
+    # For existing projects, ensure .godot/ is ignored
+    if [ -f "$PROJECT_DIR/.gitignore" ]; then
+        if ! grep -q '\.godot/' "$PROJECT_DIR/.gitignore" 2>/dev/null; then
+            echo "" >> "$PROJECT_DIR/.gitignore"
+            echo "# Godot 4 (added by godot-kickoff.sh)" >> "$PROJECT_DIR/.gitignore"
+            echo ".godot/" >> "$PROJECT_DIR/.gitignore"
+        fi
+    fi
 fi
+
+# ── docs/architecture.md ─────────────────────────────────────────────────
+# Only write if it doesn't already exist — never clobber user's docs
+if [ ! -f "$PROJECT_DIR/docs/architecture.md" ]; then
+    if [ -n "$DESCRIPTION" ]; then
+        OVERVIEW_PLACEHOLDER="$DESCRIPTION"
+    elif [ "$EXISTING_PROJECT" = true ]; then
+        OVERVIEW_PLACEHOLDER="<!-- Describe your game in 2-3 sentences. Run the planning session to fill this in from the existing codebase. -->"
+    else
+        OVERVIEW_PLACEHOLDER="<!-- Describe your game in 2-3 sentences: genre, player role, core loop -->"
+    fi
 
 cat > "$PROJECT_DIR/docs/architecture.md" << ARCH_EOF
 # $PROJECT_NAME — Architecture
@@ -138,16 +171,31 @@ Main Menu ──→ Game World ──→ Game Over
 ## Active Plans
 <!-- Links to docs/plans/active/*.md as they're created -->
 ARCH_EOF
+    echo "  Created docs/architecture.md"
+else
+    echo "  docs/architecture.md already exists — skipped"
+fi
 
-# ── docs/changelog.md ──────────────────────────────────────────────────────
+# ── docs/changelog.md ─────────────────────────────────────────────────────
+if [ ! -f "$PROJECT_DIR/docs/changelog.md" ]; then
+    if [ "$EXISTING_PROJECT" = true ]; then
+        CHANGELOG_INIT="- AI-assisted dev scaffolding added by godot-kickoff.sh"
+    else
+        CHANGELOG_INIT="- Project created with godot-kickoff.sh"
+    fi
 cat > "$PROJECT_DIR/docs/changelog.md" << CHANGELOG_EOF
 # $PROJECT_NAME — Changelog
 
 ## $(date +%Y-%m-%d)
-- Project created with godot-kickoff.sh
+$CHANGELOG_INIT
 CHANGELOG_EOF
+    echo "  Created docs/changelog.md"
+else
+    echo "  docs/changelog.md already exists — skipped"
+fi
 
-# ── docs/templates/system-spec.md ───────────────────────────────────────────
+# ── docs/templates/system-spec.md ─────────────────────────────────────────
+if [ ! -f "$PROJECT_DIR/docs/templates/system-spec.md" ]; then
 cat > "$PROJECT_DIR/docs/templates/system-spec.md" << 'TEMPLATE_SYSTEM_EOF'
 # {System Name}
 
@@ -173,8 +221,10 @@ ParentScene
 ## Open Questions
 <!-- Unresolved design questions for this system -->
 TEMPLATE_SYSTEM_EOF
+fi
 
-# ── docs/templates/plan.md ──────────────────────────────────────────────────
+# ── docs/templates/plan.md ────────────────────────────────────────────────
+if [ ! -f "$PROJECT_DIR/docs/templates/plan.md" ]; then
 cat > "$PROJECT_DIR/docs/templates/plan.md" << 'TEMPLATE_PLAN_EOF'
 # Plan: {Feature Name}
 **Status**: draft | ready | building | done
@@ -200,11 +250,24 @@ cat > "$PROJECT_DIR/docs/templates/plan.md" << 'TEMPLATE_PLAN_EOF'
 ## Acceptance Criteria
 - [ ] <!-- Observable outcome, not implementation detail -->
 
+## Playtest Checkpoints
+<!-- After each visible milestone, add a checkpoint for human testing -->
+
+### Checkpoint 1: {after what}
+**Launch:** runtime/run_project
+**User tests:**
+- [ ] <!-- specific action — which control to use -->
+- [ ] <!-- specific action — which control to use -->
+**Interview:**
+- "<!-- question about feel/experience -->"
+- "Anything feel off?"
+
 ## Notes
 <!-- Anything the builder agent needs to know -->
 TEMPLATE_PLAN_EOF
+fi
 
-# ── .claude/hooks/load-architecture.sh ──────────────────────────────────────
+# ── .claude/hooks/load-architecture.sh ────────────────────────────────────
 cat > "$PROJECT_DIR/.claude/hooks/load-architecture.sh" << 'HOOK_ARCH_EOF'
 #!/bin/bash
 # Claude Code hook: inject game architecture docs into context at session start.
@@ -217,7 +280,11 @@ if [ -f "$ARCH_FILE" ]; then
     if grep -q "<!-- TEMPLATE:" "$ARCH_FILE" 2>/dev/null; then
         echo "=== GAME ARCHITECTURE (TEMPLATE — not yet filled in) ==="
         echo "This project's architecture.md is still a template."
-        echo "If starting a planning session, read KickoffPlanningPrompt.md and follow it."
+        if [ -f "UpgradePlanningPrompt.md" ]; then
+            echo "This is an existing project. Read UpgradePlanningPrompt.md and follow it to document the current architecture."
+        elif [ -f "KickoffPlanningPrompt.md" ]; then
+            echo "If starting a planning session, read KickoffPlanningPrompt.md and follow it."
+        fi
         echo "=== END ==="
     else
         echo "=== GAME ARCHITECTURE ==="
@@ -232,7 +299,9 @@ fi
 HOOK_ARCH_EOF
 chmod +x "$PROJECT_DIR/.claude/hooks/load-architecture.sh"
 
-# ── .claude/settings.json ──────────────────────────────────────────────────
+# ── .claude/settings.json ─────────────────────────────────────────────────
+# Only write if it doesn't exist — don't clobber user's custom settings
+if [ ! -f "$PROJECT_DIR/.claude/settings.json" ]; then
 cat > "$PROJECT_DIR/.claude/settings.json" << 'SETTINGS_EOF'
 {
   "hooks": {
@@ -272,8 +341,14 @@ cat > "$PROJECT_DIR/.claude/settings.json" << 'SETTINGS_EOF'
   }
 }
 SETTINGS_EOF
+    echo "  Created .claude/settings.json"
+else
+    echo "  .claude/settings.json already exists — skipped"
+fi
 
-# ── CLAUDE.md ───────────────────────────────────────────────────────────────
+# ── CLAUDE.md ─────────────────────────────────────────────────────────────
+# Only write if it doesn't exist — don't clobber user's custom instructions
+if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
 cat > "$PROJECT_DIR/CLAUDE.md" << CLAUDE_EOF
 # $PROJECT_NAME
 
@@ -299,8 +374,8 @@ This project uses a documentation-first workflow.
 
 ### First Session
 If docs/architecture.md still contains \`<!-- TEMPLATE\`, the project hasn't been
-planned yet. Read \`KickoffPlanningPrompt.md\` and follow its instructions to run
-a planning session before writing any game code.
+planned yet. Read \`KickoffPlanningPrompt.md\` (or \`UpgradePlanningPrompt.md\` for
+existing projects) and follow its instructions to run a planning session.
 
 ## Conventions
 - Composition over inheritance — combine small scene nodes, don't extend deep hierarchies
@@ -317,8 +392,112 @@ a planning session before writing any game code.
 - architecture.md is the entry point — any agent should understand the game from it alone
 - System specs are ~25-35 lines — enough to orient, not enough to go stale
 CLAUDE_EOF
+    echo "  Created CLAUDE.md"
+else
+    echo "  CLAUDE.md already exists — skipped"
+fi
 
-# ── KickoffPlanningPrompt.md ───────────────────────────────────────────────
+# ── Planning prompt ───────────────────────────────────────────────────────
+if [ "$EXISTING_PROJECT" = true ]; then
+    # Existing project: generate UpgradePlanningPrompt.md
+    if [ ! -f "$PROJECT_DIR/UpgradePlanningPrompt.md" ]; then
+cat > "$PROJECT_DIR/UpgradePlanningPrompt.md" << 'UPGRADE_EOF'
+# Architecture Discovery Session
+
+This is an **existing Godot 4 project** that just got AI-assisted development
+scaffolding. Your job is to **explore what's already here** and document it —
+not to start from scratch.
+
+## Your role
+
+You are a game architect who reverse-engineers existing projects. You'll read
+the code, understand the structure, and fill in the architecture docs so that
+future sessions (yours or another agent's) can work with full context.
+
+## What's already set up
+
+The documentation structure is ready but empty:
+
+```
+docs/
+├── architecture.md      ← TEMPLATE — needs to be filled from what exists
+├── systems/             ← One spec per game system (empty)
+├── plans/active/        ← Implementation plans (empty)
+├── plans/completed/     ← Done plans (empty)
+├── changelog.md         ← Build log
+└── templates/           ← Copy these for new specs/plans
+```
+
+## How this works
+
+### Phase 1 — Scan the project
+Explore the existing codebase systematically:
+- Read `project.godot` for project settings, autoloads, input mappings
+- List all `.tscn` scene files — understand the scene hierarchy
+- List all `.gd` scripts — identify systems by `class_name`, autoloads, key scripts
+- Check for `addons/`, `resources/`, data files (`.tres`, `.json`)
+- Look at the main scene and trace the flow from there
+- Note the rendering method, target platforms, any special config
+
+Don't just list files — **understand the relationships**. Which scripts attach
+to which scenes? What signals connect systems? What's the player's path through
+the game?
+
+### Phase 2 — Document the architecture
+Open `docs/architecture.md` and replace the template with real content:
+- **Overview**: What IS this game? Genre, player role, core loop — from what the code shows
+- **Scene Flow**: Real scene transitions based on actual scene files
+- **Systems table**: Each real system found, status = "implemented" or "partial", one-line description
+- **Autoloads**: Actual autoloads from project.godot with their purposes
+- **Key Decisions**: Architectural choices visible in the code (node types used, patterns, etc.)
+- **Constraints**: Anything apparent (target platform, rendering method, etc.)
+
+Show me the draft. Iterate until I say it's right.
+
+### Phase 3 — System specs
+For each system in the table, create `docs/systems/{name}.md` using the template
+in `docs/templates/system-spec.md`. Fill in from what the code actually does:
+- **Purpose**: What does this system do for the player?
+- **Shape**: Actual scene tree structure from the `.tscn` files
+- **Decisions**: Architectural choices visible in the implementation
+- **Constraints & Edge Cases**: Known limitations or tricky areas
+- **Open Questions**: Things that seem unfinished or unclear
+
+Keep these lean. ~25-35 lines. They orient — they don't spec every method.
+
+### Phase 4 — What's next?
+Ask me: what are you working on next? Create an implementation plan in
+`docs/plans/active/` for the next feature or improvement.
+
+## Rules for this session
+
+- **Read before writing.** Scan thoroughly. Don't guess what a system does — read the code.
+- **Document what IS, not what should be.** Describe the current reality, not ideals.
+- **Flag gaps.** If something looks incomplete, unfinished, or questionable, note it.
+- **Ask when uncertain.** If you can't tell the intent from code alone, ask me.
+- **Stay lean.** Docs should be concise. If a spec feels long, cut it.
+- **Don't refactor.** This session is documentation only. No code changes.
+
+## When we're done
+
+At the end of this session, the project should have:
+1. A filled-in `docs/architecture.md` that accurately reflects the existing codebase
+2. A system spec in `docs/systems/` for each identified system
+3. An updated `docs/changelog.md` entry
+4. Optionally, an implementation plan for the next piece of work
+
+Future sessions will load the architecture automatically and work with full context.
+
+---
+
+**Let's start. I'll tell you about this project, then you explore the code.**
+UPGRADE_EOF
+        echo "  Created UpgradePlanningPrompt.md"
+    else
+        echo "  UpgradePlanningPrompt.md already exists — skipped"
+    fi
+else
+    # New project: generate KickoffPlanningPrompt.md
 cat > "$PROJECT_DIR/KickoffPlanningPrompt.md" << 'KICKOFF_EOF'
 # Kickoff Planning Session
 
@@ -419,13 +598,36 @@ The next session can pick up the plan and start building with full context.
 
 **Let's start. What are we building?**
 KICKOFF_EOF
+    echo "  Created KickoffPlanningPrompt.md"
+fi
 
-# ── Git init ────────────────────────────────────────────────────────────────
+# ── Git init & commit ─────────────────────────────────────────────────────
 if [ ! -d "$PROJECT_DIR/.git" ]; then
     git init -q "$PROJECT_DIR"
 fi
+
 git -C "$PROJECT_DIR" add -A
-git -C "$PROJECT_DIR" commit -q -m "$(cat <<'COMMIT_EOF'
+
+# Check if there's anything to commit
+if git -C "$PROJECT_DIR" diff --cached --quiet 2>/dev/null; then
+    echo ""
+    echo "No changes to commit (scaffolding already in place)."
+else
+    if [ "$EXISTING_PROJECT" = true ]; then
+        git -C "$PROJECT_DIR" commit -q -m "$(cat <<'COMMIT_EOF'
+Add AI-assisted development scaffolding
+
+Sets up documentation-first workflow for existing project:
+- docs/ structure with architecture template, system specs, plans, changelog
+- .claude/ hooks for architecture awareness (SessionStart, PostToolUse, Stop)
+- CLAUDE.md with project conventions
+- UpgradePlanningPrompt.md for architecture discovery session
+
+Run a planning session to document the existing codebase.
+COMMIT_EOF
+)"
+    else
+        git -C "$PROJECT_DIR" commit -q -m "$(cat <<'COMMIT_EOF'
 Bootstrap project with architecture docs and Claude Code config
 
 Sets up documentation-first workflow:
@@ -438,30 +640,45 @@ Sets up documentation-first workflow:
 No game code yet — run a planning session first.
 COMMIT_EOF
 )"
+    fi
+fi
 
-# ── Self-clean ──────────────────────────────────────────────────────────────
+# ── Self-clean ────────────────────────────────────────────────────────────
 # Remove the kickoff script itself from the project — it's done its job.
-SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 if [ -f "$PROJECT_DIR/$(basename "$0")" ]; then
     rm "$PROJECT_DIR/$(basename "$0")"
 fi
 
-# ── Done ────────────────────────────────────────────────────────────────────
+# ── Done ──────────────────────────────────────────────────────────────────
 echo ""
 echo "================================================"
+if [ "$EXISTING_PROJECT" = true ]; then
+echo "  $PROJECT_NAME — upgraded"
+else
 echo "  $PROJECT_NAME — ready"
+fi
 echo "================================================"
 echo ""
-echo "  Next steps:"
-echo "    1. Open Claude Code in this directory"
-echo "    2. Say: \"Read KickoffPlanningPrompt.md and follow it\""
-echo "    3. Plan your game architecture through conversation"
-echo "    4. Every future agent session loads docs automatically"
+if [ "$EXISTING_PROJECT" = true ]; then
+    PROMPT_FILE="UpgradePlanningPrompt.md"
+    echo "  Next steps:"
+    echo "    1. Open Claude Code in this directory"
+    echo "    2. Say: \"Read $PROMPT_FILE and follow it\""
+    echo "    3. The agent will scan your code and document the architecture"
+    echo "    4. Every future agent session loads docs automatically"
+else
+    PROMPT_FILE="KickoffPlanningPrompt.md"
+    echo "  Next steps:"
+    echo "    1. Open Claude Code in this directory"
+    echo "    2. Say: \"Read $PROMPT_FILE and follow it\""
+    echo "    3. Plan your game architecture through conversation"
+    echo "    4. Every future agent session loads docs automatically"
+fi
 echo ""
 echo "  Structure:"
 echo "    docs/architecture.md        ← fill during planning"
 echo "    docs/systems/*.md           ← one per game system"
 echo "    docs/plans/active/*.md      ← implementation plans"
 echo "    CLAUDE.md                   ← auto-loaded every session"
-echo "    KickoffPlanningPrompt.md    ← your first prompt"
+echo "    $PROMPT_FILE"
 echo ""

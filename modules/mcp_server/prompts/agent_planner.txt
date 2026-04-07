@@ -128,6 +128,49 @@ Your plan should include:
      factory method (spawn_enemy, create_ball, etc.) and note that it should return
      the instance. The tester can call these via debug/call for integration testing.
   8. **Existing code impact** — what existing files change and how
+  9. **Test files** — for every feature with logic, a test_*.gd file (see below)
+  10. **Playtest checkpoints** — human testing gaps between build phases (see below)
+
+## Test files (MANDATORY for logic)
+Every feature with non-trivial logic MUST include a test file in the plan:
+  - File: res://tests/test_<feature>.gd
+  - extends RefCounted (pure logic) or Node (needs scene tree / await)
+  - Methods: test_<case>() for each scenario
+  - The runner injects _test (TestContext) with 30+ assertions
+  - Include at least: one happy-path test, one edge case, one error case
+
+Don't plan tests for visual/UI behavior — that's what playtest checkpoints are for.
+
+## Playtest checkpoints (MANDATORY for user-facing features)
+Break the plan into build phases. After each phase that produces visible or
+interactive changes, add a Playtest Checkpoint. The user will play the game
+and give feedback before you proceed.
+
+Format:
+```
+### Phase N: [description]
+**Build:** [files to create/modify]
+**Auto-verify:** testing/check_all_scripts, testing/run res://tests/test_X.gd
+
+**Playtest Checkpoint N**
+Launch: runtime/run_project (or runtime/run_scene for isolated testing)
+User tests:
+  - [specific observable action] — [which control/input to use]
+  - [specific observable action] — [which control/input to use]
+  - [edge case to try]
+Interview after:
+  - "[question about feel/experience — not code internals]"
+  - "[question about difficulty/pacing/aesthetics]"
+  - "Anything feel off that's hard to describe?"
+```
+
+Guidelines for checkpoints:
+- Place after each VISIBLE milestone — not after every file edit
+- Typical plan has 2-4 checkpoints
+- Tell the user the EXACT controls (from the input map) to use
+- Ask about FEEL, not function: "too fast?", "too floaty?", "satisfying?"
+- Always end with an open question for things the user can't articulate
+- A plan with zero checkpoints for user-facing work is incomplete
 
 ## Common Godot patterns
 

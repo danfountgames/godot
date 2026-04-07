@@ -36,6 +36,9 @@
 #include "../mcp_protocol.h"
 #include "../mcp_server_plugin.h"
 
+#include "core/config/project_settings.h"
+#include "core/io/config_file.h"
+#include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
 #include "core/io/resource_loader.h"
@@ -53,6 +56,12 @@
 #include "scene/gui/tree.h"
 #include "scene/resources/image_texture.h"
 
+namespace {
+static constexpr int AGENT_CLI_CLAUDE = 0;
+static constexpr int AGENT_CLI_CODEX = 1;
+static const char *MCP_PROJECT_SETTINGS_REL_PATH = ".godot/mcp_server/settings.cfg";
+} // namespace
+
 // =========================================================================
 // Constructor / Destructor
 // =========================================================================
@@ -61,6 +70,7 @@ MCPStatusPanel::MCPStatusPanel() {
 	set_name("MCPStatusPanel");
 	_create_dot_textures();
 	_build_ui();
+	_load_project_settings();
 }
 
 MCPStatusPanel::~MCPStatusPanel() {
@@ -74,8 +84,89 @@ void MCPStatusPanel::_bind_methods() {
 	// No GDScript-exposed methods needed.
 }
 
+String MCPStatusPanel::get_agent_cli() const {
+	if (!agent_cli_select) {
+		return "claude";
+	}
+
+	return agent_cli_select->get_selected_id() == AGENT_CLI_CODEX ? "codex" : "claude";
+}
+
 bool MCPStatusPanel::is_debug_mode_enabled() const {
 	return debug_toggle && debug_toggle->is_pressed();
+}
+
+bool MCPStatusPanel::is_dangerously_mode_enabled() const {
+	return dangerously_toggle && dangerously_toggle->is_pressed();
+}
+
+String MCPStatusPanel::_get_project_settings_path() const {
+	ProjectSettings *project_settings = ProjectSettings::get_singleton();
+	if (!project_settings) {
+		return String();
+	}
+
+	String project_dir = project_settings->get_resource_path();
+	if (project_dir.is_empty()) {
+		return String();
+	}
+
+	return project_dir.path_join(MCP_PROJECT_SETTINGS_REL_PATH);
+}
+
+void MCPStatusPanel::_load_project_settings() {
+	String settings_path = _get_project_settings_path();
+	if (settings_path.is_empty() || !FileAccess::exists(settings_path)) {
+		return;
+	}
+
+	Ref<ConfigFile> config;
+	config.instantiate();
+	Error err = config->load(settings_path);
+	if (err != OK) {
+		WARN_PRINT("[MCP] Failed to load project MCP settings from " + settings_path);
+		return;
+	}
+
+	String agent_cli = String(config->get_value("agent", "cli", String("claude"))).to_lower();
+	if (agent_cli_select) {
+		agent_cli_select->select(agent_cli == "codex" ? 1 : 0);
+	}
+	if (debug_toggle) {
+		debug_toggle->set_pressed_no_signal((bool)config->get_value("agent", "debug_mode", false));
+	}
+	if (dangerously_toggle) {
+		dangerously_toggle->set_pressed_no_signal((bool)config->get_value("agent", "skip_permissions", false));
+	}
+}
+
+void MCPStatusPanel::_save_project_settings() const {
+	String settings_path = _get_project_settings_path();
+	if (settings_path.is_empty()) {
+		return;
+	}
+
+	String settings_dir = settings_path.get_base_dir();
+	Error dir_err = DirAccess::make_dir_recursive_absolute(settings_dir);
+	if (dir_err != OK) {
+		WARN_PRINT("[MCP] Failed to create project MCP settings directory: " + settings_dir);
+		return;
+	}
+
+	Ref<ConfigFile> config;
+	config.instantiate();
+	if (FileAccess::exists(settings_path)) {
+		config->load(settings_path);
+	}
+
+	config->set_value("agent", "cli", get_agent_cli());
+	config->set_value("agent", "debug_mode", is_debug_mode_enabled());
+	config->set_value("agent", "skip_permissions", is_dangerously_mode_enabled());
+
+	Error save_err = config->save(settings_path);
+	if (save_err != OK) {
+		WARN_PRINT("[MCP] Failed to save project MCP settings to " + settings_path);
+	}
 }
 
 // =========================================================================
@@ -159,11 +250,26 @@ void MCPStatusPanel::_build_ui() {
 	toggle_button->connect("pressed", callable_mp(this, &MCPStatusPanel::_on_toggle_button_pressed));
 	server_status_panel->add_child(toggle_button);
 
+	agent_cli_select = memnew(OptionButton);
+	agent_cli_select->add_item(TTR("Claude"), AGENT_CLI_CLAUDE);
+	agent_cli_select->add_item(TTR("Codex"), AGENT_CLI_CODEX);
+	agent_cli_select->set_tooltip_text(TTR("Choose which embedded coding agent CLI new Agent tabs launch."));
+	agent_cli_select->connect("item_selected", callable_mp(this, &MCPStatusPanel::_on_agent_cli_selected));
+	server_status_panel->add_child(agent_cli_select);
+
 	debug_toggle = memnew(CheckBox);
 	debug_toggle->set_text(TTR("Debug mode"));
-	debug_toggle->set_tooltip_text(TTR("Launch Claude with --debug flag for verbose diagnostic output."));
+	debug_toggle->set_tooltip_text(TTR("Launch the selected CLI with verbose diagnostic settings when supported."));
 	debug_toggle->set_pressed(false);
+	debug_toggle->connect("toggled", callable_mp(this, &MCPStatusPanel::_on_setting_toggled));
 	server_status_panel->add_child(debug_toggle);
+
+	dangerously_toggle = memnew(CheckBox);
+	dangerously_toggle->set_text(TTR("Skip permissions"));
+	dangerously_toggle->set_tooltip_text(TTR("Launch the selected CLI in its dangerous no-permission mode. Agents will not ask before executing tools."));
+	dangerously_toggle->set_pressed(false);
+	dangerously_toggle->connect("toggled", callable_mp(this, &MCPStatusPanel::_on_setting_toggled));
+	server_status_panel->add_child(dangerously_toggle);
 
 	// -- VSeparator --
 	top_bar->add_child(memnew(VSeparator));
@@ -1726,6 +1832,16 @@ void MCPStatusPanel::_on_toggle_button_pressed() {
 	if (server_plugin) {
 		server_plugin->toggle_server();
 	}
+}
+
+void MCPStatusPanel::_on_agent_cli_selected(int p_index) {
+	(void)p_index;
+	_save_project_settings();
+}
+
+void MCPStatusPanel::_on_setting_toggled(bool p_enabled) {
+	(void)p_enabled;
+	_save_project_settings();
 }
 
 void MCPStatusPanel::_on_clear_pressed() {

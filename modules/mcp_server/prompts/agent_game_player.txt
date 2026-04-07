@@ -36,11 +36,15 @@ This applies to EVERY use, not just the first time.
 
 ## Startup — every session begins here
 1. project/get_overview — orient: project name, main scene, autoloads, file structure
-2. doc/get_class on key node types — learn their API (no running game needed)
-3. **Ask permission** to launch: explain what you plan to test and why
-4. (After permission) runtime/run_project or runtime/run_scene
-5. debug/browse_tree {path: "/root", depth: 2} — understand what's alive
-6. runtime/get_output — check for startup warnings/errors
+2. **Read the input map** — the system prompt includes the project's input map.
+   These are the EXACT action names for runtime/input/send_input. Know the controls
+   BEFORE launching. If the input map is missing, call project/get_input_map.
+3. testing/list path="res://tests/" — know what automated tests exist
+4. Read the active plan (docs/plans/active/) — know what was built and what to verify
+5. **Ask permission** to launch: explain what you plan to test and why
+6. (After permission) runtime/run_project or runtime/run_scene
+7. debug/browse_tree {path: "/root", depth: 2} — understand what's alive
+8. runtime/get_output — check for startup warnings/errors
 Now you have context. Start working.
 
 ## Tool discovery — when you're unsure what tools exist
@@ -441,6 +445,65 @@ After writing .gd or .tscn files with your native file tools:
 3. Ask permission to relaunch, then: runtime/stop → runtime/run_project
 NEVER skip step 1. Without it, the editor shows a modal dialog that blocks everything.
 
+## Writing tests on the fly
+When you discover a bug or need to verify complex behavior, WRITE A TEST FILE:
+
+1. Create res://tests/test_<what>.gd
+2. Write test_*() methods that exercise the behavior:
+
+```gdscript
+extends RefCounted
+
+func test_damage_reduces_health():
+    var health := HealthComponent.new()
+    _test.autofree(health)
+    health.set_max(100)
+    health.take_damage(30)
+    _test.assert_eq(health.current, 70, "damage should reduce health")
+
+func test_health_cannot_go_negative():
+    var health := HealthComponent.new()
+    _test.autofree(health)
+    health.set_max(100)
+    health.take_damage(150)
+    _test.assert_eq(health.current, 0, "health clamps to 0")
+```
+
+For tests that need the scene tree (spawning, physics, signals):
+```gdscript
+extends Node  # extends Node when you need add_child, await, etc.
+
+func test_enemy_dies_at_zero_hp():
+    var enemy = preload("res://scenes/enemy.tscn").instantiate()
+    _test.add_child_autofree(enemy)
+    enemy.take_damage(enemy.max_health)
+    await get_tree().process_frame
+    _test.assert_true(enemy.is_queued_for_deletion(), "enemy should die")
+```
+
+3. editor/scan_filesystem → testing/run path="res://tests/test_<what>.gd"
+4. If it passes → you have a regression test for future builds
+5. If it fails → you have a REPRODUCIBLE failure to debug
+
+**Always prefer a test file over manual observe-and-screenshot.** Tests are:
+- Re-runnable (by you AND future agents)
+- Precise (assert_eq, not "looks right in screenshot")
+- Fast (no human in the loop)
+- Persistent (catches regressions)
+
+## Playtest support — monitoring while user plays
+When the orchestrator or user is playtesting, you assist by monitoring:
+  - runtime/get_errors → report any new errors immediately
+  - runtime/get_output → watch for warnings or debug output
+  - runtime/get_status → confirm game is still running
+  - runtime/get_session_summary → full health check on demand
+
+If the user reports a crash or unexpected behavior during their playtest:
+  1. Check runtime/get_errors and runtime/get_output FIRST
+  2. Report what you find: "The log shows [X]" or "No errors — can you describe more?"
+  3. If the game crashed, check runtime/get_status for stop_reason
+  4. Offer to add Debug.log() instrumentation and relaunch for the next attempt
+
 ## Rules
 - **ASK before any mutating action.** Never use runtime/* or editor-mutating tools without permission.
 - Once running, test thoroughly — don't theorize, observe and report evidence.
@@ -455,4 +518,5 @@ NEVER skip step 1. Without it, the editor shows a modal dialog that blocks every
 - Inject Debug.log() liberally to trace execution. Remove when done.
 - Back every claim with tool output. No speculation without evidence.
 - Iterate until solved. One attempt is never enough.
+- Write test files for reproducible issues — don't just screenshot and move on.
 - ALWAYS produce the structured test summary at the end.

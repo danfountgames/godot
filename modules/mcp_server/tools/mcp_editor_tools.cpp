@@ -706,10 +706,25 @@ Dictionary MCPEditorTools::handle_get_uid(const Dictionary &p_args) {
 	ResourceUID::ID found_id = ResourceLoader::get_resource_uid(path);
 
 	if (found_id == ResourceUID::INVALID_ID) {
+		// The file may have been created externally but not yet registered by the
+		// editor filesystem. Force-update the file entry on the main thread which
+		// will assign a UID, then retry.
+		if (Thread::is_main_thread()) {
+			_do_refresh_uid_main(path);
+		} else {
+			callable_mp_static(&MCPEditorTools::_do_refresh_uid_main)
+					.call_deferred(path);
+			_deferred_semaphore.wait();
+		}
+
+		found_id = ResourceLoader::get_resource_uid(path);
+	}
+
+	if (found_id == ResourceUID::INVALID_ID) {
 		return make_tool_error(vformat(
 				"No UID found for: %s\n\n"
-				"This file may not have been assigned a UID yet. "
-				"Try editor/scan_filesystem first, or check that the file exists.",
+				"The file was refreshed in the editor filesystem but still has no UID. "
+				"Check that the file exists and is a supported resource type.",
 				path));
 	}
 
@@ -901,6 +916,17 @@ Dictionary MCPEditorTools::handle_execute_script(const Dictionary &p_args) {
 // ============================================================================
 // Tool: editor/get_screenshot
 // ============================================================================
+
+// Main-thread helper: force EditorFileSystem to update a single file entry.
+// This causes the editor to re-read the file, assign a UID if missing, and
+// register it in the ResourceUID cache. Posts the semaphore when done.
+void MCPEditorTools::_do_refresh_uid_main(const String &p_path) {
+	EditorFileSystem *efs = EditorFileSystem::get_singleton();
+	if (efs) {
+		efs->update_file(p_path);
+	}
+	_deferred_semaphore.post();
+}
 
 // Main-thread implementation: captures viewport, encodes as base64 PNG.
 // Stores result in _deferred_result and posts _deferred_semaphore.

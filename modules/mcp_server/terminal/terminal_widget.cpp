@@ -118,6 +118,13 @@ void TerminalWidget::_notification(int p_what) {
 			// Track scrollback growth for minimum size updates.
 			int sb_len = emulator.get_scrollback_length();
 			if (sb_len != last_scrollback_len) {
+				int delta = sb_len - last_scrollback_len;
+				// Shift selection coordinates so the highlight tracks
+				// the same content even as new scrollback lines appear.
+				if (has_selection || selecting) {
+					sel_start.x += delta;
+					sel_end.x += delta;
+				}
 				last_scrollback_len = sb_len;
 				update_minimum_size();
 				if (stick_to_bottom) {
@@ -410,9 +417,13 @@ void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
 	// --- Mouse button events (selection) ---
 	Ref<InputEventMouseButton> mb = p_event;
 	if (mb.is_valid()) {
+		// Any click in the terminal area grabs focus.
+		if (mb->is_pressed()) {
+			grab_focus();
+		}
+
 		// Left click — start selection.
 		if (mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
-			grab_focus();
 			selecting = true;
 			sel_start = _pixel_to_cell(mb->get_position());
 			sel_end = sel_start;
@@ -480,8 +491,10 @@ void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
 		VTermModifier mod = _godot_mods_to_vterm(p_event);
 		VTermKey vk = _godot_key_to_vterm(keycode);
 
+		bool sent_input = false;
 		if (vk != VTERM_KEY_NONE) {
 			emulator.input_key(vk, mod);
+			sent_input = true;
 		} else if (key_event->get_unicode() > 0) {
 			uint32_t ch = key_event->get_unicode();
 
@@ -491,12 +504,14 @@ void TerminalWidget::gui_input(const Ref<InputEvent> &p_event) {
 			}
 
 			emulator.input_char(ch, mod);
+			sent_input = true;
 		}
 
 		_send_output_to_pty();
 
-		// Typing should re-stick and scroll to bottom.
-		if (!stick_to_bottom) {
+		// Typing should re-stick and scroll to bottom, but only
+		// when actual input was sent — not on modifier-only presses.
+		if (sent_input && !stick_to_bottom) {
 			stick_to_bottom = true;
 			_do_scroll_to_bottom();
 		}

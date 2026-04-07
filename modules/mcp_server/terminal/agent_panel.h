@@ -67,7 +67,7 @@ private:
 	// Title tracking.
 	String current_title;
 
-	bool claude_running = false;
+	bool agent_running = false;
 
 	void _build_ui();
 	void _on_to_bottom_pressed();
@@ -79,11 +79,17 @@ private:
 	void _update_status();
 
 	String _find_claude_binary() const;
+	String _find_codex_binary() const;
+	String _build_mcp_url() const;
 	String _build_mcp_config_json() const;
 	String _build_system_prompt() const;
+	String _build_input_map_summary() const;
 	String _build_agents_json() const;
 	Vector<String> _build_claude_args() const;
+	Vector<String> _build_agent_env() const;
 	Vector<String> _build_claude_env() const;
+	Vector<String> _build_codex_args() const;
+	Vector<String> _build_codex_env() const;
 
 	void _notification(int p_what);
 

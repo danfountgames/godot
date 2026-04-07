@@ -105,6 +105,11 @@ uint64_t OutputRingBuffer::latest_seq() const {
 	return next_seq - 1;
 }
 
+int OutputRingBuffer::get_count() const {
+	MutexLock lock(mutex);
+	return count;
+}
+
 void OutputRingBuffer::clear() {
 	MutexLock lock(mutex);
 	entries.clear();
@@ -767,6 +772,10 @@ uint64_t MCPDebuggerBridge::get_output_latest_seq() const {
 
 uint64_t MCPDebuggerBridge::get_error_latest_seq() const {
 	return error_buffer.latest_seq();
+}
+
+int MCPDebuggerBridge::get_error_count() const {
+	return error_buffer.get_count();
 }
 
 void MCPDebuggerBridge::clear_output_buffer() {

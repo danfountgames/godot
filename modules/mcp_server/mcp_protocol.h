@@ -260,7 +260,7 @@ public:
 	void set_auth_token(const String &p_token) { auth_token = p_token; }
 
 	// Per-agent token management. AgentPanel registers a unique token
-	// before launching Claude Code. The token doubles as the agent_id.
+	// before launching an embedded agent CLI. The token doubles as the agent_id.
 	void register_agent_token(const String &p_agent_token);
 	void unregister_agent_token(const String &p_agent_token);
 

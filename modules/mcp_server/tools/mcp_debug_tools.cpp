@@ -547,6 +547,16 @@ Dictionary MCPDebugTools::handle_get_status(const Dictionary &p_args) {
 		}
 	}
 
+	// Error count (always available when bridge exists).
+	int error_count = bridge ? bridge->get_error_count() : 0;
+
+	// Break reason when paused (from debugger break state).
+	String break_reason;
+	if (state == "paused" && bridge) {
+		Dictionary break_state = bridge->get_break_state_snapshot();
+		break_reason = break_state.get("reason", "");
+	}
+
 	// Build text response.
 	String text = "Game Status: " + state;
 	if (!scene_path.is_empty()) {
@@ -556,13 +566,23 @@ Dictionary MCPDebugTools::handle_get_status(const Dictionary &p_args) {
 		text += "\nUptime: " + String::num(uptime_seconds, 1) + "s";
 		text += "\nFrame: " + itos(frame_count);
 	}
+	if (!break_reason.is_empty()) {
+		text += "\nBreak reason: " + break_reason;
+	}
+	if (error_count > 0) {
+		text += "\nErrors: " + itos(error_count) + " (use runtime/get_errors for details)";
+	}
 
 	Dictionary structured;
 	structured["state"] = state;
 	structured["scene"] = scene_path.is_empty() ? Variant() : Variant(scene_path);
 	structured["uptime_seconds"] = uptime_seconds;
 	structured["frame_count"] = frame_count;
+	structured["error_count"] = error_count;
 
+	if (!break_reason.is_empty()) {
+		structured["break_reason"] = break_reason;
+	}
 	if (state == "stopped" && bridge) {
 		structured["stop_reason"] = bridge->get_last_stop_reason();
 	}

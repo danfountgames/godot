@@ -39,6 +39,7 @@
 
 #include "core/config/project_settings.h"
 #include "core/crypto/crypto_core.h"
+#include "core/input/input_map.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
@@ -49,6 +50,37 @@
 #include "scene/gui/check_box.h"
 #include "scene/gui/scroll_bar.h"
 #include "scene/gui/scroll_container.h"
+
+namespace {
+String agent_toml_string(const String &p_value) {
+	String out = "\"";
+	for (int i = 0; i < p_value.length(); i++) {
+		char32_t c = p_value[i];
+		switch (c) {
+			case '\\':
+				out += "\\\\";
+				break;
+			case '"':
+				out += "\\\"";
+				break;
+			case '\n':
+				out += "\\n";
+				break;
+			case '\r':
+				out += "\\r";
+				break;
+			case '\t':
+				out += "\\t";
+				break;
+			default:
+				out += String::chr(c);
+				break;
+		}
+	}
+	out += "\"";
+	return out;
+}
+} // namespace
 
 AgentPanel::AgentPanel() {
 	_build_ui();
@@ -95,9 +127,11 @@ void AgentPanel::_build_ui() {
 	terminal->set_scroll_container(scroll_container);
 
 	// "To Bottom" button anchored bottom-right, initially hidden.
+	// FOCUS_NONE prevents the button from stealing keyboard focus from the terminal.
 	to_bottom_button = memnew(Button);
 	to_bottom_button->set_text("To Bottom");
 	to_bottom_button->set_visible(false);
+	to_bottom_button->set_focus_mode(FOCUS_NONE);
 	to_bottom_button->set_anchors_preset(Control::PRESET_BOTTOM_RIGHT);
 	to_bottom_button->set_grow_direction_preset(Control::PRESET_BOTTOM_RIGHT);
 	to_bottom_button->set_offset(SIDE_LEFT, -120);
@@ -154,8 +188,8 @@ void AgentPanel::_notification(int p_what) {
 }
 
 void AgentPanel::_update_status() {
-	if (claude_running && terminal && !terminal->is_process_running()) {
-		claude_running = false;
+	if (agent_running && terminal && !terminal->is_process_running()) {
+		agent_running = false;
 	}
 
 	// Poll terminal title and emit signal on change.
@@ -172,24 +206,31 @@ String AgentPanel::_find_claude_binary() const {
 	return "claude";
 }
 
-String AgentPanel::_build_mcp_config_json() const {
+String AgentPanel::_find_codex_binary() const {
+	return "codex";
+}
+
+String AgentPanel::_build_mcp_url() const {
 	String host = server_plugin->get_host();
 	int port = server_plugin->get_port();
 
-	// Use the per-agent token (registered with MCPProtocol) instead of the
-	// global auth token. This lets the server identify which agent panel
-	// owns each MCP session and apply per-agent permissions.
-	Dictionary headers;
+	String url = "http://" + host + ":" + itos(port) + "/mcp";
 	if (!agent_token.is_empty()) {
-		headers["Authorization"] = "Bearer " + agent_token;
+		url += "/" + agent_token;
 	}
+	return url;
+}
+
+String AgentPanel::_build_mcp_config_json() const {
+	// Embed the agent token in the URL path instead of an Authorization
+	// header. This avoids triggering OAuth discovery in Claude Code, which
+	// interprets Authorization: Bearer as a signal to probe
+	// /.well-known/oauth-* endpoints and attempt dynamic client registration.
+	String url = _build_mcp_url();
 
 	Dictionary godot_server;
 	godot_server["type"] = "http";
-	godot_server["url"] = "http://" + host + ":" + itos(port) + "/mcp";
-	if (!headers.is_empty()) {
-		godot_server["headers"] = headers;
-	}
+	godot_server["url"] = url;
 
 	Dictionary mcp_servers;
 	mcp_servers["godot"] = godot_server;
@@ -235,7 +276,61 @@ String AgentPanel::_build_system_prompt() const {
 	}
 	p = p.replace("{{PROJECT_ARCHITECTURE}}", arch_content);
 
+	// Inject input map summary so all agents know the controls.
+	String input_map_text = _build_input_map_summary();
+	p = p.replace("{{INPUT_MAP}}", input_map_text);
+
 	return p;
+}
+
+// ---------------------------------------------------------------------------
+// Input Map Summary — compact text of project input actions for agent context
+// ---------------------------------------------------------------------------
+
+String AgentPanel::_build_input_map_summary() const {
+	InputMap *im = InputMap::get_singleton();
+	if (!im) {
+		return "Input map not available.";
+	}
+
+	TypedArray<StringName> actions = im->get_actions();
+
+	// Filter out built-in ui_* actions — keep only game actions.
+	String text;
+	int count = 0;
+	for (int i = 0; i < actions.size(); i++) {
+		StringName action = actions[i];
+		String name = String(action);
+		if (name.begins_with("ui_")) {
+			continue; // Skip built-in UI actions (ui_accept, ui_cancel, etc.)
+		}
+
+		const List<Ref<InputEvent>> *events = im->action_get_events(action);
+		if (!events) {
+			continue;
+		}
+
+		String events_text;
+		for (const Ref<InputEvent> &event : *events) {
+			if (event.is_null()) {
+				continue;
+			}
+			if (!events_text.is_empty()) {
+				events_text += ", ";
+			}
+			events_text += event->as_text();
+		}
+
+		if (!events_text.is_empty()) {
+			text += "  " + name + ": " + events_text + "\n";
+			count++;
+		}
+	}
+
+	if (count == 0) {
+		return "No custom input actions defined. Use project/get_input_map after adding inputs.";
+	}
+	return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +434,11 @@ Vector<String> AgentPanel::_build_claude_args() const {
 		args.push_back("--debug");
 	}
 
+	// Skip permissions — runs Claude with --dangerously-skip-permissions.
+	if (server_plugin && server_plugin->is_dangerously_mode_enabled()) {
+		args.push_back("--dangerously-skip-permissions");
+	}
+
 	// MCP server configuration written to a temp file.
 	if (!mcp_config_path.is_empty()) {
 		args.push_back("--mcp-config");
@@ -368,7 +468,53 @@ Vector<String> AgentPanel::_build_claude_args() const {
 	return args;
 }
 
-Vector<String> AgentPanel::_build_claude_env() const {
+Vector<String> AgentPanel::_build_codex_args() const {
+	Vector<String> args;
+
+	String project_dir = ProjectSettings::get_singleton()->get_resource_path();
+
+	args.push_back("--no-alt-screen");
+	if (!project_dir.is_empty()) {
+		args.push_back("--cd");
+		args.push_back(project_dir);
+	}
+
+	args.push_back("--enable");
+	args.push_back("multi_agent");
+
+	args.push_back("-c");
+	args.push_back("mcp_servers.godot.url=" + agent_toml_string(_build_mcp_url()));
+
+	String codex_agents_dir = project_dir.path_join(".codex").path_join("agents");
+	const char *agent_names[] = {
+		"godot-planner",
+		"godot-builder",
+		"godot-designer",
+		"godot-game-player",
+		"godot-refactor",
+		nullptr
+	};
+	for (int i = 0; agent_names[i] != nullptr; i++) {
+		String name = agent_names[i];
+		String agent_path = codex_agents_dir.path_join(name + ".toml");
+		if (FileAccess::exists(agent_path)) {
+			args.push_back("-c");
+			args.push_back("agents." + name + ".config_file=" + agent_toml_string(agent_path));
+		}
+	}
+
+	// Codex has no Claude-style --debug flag. The debug checkbox maps to
+	// verbose logging in _build_codex_env().
+	if (server_plugin && server_plugin->is_dangerously_mode_enabled()) {
+		args.push_back("--dangerously-bypass-approvals-and-sandbox");
+	} else {
+		args.push_back("--full-auto");
+	}
+
+	return args;
+}
+
+Vector<String> AgentPanel::_build_agent_env() const {
 	Vector<String> env;
 
 	const char *inherit_vars[] = {
@@ -385,6 +531,15 @@ Vector<String> AgentPanel::_build_claude_env() const {
 		"DISPLAY",
 		"WAYLAND_DISPLAY",
 		"SSH_AUTH_SOCK",
+		"CODEX_HOME",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_BASE_URL",
+		"HTTP_PROXY",
+		"HTTPS_PROXY",
+		"ALL_PROXY",
+		"NO_PROXY",
 		nullptr
 	};
 
@@ -398,8 +553,26 @@ Vector<String> AgentPanel::_build_claude_env() const {
 
 	env.push_back("TERM=xterm-256color");
 
+	return env;
+}
+
+Vector<String> AgentPanel::_build_claude_env() const {
+	Vector<String> env = _build_agent_env();
+
 	// Enable experimental agent teams (research preview).
 	env.push_back("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1");
+
+	return env;
+}
+
+Vector<String> AgentPanel::_build_codex_env() const {
+	Vector<String> env = _build_agent_env();
+
+	if (server_plugin && server_plugin->is_debug_mode_enabled()) {
+		env.push_back("RUST_LOG=codex_core=debug,codex_tui=debug,codex_cli=debug,rmcp=debug");
+		env.push_back("RUST_BACKTRACE=1");
+		env.push_back("CODEX_LOG=debug");
+	}
 
 	return env;
 }
@@ -409,9 +582,14 @@ void AgentPanel::launch() {
 		return;
 	}
 
+	String agent_cli = server_plugin->get_agent_cli().to_lower();
+	if (agent_cli == "codex") {
+		server_plugin->sync_project_agent_files();
+	}
+
 	// Generate a unique per-agent token and register it with the MCP server.
-	// This token is used as the Bearer auth token in the MCP config so the
-	// server can identify this agent's session and apply permissions.
+	// This token is embedded in the MCP URL path so the server can identify
+	// this agent's session and apply permissions.
 	{
 		agent_token = "agent_";
 		for (int i = 0; i < 16; i++) {
@@ -427,8 +605,9 @@ void AgentPanel::launch() {
 		protocol->set_editor_controls_enabled(agent_token, editor_toggle->is_pressed());
 	}
 
-	// Write MCP config to a temp file (--mcp-config expects a file path).
-	{
+	// Claude uses --mcp-config, which expects a file path. Codex receives its
+	// HTTP MCP server config via -c mcp_servers.godot.url=...
+	if (agent_cli == "claude") {
 		String mcp_json = _build_mcp_config_json();
 		mcp_config_path = OS::get_singleton()->get_cache_path().path_join("godot_mcp_" + agent_token + ".json");
 		Ref<FileAccess> f = FileAccess::open(mcp_config_path, FileAccess::WRITE);
@@ -438,19 +617,21 @@ void AgentPanel::launch() {
 			ERR_PRINT("[MCP] Failed to write MCP config to " + mcp_config_path);
 			mcp_config_path = String();
 		}
+	} else {
+		mcp_config_path = String();
 	}
 
-	String binary = _find_claude_binary();
-	Vector<String> args = _build_claude_args();
-	Vector<String> env = _build_claude_env();
+	String binary = agent_cli == "codex" ? _find_codex_binary() : _find_claude_binary();
+	Vector<String> args = agent_cli == "codex" ? _build_codex_args() : _build_claude_args();
+	Vector<String> env = agent_cli == "codex" ? _build_codex_env() : _build_claude_env();
 
-	// Launch Claude Code in the project directory so it picks up CLAUDE.md
-	// and has the correct working directory for file operations.
+	// Launch in the project directory so the selected CLI picks up project
+	// instruction files and has the correct working directory.
 	String project_dir = ProjectSettings::get_singleton()->get_resource_path();
 
 	bool ok = terminal->start_process(binary, args, env, project_dir);
 	if (ok) {
-		claude_running = true;
+		agent_running = true;
 		set_process_internal(true);
 	}
 }
@@ -467,7 +648,7 @@ void AgentPanel::stop() {
 		terminal->set_process_internal(false);
 		terminal->stop_process();
 	}
-	claude_running = false;
+	agent_running = false;
 
 	// Unregister the agent token so stale sessions don't accumulate.
 	if (!agent_token.is_empty()) {
@@ -491,6 +672,7 @@ void AgentPanel::stop() {
 void AgentPanel::_on_to_bottom_pressed() {
 	if (terminal) {
 		terminal->scroll_to_bottom();
+		terminal->grab_focus();
 	}
 }
 
@@ -523,6 +705,10 @@ void AgentPanel::_inject_pty_message(const String &p_message) {
 }
 
 void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
+	// Return focus to the terminal so the user can keep typing.
+	if (terminal) {
+		terminal->grab_focus();
+	}
 	if (agent_token.is_empty()) {
 		return; // No agent launched yet.
 	}
@@ -535,7 +721,7 @@ void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
 		server_plugin->on_agent_runtime_changed(this, p_enabled);
 	}
 	// Inform the AI of the permission change.
-	if (claude_running) {
+	if (agent_running) {
 		_inject_pty_message(p_enabled
 				? "[Permission] Runtime tools enabled. You can now use runtime/*, debug/*, and automation/* tools."
 				: "[Permission] Runtime tools disabled. runtime/*, debug/*, and automation/* tools are no longer available.");
@@ -543,6 +729,10 @@ void AgentPanel::_on_runtime_toggle_changed(bool p_enabled) {
 }
 
 void AgentPanel::_on_editor_toggle_changed(bool p_enabled) {
+	// Return focus to the terminal so the user can keep typing.
+	if (terminal) {
+		terminal->grab_focus();
+	}
 	if (agent_token.is_empty()) {
 		return;
 	}
@@ -554,7 +744,7 @@ void AgentPanel::_on_editor_toggle_changed(bool p_enabled) {
 		server_plugin->on_agent_editor_changed(this, p_enabled);
 	}
 	// Inform the AI of the permission change.
-	if (claude_running) {
+	if (agent_running) {
 		_inject_pty_message(p_enabled
 				? "[Permission] Editor controls enabled. You can now use scene/* tools."
 				: "[Permission] Editor controls disabled. scene/* tools are no longer available.");

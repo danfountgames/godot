@@ -73,6 +73,7 @@ public:
 	void push(const String &p_text, int p_type);
 	Vector<OutputEntry> read_since(uint64_t p_cursor, int p_limit = 200) const;
 	uint64_t latest_seq() const;
+	int get_count() const;
 	void clear();
 };
 
@@ -235,6 +236,7 @@ public:
 	Vector<OutputEntry> get_errors_since(uint64_t p_cursor, int p_limit = 200) const;
 	uint64_t get_output_latest_seq() const;
 	uint64_t get_error_latest_seq() const;
+	int get_error_count() const;
 	void clear_output_buffer();
 	void clear_error_buffer();
 

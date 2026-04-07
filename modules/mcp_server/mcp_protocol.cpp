@@ -141,6 +141,15 @@ MCPProtocol::MCPProtocol() {
 	tool_registry.register_alias("code/goto_definition", "analysis/goto_definition");
 	tool_registry.register_alias("code/rename", "analysis/rename_symbol");
 
+	// Playtest aliases — semantic names for the user-testing workflow.
+	// These redirect to existing tools but reinforce the playtest protocol.
+	tool_registry.register_alias("playtest/launch", "runtime/run_project");
+	tool_registry.register_alias("playtest/status", "runtime/get_status");
+	tool_registry.register_alias("playtest/check", "runtime/get_session_summary");
+	tool_registry.register_alias("playtest/errors", "runtime/get_errors");
+	tool_registry.register_alias("playtest/output", "runtime/get_output");
+	tool_registry.register_alias("playtest/screenshot", "runtime/get_screenshot");
+
 	// Install the permission check. This runs inside call_tool(),
 	// call_tool_with_progress(), and list_tools() — every code path
 	// that touches a tool goes through the registry, so permissions
@@ -701,8 +710,23 @@ void MCPProtocol::process_request(int p_client_id) {
 	}
 
 	// ── Step 3: Validate path ────────────────────────────────────────────
-	if (session->http_path != "/mcp") {
-		session->queue_response(MCP_HTTP_404, "", origin_header);
+	// Accept /mcp (standard) or /mcp/<agent_token> (editor agent tabs).
+	// Agent tokens are embedded in the URL path instead of an Authorization
+	// header to avoid triggering OAuth discovery in MCP clients.
+	// Return a JSON 404 body so clients probing OAuth endpoints
+	// (e.g. /.well-known/oauth-protected-resource) can parse the response.
+	String url_agent_token;
+	bool is_agent_path = false;
+	if (session->http_path == "/mcp") {
+		// Standard path — auth handled in Step 4b below.
+	} else if (session->http_path.begins_with("/mcp/agent_")) {
+		url_agent_token = session->http_path.substr(5); // "/mcp/" = 5 chars → "agent_<hex>"
+		is_agent_path = true;
+	} else {
+		session->queue_response(MCP_HTTP_404,
+				make_error_body(JSONRPC::METHOD_NOT_FOUND,
+						vformat("Not found: %s", session->http_path)),
+				origin_header);
 		return;
 	}
 
@@ -712,16 +736,27 @@ void MCPProtocol::process_request(int p_client_id) {
 		return;
 	}
 
-	// ── Step 4b: Bearer token authentication ─────────────────────────────
-	// Accept either the global auth_token or a registered per-agent token.
-	//
-	// All 401 responses include WWW-Authenticate: Bearer (RFC 6750 §3).
-	// This signals to MCP clients (e.g. Claude Code) that this server uses
-	// static Bearer token auth — not OAuth — preventing them from initiating
-	// an OAuth discovery flow that the server does not implement.
-	String request_agent_id; // Populated if this request uses an agent token.
-	{
-		// Lock scope for agent_tokens reads.
+	// ── Step 4a: Agent URL token validation ──────────────────────────────
+	// Editor-spawned agent tabs authenticate via URL path (/mcp/agent_<hex>)
+	// instead of an Authorization header. This avoids triggering OAuth
+	// discovery in agent CLIs that interpret Authorization: Bearer as a signal
+	// to probe /.well-known/* endpoints.
+	String request_agent_id;
+	if (is_agent_path) {
+		MutexLock lock(state_mutex);
+		if (!agent_tokens.has(url_agent_token)) {
+			session->queue_response(MCP_HTTP_403,
+					make_error_body(JSONRPC::INVALID_REQUEST, "Forbidden: unrecognized agent token"),
+					origin_header);
+			return;
+		}
+		request_agent_id = url_agent_token;
+	}
+
+	// ── Step 4b: Bearer token authentication (external clients only) ─────
+	// Standard /mcp path: accept the global auth_token or a registered
+	// per-agent token via Authorization: Bearer header.
+	if (!is_agent_path) {
 		MutexLock lock(state_mutex);
 		if (!auth_token.is_empty() || !agent_tokens.is_empty()) {
 			HashMap<String, String> www_auth;
@@ -758,7 +793,8 @@ void MCPProtocol::process_request(int p_client_id) {
 				}
 			}
 
-			// Check against registered agent tokens.
+			// Check against registered agent tokens (external clients may also
+			// present agent tokens via Bearer header for backwards compat).
 			if (!token_valid && agent_tokens.has(presented_token)) {
 				token_valid = true;
 				request_agent_id = presented_token;
