@@ -485,7 +485,7 @@ String OS_AppleEmbedded::get_processor_name() const {
 #else
 	if (apple_embedded) {
 		String model = apple_embedded->get_model();
-		for (unsigned int i = 0; i < std::size(_models); i++) {
+		for (unsigned int i = 0; i < sizeof(_models) / sizeof(_models[0]); i++) {
 			for (const String &m : _models[i].model) {
 				if (model.contains(m)) {
 					return _models[i].soc;
