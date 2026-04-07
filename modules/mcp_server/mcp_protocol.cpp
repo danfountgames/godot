@@ -453,13 +453,22 @@ bool MCPProtocol::validate_origin(const String &p_origin) {
 // Response Helpers
 // ---------------------------------------------------------------------------
 
+static Variant _normalize_jsonrpc_id(const Variant &p_id) {
+	// Godot's JSON parser stores numbers as FLOAT. Some MCP clients reject
+	// JSON-RPC ids serialized as 1.0 even when the original request used 1.
+	if (p_id.get_type() == Variant::FLOAT && p_id.operator float() == (float)(p_id.operator int())) {
+		return p_id.operator int();
+	}
+	return p_id;
+}
+
 String MCPProtocol::make_error_body(int p_code, const String &p_message, const Variant &p_id) {
-	Dictionary err_dict = make_response_error(p_code, p_message, p_id);
+	Dictionary err_dict = make_response_error(p_code, p_message, _normalize_jsonrpc_id(p_id));
 	return JSON::stringify(err_dict);
 }
 
 String MCPProtocol::make_result_body(const Dictionary &p_result, const Variant &p_id) {
-	Dictionary resp = make_response(p_result, p_id);
+	Dictionary resp = make_response(p_result, _normalize_jsonrpc_id(p_id));
 	return JSON::stringify(resp);
 }
 
@@ -2080,7 +2089,8 @@ void MCPProtocol::dispatch_tool_with_progress(
 
 	// Register in active requests map (for cancellation lookup).
 	// RAII guard ensures cleanup even if an ERR_FAIL macro triggers early return.
-	String request_key = String(p_request_id);
+	Variant normalized_request_id = _normalize_jsonrpc_id(p_request_id);
+	String request_key = String(normalized_request_id);
 	ActiveRequestGuard guard(active_requests_mutex, active_requests, request_key, &ctx);
 
 	// Log the tool invocation.
@@ -2098,7 +2108,7 @@ void MCPProtocol::dispatch_tool_with_progress(
 	// which must become a top-level JSON-RPC error, not be wrapped under "result".
 	Dictionary response;
 	response["jsonrpc"] = "2.0";
-	response["id"] = p_request_id;
+	response["id"] = normalized_request_id;
 
 	if (tool_result.has("error") && tool_result["error"].get_type() == Variant::DICTIONARY) {
 		Dictionary inner_error = tool_result["error"];
