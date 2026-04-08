@@ -485,8 +485,10 @@ Vector<String> AgentPanel::_build_codex_args() const {
 	String mcp_url = "http://" + server_plugin->get_host() + ":" + itos(server_plugin->get_port()) + "/mcp";
 	args.push_back("-c");
 	args.push_back("mcp_servers.godot.url=" + agent_toml_string(mcp_url));
-	args.push_back("-c");
-	args.push_back("mcp_servers.godot.bearer_token_env_var=\"GODOT_MCP_AGENT_TOKEN\"");
+	if (!agent_token.is_empty()) {
+		args.push_back("-c");
+		args.push_back("mcp_servers.godot.http_headers.Authorization=" + agent_toml_string("Bearer " + agent_token));
+	}
 
 	String codex_agents_dir = project_dir.path_join(".codex").path_join("agents");
 	const char *agent_names[] = {
@@ -570,10 +572,6 @@ Vector<String> AgentPanel::_build_claude_env() const {
 
 Vector<String> AgentPanel::_build_codex_env() const {
 	Vector<String> env = _build_agent_env();
-
-	if (!agent_token.is_empty()) {
-		env.push_back("GODOT_MCP_AGENT_TOKEN=" + agent_token);
-	}
 
 	if (server_plugin && server_plugin->is_debug_mode_enabled()) {
 		env.push_back("RUST_LOG=codex_core=debug,codex_tui=debug,codex_cli=debug,rmcp=debug");
