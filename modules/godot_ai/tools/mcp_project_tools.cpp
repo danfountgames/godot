@@ -44,6 +44,16 @@ static const int MAX_LISTED_FILES = 5000;
 static const int MAX_READ_BYTES = 4 * 1024 * 1024;
 static const int MAX_SEARCH_MATCHES = 500;
 
+// Joins a res:// directory with a child name. `res://` already ends in a slash, so
+// naive path_join()/concatenation produces `res:/child` and every later lookup of
+// that path fails.
+static String res_join(const String &p_base, const String &p_name) {
+	if (p_base.ends_with("/")) {
+		return p_base + p_name;
+	}
+	return p_base + "/" + p_name;
+}
+
 // Directories that never contain project-authored content worth showing an agent.
 static bool is_ignored_directory(const String &p_name) {
 	return p_name == "." || p_name == ".." || p_name == ".godot" || p_name == ".import" || p_name == ".git";
@@ -62,12 +72,12 @@ static void collect_files(const String &p_absolute_dir, const String &p_res_dir,
 	while (!entry.is_empty()) {
 		if (dir->current_is_dir()) {
 			if (p_recursive && !is_ignored_directory(entry)) {
-				collect_files(p_absolute_dir.path_join(entry), p_res_dir.path_join(entry), p_extensions, true, r_files);
+				collect_files(p_absolute_dir.path_join(entry), res_join(p_res_dir, entry), p_extensions, true, r_files);
 			}
 		} else {
 			const bool wanted = p_extensions.is_empty() || p_extensions.has(entry.get_extension().to_lower());
 			if (wanted && r_files.size() < MAX_LISTED_FILES) {
-				r_files.push_back(p_res_dir.path_join(entry));
+				r_files.push_back(res_join(p_res_dir, entry));
 			}
 		}
 		entry = dir->get_next();
@@ -93,7 +103,7 @@ static Dictionary list_folder(const Dictionary &p_arguments, const Vector<String
 
 	Array files;
 	const bool recursive = p_arguments.has("recursive") ? (bool)p_arguments["recursive"] : true;
-	collect_files(resolved.absolute, resolved.res_path.trim_suffix("/"), p_extensions, recursive, files);
+	collect_files(resolved.absolute, resolved.res_path, p_extensions, recursive, files);
 	files.sort();
 
 	Dictionary result;
@@ -358,7 +368,7 @@ public:
 		}
 
 		Array files;
-		collect_files(resolved.absolute, resolved.res_path.trim_suffix("/"), extensions, true, files);
+		collect_files(resolved.absolute, resolved.res_path, extensions, true, files);
 		files.sort();
 
 		const String needle = case_sensitive ? query : query.to_lower();
