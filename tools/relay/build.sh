@@ -29,7 +29,18 @@ while [ $# -gt 0 ]; do
 	--windows)
 		# Cross-compile check. The Windows backend cannot be run here, but it can be
 		# kept compiling, which is what stops it rotting between releases.
-		CXX="x86_64-w64-mingw32-g++"
+		#
+		# Prefer the posix-threads variant. The relay's Windows backend reads stdin on a
+		# std::thread, and libstdc++ only provides std::thread, std::mutex and
+		# std::condition_variable for the win32 thread model from GCC 13 onwards. Older
+		# toolchains - Ubuntu 22.04's, which is what CI runs - default to win32 and fail
+		# to find std::mutex, while a newer local toolchain compiles the same source
+		# happily. Naming the variant removes the difference.
+		if command -v x86_64-w64-mingw32-g++-posix >/dev/null 2>&1; then
+			CXX="x86_64-w64-mingw32-g++-posix"
+		else
+			CXX="x86_64-w64-mingw32-g++"
+		fi
 		output="$repo_root/bin/godot-ai-relay.exe"
 		extra_libs="-lws2_32 -lbcrypt -static"
 		shift
