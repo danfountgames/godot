@@ -39,6 +39,20 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   JSON-RPC surface is covered by doctest without sockets.
 - Commit `0487520976`, pushed.
 
+### S-03 end-to-end (F2, F3, T1, T2, T4, T6, T7, T8, T14)
+- Drove a full MCP session through the real relay against a headless editor on a
+  scratch project. The editor advertised itself on 6010, the relay connected, and
+  initialize/tools/list/tools/call all worked on the first attempt.
+- The run found a real defect the unit tests had missed: joining a child onto
+  `res://` produced `res:/scenes/main.tscn`. Listings looked plausible but every
+  later lookup of those paths failed, which is why `Godot_SearchProject` returned no
+  matches at all. Fixed with `res_join()`, and covered by tool tests that assert a
+  listed path round-trips through another tool.
+- Added `tools/relay/tests/run_editor_e2e.py` so the whole-stack check is repeatable;
+  it verifies effects on disk rather than trusting tool reports, and covers the
+  refusal paths. Transcript kept at `.agent/evidence/e2e-transcript.jsonl`.
+- Commit `7d8fa581f5`, pushed.
+
 ### Next
-- S-03: live end-to-end run through the relay against a headless editor, capturing a
-  transcript as evidence for F2/F3/P5 and the tool entries.
+- S-04: `Godot_ManageNode` through `EditorUndoRedoManager` (T5), then CI wiring (C1),
+  then skills (S1–S3) and checkpoints (F8).

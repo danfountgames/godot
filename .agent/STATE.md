@@ -25,21 +25,26 @@ against a running editor.
 
 ## Current vertical slice
 
-S-03: end-to-end verification. Launch a headless editor on a scratch project with
-`GODOT_AI_HOME` and `GODOT_AI_AUTO_APPROVE=1`, confirm the instance descriptor is
-written, then drive `initialize` → `tools/list` → `tools/call` through the relay and
-capture the transcript under `.agent/evidence/`.
+S-04 (next): `Godot_ManageNode` — create/delete/reparent/rename through
+`EditorUndoRedoManager`, with undo/redo asserted against real scene state.
+
+S-03 (done): end-to-end verification. `tools/relay/tests/run_editor_e2e.py` launches a
+headless editor, waits for the instance descriptor, and drives the full MCP session
+through the real relay. It found and fixed a real defect: joining onto `res://`
+produced `res:/…`, which also made `Godot_SearchProject` silently return nothing.
 
 ## Ledger IDs in this slice
 
-F2, F3, P5, T1, T2, T4, T7 (upgrade from IMPLEMENTED to VERIFIED).
+T5 (new). Just completed: F2, F3, T1, T2, T4, T6, T7, T8, T14 → VERIFIED.
 
 ## Last verified state
 
-- Commit `0487520976`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
+- Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
-- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 24 cases,
-  160 assertions, all pass.
+- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 31 cases,
+  204 assertions, all pass.
+- `python3 tools/relay/tests/run_editor_e2e.py` → 12/12 checks pass against a live
+  headless editor.
 
 ## Working-tree expectations
 
@@ -66,15 +71,14 @@ None.
 
 ## Last completed command
 
-`git push -u origin claude/godot-ai-clone-spec-6iz0ly` → commit `0487520976`.
+`python3 tools/relay/tests/run_editor_e2e.py` → all checks passed; committed and
+pushed as `7d8fa581f5`.
 
 ## Next command
 
-Launch the headless editor on a scratch project and confirm the instance descriptor
-appears:
+Start T5 by reading how the editor itself reparents nodes, then write the failing
+test first:
 
 ```sh
-GODOT_AI_HOME=<scratch>/aihome GODOT_AI_AUTO_APPROVE=1 \
-  bin/godot.linuxbsd.editor.dev.x86_64 --headless --path <scratch>/testproj --editor &
-ls <scratch>/aihome/instances
+grep -n "create_action\|add_do_method" editor/scene_tree_dock.cpp | head -40
 ```

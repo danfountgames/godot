@@ -2,19 +2,17 @@
 
 At most five ordered actions. The first must be immediately executable.
 
-1. Launch a headless editor on a scratch project with `GODOT_AI_HOME` and
-   `GODOT_AI_AUTO_APPROVE=1` and confirm `<home>/instances/<pid>.json` appears with
-   the listening port. — F2 — verified by the descriptor existing and naming a
-   reachable port.
-2. Drive `initialize` → `tools/list` → `tools/call Godot_GetEditorStatus` →
-   `tools/call Godot_ListScenes` through `bin/godot-ai-relay`, saving the transcript
-   to `.agent/evidence/e2e-transcript.jsonl`. — F3, P1, P2, P3, T1 — verified by a
-   non-error result for each call.
-3. Add `tools/relay/tests/run_editor_e2e.py` so that flow is repeatable in CI, and
-   wire both suites into a CI workflow. — C1 — verified by the script passing from a
-   clean checkout.
-4. Implement `Godot_ManageNode` (create/delete/reparent/rename) through
-   `EditorUndoRedoManager`, with undo/redo tests. — T5 — verified by scene state
-   before/after undo.
-5. Implement `SKILL.md` discovery and the allow/deny trust state. — S1, S2, S3 —
-   verified by discovery tests over a fixture skill tree.
+1. Read `editor/scene_tree_dock.cpp` for how the editor performs add/remove/reparent
+   through `EditorUndoRedoManager`, then implement `Godot_ManageNode` the same way.
+   — T5 — verified by doctest plus an e2e check that undo restores the previous tree.
+2. Extend `run_editor_e2e.py` with a mutating round trip: create a node, save, reopen
+   the scene, confirm it persisted, then undo. — T5, T3 — verified by scene state on
+   disk before and after.
+3. Add a CI workflow running the relay suite, the engine module tests and the e2e
+   script on Linux. — C1 — verified by a green run from a clean checkout.
+4. Implement `SKILL.md` discovery, frontmatter parsing and the allow/deny trust
+   state. — S1, S2, S3 — verified by discovery tests over a fixture skill tree,
+   including malformed frontmatter and version gating.
+5. Implement checkpoints for mutating tools (git-backed when available, snapshot
+   otherwise) and prove restoration in a test. — F8 — verified by mutating, restoring
+   and comparing file contents.
