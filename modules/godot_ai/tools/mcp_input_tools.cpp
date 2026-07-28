@@ -237,13 +237,18 @@ public:
 		// The game writes the file and reports where; the editor turns that into an
 		// image block. Sending pixels over the debugger bus would be the wrong use of a
 		// channel meant for small messages.
+		// The flag is bound into the transform rather than read from the reply: the game
+		// echoes back what it was asked, not what the caller asked for, and this tool
+		// used to inline unconditionally - so a caller who said `inline_image: false`
+		// got megabytes of base64 anyway.
+		const bool inline_image = (bool)p_arguments.get("inline_image", true);
 		return MCPDeferred::make_deferred_result(
 				bridge->send("capture", p_arguments, 20.0,
-						callable_mp_static(&CaptureGameTool::_inline_image)));
+						callable_mp_static(&CaptureGameTool::_inline_image).bind(inline_image)));
 	}
 
 	// Runs when the game's reply arrives, before the client sees it.
-	static Dictionary _inline_image(const Dictionary &p_result) {
+	static Dictionary _inline_image(const Dictionary &p_result, bool p_inline) {
 		Dictionary result = p_result;
 		result["inlined"] = false;
 
@@ -263,7 +268,7 @@ public:
 							scale));
 		}
 		const String path = result.get("path", String());
-		if (path.is_empty() || !FileAccess::exists(path)) {
+		if (!p_inline || path.is_empty() || !FileAccess::exists(path)) {
 			return result;
 		}
 		const Vector<uint8_t> bytes = FileAccess::get_file_as_bytes(path);

@@ -1251,6 +1251,8 @@ def run(editor_binary, display):
                 check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
                       "the game capture was not returned inline")
                 check_capture_metadata(shot, "game_window")
+                check(shot["inlined"] is True,
+                      "the default capture did not inline the image: %r" % shot)
                 check(shot["frame"] > 0, "the game capture has no frame number: %r" % shot)
                 check(abs(shot["time_scale"] - 1.0) < 0.001,
                       "the game is not running at normal speed: %r" % shot["time_scale"])
@@ -1740,6 +1742,12 @@ def run(editor_binary, display):
                               "params": {"name": "Godot_CaptureGame",
                                          "arguments": {"inline_image": False}}})
                 fast = reply["result"]["structuredContent"]
+                # The flag used to be declared and ignored, so every capture came back
+                # with megabytes of base64 whether or not the caller wanted it.
+                check(fast["inlined"] is False,
+                      "inline_image: false was ignored and the image came back anyway")
+                check(not [c for c in reply["result"]["content"] if c["type"] == "image"],
+                      "the response carries an image block despite inline_image: false")
                 check(abs(fast["time_scale"] - 2.0) < 0.001,
                       "the capture did not record the time scale it was taken at: %r" % fast)
                 check("2.00x speed" in fast.get("note", ""),
