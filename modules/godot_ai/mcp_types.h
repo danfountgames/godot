@@ -48,6 +48,11 @@ enum MCPCapability {
 	// destroying save data through the game's own menus - and separate from the read
 	// capabilities because it is not a read at all.
 	MCP_CAP_SIMULATE_INPUT,
+	// The directory a game writes its saves and settings to. Separate from the project
+	// capabilities because it is the player's data, not the developer's source, and it
+	// is the one place these tools can touch that no version control is watching.
+	MCP_CAP_READ_USER_DATA,
+	MCP_CAP_EDIT_USER_DATA,
 	MCP_CAP_DANGEROUS_EXEC, // Anything with arbitrary reach. Denied by default.
 	MCP_CAP_MAX,
 };

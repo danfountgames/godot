@@ -60,6 +60,13 @@ public:
 	// As resolve(), but also fails when the target does not exist.
 	static bool resolve_existing(const String &p_path, Resolved &r_resolved, String &r_error);
 
+	// The same confinement, applied to the *user* data directory instead of the
+	// project. Saves and settings live there, so a tool that must verify them cannot
+	// use the project boundary - but it still needs a boundary, and this is it.
+	// Accepts `user://…` and paths relative to the user directory.
+	static String get_user_root();
+	static bool resolve_user(const String &p_path, Resolved &r_resolved, String &r_error);
+
 	// True when p_absolute is inside p_root (or equal to it). Both must be canonical.
 	static bool is_inside(const String &p_root, const String &p_absolute);
 

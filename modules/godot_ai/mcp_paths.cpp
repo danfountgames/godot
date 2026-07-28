@@ -33,6 +33,7 @@
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/os/os.h"
 
 static String s_project_root_override;
 
@@ -170,6 +171,60 @@ bool MCPPaths::resolve(const String &p_path, Resolved &r_resolved, String &r_err
 	r_resolved.absolute = canonical;
 	const String relative = canonical == root ? String() : canonical.trim_prefix(root + "/");
 	r_resolved.res_path = relative.is_empty() ? "res://" : ("res://" + relative);
+	r_resolved.is_directory = DirAccess::exists(canonical);
+	r_resolved.exists = r_resolved.is_directory || FileAccess::exists(canonical);
+	return true;
+}
+
+String MCPPaths::get_user_root() {
+	if (!OS::get_singleton()) {
+		return String();
+	}
+	return _canonicalize(OS::get_singleton()->get_user_data_dir());
+}
+
+bool MCPPaths::resolve_user(const String &p_path, Resolved &r_resolved, String &r_error) {
+	const String root = get_user_root();
+	if (root.is_empty()) {
+		r_error = "this process has no user data directory";
+		return false;
+	}
+
+	const String path = p_path.strip_edges();
+	if (path.is_empty()) {
+		r_error = "path must not be empty";
+		return false;
+	}
+	// Only `user://` here, for the same reason resolve() only takes `res://`: one
+	// boundary per function, stated in the path itself.
+	if (path.contains("://") && !path.begins_with("user://")) {
+		r_error = vformat("path '%s' uses a scheme outside the user data directory; only 'user://' and relative paths are allowed", p_path);
+		return false;
+	}
+
+	String absolute;
+	if (path.begins_with("user://")) {
+		absolute = root.path_join(path.trim_prefix("user://"));
+	} else if (path.begins_with("/")) {
+		absolute = path;
+	} else {
+		absolute = root.path_join(path);
+	}
+
+	const String simplified = absolute.simplify_path();
+	if (!is_inside(root, simplified)) {
+		r_error = vformat("path '%s' resolves outside the user data directory", p_path);
+		return false;
+	}
+	const String canonical = _canonicalize(simplified);
+	if (!is_inside(root, canonical)) {
+		r_error = vformat("path '%s' points outside the user data directory through a symbolic link", p_path);
+		return false;
+	}
+
+	r_resolved.absolute = canonical;
+	const String relative = canonical == root ? String() : canonical.trim_prefix(root + "/");
+	r_resolved.res_path = relative.is_empty() ? "user://" : ("user://" + relative);
 	r_resolved.is_directory = DirAccess::exists(canonical);
 	r_resolved.exists = r_resolved.is_directory || FileAccess::exists(canonical);
 	return true;

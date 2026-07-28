@@ -60,5 +60,6 @@ void mcp_register_capture_tools();
 // Putting a question to the user and waiting for their answer.
 void mcp_register_ask_user_tool();
 void mcp_register_input_tools();
+void mcp_register_user_data_tools();
 
 #endif // MCP_BUILTIN_TOOLS_H

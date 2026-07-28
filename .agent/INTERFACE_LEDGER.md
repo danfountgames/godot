@@ -70,9 +70,9 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| G1 | `Godot_ListUserFiles`, `Godot_ReadUserFile` | read_user_data | NOT_STARTED | — | all |
-| G2 | `Godot_WriteUserFile`, `Godot_DeleteUserFile` | edit_user_data | NOT_STARTED | — | all |
-| G3 | Save-corruption fixtures | edit_user_data | NOT_STARTED | — | all |
+| G1 | `Godot_ListUserFiles`, `Godot_ReadUserFile` | read_user_data | VERIFIED | `tools/mcp_user_data_tools.cpp`, `MCPPaths::resolve_user` applying the project tools' confinement to the user directory instead. The e2e asserts the boundary from three directions — `user://../..`, a `res://` path, and an absolute one — because this is the one directory these tools reach that no version control is watching | none |
+| G2 | `Godot_WriteUserFile`, `Godot_DeleteUserFile` | edit_user_data | VERIFIED | write/read/list round trip in the e2e. Delete demands `confirm=true` and refuses directories outright: there is no checkpoint layer for user data, so a deleted save is gone, and a recursive delete rooted at a directory is the operation that has already destroyed a working tree once here | user data is **not** checkpointed; recorded rather than implied |
+| G3 | Save-corruption fixtures | edit_user_data | IMPLEMENTED | `Godot_WriteUserFile` is the mechanism — writing a truncated or malformed save is exactly how a recovery path gets tested. No game in this repository has a save system to exercise it against, so it is implemented and unproven rather than verified | needs a game with saves |
 
 ## H — Project and window configuration
 
@@ -117,5 +117,5 @@ that its signal fired.
 | ID | Item | Status | Remaining |
 |---|---|---|---|
 | X-1 | `simulate_input` capability class, ask-by-default | VERIFIED | none — added to `MCPCapability`, defaults to `ask`, and is distinct from `run_project` because input can do anything a player can |
-| X-2 | `read_user_data` / `edit_user_data` classes | NOT_STARTED | all |
+| X-2 | `read_user_data` / `edit_user_data` classes | VERIFIED | both ask-by-default. Reading is `ask` where reading the *project* is `allow`, because this is the player's data rather than the developer's source |
 | X-3 | Template `AGENTS.md` updated as capabilities land | NOT_STARTED | all |

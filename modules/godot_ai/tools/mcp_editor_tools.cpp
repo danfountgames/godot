@@ -380,6 +380,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_capture_tools();
 	mcp_register_ask_user_tool();
 	mcp_register_input_tools();
+	mcp_register_user_data_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));

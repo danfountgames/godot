@@ -915,6 +915,67 @@ def run(editor_binary, display):
             # rather than pretending the path was exercised.
             print("SKIP play lifecycle: %s" % refusal_text(reply)[:80])
 
+        # --- user data --------------------------------------------------------
+        # Saves live outside the project, which is why the project tools cannot see
+        # them and why these exist. The round trip below is the one the game-production
+        # template asks for and could not previously be performed at all.
+        reply = call({"jsonrpc": "2.0", "id": 110, "method": "tools/call",
+                      "params": {"name": "Godot_ListUserFiles"}})
+        check(reply["result"]["isError"] is False,
+              "listing user files failed: %s" % refusal_text(reply))
+        user_root = reply["result"]["structuredContent"]["root"]
+        check(os.path.isabs(user_root), "the user root is not an absolute path: %r" % user_root)
+
+        reply = call({"jsonrpc": "2.0", "id": 111, "method": "tools/call",
+                      "params": {"name": "Godot_WriteUserFile",
+                                 "arguments": {"path": "user://saves/slot1.json",
+                                               "content": '{"level": 3}'}}})
+        check(reply["result"]["isError"] is False,
+              "writing a user file failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["replaced"] is False,
+              "a new file reported itself as a replacement")
+
+        reply = call({"jsonrpc": "2.0", "id": 112, "method": "tools/call",
+                      "params": {"name": "Godot_ReadUserFile",
+                                 "arguments": {"path": "user://saves/slot1.json"}}})
+        check(reply["result"]["structuredContent"]["content"] == '{"level": 3}',
+              "the user file did not round-trip: %r" % reply["result"]["structuredContent"])
+
+        reply = call({"jsonrpc": "2.0", "id": 113, "method": "tools/call",
+                      "params": {"name": "Godot_ListUserFiles"}})
+        listed = [f["path"] for f in reply["result"]["structuredContent"]["files"]]
+        check("user://saves/slot1.json" in listed,
+              "the written save was not listed: %r" % listed)
+        print("PASS user data round-trips through write, read and list")
+
+        # The boundary matters more here than in the project: this is the one place
+        # these tools can reach that no version control is watching.
+        for escape in ("user://../../etc/passwd", "res://project.godot", "/etc/passwd"):
+            reply = call({"jsonrpc": "2.0", "id": 114, "method": "tools/call",
+                          "params": {"name": "Godot_ReadUserFile",
+                                     "arguments": {"path": escape}}})
+            check(refused(reply), "reading '%s' from the user tools was allowed" % escape)
+        print("PASS user data tools stay inside the user directory")
+
+        reply = call({"jsonrpc": "2.0", "id": 115, "method": "tools/call",
+                      "params": {"name": "Godot_DeleteUserFile",
+                                 "arguments": {"path": "user://saves/slot1.json"}}})
+        check(refused(reply), "a delete without confirmation was accepted")
+        check("confirm=true" in refusal_text(reply),
+              "the delete refusal does not say what is missing: %r" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 116, "method": "tools/call",
+                      "params": {"name": "Godot_DeleteUserFile",
+                                 "arguments": {"path": "user://saves/slot1.json",
+                                               "confirm": True}}})
+        check(reply["result"]["isError"] is False,
+              "a confirmed delete failed: %s" % refusal_text(reply))
+        reply = call({"jsonrpc": "2.0", "id": 117, "method": "tools/call",
+                      "params": {"name": "Godot_ReadUserFile",
+                                 "arguments": {"path": "user://saves/slot1.json"}}})
+        check(refused(reply), "the deleted save was still readable")
+        print("PASS Godot_DeleteUserFile demands confirmation, then deletes")
+
         # --- checkpoints ------------------------------------------------------
         # The write above must have produced a checkpoint; restoring it has to remove
         # the file, because it did not exist beforehand.

@@ -44,6 +44,10 @@ String mcp_capability_to_string(MCPCapability p_capability) {
 			return "run_project";
 		case MCP_CAP_SIMULATE_INPUT:
 			return "simulate_input";
+		case MCP_CAP_READ_USER_DATA:
+			return "read_user_data";
+		case MCP_CAP_EDIT_USER_DATA:
+			return "edit_user_data";
 		case MCP_CAP_DANGEROUS_EXEC:
 			return "dangerous_exec";
 		default:
@@ -65,6 +69,7 @@ bool mcp_capability_is_mutating(MCPCapability p_capability) {
 	switch (p_capability) {
 		case MCP_CAP_EDIT_FILES:
 		case MCP_CAP_EDIT_SCENE:
+		case MCP_CAP_EDIT_USER_DATA:
 		case MCP_CAP_DANGEROUS_EXEC:
 			return true;
 		default:
