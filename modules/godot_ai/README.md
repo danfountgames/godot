@@ -105,10 +105,45 @@ names look sensitive (`api_key`, `token`, `password`, …) redacted at source.
 | `Godot_PlayCurrentScene` | run_project | Run the edited scene |
 | `Godot_PlayMainScene` | run_project | Run the project's main scene |
 | `Godot_StopPlaying` | run_project | Stop the running game |
+| `Godot_ReadOutputLog` | read_project | Read the Output panel, including game output |
+| `Godot_ListSkills` | read_project | Discovered workflow skills and their trust state |
+| `Godot_ReadSkill` | read_project | A skill's instructions or a supporting file |
+| `Godot_ListCheckpoints` | read_project | Snapshots taken before tools wrote files |
+| `Godot_ManageNode` | edit_scene | Create, delete, rename or reparent a node |
+| `Godot_UndoLastAction` | edit_scene | Undo the most recent editor action |
+| `Godot_RedoLastAction` | edit_scene | Redo the most recently undone action |
+| `Godot_RestoreCheckpoint` | edit_files | Put a checkpoint's files back |
 
 Changes made while the game is running are **not persistent**. Tools that affect the
 running game are named and documented separately from tools that change the project,
 and the server states this in its `initialize` instructions.
+
+### Undoing things
+
+Three different scopes, deliberately not interchangeable:
+
+| Scope | Reverts | How |
+|---|---|---|
+| Editor undo | in-memory scene edits that have not been saved | `Godot_UndoLastAction` |
+| Checkpoints | files a tool wrote | `Godot_RestoreCheckpoint` |
+| Version control | your own history | never touched by these tools |
+
+Before any mutating tool runs, the protocol layer snapshots the files that tool
+declares it may write, into `$GODOT_AI_HOME/checkpoints/<project>/<id>/` — outside
+the project, so a snapshot is never imported or committed. The checkpoint id comes
+back in the tool result's `_meta`. `Godot_ManageNode` declares no files: its changes
+live in the undo history until you call `Godot_SaveScene`, which is the tool that
+snapshots the scene file.
+
+## Skills
+
+Reusable workflow instructions discovered as `SKILL.md` files with YAML frontmatter,
+from `res://ai_skills/`, `res://addons/*/ai_skills/` and the user's skill folder, in
+that precedence order. A discovered skill is **not** trusted: `Godot_ListSkills`
+shows it, but `Godot_ReadSkill` refuses its instructions until you allow it by name
+in *Editor Settings → Network → Godot AI → Allowed Skills*. Supporting files load on
+demand and cannot escape the skill's own folder. See `misc/godot_ai/skills/` for a
+working example.
 
 ## Registering your own tools
 

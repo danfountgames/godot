@@ -11,7 +11,9 @@ This is a fork of Godot Engine 4.3 that adds Unity-style AI editor tooling:
 - an MCP server inside the editor, with a schema-declared tool registry
 - a local relay binary that bridges MCP stdio clients to the running editor
 - capability-based permissions, client approval, and an audit trail
-- (planned) skills, checkpoints, runtime inspection, and screenshot tools
+- filesystem-discovered skills, trusted only after the user allows them
+- checkpoints taken before any tool writes to the project
+- (planned) an approvals UI, screenshots, ask-user, and runtime property inspection
 
 The authoritative definition of the product is `docs/godot-ai-clone-spec.md`.
 Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
@@ -62,8 +64,9 @@ python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~30s
   project root and re-checks after symlink resolution. Do not bypass it.
 - Every tool declares one capability class; `dangerous_exec` is deny-by-default and
   cannot be claimed by plugin-registered tools.
-- Mutating tools must honour read-only sessions and, once checkpoints exist, must
-  create one before changing project state.
+- Mutating tools must honour read-only sessions. Files they may write are declared
+  through `MCPTool::get_checkpoint_paths()`; the protocol layer snapshots them, so a
+  tool must never write a file it did not declare.
 - Keep relay stdout free of everything except protocol frames; diagnostics go to
   stderr.
 - Never run a recursive delete rooted at the current working directory. Test
