@@ -42,6 +42,8 @@ String mcp_capability_to_string(MCPCapability p_capability) {
 			return "edit_scene";
 		case MCP_CAP_RUN_PROJECT:
 			return "run_project";
+		case MCP_CAP_SIMULATE_INPUT:
+			return "simulate_input";
 		case MCP_CAP_DANGEROUS_EXEC:
 			return "dangerous_exec";
 		default:

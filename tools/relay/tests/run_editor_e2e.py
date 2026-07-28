@@ -49,13 +49,45 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 """
 
-MAIN_SCENE = """[gd_scene format=3 uid="uid://bqxaie2e001"]
+MAIN_SCENE = """[gd_scene load_steps=2 format=3 uid="uid://bqxaie2e001"]
+
+[ext_resource type="Script" path="res://scripts/target.gd" id="1"]
 
 [node name="Main" type="Node2D"]
 
 [node name="Player" type="Sprite2D" parent="."]
 
 [node name="Hud" type="CanvasLayer" parent="."]
+
+[node name="Target" type="Button" parent="Hud"]
+offset_left = 100.0
+offset_top = 100.0
+offset_right = 300.0
+offset_bottom = 160.0
+text = "Target"
+script = ExtResource("1")
+"""
+
+# The button records two different things on purpose. `pressed` fires however the
+# button was activated; `saw_input_event` only becomes true if a real InputEvent
+# reached _gui_input. An implementation of Godot_SendPointerInput that took a shortcut
+# - calling the handler, emitting the signal - would satisfy the first and fail the
+# second, which is the only reason this test is worth anything.
+TARGET_SCRIPT = """extends Button
+
+var saw_input_event := false
+var press_count := 0
+
+func _ready() -> void:
+	pressed.connect(_on_pressed)
+
+func _on_pressed() -> void:
+	press_count += 1
+	print("E2E_CLICK press_count=%d saw_input_event=%s" % [press_count, saw_input_event])
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		saw_input_event = true
 """
 
 
@@ -177,6 +209,9 @@ def dismiss_a_question(relay, display):
 
 def build_project(root):
     os.makedirs(os.path.join(root, "scenes"), exist_ok=True)
+    os.makedirs(os.path.join(root, "scripts"), exist_ok=True)
+    with open(os.path.join(root, "scripts", "target.gd"), "w") as handle:
+        handle.write(TARGET_SCRIPT)
     with open(os.path.join(root, "project.godot"), "w") as handle:
         handle.write(PROJECT_GODOT)
     with open(os.path.join(root, "scenes", "main.tscn"), "w") as handle:
@@ -287,7 +322,14 @@ def run(editor_binary, display):
         # that must be there rather than on the total.
         scene_matches = [m for m in matches if m["path"] == "res://scenes/main.tscn"]
         check(len(scene_matches) == 1, "search did not find the node type in the scene: %r" % matches)
-        check(scene_matches[0]["line"] == 5, "search reported the wrong line: %r" % scene_matches[0])
+        # Derived from the fixture rather than hard-coded: the scene grows whenever a
+        # new check needs a node in it, and a literal line number turns that into an
+        # unrelated failure in this assertion.
+        expected_line = next(index for index, text in enumerate(MAIN_SCENE.splitlines(), start=1)
+                             if "Sprite2D" in text)
+        check(scene_matches[0]["line"] == expected_line,
+              "search reported line %r, expected %d: %r"
+              % (scene_matches[0]["line"], expected_line, scene_matches[0]))
         print("PASS Godot_SearchProject")
 
         reply = call({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
@@ -382,6 +424,8 @@ def run(editor_binary, display):
         check("root" in refusal_text(reply),
               "root-delete refusal does not explain itself")
 
+        names_before_refusals = scene_node_names()
+
         reply = call({"jsonrpc": "2.0", "id": 30, "method": "tools/call",
                       "params": {"name": "Godot_ManageNode",
                                  "arguments": {"action": "reparent", "path": "Player",
@@ -398,9 +442,12 @@ def run(editor_binary, display):
                                  "arguments": {"action": "delete", "path": "NoSuchNode"}}})
         check(refused(reply), "deleting a node that does not exist was allowed")
 
-        # The scene must be unchanged by everything that was refused.
-        check(sorted(scene_node_names()) == ["EnemySpawner", "Hud", "Main", "Player"],
-              "a refused operation still changed the scene: %r" % scene_node_names())
+        # The scene must be unchanged by everything that was refused. Compared against
+        # what it was a moment ago rather than a literal list, so adding a node to the
+        # fixture for some other check does not fail this one.
+        check(sorted(scene_node_names()) == sorted(names_before_refusals),
+              "a refused operation still changed the scene: %r vs %r"
+              % (scene_node_names(), names_before_refusals))
         print("PASS structural refusals leave the scene untouched")
 
         # --- skills -----------------------------------------------------------
@@ -492,6 +539,13 @@ def run(editor_binary, display):
         reply = call({"jsonrpc": "2.0", "id": 74, "method": "tools/call",
                       "params": {"name": "Godot_GetRuntimeSceneTree"}})
         check(refused(reply), "the runtime scene tree was returned with no game running")
+
+        reply = call({"jsonrpc": "2.0", "id": 75, "method": "tools/call",
+                      "params": {"name": "Godot_SendPointerInput",
+                                 "arguments": {"x": 10, "y": 10}}})
+        check(refused(reply), "pointer input was accepted with no game running")
+        check("no game is running" in refusal_text(reply),
+              "the input refusal does not explain itself: %r" % refusal_text(reply))
         print("PASS runtime tools refuse cleanly while nothing is running")
 
         # --- deferred responses -----------------------------------------------
@@ -595,14 +649,21 @@ def run(editor_binary, display):
             # Runtime inspection needs the game to attach a debugger session and
             # report its tree. A headless game may exit before it ever does, so this is
             # probed there and asserted where a display exists.
-            deadline = time.time() + 10
+            # Wait for the tree to contain the *scene*, not merely for the call to
+            # succeed. The debugger answers as soon as the game is up, which can be
+            # before the main scene has been instantiated - so accepting the first
+            # successful reply is a race that reports a bare `root` and blames the
+            # scene for it.
+            deadline = time.time() + 15
             tree = None
             while time.time() < deadline:
                 probe = call({"jsonrpc": "2.0", "id": 86, "method": "tools/call",
                               "params": {"name": "Godot_GetRuntimeSceneTree"}})
                 if probe.get("result", {}).get("isError") is False:
-                    tree = probe["result"]["structuredContent"]
-                    break
+                    candidate = probe["result"]["structuredContent"]
+                    if any(node["name"] == "Main" for node in candidate["nodes"]):
+                        tree = candidate
+                        break
                 time.sleep(0.5)
             if tree is not None:
                 names = [n["name"] for n in tree["nodes"]]
@@ -625,6 +686,45 @@ def run(editor_binary, display):
                 after = open(os.path.join(project, "scenes", "main.tscn")).read()
                 check(before == after, "a runtime edit changed the scene file on disk")
                 print("PASS Godot_SetRuntimeProperty applied without touching the project")
+
+                # --- real input into the running game -------------------------
+                # The button is at (100,100)-(300,160) inside a CanvasLayer, so its
+                # centre is a point a player could hit.
+                reply = call({"jsonrpc": "2.0", "id": 89, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"x": 200, "y": 130,
+                                                       "action": "click"}}})
+                check(reply["result"]["isError"] is False,
+                      "sending pointer input failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["events"] == 3,
+                      "a click should be a move, a press and a release: %r"
+                      % reply["result"]["structuredContent"])
+
+                deadline = time.time() + 10
+                proof = []
+                while time.time() < deadline and not proof:
+                    probe = call({"jsonrpc": "2.0", "id": 90, "method": "tools/call",
+                                  "params": {"name": "Godot_ReadOutputLog",
+                                             "arguments": {"contains": "E2E_CLICK"}}})
+                    proof = probe["result"]["structuredContent"]["messages"]
+                    if not proof:
+                        time.sleep(0.5)
+                check(proof, "the click never reached the button in the running game")
+                check("press_count=1" in proof[-1]["text"],
+                      "the button was not pressed exactly once: %r" % proof[-1]["text"])
+                # The assertion that separates real input from a convincing imitation.
+                check("saw_input_event=true" in proof[-1]["text"],
+                      "the button was activated without an InputEvent reaching it, so "
+                      "this was not real input: %r" % proof[-1]["text"])
+                print("PASS Godot_SendPointerInput delivered a real click to the game")
+
+                reply = call({"jsonrpc": "2.0", "id": 91, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"x": 9000, "y": 9000}}})
+                check(refused(reply), "a click outside the window was accepted")
+                check("outside the game window" in refusal_text(reply),
+                      "the refusal does not explain itself: %r" % refusal_text(reply))
+                print("PASS Godot_SendPointerInput refuses coordinates off the window")
             elif has_display:
                 raise Failure("the running game never reported its scene tree")
             else:

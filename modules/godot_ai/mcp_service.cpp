@@ -34,6 +34,7 @@
 #include "mcp_audit.h"
 #include "mcp_chat.h"
 #include "mcp_chat_dock.h"
+#include "mcp_runtime_bridge.h"
 #include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
 
@@ -112,6 +113,9 @@ void MCPService::_notification(int p_what) {
 				}
 				_poll_deferred();
 				_poll_outgoing();
+				if (runtime_bridge.is_valid()) {
+					runtime_bridge->poll();
+				}
 				for (int i = peers.size() - 1; i >= 0; i--) {
 					if (peers[i]->connection.is_null() || peers[i]->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
 						_drop_peer(i);
@@ -540,6 +544,11 @@ void MCPService::_register_editor_commands() {
 	approvals_dialog = memnew(MCPApprovalsDialog(this));
 	// Owned by the editor's window so it is cleaned up with the editor.
 	EditorNode::get_singleton()->get_gui_base()->add_child(approvals_dialog);
+
+	// The other end of the runtime channel. Registered here so it lives exactly as long
+	// as the editor plugin does.
+	runtime_bridge.instantiate();
+	add_debugger_plugin(runtime_bridge);
 
 	chat_dock = memnew(MCPChatDock(this));
 	add_control_to_dock(DOCK_SLOT_RIGHT_BL, chat_dock);

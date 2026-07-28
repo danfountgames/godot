@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_builtin_tools.h                                                   */
+/*  mcp_runtime_bridge.h                                                  */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,37 +28,59 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef MCP_BUILTIN_TOOLS_H
-#define MCP_BUILTIN_TOOLS_H
+// The editor end of the runtime channel.
+//
+// A tool asks a question of the running game and gets an answer some frames later, so
+// this owns the correlation: each request carries an id, the reply carries it back, and
+// the pending entry holds the deferred token the protocol layer will answer.
+//
+// It is the same shape as MCPDeferred elsewhere in this module, for the same reason -
+// the editor's main loop must keep running while the game is being asked.
 
-// Registers every tool that ships with the editor. Called once, after the AI
-// service plugin is installed.
-void mcp_register_builtin_tools();
+#ifndef MCP_RUNTIME_BRIDGE_H
+#define MCP_RUNTIME_BRIDGE_H
 
-// Project-scoped tools that need nothing but the filesystem. Registered separately
-// so they can be exercised without an editor.
-void mcp_register_project_tools();
+#include "mcp_deferred.h"
 
-// Structural scene editing, which goes through the editor's undo history.
-void mcp_register_scene_tools();
+#include "core/object/ref_counted.h"
+#include "core/variant/dictionary.h"
+#include "editor/plugins/editor_debugger_plugin.h"
 
-// Skill discovery and reading. Filesystem-only, so usable without an editor.
-void mcp_register_skill_tools();
+class MCPRuntimeBridge : public EditorDebuggerPlugin {
+	GDCLASS(MCPRuntimeBridge, EditorDebuggerPlugin);
 
-// Listing and restoring the file snapshots taken before mutating tools run.
-void mcp_register_checkpoint_tools();
+	struct Pending {
+		String request_id;
+		MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
+		double deadline = 0.0;
+	};
 
-// Reading the editor Output panel, which also carries the running game's output.
-void mcp_register_output_tools();
+	Vector<Pending> pending;
+	int64_t next_request = 1;
 
-// Persistent and runtime property edits, kept deliberately separate.
-void mcp_register_property_tools();
+	static MCPRuntimeBridge *singleton;
 
-// Screenshots of what the editor is rendering.
-void mcp_register_capture_tools();
+public:
+	static MCPRuntimeBridge *get_singleton() { return singleton; }
 
-// Putting a question to the user and waiting for their answer.
-void mcp_register_ask_user_tool();
-void mcp_register_input_tools();
+	MCPRuntimeBridge();
+	~MCPRuntimeBridge();
 
-#endif // MCP_BUILTIN_TOOLS_H
+	virtual bool capture(const String &p_message, const Array &p_data, int p_session) override;
+	virtual bool has_capture(const String &p_capture) const override;
+
+	// True when a game is running and its runtime agent can be reached.
+	bool is_game_reachable() const;
+
+	// Sends a command and returns a deferred token the caller should hand back to the
+	// protocol layer. Returns INVALID_TOKEN when no game is running.
+	MCPDeferred::Token send(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds = 10.0);
+
+	// Fails every pending request; called when the game goes away.
+	void abandon_all(const String &p_reason);
+
+	// Expires requests whose deadline has passed. Driven from the service poll.
+	void poll();
+};
+
+#endif // MCP_RUNTIME_BRIDGE_H

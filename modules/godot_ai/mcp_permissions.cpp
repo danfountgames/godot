@@ -47,6 +47,7 @@ MCPPolicy MCPPermissions::get_default_policy(MCPCapability p_capability) {
 		case MCP_CAP_EDIT_FILES:
 		case MCP_CAP_EDIT_SCENE:
 		case MCP_CAP_RUN_PROJECT:
+		case MCP_CAP_SIMULATE_INPUT:
 			return MCP_POLICY_ASK;
 		case MCP_CAP_DANGEROUS_EXEC:
 		default:

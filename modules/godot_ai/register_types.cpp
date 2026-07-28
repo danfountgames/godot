@@ -32,6 +32,7 @@
 
 #include "mcp_service.h"
 #include "mcp_tool.h"
+#include "mcp_runtime_agent.h"
 #include "mcp_tool_registry.h"
 #include "tools/mcp_builtin_tools.h"
 
@@ -63,6 +64,13 @@ void initialize_godot_ai_module(ModuleInitializationLevel p_level) {
 		// headless runs can use it without an editor.
 		mcp_tool_registry = memnew(MCPToolRegistry);
 		Engine::get_singleton()->add_singleton(Engine::Singleton("MCPToolRegistry", MCPToolRegistry::get_singleton()));
+
+#ifdef TOOLS_ENABLED
+		// The other end of the runtime channel. This is a no-op in an editor process
+		// and when nothing is debugging us; in a game launched from the editor it is
+		// what lets the editor deliver real input and read back what happened.
+		MCPRuntimeAgent::install();
+#endif
 	}
 
 #ifdef TOOLS_ENABLED
@@ -74,6 +82,9 @@ void initialize_godot_ai_module(ModuleInitializationLevel p_level) {
 
 void uninitialize_godot_ai_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+#ifdef TOOLS_ENABLED
+		MCPRuntimeAgent::uninstall();
+#endif
 		if (mcp_tool_registry) {
 			memdelete(mcp_tool_registry);
 			mcp_tool_registry = nullptr;

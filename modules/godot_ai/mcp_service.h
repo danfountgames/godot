@@ -32,6 +32,7 @@
 #define MCP_SERVICE_H
 
 #include "mcp_protocol.h"
+#include "mcp_runtime_bridge.h"
 
 #include "core/io/stream_peer_tcp.h"
 #include "core/io/tcp_server.h"
@@ -39,6 +40,7 @@
 
 class MCPApprovalsDialog;
 class MCPChatDock;
+class MCPRuntimeBridge;
 
 // Editor-side half of the bridge: a loopback listener that godot-ai-relay connects
 // to, following the lifecycle pattern of the in-tree debug adapter server.
@@ -88,6 +90,7 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 
 	MCPApprovalsDialog *approvals_dialog = nullptr;
 	MCPChatDock *chat_dock = nullptr;
+	Ref<MCPRuntimeBridge> runtime_bridge;
 
 	Vector<OutgoingRequest> outgoing;
 	int64_t next_outgoing_id = 1;

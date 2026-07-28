@@ -33,6 +33,7 @@
 #include "../mcp_deferred.h"
 #include "../mcp_tool_registry.h"
 
+#include "core/os/os.h"
 #include "core/variant/array.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/editor_debugger_tree.h"
@@ -286,14 +287,41 @@ public:
 		return result;
 	}
 
+	// A cheap identity for "which tree is this", so a stale one can be told from a
+	// fresh one. Names and shape are enough: two different trees with identical names
+	// at identical depths are the same tree for this purpose.
+	String _fingerprint() const {
+		const Array nodes = _build(32)["nodes"];
+		String out;
+		for (int i = 0; i < nodes.size(); i++) {
+			const Dictionary node = nodes[i];
+			out += String(node["name"]) + ":" + String(node["depth"]) + ";";
+		}
+		return out;
+	}
+
 	Variant _poll() {
 		if (!remote_tree_ready()) {
 			return Variant();
 		}
-		return _build(pending_max_depth);
+		// Wait for a tree that arrived *after* the request, so a caller polling while
+		// the game boots sees the scene appear instead of the same bare root forever.
+		if (_fingerprint() != fingerprint_at_request) {
+			return _build(pending_max_depth);
+		}
+		// ...but a tree that genuinely has not changed must not hang the call. Once the
+		// game has had time to answer, the unchanged tree is the honest answer.
+		if (OS::get_singleton()->get_ticks_msec() - request_msec > SETTLE_MSEC) {
+			return _build(pending_max_depth);
+		}
+		return Variant();
 	}
 
+	static const uint64_t SETTLE_MSEC = 1500;
+
 	int pending_max_depth = 32;
+	uint64_t request_msec = 0;
+	String fingerprint_at_request;
 
 public:
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
@@ -301,12 +329,14 @@ public:
 		if (!tree) {
 			return Dictionary();
 		}
-		if (remote_tree_ready()) {
-			return _build((int)p_arguments["max_depth"]);
-		}
-
-		// Ask the game for its tree, then answer once it arrives.
+		// Deliberately not short-circuiting on remote_tree_ready(). The editor keeps the
+		// last tree it was sent, and the first arrives as soon as the game is up - often
+		// before the main scene has been instantiated. Returning that because it "is
+		// ready" makes every later call hand back the same bare root, so an agent
+		// polling for its scene waits forever on a cached answer.
 		pending_max_depth = (int)p_arguments["max_depth"];
+		fingerprint_at_request = remote_tree_ready() ? _fingerprint() : String();
+		request_msec = OS::get_singleton()->get_ticks_msec();
 		request_remote_tree();
 		return MCPDeferred::make_deferred_result(
 				MCPDeferred::begin_polled(10.0, callable_mp(this, &GetRuntimeSceneTreeTool::_poll)));
@@ -383,7 +413,14 @@ public:
 		pending_property = p_arguments["property"];
 		pending_value = p_arguments.has("value") ? p_arguments["value"] : Variant();
 
-		if (remote_tree_ready()) {
+		// Deliberately *not* short-circuiting on remote_tree_ready(). The editor keeps
+		// the last tree it was sent, and the first one arrives as soon as the game is
+		// up - often before the main scene has been instantiated. Returning that
+		// because it "is ready" makes every later call hand back the same bare root,
+		// so an agent polling for its scene waits forever on a cached answer. Always
+		// ask again; the wait below is what makes that cheap.
+		request_remote_tree();
+		if (false) {
 			const Variant applied = _apply();
 			const Dictionary result = applied;
 			if (result.has("error")) {

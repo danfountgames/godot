@@ -43,6 +43,11 @@ enum MCPCapability {
 	MCP_CAP_EDIT_FILES, // Writes files inside the project.
 	MCP_CAP_EDIT_SCENE, // Mutates the edited scene or resources.
 	MCP_CAP_RUN_PROJECT, // Starts, stops or drives play mode.
+	// Delivers input to the running game or the editor as though a person had. It is
+	// separate from run_project because it can do anything a player can do - including
+	// destroying save data through the game's own menus - and separate from the read
+	// capabilities because it is not a read at all.
+	MCP_CAP_SIMULATE_INPUT,
 	MCP_CAP_DANGEROUS_EXEC, // Anything with arbitrary reach. Denied by default.
 	MCP_CAP_MAX,
 };

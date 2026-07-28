@@ -25,6 +25,18 @@ against a running editor.
 
 ## Current vertical slice
 
+S-17 (in progress): closing the gap between what the game-production template asks for
+and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
+`.agent/INTERFACE_LEDGER.md` tracks it. A1 (runtime agent channel) and A2
+(`Godot_SendPointerInput`) are done and verified — the editor can now deliver a real
+click into the running game, proven by a test a shortcut implementation would fail.
+
+Two real bugs fell out of it: the runtime scene tree was cached and never refreshed, so
+an agent polling while a game booted got a bare `root` forever; and the e2e's runtime
+poll accepted the first successful reply rather than waiting for the scene.
+
+S-16 (done): the bootstrap project template.
+
 S-15 (done): the virtual display. The gaps that had been recorded as environmental
 were not: a container can have a screen if the repository gives it one. Adding
 `tools/virtual_display.py` and wiring it into the end-to-end run turned four
