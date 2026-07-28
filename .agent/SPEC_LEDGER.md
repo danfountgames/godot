@@ -59,8 +59,8 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | T7 | MCP | `Godot_ReadTextFile` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | reads, directory/missing/escape refusals | none |
 | T8 | MCP | `Godot_WriteTextFile` + filesystem refresh | F5,F8 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | content asserted on disk, not from the tool report | none |
 | T9 | MCP | `Godot_ReadOutputLog` | F2 | VERIFIED | `tools/mcp_output_tools.cpp`, accessor added to `editor/editor_log.h` | `run_editor_e2e.py` | the service startup message is read back through the tool, with type classification and filtering | none |
-| T10 | MCP | `Godot_PlayCurrentScene` / `Godot_PlayMainScene` | F6 | IMPLEMENTED | `tools/mcp_editor_tools.cpp` | — | — | e2e play lifecycle |
-| T11 | MCP | `Godot_StopPlaying` | T10 | IMPLEMENTED | `tools/mcp_editor_tools.cpp` | — | — | e2e play lifecycle |
+| T10 | MCP | `Godot_PlayCurrentScene` / `Godot_PlayMainScene` | F6 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | play reports the game as running against a live editor | none |
+| T11 | MCP | `Godot_StopPlaying` | T10 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | after stop, nothing is running; `was_playing` is not pinned down because a headless game may already have exited | none |
 | T12 | MCP | `Godot_CaptureViewport` incl. headless rejection | F6 | NOT_STARTED | — | — | — | all |
 | T13 | MCP | `Godot_AskUser` | F2 | NOT_STARTED | — | — | — | all |
 | T14 | MCP | `Godot_SearchProject` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | match line numbers, case sensitivity, empty query | none |

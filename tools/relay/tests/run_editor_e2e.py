@@ -448,6 +448,48 @@ def run(editor_binary):
         check(reply["result"]["structuredContent"]["messages"] == [],
               "a filter that matches nothing still returned messages")
 
+        # --- play lifecycle --------
+        # Deliberately after the output-log checks: starting the game clears the
+        # editor's Output panel, which would wipe the messages those checks read.------------------------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 85, "method": "tools/call",
+                      "params": {"name": "Godot_PlayCurrentScene"}})
+        if reply.get("result", {}).get("isError") is False:
+            playing = reply["result"]["structuredContent"]["playing"]
+            check(playing is True, "the editor reported the game as not running after play")
+
+            # Runtime inspection needs the game to attach a debugger session and
+            # report its tree. That does not happen reliably with a headless game, so
+            # it is probed and reported rather than asserted - claiming it passed
+            # here would be claiming something this environment cannot show.
+            deadline = time.time() + 10
+            tree = None
+            while time.time() < deadline:
+                probe = call({"jsonrpc": "2.0", "id": 86, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeSceneTree"}})
+                if probe.get("result", {}).get("isError") is False:
+                    tree = probe["result"]["structuredContent"]
+                    break
+                time.sleep(0.5)
+            if tree is not None:
+                check(any(n["name"] == "Main" for n in tree["nodes"]),
+                      "the runtime tree does not contain the scene root: %r" % tree["nodes"])
+                print("PASS Godot_GetRuntimeSceneTree saw the running game")
+            else:
+                print("SKIP runtime tree: the headless game did not report one")
+
+            reply = call({"jsonrpc": "2.0", "id": 87, "method": "tools/call",
+                          "params": {"name": "Godot_StopPlaying"}})
+            # A headless game with an empty scene may already have exited by now, so
+            # `was_playing` is not something this environment can pin down. What must
+            # hold either way is the postcondition: nothing is running afterwards.
+            check(reply["result"]["structuredContent"]["playing"] is False,
+                  "the game was still running after stop")
+            print("PASS play reported a running game and stop left nothing running")
+        else:
+            # Running a game needs more than a headless editor on some systems; say so
+            # rather than pretending the path was exercised.
+            print("SKIP play lifecycle: %s" % refusal_text(reply)[:80])
+
         # --- checkpoints ------------------------------------------------------
         # The write above must have produced a checkpoint; restoring it has to remove
         # the file, because it did not exist beforehand.

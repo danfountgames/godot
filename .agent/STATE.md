@@ -25,8 +25,9 @@ against a running editor.
 
 ## Current vertical slice
 
-S-14 (next): a full re-read of the specification against the ledger, then the
-optional tranche (O1–O4) if anything is worth doing.
+S-14 (in progress): specification re-audit against the ledger. Play/stop (T10, T11)
+are now verified against a live editor; runtime *inspection* of a headless game is
+probed and reported rather than asserted, because it does not populate reliably.
 
 S-13 (done): extracted the approvals dialog's status/decision logic into
 `mcp_skill_status_text()` so what the UI *decides* is tested even though what it

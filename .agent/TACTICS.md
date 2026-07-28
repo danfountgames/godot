@@ -73,6 +73,16 @@ Verify with `pkg-config --exists xcursor xinerama xrandr xi alsa`.
   headless unit-test binary, because `register_editor_types()` creates it. Its methods
   dereference `EditorNode`, which is null there. Guard on both.
 
+## Editor behaviour that trips tests
+
+- **Running the game clears the editor's Output panel.** Any test that reads back log
+  messages must run before the play-lifecycle checks, or it will find an empty log.
+- A headless game with an empty scene may exit almost immediately, so
+  `Godot_StopPlaying`'s `was_playing` cannot be pinned down here; assert the
+  postcondition (nothing running afterwards) instead.
+- The remote scene tree does not populate reliably for a headless game, so
+  `Godot_GetRuntimeSceneTree` is probed and reported rather than asserted in e2e.
+
 ## Cross-platform
 
 - `tools/relay/build.sh --windows` cross-compiles the relay with mingw
