@@ -1430,6 +1430,45 @@ def run(editor_binary, display):
                             "params": {"name": "Godot_AskUser",
                                        "arguments": {"question": "Is this window listed?",
                                                      "timeout_seconds": 10}}})
+        # --- finding things in the editor's interface -------------------------
+        reply = call({"jsonrpc": "2.0", "id": 155, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl", "arguments": {}}})
+        check(refused(reply), "a search with no criteria was accepted")
+        check("text" in refusal_text(reply),
+              "the refusal does not say what to give instead: %r" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 156, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"class": "Button", "limit": 5}}})
+        check(not refused(reply), "searching by class failed: %s" % refusal_text(reply))
+        found = reply["result"]["structuredContent"]
+        check(found["count"] == 5 and found["truncated"] is True,
+              "limit did not cut the editor's buttons down to 5: %r" % found["count"])
+        for match in found["matches"]:
+            check(match["kind"] == "control", "a class search returned a non-control: %r" % match)
+            check(match["width"] > 0 and match["height"] > 0,
+                  "a visible button has no size: %r" % match)
+            check(match["center_x"] == match["x"] + match["width"] // 2 or
+                  abs(match["center_x"] - (match["x"] + match["width"] / 2)) <= 1,
+                  "the reported centre is not the centre of the reported rect: %r" % match)
+
+        # A class that matches nothing is an empty answer, not a failure - and it must
+        # not be confused with the refusal above, which is about the request.
+        reply = call({"jsonrpc": "2.0", "id": 157, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"name": "NoControlIsCalledThis"}}})
+        check(not refused(reply), "a search that matches nothing was reported as an error")
+        check(reply["result"]["structuredContent"]["count"] == 0,
+              "a name nothing uses matched something")
+
+        # Criteria combine: a class that exists, in a window that does not, finds nothing.
+        reply = call({"jsonrpc": "2.0", "id": 158, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"class": "Button", "window": "No Such Window"}}})
+        check(reply["result"]["structuredContent"]["count"] == 0,
+              "the window filter was ignored")
+        print("PASS Godot_FindControl locates editor controls and combines its criteria")
+
         # The question's own reply can arrive in the middle of this, so replies are
         # matched by id rather than taken in order.
         question_reply = [None]

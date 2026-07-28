@@ -315,8 +315,47 @@ def run(editor_binary, display):
                                      "arguments": {"name": "scene-cleanup"}}})
             return not refused(probe)
 
-        click_first_action(d, dialog, skill_is_readable)
-        print("PASS clicking the dialog allowed the skill, which could then be read")
+        # The client's approval above had to be probed for: nothing was approved yet, so
+        # there was no client to ask where the button was. There is one now, and this is
+        # what Godot_FindControl is for - a click aimed at a rectangle the editor
+        # computed, instead of at an inset someone measured off a screenshot once and
+        # that stops being true when a theme or a font size changes.
+        # An independent check on the coordinate system before anything is aimed: what
+        # the editor says about its own window and what the X server says must agree, or
+        # every rectangle below is measured from the wrong origin. Whether the editor
+        # gives its dialogs real OS windows or embeds them changes that origin, and the
+        # wrong answer looks entirely plausible.
+        reply = call({"jsonrpc": "2.0", "id": 13, "method": "tools/call",
+                      "params": {"name": "Godot_ListWindows"}})
+        listed = [window for window in reply["result"]["structuredContent"]["windows"]
+                  if window["title"] == "Godot AI: Clients and Skills"]
+        check(listed, "the approvals dialog is not among the editor's listed windows")
+        box = window_geometry(d, dialog)
+        check(abs(listed[0]["x"] - box["X"]) <= 2 and abs(listed[0]["y"] - box["Y"]) <= 2,
+              "the editor and the X server disagree about where the dialog is: %r vs %r"
+              % (listed[0], box))
+
+        reply = call({"jsonrpc": "2.0", "id": 12, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"text": "scene-cleanup"}}})
+        check(not refused(reply), "finding the skill row failed: %s" % refusal_text(reply))
+        found = reply["result"]["structuredContent"]
+        rows = [match for match in found["matches"] if match["kind"] == "tree_item"]
+        check(rows, "no Tree row matched the skill's name: %r" % found)
+        buttons = rows[0]["buttons"]
+        check(len(buttons) == 1,
+              "expected one action button on the skill's row, got %r" % buttons)
+        check(buttons[0]["tooltip"] == "Allow this skill",
+              "the action button found is not the one that allows the skill: %r" % buttons[0])
+
+        xdotool(d, "mousemove", str(buttons[0]["center_x"]), str(buttons[0]["center_y"]),
+                "click", "1")
+        time.sleep(1.0)
+        check(skill_is_readable(),
+              "a click at the rectangle Godot_FindControl reported (%r) did not allow the "
+              "skill, so the coordinates it reports are not where the button is"
+              % buttons[0])
+        print("PASS Godot_FindControl located the skill's Allow button and a click there worked")
         close_dialog(d, dialog)
 
         # --- O1: the chat panel borrows this client's model ---------------------

@@ -383,6 +383,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_user_data_tools();
 	mcp_register_project_config_tools();
 	mcp_register_asset_tools();
+	mcp_register_editor_ui_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));

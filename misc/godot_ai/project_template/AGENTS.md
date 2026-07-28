@@ -102,7 +102,7 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (55)
+## Tools exposed over MCP (56)
 
 | Area | Tools |
 |---|---|
@@ -124,7 +124,7 @@ confidence.
 | Skills | `Godot_ListSkills`, `Godot_ReadSkill` |
 | Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint`, `Godot_DiffCheckpoint` |
 | Asset pipeline | `Godot_GetImportStatus`, `Godot_ReimportAsset`, `Godot_WaitForImportQueue` |
-| Editor windows | `Godot_ListWindows` |
+| Editor windows | `Godot_ListWindows`, `Godot_FindControl` |
 
 ## What the interface does **not** provide
 
@@ -138,7 +138,8 @@ below, register a project command, or record the gap honestly as unverified.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary.
 - **No editor-side input injection.** The input tools drive the *running game*. To
   drive the editor's own UI — a dialog, the command palette — use the host harness.
-  `Godot_ListWindows` will tell you *what* is open, but nothing here will click it.
+  `Godot_ListWindows` tells you what is open and `Godot_FindControl` tells you exactly
+  where to click, but the click itself still comes from the harness.
 
 ## Sharp edges that will cost you a session if you miss them
 
@@ -150,6 +151,11 @@ below, register a project command, or record the gap honestly as unverified.
 - **To know whether a dialog is open, ask, do not photograph.** `Godot_ListWindows`
   names every open window, works with no display at all, and cannot be misread the way
   a screenshot can. Reach for a capture when you need to judge how something *looks*.
+- **Never measure a coordinate off a screenshot.** `Godot_FindControl` gives you the
+  screen rectangle and centre of any editor control by its text, name, class or tooltip
+  — and of the *rows* of a Tree or ItemList, including the buttons drawn inside them,
+  which are not nodes and whose only label is a tooltip. An offset you measured once
+  stops being true when a theme, a font size or a window size changes; this does not.
 - **A changed asset is not an imported asset.** Writing a `.png` into the project does
   not give you a texture; the editor's importer has to run, and until it does the game
   keeps loading the old one. After touching any asset on disk, call

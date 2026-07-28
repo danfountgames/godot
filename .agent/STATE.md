@@ -28,14 +28,18 @@ against a running editor.
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
 `.agent/INTERFACE_LEDGER.md` tracks it. Groups A–E, G, H, J and K are verified; 55 tools
-are registered. What is left is B4 (capture metadata), E2 (duplicate/stacking detection),
-F1–F3 (scene tests) and I1–I2 (editor-side input and control lookup).
+are registered. What is left is I1 (editor-side input), B4 (capture metadata),
+F1–F3 (scene tests) and E2 (duplicate/stacking detection).
 
-Five real bugs have fallen out of it so far, all fixed and covered — see the
-"Bugs this tranche found" table in the interface ledger. The most recent two were found
-by `Godot_ListWindows` on its first run: a timed-out `Godot_AskUser` left a dead dialog
-on screen whose buttons did nothing, and the same tool gave a caller who omitted
-`timeout_seconds` a one-second deadline instead of the declared 300.
+Six real bugs have fallen out of it so far, all fixed and covered — see the
+"Bugs this tranche found" table in the interface ledger. Two were found by
+`Godot_ListWindows` on its first run: a timed-out `Godot_AskUser` left a dead dialog on
+screen whose buttons did nothing, and the same tool gave a caller who omitted
+`timeout_seconds` a one-second deadline instead of the declared 300. The latest was in
+`Godot_FindControl` itself — every rectangle came back offset by the editor window's
+position, because `get_screen_transform()` already includes that placement except when
+the window embeds its subwindows. Only clicking at the reported coordinates showed it;
+the numbers looked entirely reasonable.
 
 S-16 (done): the bootstrap project template.
 
@@ -74,18 +78,20 @@ virtual display and the editor's render-capability reporting.
 
 All of the following on the current working tree, in one sweep:
 
-- `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- `python3 tools/tests/run_tests.py` → 14/14 pass (the virtual display).
+- `python3 tools/relay/tests/run_tests.py` → 59/59 pass.
+- `python3 tools/tests/run_tests.py` → 16/16 pass (the virtual display).
 - Module suite: 62 cases, 425 assertions, all pass.
 - Full engine suite from the repository root: 940 cases, 2,395,117 assertions, all
   pass — no regression from the editor accessors this module added.
-- `python3 tools/relay/tests/run_editor_ui_e2e.py` → 9 checks pass, driving the real
-  editor by keyboard and pointer: the palette, the approvals dialog, and a chat turn
-  answered by the connected client's model.
+- `python3 tools/relay/tests/run_editor_ui_e2e.py` → all checks pass, driving the real
+  editor by keyboard and pointer: the palette, the approvals dialog, a chat turn
+  answered by the connected client's model, and a skill allowed by clicking the
+  rectangle `Godot_FindControl` reported for its button.
 - `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a display the
   script starts itself, including a real 1152x648 screenshot, a running game's scene
-  tree (`root > Main > Player, Hud, EnemySpawner`), a runtime edit that leaves the
-  scene file byte-identical, and a question answered by clicking its dialog.
+  tree (`root > Main > Player, Hud, Field, Target, EnemySpawner`), a runtime edit that
+  leaves the scene file byte-identical, and a question answered by clicking its dialog.
+  56 tools are advertised over `tools/list`.
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
   visual tools refusing as they should.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md`, `CLAUDE.md` and

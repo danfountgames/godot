@@ -66,4 +66,7 @@ void mcp_register_project_config_tools();
 // The import pipeline, checkpoint diffs, and the editor's open windows.
 void mcp_register_asset_tools();
 
+// Locating parts of the editor's own interface on screen.
+void mcp_register_editor_ui_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H
