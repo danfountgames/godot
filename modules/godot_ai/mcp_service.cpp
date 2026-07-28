@@ -1,0 +1,441 @@
+/**************************************************************************/
+/*  mcp_service.cpp                                                       */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#include "mcp_service.h"
+
+#include "mcp_audit.h"
+#include "mcp_tool_registry.h"
+
+#include "core/config/project_settings.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
+#include "core/io/json.h"
+#include "core/os/os.h"
+#include "core/os/time.h"
+#include "core/version.h"
+#include "editor/editor_log.h"
+#include "editor/editor_node.h"
+#include "editor/editor_settings.h"
+
+// Ports are probed upward from the configured one so several editors can run at
+// once; the relay learns the real port from the instance descriptor.
+static const int PORT_PROBE_RANGE = 20;
+static const int MAX_FRAME_CHARACTERS = 32 * 1024 * 1024;
+
+MCPService::MCPService() {
+	_EDITOR_DEF("network/godot_ai/enabled", true);
+	_EDITOR_DEF("network/godot_ai/port", configured_port);
+	_EDITOR_DEF("network/godot_ai/auto_approve_clients", false);
+	MCPPermissions::register_editor_settings();
+}
+
+MCPService::~MCPService() {
+	stop();
+}
+
+String MCPService::get_state_dir() {
+	// Shared with godot-ai-relay, which resolves the same location without engine
+	// APIs; keep both implementations in step.
+	const String override_dir = OS::get_singleton()->get_environment("GODOT_AI_HOME");
+	if (!override_dir.is_empty()) {
+		return override_dir;
+	}
+	const String home = OS::get_singleton()->get_environment("HOME");
+	if (!home.is_empty()) {
+		return home.path_join(".godot-ai");
+	}
+	return OS::get_singleton()->get_user_data_dir().path_join("godot_ai");
+}
+
+String MCPService::get_instances_dir() {
+	return get_state_dir().path_join("instances");
+}
+
+void MCPService::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			if (MCPToolRegistry::get_singleton()) {
+				MCPToolRegistry::get_singleton()->connect("tools_changed", callable_mp(this, &MCPService::_on_tools_changed));
+			}
+			start();
+		} break;
+
+		case NOTIFICATION_EXIT_TREE: {
+			if (MCPToolRegistry::get_singleton() &&
+					MCPToolRegistry::get_singleton()->is_connected("tools_changed", callable_mp(this, &MCPService::_on_tools_changed))) {
+				MCPToolRegistry::get_singleton()->disconnect("tools_changed", callable_mp(this, &MCPService::_on_tools_changed));
+			}
+			stop();
+		} break;
+
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			// Tools run editor operations that can pump the main loop, so re-entrant
+			// polling must be prevented (the debug adapter guards the same way).
+			if (started && !polling) {
+				polling = true;
+				_accept_new_peers();
+				for (int i = peers.size() - 1; i >= 0; i--) {
+					_poll_peer(peers[i]);
+				}
+				for (int i = peers.size() - 1; i >= 0; i--) {
+					if (peers[i]->connection.is_null() || peers[i]->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
+						_drop_peer(i);
+					}
+				}
+				polling = false;
+			}
+		} break;
+
+		case EditorSettings::NOTIFICATION_EDITOR_SETTINGS_CHANGED: {
+			if (!EditorSettings::get_singleton()->check_changed_settings_in_group("network/godot_ai")) {
+				break;
+			}
+			const bool enabled = EDITOR_GET("network/godot_ai/enabled");
+			const int new_port = (int)_EDITOR_GET("network/godot_ai/port");
+			if (!enabled && started) {
+				stop();
+			} else if (enabled && !started) {
+				start();
+			} else if (enabled && started && new_port != configured_port) {
+				stop();
+				start();
+			}
+		} break;
+	}
+}
+
+void MCPService::start() {
+	if (started) {
+		return;
+	}
+	if (EditorSettings::get_singleton() && !(bool)EDITOR_GET("network/godot_ai/enabled")) {
+		return;
+	}
+
+	configured_port = (int)_EDITOR_GET("network/godot_ai/port");
+	server.instantiate();
+
+	Error error = ERR_CANT_CREATE;
+	for (int offset = 0; offset < PORT_PROBE_RANGE; offset++) {
+		error = server->listen(configured_port + offset, IPAddress("127.0.0.1"));
+		if (error == OK) {
+			port = configured_port + offset;
+			break;
+		}
+	}
+	if (error != OK) {
+		server.unref();
+		ERR_PRINT(vformat("Godot AI: could not open a local port in the range %d-%d; the AI service is disabled.",
+				configured_port, configured_port + PORT_PROBE_RANGE - 1));
+		return;
+	}
+
+	started = true;
+	set_process_internal(true);
+	_write_instance_descriptor();
+
+	if (EditorNode::get_log()) {
+		EditorNode::get_log()->add_message(
+				vformat("--- Godot AI service listening on 127.0.0.1:%d ---", port), EditorLog::MSG_TYPE_EDITOR);
+	}
+}
+
+void MCPService::stop() {
+	if (!started && peers.is_empty() && server.is_null()) {
+		return;
+	}
+	for (int i = peers.size() - 1; i >= 0; i--) {
+		_drop_peer(i);
+	}
+	if (server.is_valid()) {
+		server->stop();
+		server.unref();
+	}
+	_remove_instance_descriptor();
+	set_process_internal(false);
+
+	if (started && EditorNode::get_log()) {
+		EditorNode::get_log()->add_message("--- Godot AI service stopped ---", EditorLog::MSG_TYPE_EDITOR);
+	}
+	started = false;
+	port = 0;
+}
+
+void MCPService::_accept_new_peers() {
+	if (server.is_null()) {
+		return;
+	}
+	while (server->is_connection_available()) {
+		Ref<StreamPeerTCP> connection = server->take_connection();
+		if (connection.is_null()) {
+			break;
+		}
+		Peer *peer = memnew(Peer);
+		peer->connection = connection;
+		peer->address = String(connection->get_connected_host()) + ":" + itos(connection->get_connected_port());
+		peers.push_back(peer);
+	}
+}
+
+void MCPService::_poll_peer(Peer *p_peer) {
+	Ref<StreamPeerTCP> connection = p_peer->connection;
+	if (connection.is_null() || connection->poll() != OK) {
+		return;
+	}
+	if (connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
+		return;
+	}
+
+	int available = connection->get_available_bytes();
+	while (available > 0) {
+		Vector<uint8_t> chunk;
+		chunk.resize(available);
+		int received = 0;
+		if (connection->get_partial_data(chunk.ptrw(), available, received) != OK || received <= 0) {
+			break;
+		}
+		p_peer->buffer += String::utf8((const char *)chunk.ptr(), received);
+
+		int newline = p_peer->buffer.find("\n");
+		while (newline >= 0) {
+			String line = p_peer->buffer.substr(0, newline);
+			p_peer->buffer = p_peer->buffer.substr(newline + 1);
+			if (line.ends_with("\r")) {
+				line = line.substr(0, line.length() - 1);
+			}
+			if (!line.strip_edges().is_empty()) {
+				_handle_line(p_peer, line);
+			}
+			newline = p_peer->buffer.find("\n");
+		}
+
+		if (p_peer->buffer.length() > MAX_FRAME_CHARACTERS) {
+			ERR_PRINT("Godot AI: dropping an oversized frame from a client.");
+			p_peer->buffer = String();
+		}
+
+		available = connection->get_available_bytes();
+	}
+}
+
+void MCPService::_handle_line(Peer *p_peer, const String &p_line) {
+	const Variant parsed = JSON::parse_string(p_line);
+	if (parsed.get_type() != Variant::DICTIONARY) {
+		_send(p_peer, MCPProtocol::make_error(Variant(), MCPProtocol::ERROR_PARSE,
+									 "the editor could not parse this frame as a JSON-RPC object"));
+		return;
+	}
+
+	Dictionary response;
+	if (MCPProtocol::handle_message(parsed, p_peer->session, this, response)) {
+		_send(p_peer, response);
+	}
+}
+
+void MCPService::_send(Peer *p_peer, const Dictionary &p_message) {
+	if (p_peer->connection.is_null() || p_peer->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
+		return;
+	}
+	// One JSON object per line; JSON::stringify never emits a raw newline.
+	const CharString payload = (JSON::stringify(p_message) + "\n").utf8();
+	p_peer->connection->put_data((const uint8_t *)payload.get_data(), payload.length());
+}
+
+void MCPService::_drop_peer(int p_index) {
+	ERR_FAIL_INDEX(p_index, peers.size());
+	Peer *peer = peers[p_index];
+	if (peer->connection.is_valid()) {
+		peer->connection->disconnect_from_host();
+	}
+	peers.remove_at(p_index);
+	memdelete(peer);
+}
+
+void MCPService::_on_tools_changed() {
+	// Clients cache tool lists; tell every initialized session the set moved.
+	const Dictionary notification = MCPProtocol::make_notification("notifications/tools/list_changed", Dictionary());
+	for (Peer *peer : peers) {
+		if (peer->session.initialized) {
+			_send(peer, notification);
+		}
+	}
+}
+
+void MCPService::_write_instance_descriptor() {
+	const String dir = get_instances_dir();
+	Ref<DirAccess> access = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	if (access.is_null() || access->make_dir_recursive(dir) != OK) {
+		WARN_PRINT(vformat("Godot AI: could not create the instance directory '%s'; clients will need --editor-socket %d.", dir, port));
+		return;
+	}
+
+	Dictionary descriptor;
+	descriptor["pid"] = OS::get_singleton()->get_process_id();
+	descriptor["port"] = port;
+	descriptor["project_path"] = get_project_path();
+	descriptor["project_name"] = get_project_name();
+	descriptor["editor_version"] = get_editor_version();
+	descriptor["protocol_version"] = MCPProtocol::BRIDGE_VERSION;
+	descriptor["started_at"] = Time::get_singleton()->get_unix_time_from_system();
+
+	instance_descriptor_path = dir.path_join(itos(OS::get_singleton()->get_process_id()) + ".json");
+	Ref<FileAccess> file = FileAccess::open(instance_descriptor_path, FileAccess::WRITE);
+	if (file.is_null()) {
+		WARN_PRINT(vformat("Godot AI: could not write the instance descriptor '%s'.", instance_descriptor_path));
+		instance_descriptor_path = String();
+		return;
+	}
+	file->store_string(JSON::stringify(descriptor));
+}
+
+void MCPService::_remove_instance_descriptor() {
+	if (instance_descriptor_path.is_empty()) {
+		return;
+	}
+	Ref<DirAccess> access = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	if (access.is_valid()) {
+		access->remove(instance_descriptor_path);
+	}
+	instance_descriptor_path = String();
+}
+
+// ----------------------------------------------------------------- approvals ---
+
+static String approved_clients_setting() {
+	return "network/godot_ai/approved_clients";
+}
+
+bool MCPService::is_client_approved(const String &p_client_name) {
+	// An explicit opt-in for automation. Documented as CI/headless only: it bypasses
+	// the first-connection approval that otherwise gates every client.
+	if (OS::get_singleton()->get_environment("GODOT_AI_AUTO_APPROVE") == "1") {
+		return true;
+	}
+	if (!EditorSettings::get_singleton()) {
+		return false;
+	}
+	if ((bool)EDITOR_GET("network/godot_ai/auto_approve_clients")) {
+		return true;
+	}
+	if (!EditorSettings::get_singleton()->has_setting(approved_clients_setting())) {
+		return false;
+	}
+	const PackedStringArray approved = EditorSettings::get_singleton()->get_setting(approved_clients_setting());
+	return approved.has(p_client_name);
+}
+
+void MCPService::approve_client_name(const String &p_client_name) {
+	if (!EditorSettings::get_singleton()) {
+		return;
+	}
+	PackedStringArray approved;
+	if (EditorSettings::get_singleton()->has_setting(approved_clients_setting())) {
+		approved = EditorSettings::get_singleton()->get_setting(approved_clients_setting());
+	}
+	if (!approved.has(p_client_name)) {
+		approved.push_back(p_client_name);
+		EditorSettings::get_singleton()->set_setting(approved_clients_setting(), approved);
+	}
+	pending_clients.erase(p_client_name);
+}
+
+void MCPService::revoke_client_name(const String &p_client_name) {
+	if (!EditorSettings::get_singleton() || !EditorSettings::get_singleton()->has_setting(approved_clients_setting())) {
+		return;
+	}
+	PackedStringArray approved = EditorSettings::get_singleton()->get_setting(approved_clients_setting());
+	const int index = approved.find(p_client_name);
+	if (index >= 0) {
+		approved.remove_at(index);
+		EditorSettings::get_singleton()->set_setting(approved_clients_setting(), approved);
+	}
+	// Revocation takes effect now, not at the next connection.
+	for (int i = peers.size() - 1; i >= 0; i--) {
+		if (peers[i]->session.client_name == p_client_name) {
+			_drop_peer(i);
+		}
+	}
+}
+
+bool MCPService::approve_client(MCPSession &p_session, String &r_reason) {
+	if (is_client_approved(p_session.client_name)) {
+		return true;
+	}
+	if (!pending_clients.has(p_session.client_name)) {
+		pending_clients.push_back(p_session.client_name);
+		if (EditorNode::get_log()) {
+			EditorNode::get_log()->add_message(
+					vformat("Godot AI: client '%s' asked to connect and is waiting for approval "
+							"(Editor Settings > Network > Godot AI).",
+							p_session.client_name),
+					EditorLog::MSG_TYPE_WARNING);
+		}
+	}
+	r_reason = vformat("client '%s' is not approved for this editor; approve it in "
+					   "Editor Settings > Network > Godot AI and reconnect",
+			p_session.client_name);
+	return false;
+}
+
+bool MCPService::prompt_for_tool(const MCPSession &p_session, const Ref<MCPTool> &p_tool, const Dictionary &p_arguments, String &r_reason) {
+	if (OS::get_singleton()->get_environment("GODOT_AI_AUTO_APPROVE") == "1") {
+		r_reason = "auto-approved (GODOT_AI_AUTO_APPROVE)";
+		return true;
+	}
+	// Interactive per-invocation approval belongs to the settings UI; until the user
+	// has made a standing decision, the safe answer is no.
+	r_reason = vformat("'%s' needs approval for the '%s' capability. Set that capability to "
+					   "'allow' in Editor Settings > Network > Godot AI, or start the relay with "
+					   "--approval-mode allow, to permit it.",
+			p_tool->get_tool_name(), mcp_capability_to_string(p_tool->get_capability()));
+	return false;
+}
+
+void MCPService::record_invocation(const MCPSession &p_session, const String &p_tool_name, const String &p_summary, bool p_allowed, const String &p_reason) {
+	MCPAudit::record(p_session.client_name, p_tool_name, p_summary, p_allowed, p_reason);
+}
+
+String MCPService::get_project_path() const {
+	if (!ProjectSettings::get_singleton()) {
+		return String();
+	}
+	return ProjectSettings::get_singleton()->get_resource_path();
+}
+
+String MCPService::get_project_name() const {
+	if (!ProjectSettings::get_singleton()) {
+		return String();
+	}
+	return ProjectSettings::get_singleton()->get("application/config/name");
+}
+
+String MCPService::get_editor_version() const {
+	return String(VERSION_FULL_BUILD);
+}
