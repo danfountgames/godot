@@ -139,9 +139,20 @@ below, register a project command, or record the gap honestly as unverified.
   it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
-- **No editor-side *drag*.** `Godot_SendEditorInput` does moves, clicks and keys, so
-  a dialog, a menu or the command palette is reachable; dragging a dock or a curve
-  handle is not.
+- **No drag and no scroll with the mouse, in the game or the editor.**
+  `Godot_SendPointerInput` and `Godot_SendEditorInput` do moves, clicks and keys. A
+  slider you must drag, a camera you must swipe, a list you must scroll with the wheel —
+  none of those can be driven yet. `Godot_SendTouchInput` *does* have drag, so a
+  touch-driven equivalent may be reachable. Record the gap rather than claiming the
+  interaction was tested.
+- **No touch cancellation.** A touch the OS takes away — a notification, an incoming
+  call — cannot be simulated, so that recovery path stays unverified.
+- **Runtime errors carry a call site, not a call stack.** `Godot_GetRuntimeErrors`
+  gives you file, line, function, message and kind. For anything deeper, read the
+  Output log.
+- **Stacking detection is a snapshot.** `Godot_GetAudioState` sees sounds stacked *at
+  the moment you ask*. A sound that doubles and clears between two calls is invisible;
+  to catch a burst, ask repeatedly while you send the input.
 
 ## Sharp edges that will cost you a session if you miss them
 

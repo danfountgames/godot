@@ -27,13 +27,14 @@ against a running editor.
 
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
-`.agent/INTERFACE_LEDGER.md` tracks it. Groups A–E, G, H, J and K are verified; 55 tools
-are registered — 57 over `tools/list`. Group I is now complete too: the editor's own
+`.agent/INTERFACE_LEDGER.md` tracks it. 59 tools are advertised over `tools/list`.
+Group I is complete: the editor's own
 interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
 every capture now carries its own provenance, and group F: the project's own test scenes
 are discoverable and runnable without a shell, and group E: stacked audio is detected
-structurally. **Every item in the interface ledger is now VERIFIED**, and the chat
+structurally. **40 of the ledger's 41 items are VERIFIED**; G3 (save-corruption fixtures) is
+IMPLEMENTED and unproven, because no game here has a save system to corrupt. The chat
 cancellation frame is caught end to end - the tools built for group I are what made that
 possible, by locating and pressing the dock's Cancel button.
 
