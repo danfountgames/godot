@@ -25,8 +25,14 @@ against a running editor.
 
 ## Current vertical slice
 
-S-07 (in progress): `Godot_ReadOutputLog` (T9) is done. Remaining in this slice: the
-runtime/persistent property split (T15), then the approvals UI (U1, U2).
+S-08 (next): the approvals UI and command palette entries (U1, U2), then the headless
+execution hook (U3).
+
+S-07 (done): `Godot_ReadOutputLog` (T9) and the persistent/runtime property split
+(T15). `Godot_SetSceneProperty` is undoable and survives a save; `Godot_SetRuntimeProperty`
+and `Godot_GetRuntimeSceneTree` drive the running game and say `persistent: false`
+in their results as well as their descriptions. A path lookup was added to
+`EditorDebuggerTree`, which previously only exposed the user's current selection.
 
 S-06 (done): checkpoints. Snapshots are taken by the protocol layer before any
 mutating tool runs, from paths the tool itself declares, and stored outside the
@@ -51,7 +57,7 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-T9, T15 (next). Just completed: F8, T8 → VERIFIED.
+U1, U2, U3 (next). Just completed: T9, T15 → VERIFIED.
 
 ## Last verified state
 
@@ -59,7 +65,7 @@ T9, T15 (next). Just completed: F8, T8 → VERIFIED.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
 - Module suite: 44 cases, 318 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
-- `python3 tools/relay/tests/run_editor_e2e.py` → 25/25 checks pass against a live
+- `python3 tools/relay/tests/run_editor_e2e.py` → 28/28 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
   trip verified against the saved scene file, and the shipped example skill read back
   over the protocol.
@@ -97,8 +103,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start T15 by finding how the editor pushes property changes into the running game:
+Start U1/U2 by finding how other plugins add editor settings UI and palette entries:
 
 ```sh
-grep -rn "live_debug\|set_object_property" editor/debugger/editor_debugger_node.h | head -20
+grep -rn "add_tool_menu_item\|EditorCommandPalette::get_singleton" editor/*.cpp editor/plugins/*.cpp | head
 ```

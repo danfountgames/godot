@@ -120,7 +120,21 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   runs from anywhere, and fixture safety comes from `mcp_test_remove_tree()`, not
   from the choice of working directory.
 
+### S-07b persistent vs runtime properties (T15)
+- `Godot_SetSceneProperty` coerces the incoming JSON against the property's *current*
+  value, so the tool never has to know Godot's whole type system, and goes through
+  undo/redo like every other scene edit.
+- `Godot_SetRuntimeProperty` and `Godot_GetRuntimeSceneTree` drive the running game
+  through the debugger. `EditorDebuggerTree` only exposed the user's current
+  selection, so a path lookup was added to it.
+- The distinction the specification insists on is carried in three places: the tool
+  names, the descriptions, and a `persistent` field in every result - an agent that
+  reads only the output still learns whether the change survives.
+- A schema bug surfaced in e2e: `value` was declared as an object, so `[128, 64]` was
+  rejected. Added `MCPSchema::any_property()` for arguments whose shape depends on
+  what they address.
+
 ### Next
-- S-07 continues: the runtime/persistent property split (T15),
+- S-08:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

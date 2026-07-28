@@ -162,7 +162,8 @@ def run(editor_binary):
                          "Godot_ManageNode", "Godot_UndoLastAction",
                          "Godot_ListSkills", "Godot_ReadSkill",
                          "Godot_ListCheckpoints", "Godot_RestoreCheckpoint",
-                         "Godot_ReadOutputLog"):
+                         "Godot_ReadOutputLog", "Godot_SetSceneProperty",
+                         "Godot_SetRuntimeProperty", "Godot_GetRuntimeSceneTree"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -348,6 +349,44 @@ def run(editor_binary):
         # needs the metadata from this specific write.
         write_reply = reply
         print("PASS Godot_WriteTextFile")
+
+        # --- persistent vs runtime property edits ------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 70, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": "Player", "property": "position",
+                                               "value": [128, 64]}}})
+        check(reply["result"]["isError"] is False,
+              "setting a scene property failed: %s" % reply["result"]["content"][0]["text"])
+        check(reply["result"]["structuredContent"]["persistent"] is True,
+              "a scene property edit did not report itself as persistent")
+
+        # It must survive a save/reopen, which is what "persistent" has to mean.
+        call({"jsonrpc": "2.0", "id": 71, "method": "tools/call",
+              "params": {"name": "Godot_SaveScene"}})
+        with open(os.path.join(project, "scenes", "main.tscn")) as handle:
+            check("128" in handle.read(), "the scene property did not reach the saved file")
+        print("PASS Godot_SetSceneProperty is persistent")
+
+        reply = call({"jsonrpc": "2.0", "id": 72, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": "Player", "property": "not_a_property",
+                                               "value": 1}}})
+        check(refused(reply), "setting an unknown property was accepted")
+
+        # The runtime tools must refuse clearly while nothing is running, rather than
+        # pretending to have changed something.
+        reply = call({"jsonrpc": "2.0", "id": 73, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Player",
+                                               "property": "position", "value": [1, 2]}}})
+        check(refused(reply), "a runtime property edit was accepted with no game running")
+        check("running" in reply["result"]["content"][0]["text"],
+              "the refusal does not explain that the game is not running")
+
+        reply = call({"jsonrpc": "2.0", "id": 74, "method": "tools/call",
+                      "params": {"name": "Godot_GetRuntimeSceneTree"}})
+        check(refused(reply), "the runtime scene tree was returned with no game running")
+        print("PASS runtime tools refuse cleanly while nothing is running")
 
         # --- output log -------------------------------------------------------
         # The AI service announces itself in the Output panel at startup, so that

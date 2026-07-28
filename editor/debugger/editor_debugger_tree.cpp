@@ -299,6 +299,28 @@ String EditorDebuggerTree::get_selected_path() {
 	return _get_path(get_selected());
 }
 
+ObjectID EditorDebuggerTree::get_object_id_for_path(const String &p_path) {
+	// The tree is small (it mirrors the running scene) and this is only called from
+	// an explicit tool request, so a walk is cheaper than maintaining a second index
+	// that could drift out of step with the tree.
+	List<TreeItem *> pending;
+	if (get_root()) {
+		pending.push_back(get_root());
+	}
+	while (!pending.is_empty()) {
+		TreeItem *item = pending.front()->get();
+		pending.pop_front();
+
+		if (_get_path(item) == p_path) {
+			return ObjectID(item->get_metadata(0).operator uint64_t());
+		}
+		for (TreeItem *child = item->get_first_child(); child; child = child->get_next()) {
+			pending.push_back(child);
+		}
+	}
+	return ObjectID();
+}
+
 String EditorDebuggerTree::_get_path(TreeItem *p_item) {
 	ERR_FAIL_NULL_V(p_item, "");
 

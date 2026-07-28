@@ -267,6 +267,12 @@ Dictionary MCPSchema::enum_property(const String &p_description, const Vector<St
 	return property;
 }
 
+Dictionary MCPSchema::any_property(const String &p_description) {
+	Dictionary property;
+	property["description"] = p_description;
+	return property;
+}
+
 Dictionary MCPSchema::array_property(const String &p_description, const Dictionary &p_items) {
 	Dictionary property = make_property("array", p_description, Variant());
 	property["items"] = p_items;

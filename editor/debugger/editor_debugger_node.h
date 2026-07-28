@@ -165,6 +165,10 @@ public:
 
 	ScriptEditorDebugger *get_previous_debugger() const;
 	ScriptEditorDebugger *get_current_debugger() const;
+
+	// The mirror of the running scene. Exposed so tooling can look a node up by path
+	// instead of being limited to whatever the user has selected.
+	EditorDebuggerTree *get_remote_tree() const { return remote_scene_tree; }
 	ScriptEditorDebugger *get_default_debugger() const;
 	ScriptEditorDebugger *get_debugger(int p_debugger) const;
 

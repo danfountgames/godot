@@ -51,4 +51,7 @@ void mcp_register_checkpoint_tools();
 // Reading the editor Output panel, which also carries the running game's output.
 void mcp_register_output_tools();
 
+// Persistent and runtime property edits, kept deliberately separate.
+void mcp_register_property_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

@@ -74,6 +74,11 @@ public:
 
 	String get_selected_path();
 	ObjectID get_selected_object();
+
+	// Looks up a remote node by its path in the running scene ("/root/Main/Player").
+	// Tooling needs this because the remote inspector only ever exposes whatever the
+	// user happens to have selected. Returns an invalid id when the path is unknown.
+	ObjectID get_object_id_for_path(const String &p_path);
 	int get_current_debugger(); // Would love to have one tree for every debugger.
 	void update_scene_tree(const SceneDebuggerTree *p_tree, int p_debugger);
 	EditorDebuggerTree();

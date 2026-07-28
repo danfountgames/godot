@@ -360,6 +360,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_skill_tools();
 	mcp_register_checkpoint_tools();
 	mcp_register_output_tools();
+	mcp_register_property_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));

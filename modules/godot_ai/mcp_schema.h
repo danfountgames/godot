@@ -57,6 +57,9 @@ public:
 	static Dictionary integer_property(const String &p_description, const Variant &p_default = Variant());
 	static Dictionary enum_property(const String &p_description, const Vector<String> &p_values, const Variant &p_default = Variant());
 	static Dictionary array_property(const String &p_description, const Dictionary &p_items);
+	// A property with no type constraint, for arguments whose shape depends on what
+	// they are addressing (a Godot property value can be any Variant).
+	static Dictionary any_property(const String &p_description);
 };
 
 #endif // MCP_SCHEMA_H

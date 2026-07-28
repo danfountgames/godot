@@ -64,7 +64,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | T12 | MCP | `Godot_CaptureViewport` incl. headless rejection | F6 | NOT_STARTED | — | — | — | all |
 | T13 | MCP | `Godot_AskUser` | F2 | NOT_STARTED | — | — | — | all |
 | T14 | MCP | `Godot_SearchProject` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | match line numbers, case sensitivity, empty query | none |
-| T15 | SEC | Runtime vs persistent edits kept distinct | T5,T10 | IN_PROGRESS | tool descriptions and `initialize` instructions state the distinction; `Godot_ManageNode` documents that saving is separate | — | — | `Godot_SetRuntimeProperty`/`Godot_SetSceneProperty` still absent |
+| T15 | SEC | Runtime vs persistent edits kept distinct | T5,T10 | VERIFIED | `tools/mcp_property_tools.cpp`, lookup added to `editor/debugger/editor_debugger_tree.*` | `run_editor_e2e.py` | scene edit survives save/reopen; runtime tools refuse cleanly with no game running, and report `persistent: false` | live runtime edit needs a game running under a display |
 
 ## Skills, UX, docs, packaging
 
