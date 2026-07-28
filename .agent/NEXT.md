@@ -1,17 +1,20 @@
 # NEXT
 
-At most five ordered actions. The first must be immediately executable.
+The must-have and high-value tranches are complete and verified. What remains needs
+either a display, another operating system, or a decision to start the optional
+tranche. At most five ordered actions, as always.
 
-1. Give `MCPApprovalsDialog` headless coverage: build it with a stub service, call
-   `refresh()`, and assert it lists pending clients and every discovered skill with
-   the right status and buttons. — U2 — verified by that test passing headlessly.
-2. Cover the palette/menu registration: assert the commands exist after the service
-   enters the tree. — U1 — verified by the same test run.
-3. Cover approval persistence: an `EditorSettings` stand-in so approve/revoke can be
-   asserted to survive, closing the last F6 caveat. — F6 — verified headlessly.
-4. Re-read `docs/godot-ai-clone-spec.md` end to end against the ledger and correct any
-   entry whose evidence no longer matches the code. — all — verified by the audit
-   finding no discrepancies.
-5. Consider the optional tranche (O1–O4) only after the above: in-editor chat UI,
-   packaged agent backends, export-template integration, remote HTTP transport. Each
-   is explicitly optional in the specification and none is started.
+1. On a machine with a display: verify `Godot_CaptureViewport` produces a correct
+   image and `Godot_AskUser` returns a clicked answer, and exercise the approvals
+   dialog by hand. — T12, T13, U1, U2 — these are the only gaps that are purely
+   environmental.
+2. On a Windows host: run the cross-compiled relay against a Godot editor and run
+   `tools/relay/tests/run_tests.py` there. — R8 — the code compiles in CI already.
+3. Confirm `.github/workflows/godot_ai.yml` goes green on GitHub Actions, and fix
+   whatever the runner disagrees with. — C1.
+4. Runtime inspection of a *windowed* game: `Godot_GetRuntimeSceneTree` and
+   `Godot_SetRuntimeProperty` are implemented and refuse correctly, but a headless
+   game never reports its tree, so the success path is unproven. — T15 follow-up.
+5. Only then the optional tranche, in the specification's own order of value:
+   O2 (packaged agent backends), O4 (remote HTTP transport), O1 (in-editor chat UI),
+   O3 (export-template integration). None is started; none is required.

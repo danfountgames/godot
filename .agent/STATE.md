@@ -25,9 +25,16 @@ against a running editor.
 
 ## Current vertical slice
 
-S-14 (in progress): specification re-audit against the ledger. Play/stop (T10, T11)
-are now verified against a live editor; runtime *inspection* of a headless game is
-probed and reported rather than asserted, because it does not populate reliably.
+S-14 (done): specification re-audit. 45 of 55 requirements are VERIFIED. What remains
+is honest, not deferred work:
+
+- **T12, T13, U1, U2** — implemented and exercised as far as a machine without a
+  display can: the refusal paths, the decision logic and the deferral mechanics are
+  tested; rendering and clicking are not.
+- **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
+- **C1** — the workflow's commands all pass locally; it has never been observed green
+  on GitHub Actions from here.
+- **O1–O4** — explicitly optional in the specification, and not started.
 
 S-13 (done): extracted the approvals dialog's status/decision logic into
 `mcp_skill_status_text()` so what the UI *decides* is tested even though what it
@@ -94,8 +101,7 @@ IMPLEMENTED because rendering and clicking need a display.
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- Module suite: 55 cases, 372 assertions, all pass. Full engine suite: 933 cases,
-  2,395,064 assertions, all pass. Full engine suite from the
+- Module suite: 57 cases, 379 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
 - `python3 tools/relay/tests/run_editor_e2e.py` → 31/31 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
@@ -136,8 +142,9 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Re-read the specification against the ledger and correct anything stale:
+The next session should pick from the optional tranche or close a display-dependent
+gap on a machine that has one. Start by confirming the ledger still matches reality:
 
 ```sh
-grep -n "^| [A-Z][0-9]" .agent/SPEC_LEDGER.md | grep -v VERIFIED
+python3 tools/relay/tests/run_tests.py && python3 tools/relay/tests/run_editor_e2e.py
 ```

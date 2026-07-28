@@ -30,7 +30,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | P2 | MCP | `tools/list` with input/output schemas | F4,P1 | VERIFIED | `_handle_tools_list` | `test_mcp_protocol.h` | listing case passes | none |
 | P3 | MCP | `tools/call` with structured content | P2 | VERIFIED | `_handle_tools_call` | `test_mcp_protocol.h` | structuredContent + text content asserted | none |
 | P4 | MCP | Errors: unknown method/tool, malformed/missing/extra args, denial | P3 | VERIFIED | `mcp_protocol.cpp` | `test_mcp_protocol.h` | 4 error subcases + permission denial | none |
-| P5 | MCP | `notifications/tools/list_changed` | F4,P1 | IMPLEMENTED | `MCPService::_on_tools_changed` | relay forwarding covered | relay test asserts client delivery | live editor-side emission not asserted |
+| P5 | MCP | `notifications/tools/list_changed` | F4,P1 | VERIFIED | `mcp_tool_registry.cpp`, `MCPService::_on_tools_changed` | `tests/test_mcp_protocol.h`, `run_tests.py` | registry announces add/remove and stays silent on a no-op; the frame is a valid id-less notification; the relay delivers one to a client | none |
 | P6 | CI | Cancellation and clean termination semantics | P3 | VERIFIED | `mcp_protocol.cpp`, `mcp_deferred.cpp`, `MCPService::_poll_deferred` | `tests/test_mcp_deferred.h`, `run_editor_e2e.py` | exactly one response per call, late answers dropped, overdue calls failed, abandoned on disconnect | none |
 
 ## Relay

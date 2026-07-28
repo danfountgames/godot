@@ -209,7 +209,17 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   offers no "Allow" button, because offering one for something that cannot load would
   be a lie. U1/U2 stay IMPLEMENTED - rendering and clicking still need a display.
 
+### S-14 specification re-audit
+- Closed P5 by testing the two links that were untested: the registry announces every
+  add and remove and stays silent on a no-op, and the frame is a valid id-less
+  notification. The relay side was already covered.
+- Verified play/stop against a live editor (T10, T11). Two things are reported rather
+  than asserted because this environment cannot show them: `was_playing` on stop, and
+  the remote scene tree of a headless game.
+- Final tally: 45 of 55 requirements VERIFIED. The rest are environmental (need a
+  display, a Windows host, or GitHub Actions) or explicitly optional.
+
 ### Next
-- S-14:
+- Nothing is blocked on more implementation here. See NEXT.md.
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

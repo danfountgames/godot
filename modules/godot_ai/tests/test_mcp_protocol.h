@@ -428,6 +428,47 @@ TEST_CASE("[godot_ai] Unknown methods and malformed messages") {
 	}
 }
 
+// Records signal emissions, so the registry's change notification can be observed.
+class ToolsChangedWatcher : public Object {
+	GDCLASS(ToolsChangedWatcher, Object);
+
+public:
+	int count = 0;
+	void on_tools_changed() { count++; }
+};
+
+TEST_CASE("[godot_ai] Registry changes announce themselves") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	registry->unregister_tool("Test_Announce");
+
+	ToolsChangedWatcher *watcher = memnew(ToolsChangedWatcher);
+	registry->connect("tools_changed", callable_mp(watcher, &ToolsChangedWatcher::on_tools_changed));
+
+	// Clients cache the tool list, so every change to it has to be announced or they
+	// will keep calling a tool that no longer exists.
+	registry->register_tool(Ref<MCPTool>(memnew(ProbeTool("Test_Announce", MCP_CAP_READ_PROJECT))));
+	CHECK(watcher->count == 1);
+
+	registry->unregister_tool("Test_Announce");
+	CHECK(watcher->count == 2);
+
+	// A no-op unregister changes nothing and must not announce anything.
+	registry->unregister_tool("Test_Announce");
+	CHECK(watcher->count == 2);
+
+	registry->disconnect("tools_changed", callable_mp(watcher, &ToolsChangedWatcher::on_tools_changed));
+	memdelete(watcher);
+}
+
+TEST_CASE("[godot_ai] The list-changed notification is a well-formed MCP frame") {
+	const Dictionary notification = MCPProtocol::make_notification("notifications/tools/list_changed", Dictionary());
+	CHECK(String(notification["jsonrpc"]) == "2.0");
+	CHECK(String(notification["method"]) == "notifications/tools/list_changed");
+	// A notification must carry no id, or a client will treat it as a response.
+	CHECK_FALSE(notification.has("id"));
+	CHECK_FALSE(notification.has("params"));
+}
+
 } // namespace TestMCPProtocol
 
 #endif // TEST_MCP_PROTOCOL_H
