@@ -25,8 +25,12 @@ against a running editor.
 
 ## Current vertical slice
 
-S-06 (next): checkpoints (F8) — create one before any mutating tool runs, and prove
-restoration in a test.
+S-07 (next): `Godot_ReadOutputLog` (T9) and the runtime/persistent property split
+(T15), then the approvals UI (U1, U2).
+
+S-06 (done): checkpoints. Snapshots are taken by the protocol layer before any
+mutating tool runs, from paths the tool itself declares, and stored outside the
+project. Restore puts files back byte for byte and removes files the tool created.
 
 S-05 (done): skills. Discovery across project/plugin/user roots, frontmatter
 parsing with editor-version gating, deny-by-default trust, on-demand supporting
@@ -47,15 +51,15 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-F8 (next). Just completed: S1–S5, D3 → VERIFIED.
+T9, T15 (next). Just completed: F8, T8 → VERIFIED.
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
-- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 39 cases,
-  282 assertions, all pass.
-- `python3 tools/relay/tests/run_editor_e2e.py` → 21/21 checks pass against a live
+- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 44 cases,
+  318 assertions, all pass.
+- `python3 tools/relay/tests/run_editor_e2e.py` → 23/23 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
   trip verified against the saved scene file, and the shipped example skill read back
   over the protocol.
@@ -93,8 +97,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start checkpoints by deciding the storage shape, then write the failing restore test:
+Start T9 by finding what the editor log exposes to read back:
 
 ```sh
-grep -rn "class EditorVCSInterface" editor/plugins/version_control_editor_plugin.h | head
+grep -n "add_message\|MessageType\|class EditorLog" editor/editor_log.h | head -20
 ```

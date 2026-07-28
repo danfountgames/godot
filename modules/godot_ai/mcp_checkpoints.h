@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_builtin_tools.h                                                   */
+/*  mcp_checkpoints.h                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,24 +28,52 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef MCP_BUILTIN_TOOLS_H
-#define MCP_BUILTIN_TOOLS_H
+#ifndef MCP_CHECKPOINTS_H
+#define MCP_CHECKPOINTS_H
 
-// Registers every tool that ships with the editor. Called once, after the AI
-// service plugin is installed.
-void mcp_register_builtin_tools();
+#include "core/string/ustring.h"
+#include "core/templates/vector.h"
+#include "core/variant/array.h"
+#include "core/variant/dictionary.h"
 
-// Project-scoped tools that need nothing but the filesystem. Registered separately
-// so they can be exercised without an editor.
-void mcp_register_project_tools();
+// File-level snapshots taken before a tool changes the project on disk.
+//
+// This is deliberately one scope among several, and they are not interchangeable:
+//
+//  - editor undo    reverts in-memory scene edits (Godot_UndoLastAction)
+//  - checkpoints    revert files that a tool wrote (this class)
+//  - version control is the user's own history and is never touched here
+//
+// A tool that only changes the edited scene in memory does not create a checkpoint,
+// because undo already covers it and a snapshot of an unsaved scene would restore
+// nothing. Tools declare the files they may write via MCPTool::get_checkpoint_paths.
+//
+// Snapshots live outside the project so they never end up committed.
+class MCPCheckpoints {
+	static String _project_key();
+	static bool _copy_file(const String &p_from, const String &p_to);
 
-// Structural scene editing, which goes through the editor's undo history.
-void mcp_register_scene_tools();
+public:
+	// Root directory for this project's checkpoints.
+	static String get_root();
 
-// Skill discovery and reading. Filesystem-only, so usable without an editor.
-void mcp_register_skill_tools();
+	// Snapshots the current contents of p_res_paths. Returns the checkpoint id, or
+	// an empty string when nothing needed snapshotting or creation failed.
+	static String create(const String &p_tool, const String &p_invocation, const Vector<String> &p_res_paths, String &r_error);
 
-// Listing and restoring the file snapshots taken before mutating tools run.
-void mcp_register_checkpoint_tools();
+	// Newest first.
+	static Array list();
 
-#endif // MCP_BUILTIN_TOOLS_H
+	// Restores every file in a checkpoint: files that existed are put back, files
+	// the tool created are removed again.
+	static bool restore(const String &p_id, int &r_restored, int &r_removed, String &r_error);
+
+	// Keeps storage bounded; called after each creation.
+	static void prune(int p_keep);
+
+	// Test seam.
+	static void set_root_override(const String &p_root);
+	static void clear_root_override();
+};
+
+#endif // MCP_CHECKPOINTS_H

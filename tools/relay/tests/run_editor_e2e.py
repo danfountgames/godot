@@ -160,7 +160,8 @@ def run(editor_binary):
         for expected in ("Godot_ListScenes", "Godot_OpenScene", "Godot_GetEditedSceneTree",
                          "Godot_ReadTextFile", "Godot_WriteTextFile", "Godot_SearchProject",
                          "Godot_ManageNode", "Godot_UndoLastAction",
-                         "Godot_ListSkills", "Godot_ReadSkill"):
+                         "Godot_ListSkills", "Godot_ReadSkill",
+                         "Godot_ListCheckpoints", "Godot_RestoreCheckpoint"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -343,6 +344,44 @@ def run(editor_binary):
         with open(os.path.join(project, "written.txt")) as handle:
             check(handle.read() == "written through MCP", "file content does not match")
         print("PASS Godot_WriteTextFile")
+
+        # --- checkpoints ------------------------------------------------------
+        # The write above must have produced a checkpoint; restoring it has to remove
+        # the file, because it did not exist beforehand.
+        created_checkpoint = reply["result"].get("_meta", {}).get("checkpoint")
+        check(created_checkpoint, "the mutating write did not report a checkpoint")
+
+        reply = call({"jsonrpc": "2.0", "id": 50, "method": "tools/call",
+                      "params": {"name": "Godot_ListCheckpoints"}})
+        checkpoints = reply["result"]["structuredContent"]["checkpoints"]
+        check(any(c["id"] == created_checkpoint for c in checkpoints),
+              "the checkpoint is not listed")
+        entry = [c for c in checkpoints if c["id"] == created_checkpoint][0]
+        check(entry["tool"] == "Godot_WriteTextFile", "checkpoint names the wrong tool")
+        print("PASS a mutating write created a listed checkpoint")
+
+        # Change the file again, so the restore has something to undo.
+        call({"jsonrpc": "2.0", "id": 51, "method": "tools/call",
+              "params": {"name": "Godot_WriteTextFile",
+                         "arguments": {"path": "res://written.txt", "text": "second write"}}})
+        with open(os.path.join(project, "written.txt")) as handle:
+            check(handle.read() == "second write", "the second write did not land")
+
+        reply = call({"jsonrpc": "2.0", "id": 52, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"id": created_checkpoint}}})
+        check(reply["result"]["isError"] is False,
+              "restore failed: %s" % reply["result"]["content"][0]["text"])
+        check(reply["result"]["structuredContent"]["files_removed"] == 1,
+              "restore did not remove the file the tool had created")
+        check(not os.path.exists(os.path.join(project, "written.txt")),
+              "the created file survived the restore")
+        print("PASS Godot_RestoreCheckpoint undid a file the tool created")
+
+        reply = call({"jsonrpc": "2.0", "id": 53, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"id": "no-such-checkpoint"}}})
+        check(refused(reply), "restoring an unknown checkpoint was accepted")
 
         reply = call({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
                       "params": {"name": "Godot_ReadTextFile",

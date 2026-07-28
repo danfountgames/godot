@@ -255,6 +255,13 @@ public:
 		properties["created"] = MCPSchema::bool_property("True when the file did not exist before.");
 		return MCPSchema::object_schema(properties);
 	}
+	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const override {
+		Vector<String> paths;
+		if (p_arguments.has("path")) {
+			paths.push_back(p_arguments["path"]);
+		}
+		return paths;
+	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
 		MCPPaths::Resolved resolved;
 		String error;

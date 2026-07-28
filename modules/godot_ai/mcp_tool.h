@@ -55,6 +55,12 @@ public:
 	// actual arguments so a user approves a concrete action, not a category.
 	virtual String describe_invocation(const Dictionary &p_arguments) const;
 
+	// Project files this invocation may write, as res:// paths. The protocol layer
+	// snapshots them before running the tool, so a mutating tool that returns nothing
+	// here is declaring that it changes no files - which is true for scene edits that
+	// live in the undo history until the scene is saved.
+	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const { return Vector<String>(); }
+
 	// Runs the tool. Arguments have already been schema-validated and defaulted.
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) = 0;
 

@@ -2,18 +2,18 @@
 
 At most five ordered actions. The first must be immediately executable.
 
-1. Implement checkpoints: before any mutating tool runs, snapshot the files it is
-   about to touch under `$GODOT_AI_HOME/checkpoints/<project>/<id>/`, with a manifest
-   recording tool, arguments summary and file hashes. — F8 — verified by a test that
-   mutates, restores, and compares file contents byte for byte.
-2. Expose `Godot_ListCheckpoints` and `Godot_RestoreCheckpoint`, and wire creation
-   into `MCPProtocol::_handle_tools_call` so no mutating tool can bypass it.
-   — F8 — verified by an e2e round trip: write file, restore, confirm old content.
-3. Add `Godot_ReadOutputLog` backed by the editor log. — T9 — verified by an e2e
-   check that a message printed by the editor appears in the tool's output.
-4. Add `Godot_SetSceneProperty` and `Godot_SetRuntimeProperty` so persistent and
-   play-mode edits stay distinguishable. — T15 — verified by an e2e check that the
-   runtime edit does not survive stopping the game.
-5. Add the approvals UI: a settings section listing pending clients and discovered
-   skills with allow/deny, plus command palette entries. — U1, U2 — verified by
-   manual inspection plus a test of the underlying approve/revoke calls.
+1. Add `Godot_ReadOutputLog`, backed by the editor log, with a level filter and a
+   line limit. — T9 — verified by an e2e check that a message the editor printed
+   appears in the tool's output.
+2. Add `Godot_SetSceneProperty` (persistent, undoable, `edit_scene`) and
+   `Godot_SetRuntimeProperty` (play-mode only, `read_runtime`/`run_project`), with
+   the distinction stated in both names and descriptions. — T15 — verified by an e2e
+   check that a runtime edit does not survive stopping the game.
+3. Add the approvals UI: an editor settings section listing pending clients and
+   discovered skills with allow/deny, plus command palette entries for the service
+   status. — U1, U2 — verified by tests of the underlying approve/revoke calls.
+4. Add `Godot_CaptureViewport`, rejecting cleanly in headless runs. — T12 — verified
+   by a headless test asserting the refusal, and a manual check with a display.
+5. Port the relay to Winsock behind a thin socket abstraction so R8 stops being
+   blocked on Linux-only code, keeping the POSIX path unchanged. — R8 — verified by
+   compiling for Windows in CI; runtime verification still needs a Windows host.

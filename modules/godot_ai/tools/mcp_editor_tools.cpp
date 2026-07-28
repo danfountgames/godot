@@ -156,6 +156,19 @@ public:
 		properties["path"] = MCPSchema::string_property("Scene that was saved, when saving a single scene.");
 		return MCPSchema::object_schema(properties);
 	}
+	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const override {
+		// Saving is the moment a scene edit becomes a file change, so this is where the
+		// snapshot belongs - not on the in-memory edits that preceded it.
+		Vector<String> paths;
+		if (!EditorNode::get_singleton() || !EditorInterface::get_singleton()) {
+			return paths;
+		}
+		Node *root = EditorInterface::get_singleton()->get_edited_scene_root();
+		if (root && !root->get_scene_file_path().is_empty()) {
+			paths.push_back(root->get_scene_file_path());
+		}
+		return paths;
+	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
 		if (!require_editor(r_error, get_tool_name())) {
 			return Dictionary();
@@ -345,6 +358,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_project_tools();
 	mcp_register_scene_tools();
 	mcp_register_skill_tools();
+	mcp_register_checkpoint_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));

@@ -20,7 +20,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | F5 | SEC | Project-root confinement incl. traversal and symlink escape | F1 | VERIFIED | `mcp_paths.cpp` | `tests/test_mcp_paths.h` | traversal/scheme/symlink cases pass | none |
 | F6 | SEC | Permission model: capabilities, allow/ask/deny, client approval, read-only | F4 | IMPLEMENTED | `mcp_permissions.cpp`, `mcp_service.cpp` | `tests/test_mcp_paths.h`, `test_mcp_protocol.h` | policy evaluation fully covered | interactive approval UI (U2); approval persistence untested |
 | F7 | SEC | Audit log with secret redaction | F6 | IMPLEMENTED | `mcp_audit.cpp`, `mcp_tool.cpp` | redaction covered in `test_mcp_registry.h` | summaries redact `api_key` | no test that the log file is written//rotated |
-| F8 | SEC/PRI | Checkpoints created before mutation and restorable | F5,F6 | NOT_STARTED | — | — | — | all |
+| F8 | SEC/PRI | Checkpoints created before mutation and restorable | F5,F6 | VERIFIED | `mcp_checkpoints.cpp`, `mcp_protocol.cpp`, `tools/mcp_checkpoint_tools.cpp` | `tests/test_mcp_checkpoints.h`, `run_editor_e2e.py` | restore compares contents byte for byte; created files are removed again; live round trip through the protocol | git-backed variant not implemented (snapshot only) |
 
 ## Protocol
 
@@ -57,7 +57,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | T5 | MCP | `Godot_ManageNode` with undo/redo | T4,F8 | VERIFIED | `tools/mcp_scene_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | create/rename/reparent/delete + undo asserted against live scene state and the saved file | none |
 | T6 | MCP | `Godot_ListAssets` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h` | extension filtering covered | none |
 | T7 | MCP | `Godot_ReadTextFile` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | reads, directory/missing/escape refusals | none |
-| T8 | MCP | `Godot_WriteTextFile` + filesystem refresh | F5,F8 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | content asserted on disk, not from the tool report | checkpoint integration (F8) |
+| T8 | MCP | `Godot_WriteTextFile` + filesystem refresh | F5,F8 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | content asserted on disk, not from the tool report | none |
 | T9 | MCP | `Godot_ReadOutputLog` | F2 | NOT_STARTED | — | — | — | all |
 | T10 | MCP | `Godot_PlayCurrentScene` / `Godot_PlayMainScene` | F6 | IMPLEMENTED | `tools/mcp_editor_tools.cpp` | — | — | e2e play lifecycle |
 | T11 | MCP | `Godot_StopPlaying` | T10 | IMPLEMENTED | `tools/mcp_editor_tools.cpp` | — | — | e2e play lifecycle |

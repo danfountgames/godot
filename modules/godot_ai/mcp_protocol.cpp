@@ -30,6 +30,7 @@
 
 #include "mcp_protocol.h"
 
+#include "mcp_checkpoints.h"
 #include "mcp_tool_registry.h"
 
 #include "core/io/json.h"
@@ -295,6 +296,26 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 		return true;
 	}
 
+	// Snapshot before the tool runs, so a mutating tool cannot leave the project in a
+	// state the user has no way back from. Tools declare what they may write; one
+	// that declares nothing changes no files.
+	String checkpoint_id;
+	if (tool->is_mutating()) {
+		const Vector<String> checkpoint_paths = tool->get_checkpoint_paths(arguments);
+		if (!checkpoint_paths.is_empty()) {
+			String checkpoint_error;
+			checkpoint_id = MCPCheckpoints::create(tool_name, summary, checkpoint_paths, checkpoint_error);
+			if (checkpoint_id.is_empty() && !checkpoint_error.is_empty()) {
+				// Refusing is the safe answer: running anyway would silently drop the
+				// user's only way back.
+				p_delegate->record_invocation(r_session, tool_name, summary, false, checkpoint_error);
+				r_response = make_error(p_id, ERROR_INTERNAL,
+						vformat("could not create a checkpoint before running '%s': %s", tool_name, checkpoint_error));
+				return true;
+			}
+		}
+	}
+
 	MCPToolError error;
 	const Dictionary structured = registry->call_tool(tool_name, arguments, error);
 
@@ -312,7 +333,14 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 		return true;
 	}
 
-	r_response = make_result(p_id, make_tool_result(structured, tool->get_output_schema()));
+	Dictionary tool_result = make_tool_result(structured, tool->get_output_schema());
+	if (!checkpoint_id.is_empty()) {
+		// Tells the client how to undo this specific call.
+		Dictionary meta;
+		meta["checkpoint"] = checkpoint_id;
+		tool_result["_meta"] = meta;
+	}
+	r_response = make_result(p_id, tool_result);
 	return true;
 }
 

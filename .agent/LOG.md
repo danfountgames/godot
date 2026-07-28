@@ -93,7 +93,21 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - `GODOT_AI_AUTO_APPROVE=1` now also trusts discovered skills; it has one meaning
   throughout: "no human is present to decide", and must be set deliberately.
 
+### S-06 checkpoints (F8, T8)
+- `MCPCheckpoints` snapshots files before a mutating tool runs, into
+  `$GODOT_AI_HOME/checkpoints/<project>/<id>/` with a manifest. Outside the project
+  on purpose: a snapshot inside `res://` would be imported and could be committed.
+- The protocol layer creates the checkpoint, not the tools, so no mutating tool can
+  bypass it; tools only declare which files they may write via
+  `get_checkpoint_paths()`. A failure to snapshot refuses the call rather than
+  running without a way back.
+- Scope is deliberate and documented: undo covers unsaved scene edits, checkpoints
+  cover files, version control is never touched. `Godot_SaveScene` snapshots the
+  scene file because saving is the moment an edit becomes a file change.
+- `Godot_ListCheckpoints` / `Godot_RestoreCheckpoint`, with restore putting contents
+  back byte for byte and removing files the tool had created.
+
 ### Next
-- S-06: checkpoints (F8), then `Godot_ReadOutputLog` and the runtime/persistent
-  property split (T9, T15), the approvals UI (U1, U2), screenshots (T12) and
-  ask-user (T13).
+- S-07: `Godot_ReadOutputLog` and the runtime/persistent property split (T9, T15),
+  the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
+  that would unblock R8.
