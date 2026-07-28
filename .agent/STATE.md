@@ -27,13 +27,15 @@ against a running editor.
 
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
-`.agent/INTERFACE_LEDGER.md` tracks it. A1 (runtime agent channel) and A2
-(`Godot_SendPointerInput`) are done and verified — the editor can now deliver a real
-click into the running game, proven by a test a shortcut implementation would fail.
+`.agent/INTERFACE_LEDGER.md` tracks it. Groups A–E, G, H, J and K are verified; 55 tools
+are registered. What is left is B4 (capture metadata), E2 (duplicate/stacking detection),
+F1–F3 (scene tests) and I1–I2 (editor-side input and control lookup).
 
-Two real bugs fell out of it: the runtime scene tree was cached and never refreshed, so
-an agent polling while a game booted got a bare `root` forever; and the e2e's runtime
-poll accepted the first successful reply rather than waiting for the scene.
+Five real bugs have fallen out of it so far, all fixed and covered — see the
+"Bugs this tranche found" table in the interface ledger. The most recent two were found
+by `Godot_ListWindows` on its first run: a timed-out `Godot_AskUser` left a dead dialog
+on screen whose buttons did nothing, and the same tool gave a caller who omitted
+`timeout_seconds` a one-second deadline instead of the declared 300.
 
 S-16 (done): the bootstrap project template.
 

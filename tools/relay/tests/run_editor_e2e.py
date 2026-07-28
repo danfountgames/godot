@@ -17,10 +17,12 @@ import base64
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -222,6 +224,50 @@ def dismiss_a_question(relay, display):
     return reply["result"]["structuredContent"]
 
 
+def write_png(path, width=2, height=2, gradient=False):
+    """Writes a small but genuinely valid PNG.
+
+    The import-pipeline checks need an asset the editor's importer will actually
+    consume; a file merely named `.png` would be reported as a broken import and every
+    assertion below would then be about the wrong thing.
+
+    `gradient` gives every pixel a different colour. A flat image is the wrong thing to
+    compare imports of: the importer compresses it, and a 16x16 block of one colour
+    comes out very nearly the same size as a 2x2 block of it, so a check on the
+    importer's output would pass whether the reimport happened or not.
+    """
+    def chunk(kind, payload):
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    def pixel(x, y):
+        if gradient:
+            return bytes(((x * 37) % 256, (y * 91) % 256, ((x * y) * 13) % 256))
+        return b"\xff\x00\x00"
+
+    scanlines = b"".join(
+        b"\x00" + b"".join(pixel(x, y) for x in range(width)) for y in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    with open(path, "wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n"
+                     + chunk(b"IHDR", header)
+                     + chunk(b"IDAT", zlib.compress(scanlines))
+                     + chunk(b"IEND", b""))
+
+
+def imported_output_of(project, source_relative):
+    """The file the importer produced for an asset, read out of its `.import` sidecar."""
+    sidecar = os.path.join(project, source_relative + ".import")
+    if not os.path.exists(sidecar):
+        return None
+    with open(sidecar) as handle:
+        for line in handle:
+            if line.startswith("path="):
+                res_path = line.split("=", 1)[1].strip().strip('"')
+                return os.path.join(project, res_path[len("res://"):])
+    return None
+
+
 def build_project(root):
     os.makedirs(os.path.join(root, "scenes"), exist_ok=True)
     os.makedirs(os.path.join(root, "scripts"), exist_ok=True)
@@ -233,6 +279,7 @@ def build_project(root):
         handle.write(MAIN_SCENE)
     with open(os.path.join(root, "notes.txt"), "w") as handle:
         handle.write("hello from a project text file\n")
+    write_png(os.path.join(root, "sprite.png"))
     install_example_skill(root)
 
 
@@ -591,6 +638,21 @@ def run(editor_binary, display):
                       "params": {"name": "Godot_GetEditorStatus"}})
         check(reply["result"]["isError"] is False, "the editor stopped serving after a deferred call")
         print("PASS Godot_AskUser deferred the response and timed out cleanly")
+
+        # The timeout answered the client. The dialog has to go with it: left up, it
+        # invites an answer, accepts the click, and does nothing, because the token it
+        # would complete is already gone. This used to be exactly what happened.
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            reply = call({"jsonrpc": "2.0", "id": 94, "method": "tools/call",
+                          "params": {"name": "Godot_ListWindows"}})
+            stale = [window for window in reply["result"]["structuredContent"]["windows"]
+                     if window["title"] == "Godot AI asks"]
+            if not stale:
+                break
+            time.sleep(0.5)
+        check(not stale, "the timed-out question left its dialog on screen: %r" % stale)
+        print("PASS a timed-out question closes its own dialog")
 
         # --- answering the question for real ----------------------------------
         # A timeout only proves the plumbing. This drives the dialog the way a person
@@ -1207,10 +1269,17 @@ def run(editor_binary, display):
               "creating a checkpoint failed: %s" % refusal_text(reply))
         manual_checkpoint = reply["result"]["structuredContent"]["checkpoint"]
 
-        # Change the file, then put it back through the named point.
-        call({"jsonrpc": "2.0", "id": 135, "method": "tools/call",
-              "params": {"name": "Godot_WriteTextFile",
-                         "arguments": {"path": "res://notes.txt", "content": "clobbered"}}})
+        # Change the file, then put it back through the named point. The clobber is
+        # asserted, not assumed: this call used to pass the wrong argument name, so the
+        # write was rejected and the restore below had nothing to undo - a check that
+        # could not fail is not a check.
+        reply = call({"jsonrpc": "2.0", "id": 135, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": "res://notes.txt", "text": "clobbered"}}})
+        check(not refused(reply), "clobbering the file failed: %s" % refusal_text(reply))
+        with open(os.path.join(project, "notes.txt")) as handle:
+            check(handle.read() == "clobbered", "the clobbering write did not land")
+
         reply = call({"jsonrpc": "2.0", "id": 136, "method": "tools/call",
                       "params": {"name": "Godot_RestoreCheckpoint",
                                  "arguments": {"id": manual_checkpoint}}})
@@ -1225,6 +1294,178 @@ def run(editor_binary, display):
                                  "arguments": {"paths": ["res://nope.txt"]}}})
         check(refused(reply), "a checkpoint of a file that does not exist was accepted")
         print("PASS Godot_CreateCheckpoint marks a point that Godot_RestoreCheckpoint returns to")
+
+        # --- import pipeline --------------------------------------------------
+        # Editing an asset on disk is not the same as the editor having imported it.
+        # These tools exist so that gap is answerable rather than guessed at from the
+        # output log, and the checks below are about the importer's real output.
+        reply = call({"jsonrpc": "2.0", "id": 140, "method": "tools/call",
+                      "params": {"name": "Godot_WaitForImportQueue",
+                                 "arguments": {"timeout_seconds": 90}}})
+        check(not refused(reply), "waiting for the import queue failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["idle"] is True,
+              "the import queue reported itself as still busy after succeeding")
+
+        reply = call({"jsonrpc": "2.0", "id": 141, "method": "tools/call",
+                      "params": {"name": "Godot_GetImportStatus"}})
+        check(not refused(reply), "reading import status failed: %s" % refusal_text(reply))
+        import_status = reply["result"]["structuredContent"]
+        check(import_status["scanning"] is False,
+              "the pipeline says it is scanning immediately after reporting itself idle")
+        broken = [entry["path"] for entry in import_status["broken"]]
+        check("res://sprite.png" not in broken,
+              "a valid PNG was reported as a broken import: %r" % broken)
+
+        produced = imported_output_of(project, "sprite.png")
+        check(produced and os.path.exists(produced),
+              "the editor never imported the fixture PNG (%r)" % produced)
+        with open(produced, "rb") as handle:
+            before_bytes = handle.read()
+
+        # Replace the asset behind the editor's back, then make it notice. A reimport
+        # that was merely accepted would leave the old texture in place, so the check is
+        # on the importer's output, not on the tool's own report.
+        write_png(os.path.join(project, "sprite.png"), width=16, height=16, gradient=True)
+        reply = call({"jsonrpc": "2.0", "id": 142, "method": "tools/call",
+                      "params": {"name": "Godot_ReimportAsset",
+                                 "arguments": {"paths": ["res://sprite.png"]}}})
+        check(not refused(reply), "reimporting an asset failed: %s" % refusal_text(reply))
+        reimported = reply["result"]["structuredContent"]
+        check(reimported["reimported"] == ["res://sprite.png"],
+              "reimport named the wrong files: %r" % reimported["reimported"])
+        check(reimported["scanned"] is False,
+              "reimporting one file reported a whole-project rescan")
+        produced = imported_output_of(project, "sprite.png")
+        with open(produced, "rb") as handle:
+            after_bytes = handle.read()
+        check(after_bytes != before_bytes,
+              "the replacement asset produced a byte-identical texture (%d bytes), so the "
+              "reimport was accepted but never happened" % len(after_bytes))
+        print("PASS Godot_ReimportAsset rebuilt the importer's output for a changed asset")
+
+        # No `paths` at all. This is also the regression check for the const-Dictionary
+        # trap: reading a missing optional key by subscript inserts a null, and schema
+        # validation then rejects the call the tool itself corrupted.
+        reply = call({"jsonrpc": "2.0", "id": 143, "method": "tools/call",
+                      "params": {"name": "Godot_ReimportAsset", "arguments": {}}})
+        check(not refused(reply), "a whole-project rescan was refused: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["scanned"] is True,
+              "omitting paths did not rescan the project")
+
+        reply = call({"jsonrpc": "2.0", "id": 144, "method": "tools/call",
+                      "params": {"name": "Godot_ReimportAsset",
+                                 "arguments": {"paths": ["res://not-an-asset.png"]}}})
+        check(refused(reply), "reimporting a file that does not exist was accepted")
+        print("PASS Godot_GetImportStatus and Godot_WaitForImportQueue answer for the pipeline")
+
+        # --- checkpoint diff --------------------------------------------------
+        # The restore above put notes.txt back, so the checkpoint and the project agree.
+        reply = call({"jsonrpc": "2.0", "id": 145, "method": "tools/call",
+                      "params": {"name": "Godot_DiffCheckpoint",
+                                 "arguments": {"id": manual_checkpoint}}})
+        check(not refused(reply), "diffing a checkpoint failed: %s" % refusal_text(reply))
+        diff = reply["result"]["structuredContent"]
+        check("res://notes.txt" in diff["unchanged"],
+              "a restored file was not reported as unchanged: %r" % diff)
+        check(diff["changed"] == [], "an untouched project reported changes: %r" % diff)
+
+        call({"jsonrpc": "2.0", "id": 146, "method": "tools/call",
+              "params": {"name": "Godot_WriteTextFile",
+                         "arguments": {"path": "res://notes.txt", "text": "diverged"}}})
+        reply = call({"jsonrpc": "2.0", "id": 147, "method": "tools/call",
+                      "params": {"name": "Godot_DiffCheckpoint",
+                                 "arguments": {"id": manual_checkpoint}}})
+        diff = reply["result"]["structuredContent"]
+        check("res://notes.txt" in diff["changed"],
+              "an edited file was not reported as changed: %r" % diff)
+        check("res://notes.txt" not in diff["unchanged"],
+              "the same file was reported both changed and unchanged: %r" % diff)
+
+        os.remove(os.path.join(project, "notes.txt"))
+        reply = call({"jsonrpc": "2.0", "id": 148, "method": "tools/call",
+                      "params": {"name": "Godot_DiffCheckpoint",
+                                 "arguments": {"id": manual_checkpoint}}})
+        diff = reply["result"]["structuredContent"]
+        check("res://notes.txt" in diff["deleted"],
+              "a deleted file was not reported as deleted: %r" % diff)
+
+        # Put the project back, so nothing downstream inherits the divergence.
+        call({"jsonrpc": "2.0", "id": 149, "method": "tools/call",
+              "params": {"name": "Godot_RestoreCheckpoint",
+                         "arguments": {"id": manual_checkpoint}}})
+        with open(os.path.join(project, "notes.txt")) as handle:
+            check(handle.read().startswith("hello"), "the restore did not bring notes.txt back")
+
+        reply = call({"jsonrpc": "2.0", "id": 150, "method": "tools/call",
+                      "params": {"name": "Godot_DiffCheckpoint",
+                                 "arguments": {"id": "no-such-checkpoint"}}})
+        check(refused(reply), "diffing an unknown checkpoint was accepted")
+        print("PASS Godot_DiffCheckpoint separates changed, unchanged and deleted files")
+
+        # --- windows ----------------------------------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 151, "method": "tools/call",
+                      "params": {"name": "Godot_ListWindows"}})
+        check(not refused(reply), "listing windows failed: %s" % refusal_text(reply))
+        windows = reply["result"]["structuredContent"]["windows"]
+        main_windows = [window for window in windows if window["main"]]
+        check(len(main_windows) == 1, "expected exactly one main window, got %r" % windows)
+        check(main_windows[0]["width"] > 0 and main_windows[0]["height"] > 0,
+              "the main window has no size: %r" % main_windows[0])
+        check(all(window["visible"] for window in windows),
+              "the default listing included a hidden window")
+
+        reply = call({"jsonrpc": "2.0", "id": 152, "method": "tools/call",
+                      "params": {"name": "Godot_ListWindows",
+                                 "arguments": {"visible_only": False}}})
+        all_windows = reply["result"]["structuredContent"]["windows"]
+        check(len(all_windows) > len(windows),
+              "including hidden windows found no more than the visible ones (%d vs %d) - "
+              "the editor always has closed dialogs parented in its tree"
+              % (len(all_windows), len(windows)))
+        print("PASS Godot_ListWindows reports the editor's windows, hidden ones on request")
+
+        # The point of the tool: knowing a dialog is open without looking at a screen.
+        # Godot_AskUser is deferred, so its dialog stays up while other calls are served.
+        relay.send_message({"jsonrpc": "2.0", "id": 153, "method": "tools/call",
+                            "params": {"name": "Godot_AskUser",
+                                       "arguments": {"question": "Is this window listed?",
+                                                     "timeout_seconds": 10}}})
+        # The question's own reply can arrive in the middle of this, so replies are
+        # matched by id rather than taken in order.
+        question_reply = [None]
+
+        def call_by_id(identifier, name):
+            relay.send_message({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                                "params": {"name": name}})
+            while True:
+                reply = relay.read_message(timeout=20)
+                check(reply is not None, "no reply to %s" % name)
+                if reply.get("id") == identifier:
+                    return reply
+                if reply.get("id") == 153:
+                    question_reply[0] = reply
+
+        titles = set()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            reply = call_by_id(154, "Godot_ListWindows")
+            titles = {window["title"] for window in
+                      reply["result"]["structuredContent"]["windows"]}
+            if "Godot AI asks" in titles:
+                break
+            time.sleep(0.5)
+        check("Godot AI asks" in titles,
+              "an open dialog was not among the listed windows: %r" % sorted(titles))
+        print("PASS an open dialog is visible through Godot_ListWindows, with no screen")
+
+        # Let the question time out so the deferred reply is drained before moving on.
+        deadline = time.time() + 40
+        while question_reply[0] is None and time.time() < deadline:
+            reply = relay.read_message(timeout=30)
+            if reply is not None and reply.get("id") == 153:
+                question_reply[0] = reply
+        check(question_reply[0] is not None,
+              "the pending question never produced its reply")
 
         # --- checkpoints ------------------------------------------------------
         # The write above must have produced a checkpoint; restoring it has to remove

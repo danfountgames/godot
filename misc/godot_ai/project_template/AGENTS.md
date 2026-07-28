@@ -102,7 +102,7 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (46)
+## Tools exposed over MCP (55)
 
 | Area | Tools |
 |---|---|
@@ -122,7 +122,9 @@ confidence.
 | Saves and settings | `Godot_ListUserFiles`, `Godot_ReadUserFile`, `Godot_WriteUserFile`, `Godot_DeleteUserFile` |
 | User | `Godot_AskUser` |
 | Skills | `Godot_ListSkills`, `Godot_ReadSkill` |
-| Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint` |
+| Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint`, `Godot_DiffCheckpoint` |
+| Asset pipeline | `Godot_GetImportStatus`, `Godot_ReimportAsset`, `Godot_WaitForImportQueue` |
+| Editor windows | `Godot_ListWindows` |
 
 ## What the interface does **not** provide
 
@@ -136,13 +138,23 @@ below, register a project command, or record the gap honestly as unverified.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary.
 - **No editor-side input injection.** The input tools drive the *running game*. To
   drive the editor's own UI — a dialog, the command palette — use the host harness.
+  `Godot_ListWindows` will tell you *what* is open, but nothing here will click it.
 
 ## Sharp edges that will cost you a session if you miss them
 
 - **Three captures, three different questions.** `Godot_CaptureGame` photographs the
   running game — that is the one a playtest wants. `Godot_CaptureViewport` photographs
   the editor's viewport. `Godot_CaptureEditorWindow` photographs the whole screen, and
-  is the only one that contains a dialog, because every dialog is a separate OS window.
+  is the only one that shows a dialog: the editor draws its dialogs over the viewport,
+  not inside it.
+- **To know whether a dialog is open, ask, do not photograph.** `Godot_ListWindows`
+  names every open window, works with no display at all, and cannot be misread the way
+  a screenshot can. Reach for a capture when you need to judge how something *looks*.
+- **A changed asset is not an imported asset.** Writing a `.png` into the project does
+  not give you a texture; the editor's importer has to run, and until it does the game
+  keeps loading the old one. After touching any asset on disk, call
+  `Godot_ReimportAsset` (or `Godot_WaitForImportQueue`) and check `Godot_GetImportStatus`
+  before concluding the new asset does not work. Never sleep and hope.
   Reviewing the wrong one is easy and looks exactly like a bug in the game.
 - **A headless editor cannot render.** Check `Godot_GetEditorStatus.can_render`
   *before* planning visual verification, rather than discovering it from a refusal.

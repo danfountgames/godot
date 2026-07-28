@@ -88,9 +88,30 @@ class MCPAskUserDialog : public AcceptDialog {
 
 protected:
 	void _notification(int p_what) {
-		if (p_what == NOTIFICATION_PREDELETE && !answered) {
-			// The editor is going away with the question still open.
-			MCPDeferred::fail(token, MCPToolError::INVALID_STATE, "the question was dismissed");
+		switch (p_what) {
+			case NOTIFICATION_READY: {
+				set_process(true);
+			} break;
+
+			case NOTIFICATION_PROCESS: {
+				// The client's request has a deadline this dialog knows nothing about.
+				// Once it passes the service answers the token without us, and every
+				// button here goes inert - so the dialog has to leave with it. Left up,
+				// it is worse than no dialog: it invites an answer, accepts the click,
+				// and does nothing.
+				if (!answered && !MCPDeferred::is_pending(token)) {
+					answered = true;
+					hide();
+					queue_free();
+				}
+			} break;
+
+			case NOTIFICATION_PREDELETE: {
+				if (!answered) {
+					// The editor is going away with the question still open.
+					MCPDeferred::fail(token, MCPToolError::INVALID_STATE, "the question was dismissed");
+				}
+			} break;
 		}
 	}
 
@@ -185,11 +206,14 @@ public:
 			return Dictionary();
 		}
 
-		const int timeout = MAX(1, (int)p_arguments["timeout_seconds"]);
+		// `get()`, not subscript: reading a missing optional key off a const Dictionary
+		// inserts a null, and a missing timeout would then come back as 0 - a question
+		// the user gets one second to answer.
+		const int timeout = MAX(1, (int)p_arguments.get("timeout_seconds", 300));
 		const MCPDeferred::Token token = MCPDeferred::begin((double)timeout);
 
 		MCPAskUserDialog *dialog = memnew(MCPAskUserDialog(token, question,
-				p_arguments["context"], p_arguments.has("choices") ? Array(p_arguments["choices"]) : Array()));
+				p_arguments.get("context", String()), p_arguments.get("choices", Array())));
 		EditorNode::get_singleton()->get_gui_base()->add_child(dialog);
 		dialog->popup_centered();
 

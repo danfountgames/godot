@@ -88,22 +88,22 @@ that its signal fired.
 |---|---|---|---|---|---|
 | I1 | `Godot_SendEditorInput` | simulate_input | NOT_STARTED | — | all |
 | I2 | `Godot_FindControl` (→ screen rectangle) | read_project | NOT_STARTED | — | all |
-| I3 | `Godot_ListWindows` | read_project | NOT_STARTED | — | all |
+| I3 | `Godot_ListWindows` | read_project | VERIFIED | `tools/mcp_asset_tools.cpp`. Walks the scene tree rather than enumerating `DisplayServer` windows, because the editor embeds its dialogs as subwindows of the main one: a DisplayServer enumeration reports one window while three dialogs are stacked on screen. Reports title, class, node path, rect, visibility, embedded/native and which is the root. Works headless, where a screenshot cannot, so "did a dialog open" is answerable with no display at all — the e2e asserts an open `Godot_AskUser` dialog appears by title. Hidden windows on request only | no way to act on a window; that is I1 |
 
 ## J — Asset pipeline
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| J1 | `Godot_GetImportStatus` | read_project | NOT_STARTED | — | all |
-| J2 | `Godot_ReimportAsset` | edit_files | NOT_STARTED | — | all |
-| J3 | `Godot_WaitForImportQueue` | read_project | NOT_STARTED | — | all |
+| J1 | `Godot_GetImportStatus` | read_project | VERIFIED | `tools/mcp_asset_tools.cpp`. Whether the pipeline is busy, its progress, and every file whose import is missing or failed — an importable source with no usable asset beside it is the failure this exists to surface. Broken files are only collected once a scan has finished; mid-scan the answer would be a snapshot of a moving target | does not say *why* an import failed |
+| J2 | `Godot_ReimportAsset` | edit_files | VERIFIED | reimports named files, or rescans the whole project when none are named, and answers when the pipeline is **idle** rather than when the request was accepted. The e2e replaces a 2x2 PNG with a 16x16 gradient behind the editor's back and asserts the *importer's output bytes* changed — the first version of that check compared file sizes of two flat-red images, which the importer compresses to nearly the same length, so it would have passed whether the reimport happened or not | group/scene reimport not separately exercised |
+| J3 | `Godot_WaitForImportQueue` | read_project | VERIFIED | the explicit wait that replaces sleeping after an asset change. Polled deferred token, so the editor keeps running while it waits. This is what stops a test that passes on an idle machine from failing on a loaded one | none |
 
 ## K — Checkpoints and evidence
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
 | K1 | `Godot_CreateCheckpoint` (named, on demand) | edit_files | VERIFIED | snapshots named files under a label, for the moment before a sequence of risky changes rather than only before one tool's write. The e2e creates one, clobbers the file, restores through it, and checks the original contents came back | none |
-| K2 | `Godot_DiffCheckpoint` | read_project | NOT_STARTED | — | all |
+| K2 | `Godot_DiffCheckpoint` | read_project | VERIFIED | compares the project against a checkpoint and separates changed, unchanged, deleted and created, without restoring anything — "what did that sequence of edits actually do". A file the checkpoint recorded as absent and that exists now is *created*, not changed; a file skipped at snapshot time is reported in neither list, because saying "changed" would be a guess. The e2e drives all three transitions on one file | contents of the difference are not shown, only which files differ |
 
 ## Bugs this tranche found in existing tools
 
@@ -111,6 +111,9 @@ that its signal fired.
 |---|---|---|
 | Y-1 | `Godot_SetRuntimeProperty` reported success while doing nothing whenever the value's JSON type did not match the property's real type. It went through the debugger's generic `scene:set_object_property`, which hands the value to `Object::set` unconverted — and `Object::set` refuses silently. A `Vector2` given `[64, 32]` simply stayed `(0, 0)`. The old test only asserted that the *scene file* was unchanged, so it never noticed. Now routed through the runtime agent, which knows the property's real type, converts to it, and **reads the value back before answering** | FIXED, covered by `run_editor_e2e.py` |
 | Y-2 | `Godot_GetRuntimeSceneTree` returned the editor's cached tree whenever one existed, and the first tree arrives before the main scene is instantiated — so an agent polling while a game booted got a bare `root` for ever | FIXED |
+| Y-3 | `Godot_AskUser` left its dialog on screen after the request timed out. The token was already answered, so every button on the dialog was inert: it invited an answer, accepted the click, and did nothing. Found by `Godot_ListWindows` — the very first window listing showed a dialog from a test that had finished minutes earlier. The dialog now watches its own token and closes when it stops being pending | FIXED, covered by `run_editor_e2e.py` |
+| Y-4 | `Godot_AskUser` read `timeout_seconds` by subscripting a const `Dictionary`. A caller who omitted it got `0` rather than the schema's declared default of 300, and `MAX(1, 0)` turned that into a question the user had **one second** to answer. The declared default and the applied default now agree | FIXED |
+| Y-5 | The e2e's checkpoint test passed `content` where `Godot_WriteTextFile`'s schema says `text`, and did not check the reply. The write was rejected, so the restore it was meant to exercise had nothing to undo and the assertion could not fail | FIXED |
 
 ## New capability classes
 
@@ -118,4 +121,4 @@ that its signal fired.
 |---|---|---|---|
 | X-1 | `simulate_input` capability class, ask-by-default | VERIFIED | none — added to `MCPCapability`, defaults to `ask`, and is distinct from `run_project` because input can do anything a player can |
 | X-2 | `read_user_data` / `edit_user_data` classes | VERIFIED | both ask-by-default. Reading is `ask` where reading the *project* is `allow`, because this is the player's data rather than the developer's source |
-| X-3 | Template `AGENTS.md` updated as capabilities land | VERIFIED | the template listed 25 tools and told agents input injection, runtime reads, performance and `user://` did not exist. All of that is now built, so leaving it would have been worse than the original error — it would have told an agent to fall back to a host harness for something the product does. Now lists 46 tools, and the "does not provide" section is down to audio, a test runner, frame sequences, editor-side input, and shell execution |
+| X-3 | Template `AGENTS.md` updated as capabilities land | VERIFIED | the template listed 25 tools and told agents input injection, runtime reads, performance and `user://` did not exist. All of that is now built, so leaving it would have been worse than the original error — it would have told an agent to fall back to a host harness for something the product does. Now lists 55 tools, and the "does not provide" section is down to audio's limits, a test runner, editor-side input, and shell execution. The count in the template header had also drifted four behind the registry; it is now checked against a live `tools/list` rather than against the table |
