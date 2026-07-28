@@ -117,10 +117,29 @@ CHIMES_SCRIPT = """extends Node
 var play_count := 0:
 	set(value):
 		play_count = value
+		if value == 0:
+			$One.stop()
+			$Two.stop()
 		if value >= 1:
 			$One.play()
 		if value >= 2:
 			$Two.play()
+
+# A burst: both players start and both stop again a fraction of a second later. This is
+# the case a snapshot cannot catch - by the time anything asks, the stacking is over -
+# and it is exactly what a sound triggered twice by one button press looks like.
+var flash := 0:
+	set(value):
+		flash = value
+		if value > 0:
+			_flash()
+
+func _flash() -> void:
+	$One.play()
+	$Two.play()
+	await get_tree().create_timer(0.25).timeout
+	$One.stop()
+	$Two.stop()
 """
 
 SCENE_TEST_SCRIPT = """extends Node
@@ -1513,6 +1532,68 @@ def run(editor_binary, display):
                 check("stacked" in audio["note"] and "more than one player" in audio["note"],
                       "the note does not mention the stacking it found: %r" % audio["note"])
                 print("PASS Godot_GetAudioState found one sound playing on two players at once")
+
+                # --- stacking across a burst -------------------------------------
+                # Everything above was a snapshot of a sound left playing. The real bug
+                # is a sound triggered twice by one button press: it doubles and is over
+                # before the next call arrives, so no snapshot can ever see it.
+                call({"jsonrpc": "2.0", "id": 184, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Chimes",
+                                               "property": "play_count", "value": 0}}})
+                reply = call({"jsonrpc": "2.0", "id": 185, "method": "tools/call",
+                              "params": {"name": "Godot_GetAudioState"}})
+                check(reply["result"]["structuredContent"]["stacked"] == [],
+                      "the sounds did not stop before the burst test")
+
+                # Sampling starts first and the burst happens inside it. The two replies
+                # come back in whichever order they finish, so they are matched by id.
+                relay.send_message({"jsonrpc": "2.0", "id": 186, "method": "tools/call",
+                                    "params": {"name": "Godot_DetectAudioStacking",
+                                               "arguments": {"frames": 60}}})
+                relay.send_message({"jsonrpc": "2.0", "id": 187, "method": "tools/call",
+                                    "params": {"name": "Godot_SetRuntimeProperty",
+                                               "arguments": {"path": "/root/Main/Chimes",
+                                                             "property": "flash", "value": 1}}})
+                window = None
+                deadline = time.time() + 60
+                while window is None and time.time() < deadline:
+                    message = relay.read_message(timeout=30)
+                    if message is None:
+                        break
+                    if message.get("id") == 186:
+                        window = message
+                check(window is not None, "the audio window never answered")
+                check(not refused(window), "sampling audio failed: %s" % refusal_text(window))
+                sampled = window["result"]["structuredContent"]
+                check(sampled["frames_sampled"] == 60,
+                      "the window did not sample 60 frames: %r" % sampled)
+                check(len(sampled["stacked"]) == 1,
+                      "the burst doubled a sound and the window missed it: %r" % sampled)
+                burst = sampled["stacked"][0]
+                check(burst["stream"] == "res://audio/chime.wav" and burst["peak_count"] == 2,
+                      "the window named the wrong sound or count: %r" % burst)
+                check(burst["at_frame"] > 0, "the window does not say when it happened: %r" % burst)
+
+                # And the proof that this catches what a snapshot cannot: by now the
+                # burst is long over, and asking directly finds nothing at all.
+                reply = call({"jsonrpc": "2.0", "id": 188, "method": "tools/call",
+                              "params": {"name": "Godot_GetAudioState"}})
+                check(reply["result"]["structuredContent"]["stacked"] == [],
+                      "the burst is somehow still audible, so this proves nothing about "
+                      "windows: %r" % reply["result"]["structuredContent"]["stacked"])
+
+                # Pointed at an idle game it must report nothing, or it would call
+                # everything stacked and the check above would be meaningless.
+                reply = call({"jsonrpc": "2.0", "id": 189, "method": "tools/call",
+                              "params": {"name": "Godot_DetectAudioStacking",
+                                         "arguments": {"frames": 10}}})
+                idle = reply["result"]["structuredContent"]
+                check(idle["stacked"] == [] and idle["max_simultaneous"] == 0,
+                      "an idle game was reported as stacking: %r" % idle)
+                check("not the same as nothing ever stacking" in idle["note"],
+                      "the empty result does not say what it does not prove: %r" % idle["note"])
+                print("PASS Godot_DetectAudioStacking caught a burst no snapshot could see")
 
                 reply = call({"jsonrpc": "2.0", "id": 127, "method": "tools/call",
                               "params": {"name": "Godot_SetTimeScale",

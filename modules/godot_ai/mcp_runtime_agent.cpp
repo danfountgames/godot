@@ -216,6 +216,13 @@ void MCPRuntimeWatcher::add_profile(const String &p_request_id, int p_frames, do
 	profiles.push_back(profile);
 }
 
+void MCPRuntimeWatcher::add_audio_window(const String &p_request_id, int p_frames) {
+	AudioWindow window;
+	window.request_id = p_request_id;
+	window.remaining = p_frames;
+	audio_windows.push_back(window);
+}
+
 void MCPRuntimeWatcher::add_scene_test(const String &p_request_id, double p_timeout_seconds) {
 	SceneTest test;
 	test.request_id = p_request_id;
@@ -266,7 +273,88 @@ bool MCPRuntimeWatcher::read_scene_test(bool &r_finished, Array &r_cases) {
 	return true;
 }
 
+// Defined with the audio tool further down; declared here because the frame watcher
+// needs it, and at file scope because that is where the definition lives.
+void collect_audio_players(Node *p_node, Array &r_players);
+
 void MCPRuntimeWatcher::on_frame() {
+	for (int i = audio_windows.size() - 1; i >= 0; i--) {
+		AudioWindow &window = audio_windows.write[i];
+
+		Array players;
+		collect_audio_players(SceneTree::get_singleton() ? SceneTree::get_singleton()->get_root() : nullptr,
+				players);
+
+		HashMap<String, Array> sounding;
+		for (int p = 0; p < players.size(); p++) {
+			const Dictionary entry = players[p];
+			if (!(bool)entry.get("playing", false)) {
+				continue;
+			}
+			const String stream = entry.get("stream", String());
+			if (stream.is_empty()) {
+				// No resource path means no identity to compare, so counting it would
+				// invent duplicates out of unrelated sounds.
+				continue;
+			}
+			if (!sounding.has(stream)) {
+				sounding.insert(stream, Array());
+			}
+			sounding[stream].push_back(entry.get("node_path", String()));
+		}
+
+		for (const KeyValue<String, Array> &pair : sounding) {
+			const int count = pair.value.size();
+			window.max_simultaneous = MAX(window.max_simultaneous, count);
+			const int *previous = window.peak.getptr(pair.key);
+			if (previous && count <= *previous) {
+				continue;
+			}
+			// Only the worst moment is kept, with the frame it happened on: a burst that
+			// doubled a sound once in sixty frames is the bug, and an average would hide
+			// it exactly the way a mean frame time hides a stutter.
+			window.peak[pair.key] = count;
+			window.peak_frame[pair.key] = (int)Engine::get_singleton()->get_process_frames();
+			window.peak_players[pair.key] = pair.value;
+		}
+
+		window.sampled++;
+		window.remaining--;
+		if (window.remaining > 0) {
+			continue;
+		}
+
+		Array stacked;
+		for (const KeyValue<String, int> &pair : window.peak) {
+			if (pair.value < 2) {
+				continue;
+			}
+			Dictionary entry;
+			entry["stream"] = pair.key;
+			entry["peak_count"] = pair.value;
+			const int *frame = window.peak_frame.getptr(pair.key);
+			const Array *paths = window.peak_players.getptr(pair.key);
+			entry["at_frame"] = frame ? *frame : 0;
+			entry["node_paths"] = paths ? *paths : Array();
+			stacked.push_back(entry);
+		}
+
+		Dictionary result;
+		result["frames_sampled"] = window.sampled;
+		result["stacked"] = stacked;
+		result["max_simultaneous"] = window.max_simultaneous;
+		result["note"] = stacked.is_empty()
+				? String("nothing stacked during these frames. That is not the same as nothing "
+						 "ever stacking: send the input burst you are worried about *while* this "
+						 "is sampling, or it watches an idle game")
+				: String("a sound played on more than one player at once during this window, "
+						 "which is audible as one loud or doubled sound");
+
+		const String request_id = window.request_id;
+		audio_windows.remove_at(i);
+		MCPRuntimeAgent::reply(request_id, result);
+	}
+
 	const double now_seconds = OS::get_singleton()->get_ticks_msec() / 1000.0;
 	for (int i = scene_tests.size() - 1; i >= 0; i--) {
 		bool finished = false;
@@ -494,6 +582,22 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 			const double budget = arguments.has("budget_frame_ms") ? (double)arguments["budget_frame_ms"] : 0.0;
 			watcher->add_profile(request_id, frames, budget);
 		}
+		return OK;
+	}
+
+	if (command == "audio_window") {
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		if (!watcher) {
+			_fail(request_id, "the running game cannot schedule frame work");
+			return OK;
+		}
+		const int frames = arguments.has("frames") ? (int)arguments["frames"] : 60;
+		if (frames < 1 || frames > 600) {
+			_fail(request_id, "sample for between 1 and 600 frames");
+			return OK;
+		}
+		watcher->add_audio_window(request_id, frames);
 		return OK;
 	}
 
@@ -975,7 +1079,7 @@ Dictionary MCPRuntimeAgent::_time_scale(const Dictionary &p_arguments, String &r
 // Every kind of audio player, read through properties rather than by casting: the three
 // player classes are siblings, not subclasses of one another, and a project may well
 // have a fourth of its own.
-static void collect_audio_players(Node *p_node, Array &r_players) {
+void collect_audio_players(Node *p_node, Array &r_players) {
 	if (!p_node) {
 		return;
 	}

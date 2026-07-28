@@ -684,6 +684,23 @@ void mcp_register_input_tools() {
 			"pretend to more: whether it sounds right is not something it can tell you.",
 			MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(Dictionary())))));
 
+	{
+		Dictionary properties;
+		properties["frames"] = MCPSchema::integer_property(
+				"How many frames to watch. Send the input burst you are worried about while "
+				"this is sampling.",
+				60);
+		registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+				"Godot_DetectAudioStacking", "audio_window",
+				"Watch every frame for a window and report any sound that played on more than "
+				"one player at the same time, with the frame it happened on. Godot_GetAudioState "
+				"answers for the instant you ask; a sound triggered twice by one button press "
+				"can double and finish before the next call arrives, and this is the only thing "
+				"that will see it. Send the input burst while this is sampling - pointed at an "
+				"idle game it correctly reports nothing.",
+				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties), 60.0))));
+	}
+
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetTimeScale", "time_scale",
 			"Speed up or slow down the running game, for walking a long route without waiting "

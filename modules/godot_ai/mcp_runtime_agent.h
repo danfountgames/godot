@@ -53,6 +53,7 @@
 #ifdef TOOLS_ENABLED
 
 #include "core/object/class_db.h"
+#include "core/templates/hash_map.h"
 #include "core/string/ustring.h"
 #include "core/variant/array.h"
 #include "core/variant/dictionary.h"
@@ -106,10 +107,25 @@ class MCPRuntimeWatcher : public Object {
 		double deadline = 0.0;
 	};
 
+	// Stacking is a thing that happens *during* a burst of input, not a thing that is
+	// true when someone happens to ask. A sound triggered twice on the same frame may
+	// have finished before the next call arrives, so the only way to catch it is to
+	// watch every frame and remember the worst.
+	struct AudioWindow {
+		String request_id;
+		int remaining = 0;
+		int sampled = 0;
+		int max_simultaneous = 0;
+		HashMap<String, int> peak;
+		HashMap<String, int> peak_frame;
+		HashMap<String, Array> peak_players;
+	};
+
 	Vector<Watch> watches;
 	Vector<Sequence> sequences;
 	Vector<Profile> profiles;
 	Vector<SceneTest> scene_tests;
+	Vector<AudioWindow> audio_windows;
 
 	static MCPRuntimeWatcher *singleton;
 
@@ -127,6 +143,7 @@ public:
 	void add_sequence(const String &p_request_id, int p_frames, int p_interval_frames);
 	void add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms);
 	void add_scene_test(const String &p_request_id, double p_timeout_seconds);
+	void add_audio_window(const String &p_request_id, int p_frames);
 	void on_frame();
 };
 

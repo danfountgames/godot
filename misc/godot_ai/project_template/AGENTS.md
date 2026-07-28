@@ -102,7 +102,7 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (59)
+## Tools exposed over MCP (60)
 
 | Area | Tools |
 |---|---|
@@ -115,7 +115,7 @@ confidence.
 | **Real input** | `Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput`, `Godot_SendGamepadInput`, `Godot_GetInputTrace` |
 | Running game | `Godot_GetRuntimeSceneTree`, `Godot_GetRuntimeProperty`, `Godot_SetRuntimeProperty`, `Godot_GetRuntimeNodeInfo`, `Godot_WaitForRuntimeCondition`, `Godot_GetRuntimeErrors`, `Godot_GetGameWindowInfo`, `Godot_SetGameWindowSize` |
 | Performance | `Godot_GetPerformanceMetrics`, `Godot_ProfileWindow` |
-| Audio | `Godot_GetAudioState` |
+| Audio | `Godot_GetAudioState`, `Godot_DetectAudioStacking` |
 | Pace | `Godot_SetTimeScale` |
 | Output | `Godot_ReadOutputLog` |
 | Visual | `Godot_CaptureViewport` (the editor's viewport), `Godot_CaptureGame` (the running game), `Godot_CaptureFrameSequence` (several consecutive frames), `Godot_CaptureEditorWindow` (the whole screen, dialogs included) |
@@ -139,9 +139,12 @@ below, register a project command, or record the gap honestly as unverified.
   it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
-- **Stacking detection is a snapshot.** `Godot_GetAudioState` sees sounds stacked *at
-  the moment you ask*. A sound that doubles and clears between two calls is invisible;
-  to catch a burst, ask repeatedly while you send the input.
+- **Two audio questions, two tools.** `Godot_GetAudioState` answers for the instant you
+  ask. `Godot_DetectAudioStacking` watches every frame for a window — send the input
+  burst *while it is sampling*. The bug you are hunting is a sound triggered twice by
+  one button press, which doubles and finishes before any snapshot could catch it. An
+  empty result from an idle game means nothing; the burst has to happen inside the
+  window.
 
 ## Sharp edges that will cost you a session if you miss them
 
