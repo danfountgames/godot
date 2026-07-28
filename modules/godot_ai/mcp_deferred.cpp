@@ -37,6 +37,7 @@ namespace {
 struct Entry {
 	bool answered = false;
 	double deadline = 0.0; // 0 means no deadline.
+	Callable poller; // Optional; see MCPDeferred::begin_polled.
 	MCPDeferred::Completion completion;
 };
 
@@ -54,6 +55,15 @@ MCPDeferred::Token MCPDeferred::begin(double p_timeout_seconds) {
 	Entry entry;
 	entry.deadline = p_timeout_seconds > 0.0 ? now_seconds() + p_timeout_seconds : 0.0;
 	s_entries[token] = entry;
+	return token;
+}
+
+MCPDeferred::Token MCPDeferred::begin_polled(double p_timeout_seconds, const Callable &p_poller) {
+	const Token token = begin(p_timeout_seconds);
+	Entry *entry = s_entries.getptr(token);
+	if (entry) {
+		entry->poller = p_poller;
+	}
 	return token;
 }
 
@@ -94,7 +104,28 @@ bool MCPDeferred::is_pending(Token p_token) {
 	return entry && !entry->answered;
 }
 
-void MCPDeferred::expire_overdue() {
+void MCPDeferred::update() {
+	// Pollers first: a token whose answer is ready this frame should be answered
+	// rather than timed out on the same frame its deadline lapses.
+	for (KeyValue<Token, Entry> &pair : s_entries) {
+		if (pair.value.answered || !pair.value.poller.is_valid()) {
+			continue;
+		}
+		Variant answer;
+		Callable::CallError error;
+		pair.value.poller.callp(nullptr, 0, answer, error);
+		if (error.error != Callable::CallError::CALL_OK) {
+			pair.value.answered = true;
+			pair.value.completion.error.set(MCPToolError::FAILED, "the pending operation failed while waiting");
+			continue;
+		}
+		if (answer.get_type() == Variant::DICTIONARY) {
+			pair.value.answered = true;
+			pair.value.completion.result = answer;
+			pair.value.completion.error.clear();
+		}
+	}
+
 	const double now = now_seconds();
 	for (KeyValue<Token, Entry> &pair : s_entries) {
 		if (pair.value.answered || pair.value.deadline <= 0.0 || now < pair.value.deadline) {
@@ -103,7 +134,9 @@ void MCPDeferred::expire_overdue() {
 		pair.value.answered = true;
 		pair.value.completion.result = Dictionary();
 		pair.value.completion.error.set(MCPToolError::FAILED,
-				"timed out waiting for the user to answer");
+				pair.value.poller.is_valid()
+						? "timed out waiting for the editor to produce a result"
+						: "timed out waiting for the user to answer");
 	}
 }
 

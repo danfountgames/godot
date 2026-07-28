@@ -281,7 +281,7 @@ bool MCPService::defer_response(const Variant &p_id, int64_t p_token, const Ref<
 }
 
 void MCPService::_poll_deferred() {
-	MCPDeferred::expire_overdue();
+	MCPDeferred::update();
 
 	for (Peer *peer : peers) {
 		for (int i = peer->deferred.size() - 1; i >= 0; i--) {

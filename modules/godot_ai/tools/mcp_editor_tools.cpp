@@ -34,6 +34,8 @@
 #include "../mcp_tool_registry.h"
 
 #include "core/variant/array.h"
+#include "servers/display_server.h"
+
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 #include "scene/main/node.h"
@@ -321,7 +323,8 @@ class GetEditorStatusTool : public MCPTool {
 public:
 	virtual String get_tool_name() const override { return "Godot_GetEditorStatus"; }
 	virtual String get_description() const override {
-		return "Report what the editor is currently doing: edited scene, play state, and project root.";
+		return "Report what the editor is currently doing: edited scene, play state, project root, "
+			   "and whether it has a display, which decides whether the visual tools can work.";
 	}
 	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_PROJECT; }
 	virtual Dictionary get_input_schema() const override { return MCPSchema::object_schema(Dictionary()); }
@@ -331,11 +334,24 @@ public:
 		properties["edited_scene"] = MCPSchema::string_property("Path of the edited scene, empty when none.");
 		properties["playing"] = MCPSchema::bool_property("True when the game is running.");
 		properties["project_root"] = MCPSchema::string_property("Absolute project directory.");
+		properties["display_server"] = MCPSchema::string_property(
+				"Name of the display server driving this editor, \"headless\" when it has none.");
+		properties["can_render"] = MCPSchema::bool_property(
+				"True when the editor is drawing to a display, so screenshots and dialogs work. "
+				"False means it was launched headless; relaunching it under a display (see "
+				"tools/virtual_display.py) is what makes the visual tools usable.");
 		return MCPSchema::object_schema(properties);
 	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
 		Dictionary result;
 		result["project_root"] = MCPPaths::get_project_root();
+		// An agent should be able to find out that screenshots are impossible here
+		// without having to take one and read the refusal.
+		const String display_server = DisplayServer::get_singleton()
+				? DisplayServer::get_singleton()->get_name()
+				: String("none");
+		result["display_server"] = display_server;
+		result["can_render"] = display_server != "headless" && display_server != "none";
 		result["has_editor"] = EditorInterface::get_singleton() != nullptr;
 		if (!EditorInterface::get_singleton()) {
 			result["edited_scene"] = String();

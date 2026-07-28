@@ -30,6 +30,7 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "../mcp_deferred.h"
 #include "../mcp_tool_registry.h"
 
 #include "core/variant/array.h"
@@ -214,12 +215,29 @@ static EditorDebuggerTree *get_remote_tree(MCPToolError &r_error, const String &
 		return nullptr;
 	}
 	EditorDebuggerTree *tree = EditorDebuggerNode::get_singleton()->get_remote_tree();
-	if (!tree || !tree->get_root()) {
-		r_error.set(MCPToolError::INVALID_STATE,
-				"the running game has not reported its scene tree yet; try again in a moment");
+	if (!tree) {
+		r_error.set(MCPToolError::INVALID_STATE, "the editor has no remote scene tree");
 		return nullptr;
 	}
 	return tree;
+}
+
+// The editor only populates its remote scene tree while the Remote panel is visible,
+// because that is the only thing that normally asks for it. A tool has to ask
+// explicitly, and then wait: the answer arrives from the game with no signal to
+// listen for, so it is polled through the deferred-response path.
+static bool remote_tree_ready() {
+	if (!EditorDebuggerNode::get_singleton()) {
+		return false;
+	}
+	EditorDebuggerTree *tree = EditorDebuggerNode::get_singleton()->get_remote_tree();
+	return tree && tree->get_root();
+}
+
+static void request_remote_tree() {
+	if (EditorDebuggerNode::get_singleton()) {
+		EditorDebuggerNode::get_singleton()->request_remote_tree();
+	}
 }
 
 static void collect_remote_nodes(TreeItem *p_item, int p_depth, int p_max_depth, Array &r_nodes) {
@@ -258,18 +276,40 @@ public:
 		properties["running"] = MCPSchema::bool_property("Always true when this succeeds.");
 		return MCPSchema::object_schema(properties);
 	}
+	Dictionary _build(int p_max_depth) const {
+		Array nodes;
+		collect_remote_nodes(EditorDebuggerNode::get_singleton()->get_remote_tree()->get_root(),
+				0, p_max_depth, nodes);
+		Dictionary result;
+		result["nodes"] = nodes;
+		result["running"] = true;
+		return result;
+	}
+
+	Variant _poll() {
+		if (!remote_tree_ready()) {
+			return Variant();
+		}
+		return _build(pending_max_depth);
+	}
+
+	int pending_max_depth = 32;
+
+public:
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
 		EditorDebuggerTree *tree = get_remote_tree(r_error, get_tool_name());
 		if (!tree) {
 			return Dictionary();
 		}
-		Array nodes;
-		collect_remote_nodes(tree->get_root(), 0, (int)p_arguments["max_depth"], nodes);
+		if (remote_tree_ready()) {
+			return _build((int)p_arguments["max_depth"]);
+		}
 
-		Dictionary result;
-		result["nodes"] = nodes;
-		result["running"] = true;
-		return result;
+		// Ask the game for its tree, then answer once it arrives.
+		pending_max_depth = (int)p_arguments["max_depth"];
+		request_remote_tree();
+		return MCPDeferred::make_deferred_result(
+				MCPDeferred::begin_polled(10.0, callable_mp(this, &GetRuntimeSceneTreeTool::_poll)));
 	}
 };
 
@@ -304,38 +344,58 @@ public:
 		return MCPSchema::object_schema(properties);
 	}
 
+	String pending_path;
+	String pending_property;
+	Variant pending_value;
+
+	// Returns the result once the tree is available; Variant() means "still waiting".
+	// An error is reported by returning a result the protocol turns into a failure,
+	// because a poller has no error channel of its own.
+	Variant _apply() {
+		if (!remote_tree_ready()) {
+			return Variant();
+		}
+		EditorDebuggerTree *tree = EditorDebuggerNode::get_singleton()->get_remote_tree();
+		const ObjectID id = tree->get_object_id_for_path(pending_path);
+		ScriptEditorDebugger *debugger = EditorDebuggerNode::get_singleton()->get_current_debugger();
+		if (id.is_null() || !debugger) {
+			Dictionary failure;
+			failure["error"] = vformat("no node at '%s' in the running game; paths there start at '/root'", pending_path);
+			return failure;
+		}
+		debugger->update_remote_object(id, pending_property, pending_value);
+
+		Dictionary result;
+		result["path"] = pending_path;
+		result["property"] = pending_property;
+		result["persistent"] = false;
+		return result;
+	}
+
+public:
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
 		EditorDebuggerTree *tree = get_remote_tree(r_error, get_tool_name());
 		if (!tree) {
 			return Dictionary();
 		}
 
-		const String path = String(p_arguments["path"]).strip_edges();
-		const ObjectID id = tree->get_object_id_for_path(path);
-		if (id.is_null()) {
-			r_error.set(MCPToolError::NOT_FOUND,
-					vformat("no node at '%s' in the running game; paths there start at '/root'", path));
-			return Dictionary();
+		pending_path = String(p_arguments["path"]).strip_edges();
+		pending_property = p_arguments["property"];
+		pending_value = p_arguments.has("value") ? p_arguments["value"] : Variant();
+
+		if (remote_tree_ready()) {
+			const Variant applied = _apply();
+			const Dictionary result = applied;
+			if (result.has("error")) {
+				r_error.set(MCPToolError::NOT_FOUND, result["error"]);
+				return Dictionary();
+			}
+			return result;
 		}
 
-		ScriptEditorDebugger *debugger = EditorDebuggerNode::get_singleton()->get_current_debugger();
-		if (!debugger) {
-			r_error.set(MCPToolError::INVALID_STATE, "no debugger session is attached to the running game");
-			return Dictionary();
-		}
-
-		// The game holds the authoritative value, so there is nothing to coerce
-		// against here; the value is sent as-is and applied by the running process.
-		debugger->update_remote_object(id, p_arguments["property"],
-				p_arguments.has("value") ? p_arguments["value"] : Variant());
-
-		Dictionary result;
-		result["path"] = path;
-		result["property"] = p_arguments["property"];
-		// Stated in the result as well as the description: an agent reading only the
-		// output still learns that this did not change the project.
-		result["persistent"] = false;
-		return result;
+		request_remote_tree();
+		return MCPDeferred::make_deferred_result(
+				MCPDeferred::begin_polled(10.0, callable_mp(this, &SetRuntimePropertyTool::_apply)));
 	}
 };
 

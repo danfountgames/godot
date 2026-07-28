@@ -89,7 +89,7 @@ TEST_CASE("[godot_ai] Overdue calls fail instead of hanging the client") {
 	// pass rather than asserting on a sub-millisecond difference.
 	const MCPDeferred::Token token = MCPDeferred::begin(0.001);
 	OS::get_singleton()->delay_usec(5000);
-	MCPDeferred::expire_overdue();
+	MCPDeferred::update();
 
 	MCPDeferred::Completion completion;
 	REQUIRE(MCPDeferred::take(token, completion));
@@ -98,7 +98,7 @@ TEST_CASE("[godot_ai] Overdue calls fail instead of hanging the client") {
 
 	// A token with no deadline is the caller's responsibility and must survive.
 	const MCPDeferred::Token forever = MCPDeferred::begin(0.0);
-	MCPDeferred::expire_overdue();
+	MCPDeferred::update();
 	CHECK(MCPDeferred::is_pending(forever));
 	MCPDeferred::reset();
 }

@@ -100,10 +100,15 @@ public:
 			return Dictionary();
 		}
 		// The headless display server renders nothing, so a capture would be a blank
-		// image presented as if it were the editor. Refuse instead.
+		// image presented as if it were the editor. Refuse instead - and say what to do
+		// about it, because on a machine with no display this is fixable rather than
+		// fatal: the repository ships a virtual display for exactly this case.
 		if (DisplayServer::get_singleton() && DisplayServer::get_singleton()->get_name() == "headless") {
 			r_error.set(MCPToolError::UNSUPPORTED,
-					"this editor is running headless, so there is nothing on screen to capture");
+					"this editor is running headless, so there is nothing on screen to capture; "
+					"relaunch it with a display - on a machine without one, "
+					"`python3 tools/virtual_display.py -- <godot binary> --path <project> --editor` "
+					"starts a virtual display and the correct renderer for it");
 			return Dictionary();
 		}
 

@@ -34,6 +34,7 @@
 #include "mcp_types.h"
 
 #include "core/templates/hash_map.h"
+#include "core/variant/callable.h"
 #include "core/variant/dictionary.h"
 
 // Support for tools that cannot answer immediately.
@@ -62,6 +63,12 @@ public:
 	// the caller takes responsibility for completing it.
 	static Token begin(double p_timeout_seconds);
 
+	// Claims a token whose answer arrives by the world changing rather than by anyone
+	// calling back - the debugger fills the remote scene tree with no signal to listen
+	// for, so the only way to know is to look. The poller is called on each service
+	// poll and returns a Dictionary to complete, or nil to keep waiting.
+	static Token begin_polled(double p_timeout_seconds, const Callable &p_poller);
+
 	// Completes a token. Ignored when the token is unknown, which happens when a
 	// client disconnected or the deadline already passed.
 	static void complete(Token p_token, const Dictionary &p_result);
@@ -73,8 +80,9 @@ public:
 	// True when the token is still waiting for an answer.
 	static bool is_pending(Token p_token);
 
-	// Fails every token whose deadline has passed. Called from the service's poll.
-	static void expire_overdue();
+	// Runs pollers and fails every token whose deadline has passed. Called once per
+	// frame from the service's poll.
+	static void update();
 
 	// Drops a token without answering, for a client that has gone away.
 	static void abandon(Token p_token);
