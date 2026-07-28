@@ -30,6 +30,21 @@
 
 #ifdef _WIN32
 
+// WSAPoll, GetTickCount64 and BCryptGenRandom are Vista/Windows 7 APIs, and mingw
+// declares them only when the target version asks for them. Toolchains disagree about
+// the default: a recent one exposes them anyway, an older one does not, so the same
+// source cross-compiled cleanly here and failed on CI with "WSAPoll was not declared".
+// State the target rather than inherit it. This must precede every Windows header.
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#ifndef WINVER
+#define WINVER 0x0601
+#endif
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x06010000
+#endif
+
 #include "platform.h"
 
 #include <atomic>
