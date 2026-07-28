@@ -31,6 +31,7 @@
 #include "mcp_protocol.h"
 
 #include "mcp_checkpoints.h"
+#include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
 
 #include "core/io/json.h"
@@ -340,6 +341,19 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 		} else {
 			r_response = make_result(p_id, make_tool_error_result(error));
 		}
+		return true;
+	}
+
+	// A tool that cannot answer yet hands back a token instead of a result; the
+	// transport holds the request id until it completes.
+	MCPDeferred::Token deferred_token = MCPDeferred::INVALID_TOKEN;
+	if (MCPDeferred::get_deferred_token(structured, deferred_token)) {
+		if (p_delegate->defer_response(p_id, deferred_token, tool, checkpoint_id)) {
+			return false;
+		}
+		MCPDeferred::abandon(deferred_token);
+		r_response = make_error(p_id, ERROR_INTERNAL,
+				vformat("'%s' needs to answer asynchronously, which this connection cannot do", tool_name));
 		return true;
 	}
 

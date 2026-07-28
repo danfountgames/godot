@@ -57,4 +57,7 @@ void mcp_register_property_tools();
 // Screenshots of what the editor is rendering.
 void mcp_register_capture_tools();
 
+// Putting a question to the user and waiting for their answer.
+void mcp_register_ask_user_tool();
+
 #endif // MCP_BUILTIN_TOOLS_H

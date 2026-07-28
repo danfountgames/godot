@@ -31,7 +31,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | P3 | MCP | `tools/call` with structured content | P2 | VERIFIED | `_handle_tools_call` | `test_mcp_protocol.h` | structuredContent + text content asserted | none |
 | P4 | MCP | Errors: unknown method/tool, malformed/missing/extra args, denial | P3 | VERIFIED | `mcp_protocol.cpp` | `test_mcp_protocol.h` | 4 error subcases + permission denial | none |
 | P5 | MCP | `notifications/tools/list_changed` | F4,P1 | IMPLEMENTED | `MCPService::_on_tools_changed` | relay forwarding covered | relay test asserts client delivery | live editor-side emission not asserted |
-| P6 | CI | Cancellation and clean termination semantics | P3 | IMPLEMENTED | `mcp_protocol.cpp` notification branch | `test_mcp_protocol.h` | cancelled notification produces no response | no live cancellation test |
+| P6 | CI | Cancellation and clean termination semantics | P3 | VERIFIED | `mcp_protocol.cpp`, `mcp_deferred.cpp`, `MCPService::_poll_deferred` | `tests/test_mcp_deferred.h`, `run_editor_e2e.py` | exactly one response per call, late answers dropped, overdue calls failed, abandoned on disconnect | none |
 
 ## Relay
 

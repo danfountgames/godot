@@ -78,6 +78,11 @@ public:
 		// Recorded for the audit trail. The summary is already redacted.
 		virtual void record_invocation(const MCPSession &p_session, const String &p_tool_name, const String &p_summary, bool p_allowed, const String &p_reason) = 0;
 
+		// A tool answered "later": hold this request id until the token completes.
+		// Returning false means the transport cannot defer, and the caller turns it
+		// into an immediate error rather than losing the request.
+		virtual bool defer_response(const Variant &p_id, int64_t p_token, const Ref<MCPTool> &p_tool, const String &p_checkpoint) { return false; }
+
 		virtual String get_project_path() const = 0;
 		virtual String get_project_name() const = 0;
 		virtual String get_editor_version() const = 0;
@@ -91,16 +96,17 @@ public:
 	static Dictionary make_error(const Variant &p_id, int p_code, const String &p_message, const Dictionary &p_data = Dictionary());
 	static Dictionary make_notification(const String &p_method, const Dictionary &p_params);
 
+	// Builds the MCP result envelope for a tool's structured output. Public because a
+	// deferred call is completed by the transport, after handle_message has returned.
+	static Dictionary make_tool_result(const Dictionary &p_structured, const Dictionary &p_output_schema);
+	static Dictionary make_tool_error_result(const MCPToolError &p_error);
+
 private:
 	static bool _handle_hello(const Dictionary &p_params, const Variant &p_id, MCPSession &r_session, Delegate *p_delegate, Dictionary &r_response);
 	static bool _handle_initialize(const Dictionary &p_params, const Variant &p_id, MCPSession &r_session, Dictionary &r_response);
 	static bool _handle_tools_list(const Variant &p_id, Dictionary &r_response);
 	static bool _handle_tools_call(const Dictionary &p_params, const Variant &p_id, MCPSession &r_session, Delegate *p_delegate, Dictionary &r_response);
 
-	// Tool-level failures are results with isError set, not JSON-RPC errors, so a
-	// model can read and react to them.
-	static Dictionary make_tool_result(const Dictionary &p_structured, const Dictionary &p_output_schema);
-	static Dictionary make_tool_error_result(const MCPToolError &p_error);
 };
 
 #endif // MCP_PROTOCOL_H

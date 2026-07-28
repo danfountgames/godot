@@ -48,12 +48,13 @@ namespace TestMCPCheckpoints {
 // A scratch project plus a scratch checkpoint store, so restores are exercised
 // against real files.
 class CheckpointFixture {
+	String base;
 	String root;
 	String store;
 
 public:
 	explicit CheckpointFixture(const String &p_suffix) {
-		const String base = OS::get_singleton()->get_cache_path().path_join(
+		base = OS::get_singleton()->get_cache_path().path_join(
 				"godot_ai_test_ckpt_" + p_suffix + "_" + itos(OS::get_singleton()->get_process_id()));
 		root = base.path_join("project");
 		store = base.path_join("store");
@@ -68,9 +69,10 @@ public:
 	~CheckpointFixture() {
 		MCPPaths::clear_project_root_override();
 		MCPCheckpoints::clear_root_override();
-		// The scratch base carries the marker; both subdirectories go with it.
+		// Remove the whole scratch tree in one go; both subdirectories live under it.
 		mcp_test_remove_tree(store);
 		mcp_test_remove_tree(root);
+		mcp_test_remove_tree(base);
 	}
 
 	void write(const String &p_relative, const String &p_contents) const {

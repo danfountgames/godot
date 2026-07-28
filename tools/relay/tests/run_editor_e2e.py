@@ -172,7 +172,7 @@ def run(editor_binary):
                          "Godot_ListCheckpoints", "Godot_RestoreCheckpoint",
                          "Godot_ReadOutputLog", "Godot_SetSceneProperty",
                          "Godot_SetRuntimeProperty", "Godot_GetRuntimeSceneTree",
-                         "Godot_CaptureViewport"):
+                         "Godot_CaptureViewport", "Godot_AskUser"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -396,6 +396,27 @@ def run(editor_binary):
                       "params": {"name": "Godot_GetRuntimeSceneTree"}})
         check(refused(reply), "the runtime scene tree was returned with no game running")
         print("PASS runtime tools refuse cleanly while nothing is running")
+
+        # --- deferred responses -----------------------------------------------
+        # Nobody is here to answer, so a short timeout proves the whole deferred path
+        # end to end: the request is held, the editor keeps working, and exactly one
+        # response arrives later.
+        before = time.time()
+        reply = call({"jsonrpc": "2.0", "id": 90, "method": "tools/call",
+                      "params": {"name": "Godot_AskUser",
+                                 "arguments": {"question": "Is anyone there?",
+                                               "timeout_seconds": 2}}})
+        elapsed = time.time() - before
+        check(refused(reply), "an unanswered question did not fail")
+        check("timed out" in refusal_text(reply),
+              "the unanswered question did not report a timeout: %r" % refusal_text(reply))
+        check(elapsed >= 1.5, "the response came back too fast to have been deferred (%.2fs)" % elapsed)
+
+        # The editor must still be serving other calls while a question is pending.
+        reply = call({"jsonrpc": "2.0", "id": 91, "method": "tools/call",
+                      "params": {"name": "Godot_GetEditorStatus"}})
+        check(reply["result"]["isError"] is False, "the editor stopped serving after a deferred call")
+        print("PASS Godot_AskUser deferred the response and timed out cleanly")
 
         # --- screenshots ------------------------------------------------------
         # This editor is headless, so the honest answer is a refusal that names the

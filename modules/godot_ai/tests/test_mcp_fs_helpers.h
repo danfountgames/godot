@@ -51,8 +51,17 @@ inline bool mcp_test_remove_tree(const String &p_absolute_path) {
 		ERR_PRINT(vformat("Refusing to delete suspicious test path '%s'.", path));
 		return false;
 	}
-	// Guard 2: must carry the marker every fixture in this module uses.
-	if (!path.get_file().begins_with("godot_ai_test_") && !path.get_file().begins_with("godot_ai_outside_")) {
+	// Guard 2: some component must carry the marker every fixture in this module
+	// uses. Checking components rather than only the leaf lets a fixture delete a
+	// subdirectory of its own scratch tree without weakening the confinement.
+	bool marked = false;
+	for (const String &component : path.split("/", false)) {
+		if (component.begins_with("godot_ai_test_") || component.begins_with("godot_ai_outside_")) {
+			marked = true;
+			break;
+		}
+	}
+	if (!marked) {
 		ERR_PRINT(vformat("Refusing to delete '%s': not a godot_ai test directory.", path));
 		return false;
 	}

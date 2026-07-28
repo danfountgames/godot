@@ -362,6 +362,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_output_tools();
 	mcp_register_property_tools();
 	mcp_register_capture_tools();
+	mcp_register_ask_user_tool();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));

@@ -32,6 +32,7 @@
 
 #include "mcp_approvals_dialog.h"
 #include "mcp_audit.h"
+#include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
 
 #include "core/config/project_settings.h"
@@ -107,6 +108,7 @@ void MCPService::_notification(int p_what) {
 				for (int i = peers.size() - 1; i >= 0; i--) {
 					_poll_peer(peers[i]);
 				}
+				_poll_deferred();
 				for (int i = peers.size() - 1; i >= 0; i--) {
 					if (peers[i]->connection.is_null() || peers[i]->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
 						_drop_peer(i);
@@ -257,8 +259,54 @@ void MCPService::_handle_line(Peer *p_peer, const String &p_line) {
 	}
 
 	Dictionary response;
-	if (MCPProtocol::handle_message(parsed, p_peer->session, this, response)) {
+	current_peer = p_peer;
+	const bool has_response = MCPProtocol::handle_message(parsed, p_peer->session, this, response);
+	current_peer = nullptr;
+	if (has_response) {
 		_send(p_peer, response);
+	}
+}
+
+bool MCPService::defer_response(const Variant &p_id, int64_t p_token, const Ref<MCPTool> &p_tool, const String &p_checkpoint) {
+	if (!current_peer) {
+		return false;
+	}
+	DeferredCall call;
+	call.id = p_id;
+	call.token = p_token;
+	call.tool = p_tool;
+	call.checkpoint = p_checkpoint;
+	current_peer->deferred.push_back(call);
+	return true;
+}
+
+void MCPService::_poll_deferred() {
+	MCPDeferred::expire_overdue();
+
+	for (Peer *peer : peers) {
+		for (int i = peer->deferred.size() - 1; i >= 0; i--) {
+			const DeferredCall &call = peer->deferred[i];
+			MCPDeferred::Completion completion;
+			if (!MCPDeferred::take(call.token, completion)) {
+				continue;
+			}
+
+			Dictionary response;
+			if (completion.error.has_error()) {
+				response = MCPProtocol::make_result(call.id, MCPProtocol::make_tool_error_result(completion.error));
+			} else {
+				Dictionary tool_result = MCPProtocol::make_tool_result(completion.result,
+						call.tool.is_valid() ? call.tool->get_output_schema() : Dictionary());
+				if (!call.checkpoint.is_empty()) {
+					Dictionary meta;
+					meta["checkpoint"] = call.checkpoint;
+					tool_result["_meta"] = meta;
+				}
+				response = MCPProtocol::make_result(call.id, tool_result);
+			}
+			_send(peer, response);
+			peer->deferred.remove_at(i);
+		}
 	}
 }
 
@@ -274,6 +322,11 @@ void MCPService::_send(Peer *p_peer, const Dictionary &p_message) {
 void MCPService::_drop_peer(int p_index) {
 	ERR_FAIL_INDEX(p_index, peers.size());
 	Peer *peer = peers[p_index];
+	// Nobody is left to hear the answer; abandoning also stops a dialog from
+	// completing into a socket that no longer exists.
+	for (const DeferredCall &call : peer->deferred) {
+		MCPDeferred::abandon(call.token);
+	}
 	if (peer->connection.is_valid()) {
 		peer->connection->disconnect_from_host();
 	}

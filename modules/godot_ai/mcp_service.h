@@ -47,11 +47,21 @@ class MCPApprovalsDialog;
 class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	GDCLASS(MCPService, EditorPlugin);
 
+	struct DeferredCall {
+		Variant id;
+		int64_t token = 0;
+		Ref<MCPTool> tool;
+		String checkpoint;
+	};
+
 	struct Peer {
 		Ref<StreamPeerTCP> connection;
 		String buffer;
 		MCPSession session;
 		String address;
+		// Requests this client is still waiting on. Dropped if it disconnects, so a
+		// dialog nobody is listening to cannot answer into a dead socket.
+		Vector<DeferredCall> deferred;
 	};
 
 	Ref<TCPServer> server;
@@ -84,6 +94,11 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	void _remove_instance_descriptor();
 
 	void _on_tools_changed();
+	void _poll_deferred();
+
+	// The peer whose message is being handled, so defer_response() knows who to hold
+	// the request for. Only valid inside _handle_line.
+	Peer *current_peer = nullptr;
 
 public:
 	MCPService();
@@ -106,6 +121,7 @@ public:
 	virtual bool approve_client(MCPSession &p_session, String &r_reason) override;
 	virtual bool prompt_for_tool(const MCPSession &p_session, const Ref<MCPTool> &p_tool, const Dictionary &p_arguments, String &r_reason) override;
 	virtual void record_invocation(const MCPSession &p_session, const String &p_tool_name, const String &p_summary, bool p_allowed, const String &p_reason) override;
+	virtual bool defer_response(const Variant &p_id, int64_t p_token, const Ref<MCPTool> &p_tool, const String &p_checkpoint) override;
 	virtual String get_project_path() const override;
 	virtual String get_project_name() const override;
 	virtual String get_editor_version() const override;

@@ -162,7 +162,22 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - T12 is IMPLEMENTED, not VERIFIED: nothing here has a display, so the refusal is
   verified and the image itself is not.
 
+### S-10 deferred responses and ask-user (P6, T13)
+- Everything else here runs to completion inside one call on the main thread. A modal
+  cannot: it needs the main loop to keep running, so blocking in the tool would freeze
+  the editor and the dialog it just opened. Tools can now return a token instead of a
+  result; `MCPService` holds the request id and answers when the token resolves.
+- Exactly one response per call is the invariant: a late answer is dropped rather than
+  queued, an overdue call fails with a timeout, and a disconnecting client abandons
+  its tokens so a dialog cannot answer into a dead socket.
+- The e2e proves the whole path without a human: a 2s timeout shows the request was
+  genuinely held, the response arrives later, and the editor keeps serving other calls
+  meanwhile.
+- Two test-side defects fixed on the way: the guarded delete only accepted a marker on
+  the *leaf* of a path, so fixtures could not clean up their own subdirectories; and
+  the timeout test asserted on a sub-millisecond deadline against a millisecond clock.
+
 ### Next
-- S-10:
+- S-11:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

@@ -25,9 +25,12 @@ against a running editor.
 
 ## Current vertical slice
 
-S-10 (next): `Godot_AskUser` (T13). It needs deferred tool responses - a modal cannot
-block the editor's main thread, and the service answers synchronously today - so it is
-an architecture change, not just another tool. Then the Winsock port (R8).
+S-11 (next): the Winsock port that would unblock R8, then packaging (C2).
+
+S-10 (done): deferred tool responses and `Godot_AskUser`. A tool can now return a
+token instead of a result; the service holds the client's request id and answers when
+the token completes or its deadline passes. Exactly one response per call is
+guaranteed: late answers are dropped, and a disconnecting client abandons its tokens.
 
 S-09 (done): `Godot_CaptureViewport`. Refuses headless rather than returning a blank
 image, saves a PNG in the project, and returns it inline as an MCP image block when
@@ -67,16 +70,16 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-T13 (next). Just completed: T12 → IMPLEMENTED (headless refusal verified; visual
-output needs a display).
+R8, C2 (next). Just completed: P6 → VERIFIED; T13 → IMPLEMENTED (the deferral and
+timeout are verified; a human clicking an answer needs a display).
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- Module suite: 45 cases, 319 assertions, all pass. Full engine suite from the
+- Module suite: 50 cases, 341 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
-- `python3 tools/relay/tests/run_editor_e2e.py` → 30/30 checks pass against a live
+- `python3 tools/relay/tests/run_editor_e2e.py` → 31/31 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
   trip verified against the saved scene file, and the shipped example skill read back
   over the protocol.
@@ -114,8 +117,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start T13 by deciding how a tool call can be answered later than it was received:
+Start R8 by listing every POSIX socket call the relay makes:
 
 ```sh
-grep -n "handle_message" modules/godot_ai/mcp_protocol.h
+grep -n "socket(\|connect(\|recv(\|send(\|poll(\|close(" tools/relay/src/relay.cpp
 ```
