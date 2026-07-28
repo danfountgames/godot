@@ -63,6 +63,13 @@ struct MCPSkill {
 	Dictionary to_dictionary() const;
 };
 
+// How a skill should be presented to the user: the reason it is or is not usable,
+// and whether offering an allow/revoke button would mean anything.
+//
+// Split out of the approvals dialog so the decision can be tested without a display;
+// the dialog only renders what this returns.
+String mcp_skill_status_text(const MCPSkill &p_skill, bool &r_can_toggle, bool &r_needs_decision);
+
 class MCPSkills {
 	static bool _parse_frontmatter(const String &p_text, Dictionary &r_fields, String &r_body, String &r_error);
 

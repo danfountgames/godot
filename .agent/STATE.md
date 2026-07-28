@@ -25,8 +25,12 @@ against a running editor.
 
 ## Current vertical slice
 
-S-13 (next): the last coverage gap — drive `MCPApprovalsDialog::refresh()` and the
-approve/revoke paths headlessly (U1, U2).
+S-14 (next): a full re-read of the specification against the ledger, then the
+optional tranche (O1–O4) if anything is worth doing.
+
+S-13 (done): extracted the approvals dialog's status/decision logic into
+`mcp_skill_status_text()` so what the UI *decides* is tested even though what it
+*draws* cannot be. The dialog now only renders what that function returns.
 
 S-12 (done): packaging and the audit-log gap. `package.sh` produces a distributable
 bundle with the MIT notices; `run_clean_checkout.py` proves the tracked tree builds,
@@ -82,13 +86,15 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-U1, U2 (next). Just completed: C2, F6, F7 → VERIFIED.
+Specification re-audit (next). Just completed: U2 decision logic covered; U1/U2 stay
+IMPLEMENTED because rendering and clicking need a display.
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- Module suite: 54 cases, 358 assertions, all pass. Full engine suite from the
+- Module suite: 55 cases, 372 assertions, all pass. Full engine suite: 933 cases,
+  2,395,064 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
 - `python3 tools/relay/tests/run_editor_e2e.py` → 31/31 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
@@ -129,8 +135,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Give the approvals dialog headless coverage; it needs a settings stand-in:
+Re-read the specification against the ledger and correct anything stale:
 
 ```sh
-grep -n "set_allow_override\|is_client_approved" modules/godot_ai/mcp_skills.h modules/godot_ai/mcp_service.h
+grep -n "^| [A-Z][0-9]" .agent/SPEC_LEDGER.md | grep -v VERIFIED
 ```

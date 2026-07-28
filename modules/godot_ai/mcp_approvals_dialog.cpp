@@ -103,17 +103,10 @@ void MCPApprovalsDialog::refresh() {
 		item->set_text(COLUMN_NAME, skill.name);
 		item->set_text(COLUMN_KIND, TTR("Skill"));
 
-		String status;
-		if (!skill.problem.is_empty()) {
-			status = skill.problem;
-		} else if (!skill.enabled) {
-			status = TTR("Disabled by the skill itself");
-		} else if (!skill.version_supported) {
-			status = vformat(TTR("Needs editor version %s"), skill.required_editor_version);
-		} else if (skill.allowed) {
-			status = vformat(TTR("Allowed (%s)"), skill.root_kind);
-		} else {
-			status = vformat(TTR("Not allowed (%s)"), skill.root_kind);
+		bool can_toggle = false;
+		bool needs_decision = false;
+		const String status = mcp_skill_status_text(skill, can_toggle, needs_decision);
+		if (needs_decision) {
 			pending_count++;
 		}
 		item->set_text(COLUMN_STATUS, status);
@@ -122,7 +115,7 @@ void MCPApprovalsDialog::refresh() {
 		item->set_meta("name", skill.name);
 
 		// A skill that cannot run is not a decision the user should be offered.
-		if (skill.problem.is_empty() && skill.enabled && skill.version_supported) {
+		if (can_toggle) {
 			item->add_button(COLUMN_ACTION, Ref<Texture2D>(), BUTTON_TOGGLE, false,
 					skill.allowed ? TTR("Revoke") : TTR("Allow"));
 		}

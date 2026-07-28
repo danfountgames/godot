@@ -201,7 +201,15 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   a multi-line argument cannot break the one-object-per-line format, and client
   approval is denied by default with only the exact automation opt-in accepted.
 
+### S-13 approvals-dialog decision logic (U2)
+- The dialog decided *and* drew; the decision is now `mcp_skill_status_text()`, which
+  returns the status line plus whether a toggle button would mean anything and whether
+  the item is waiting on the user. The dialog renders what it returns.
+- That makes the substantive half testable headlessly: a broken or version-gated skill
+  offers no "Allow" button, because offering one for something that cannot load would
+  be a lie. U1/U2 stay IMPLEMENTED - rendering and clicking still need a display.
+
 ### Next
-- S-13:
+- S-14:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

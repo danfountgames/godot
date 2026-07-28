@@ -301,6 +301,55 @@ TEST_CASE("[godot_ai] Duplicate skill names keep the first and flag the rest") {
 	CHECK(flagged == 1);
 }
 
+TEST_CASE("[godot_ai] Skill status decides what the approvals UI offers") {
+	MCPSkill skill;
+	skill.name = "example";
+	skill.root_kind = "project";
+	bool can_toggle = false;
+	bool needs_decision = false;
+
+	SUBCASE("a usable but unallowed skill is the one that needs a decision") {
+		skill.allowed = false;
+		const String status = mcp_skill_status_text(skill, can_toggle, needs_decision);
+		CHECK(status.contains("Not allowed"));
+		CHECK(status.contains("project"));
+		CHECK(can_toggle);
+		CHECK(needs_decision);
+	}
+
+	SUBCASE("an allowed skill can be revoked but needs no decision") {
+		skill.allowed = true;
+		const String status = mcp_skill_status_text(skill, can_toggle, needs_decision);
+		CHECK(status.contains("Allowed"));
+		CHECK(can_toggle);
+		CHECK_FALSE(needs_decision);
+	}
+
+	SUBCASE("a broken skill explains itself and offers no button") {
+		skill.problem = "frontmatter is missing a 'name'";
+		const String status = mcp_skill_status_text(skill, can_toggle, needs_decision);
+		CHECK(status == "frontmatter is missing a 'name'");
+		// Offering "Allow" for something that cannot load would be a lie.
+		CHECK_FALSE(can_toggle);
+		CHECK_FALSE(needs_decision);
+	}
+
+	SUBCASE("a self-disabled skill offers no button") {
+		skill.enabled = false;
+		mcp_skill_status_text(skill, can_toggle, needs_decision);
+		CHECK_FALSE(can_toggle);
+		CHECK_FALSE(needs_decision);
+	}
+
+	SUBCASE("a version-gated skill says which version it wants") {
+		skill.version_supported = false;
+		skill.required_editor_version = ">=99.0";
+		const String status = mcp_skill_status_text(skill, can_toggle, needs_decision);
+		CHECK(status.contains(">=99.0"));
+		CHECK_FALSE(can_toggle);
+	}
+}
+
 } // namespace TestMCPSkills
 
 #endif // TEST_MCP_SKILLS_H

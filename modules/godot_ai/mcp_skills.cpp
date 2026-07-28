@@ -96,6 +96,29 @@ Dictionary MCPSkill::to_dictionary() const {
 	return out;
 }
 
+String mcp_skill_status_text(const MCPSkill &p_skill, bool &r_can_toggle, bool &r_needs_decision) {
+	r_can_toggle = false;
+	r_needs_decision = false;
+
+	if (!p_skill.problem.is_empty()) {
+		// Nothing to decide about a skill that cannot load at all.
+		return p_skill.problem;
+	}
+	if (!p_skill.enabled) {
+		return "Disabled by the skill itself";
+	}
+	if (!p_skill.version_supported) {
+		return vformat("Needs editor version %s", p_skill.required_editor_version);
+	}
+
+	r_can_toggle = true;
+	if (p_skill.allowed) {
+		return vformat("Allowed (%s)", p_skill.root_kind);
+	}
+	r_needs_decision = true;
+	return vformat("Not allowed (%s)", p_skill.root_kind);
+}
+
 Vector<String> MCPSkills::get_roots() {
 	if (!s_roots_override.is_empty()) {
 		return s_roots_override;
