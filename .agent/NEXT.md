@@ -5,15 +5,11 @@ two are verified here (the two need hardware this machine is not — see the bot
 this file).
 
 Current work is the interface tranche tracked in `.agent/INTERFACE_LEDGER.md`: making
-the product answer everything the game-production template assumes of it. Two items
-remain. Take them in this order — each is a whole slice, ending in a build, the full
-sweep, a ledger update, and a push.
+the product answer everything the game-production template assumes of it. **Every item
+in that ledger is now VERIFIED.** One loose end remains, and it is a missing test rather
+than a missing capability.
 
-1. **E2 — duplicate/stacking detection.** Whether the same sound is playing several
-   times over itself. `Godot_GetAudioState` reports bus peaks, which cannot tell one
-   loud playback from four stacked ones — and stacking is the audio bug an agent
-   working without ears is most likely to ship.
-2. **The chat cancellation frame.** Cancel a turn in flight from the dock and assert
+1. **The chat cancellation frame.** Cancel a turn in flight from the dock and assert
    the client is told to stop. The conversation's half is unit-tested; the
    `notifications/cancelled` frame is not. This used to be recorded as needing something
    external, and it does not: `Godot_FindControl` locates the dock's Cancel button and

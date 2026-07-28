@@ -650,9 +650,12 @@ void mcp_register_input_tools() {
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_GetAudioState", "audio_state",
-			"Report the running game's audio buses: volumes, mute and solo state, and current "
-			"peak levels. An agent cannot hear the game, and this does not pretend otherwise - "
-			"peaks answer whether a sound played, not whether it sounded right.",
+			"Report the running game's audio: bus volumes, mute and solo state, current peak "
+			"levels, every audio player in the scene, and any sound playing on more than one "
+			"player at once. That last one is what a peak cannot tell you - four stacked "
+			"playbacks and one loud playback look identical on a meter, and a sound triggered "
+			"twice is the audio bug you are most likely to ship without ears. This does not "
+			"pretend to more: whether it sounds right is not something it can tell you.",
 			MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(Dictionary())))));
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(

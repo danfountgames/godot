@@ -46,6 +46,8 @@
 #include "scene/gui/control.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
+#include "core/io/resource.h"
+#include "core/templates/hash_map.h"
 #include "core/os/time.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -845,6 +847,33 @@ Dictionary MCPRuntimeAgent::_time_scale(const Dictionary &p_arguments, String &r
 	return result;
 }
 
+// Every kind of audio player, read through properties rather than by casting: the three
+// player classes are siblings, not subclasses of one another, and a project may well
+// have a fourth of its own.
+static void collect_audio_players(Node *p_node, Array &r_players) {
+	if (!p_node) {
+		return;
+	}
+	if (p_node->is_class("AudioStreamPlayer") || p_node->is_class("AudioStreamPlayer2D") ||
+			p_node->is_class("AudioStreamPlayer3D")) {
+		Dictionary entry;
+		entry["node_path"] = String(p_node->get_path());
+		entry["class"] = p_node->get_class();
+		const Ref<Resource> stream = p_node->get(SNAME("stream"));
+		entry["stream"] = stream.is_valid() ? stream->get_path() : String();
+		entry["playing"] = (bool)p_node->get(SNAME("playing"));
+		entry["volume_db"] = (double)p_node->get(SNAME("volume_db"));
+		entry["bus"] = String(p_node->get(SNAME("bus")));
+		entry["autoplay"] = (bool)p_node->get(SNAME("autoplay"));
+		entry["max_polyphony"] = (int)p_node->get(SNAME("max_polyphony"));
+		entry["position_seconds"] = (double)p_node->call(SNAME("get_playback_position"));
+		r_players.push_back(entry);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		collect_audio_players(p_node->get_child(i), r_players);
+	}
+}
+
 Dictionary MCPRuntimeAgent::_audio_state(const Dictionary &p_arguments, String &r_error) {
 	AudioServer *server = AudioServer::get_singleton();
 	if (!server) {
@@ -867,11 +896,65 @@ Dictionary MCPRuntimeAgent::_audio_state(const Dictionary &p_arguments, String &
 		buses.push_back(bus);
 	}
 
+	// Which players are sounding, and whether any sound is sounding twice.
+	//
+	// A bus peak cannot tell one loud playback from four stacked on top of each other,
+	// and stacking is the audio bug an agent working without ears is most likely to
+	// ship: a sound triggered from two places, or on every frame a button is held, is
+	// loud and wrong and looks completely fine in every other measurement here.
+	Array players;
+	collect_audio_players(SceneTree::get_singleton() ? SceneTree::get_singleton()->get_root() : nullptr,
+			players);
+
+	HashMap<String, Array> sounding;
+	for (int i = 0; i < players.size(); i++) {
+		const Dictionary entry = players[i];
+		if (!(bool)entry.get("playing", false)) {
+			continue;
+		}
+		const String stream = entry.get("stream", String());
+		if (stream.is_empty()) {
+			// An unsaved or generated stream has no identity to compare against, so
+			// counting it would invent duplicates out of unrelated sounds.
+			continue;
+		}
+		if (!sounding.has(stream)) {
+			sounding.insert(stream, Array());
+		}
+		sounding[stream].push_back(entry.get("node_path", String()));
+	}
+
+	Array stacked;
+	for (const KeyValue<String, Array> &pair : sounding) {
+		if (pair.value.size() < 2) {
+			continue;
+		}
+		Dictionary entry;
+		entry["stream"] = pair.key;
+		entry["count"] = pair.value.size();
+		entry["node_paths"] = pair.value;
+		stacked.push_back(entry);
+	}
+
 	Dictionary result;
 	result["buses"] = buses;
+	result["players"] = players;
+	result["stacked"] = stacked;
 	result["output_latency_ms"] = server->get_output_latency() * 1000.0;
-	result["note"] = "an agent cannot hear this; peaks and bus state are structural evidence, "
-					 "and whether it sounds right is not something this can tell you";
+
+	String note = "an agent cannot hear this; peaks and bus state are structural evidence, "
+				  "and whether it sounds right is not something this can tell you";
+	if (!stacked.is_empty()) {
+		note += vformat(". %d sound(s) are playing on more than one player at once, which is "
+						"audible as one loud or doubled sound - see `stacked`",
+				stacked.size());
+	}
+	// Said whether or not anything stacked, because the limit matters to how the empty
+	// case should be read: a player with polyphony above 1 can stack with *itself*, and
+	// nothing here can see inside it.
+	note += ". A single player whose max_polyphony is above 1 can overlap itself, and that "
+			"cannot be counted from outside it";
+	result["note"] = note;
 	return result;
 }
 

@@ -32,8 +32,10 @@ are registered — 57 over `tools/list`. Group I is now complete too: the editor
 interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
 every capture now carries its own provenance, and group F: the project's own test scenes
-are discoverable and runnable without a shell. What is left is E2 (duplicate/stacking
-detection) and an end-to-end catch of the chat cancellation frame.
+are discoverable and runnable without a shell, and group E: stacked audio is detected
+structurally. **Every item in the interface ledger is now VERIFIED.** What is left is an
+end-to-end catch of the chat cancellation frame, which is a check nobody has written
+rather than a capability that is missing.
 
 Six real bugs have fallen out of it so far, all fixed and covered — see the
 "Bugs this tranche found" table in the interface ledger. Two were found by

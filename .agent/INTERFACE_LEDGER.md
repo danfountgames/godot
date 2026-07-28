@@ -56,7 +56,7 @@ that its signal fired.
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
 | E1 | `Godot_GetAudioState` (buses, playbacks, peaks) | read_runtime | VERIFIED | bus names, volumes, mute/solo and current peak levels — peaks are how "did a sound play" is answered without hearing it. Carries a note saying what it cannot tell you, because whether audio *sounds right* is not something this can establish and pretending otherwise would be worse than the gap | per-playback detail not exposed |
-| E2 | Duplicate/stacking detection | read_runtime | NOT_STARTED | — | all |
+| E2 | Duplicate/stacking detection | read_runtime | VERIFIED | folded into `Godot_GetAudioState`, so an agent that already calls it gets the answer without having to know to ask. Every audio player in the scene is listed with its stream, bus, volume, polyphony limit and playback position, and any stream sounding on more than one player at once is reported in `stacked` with the players named. Players are found by class name and read through properties, because the three player classes are siblings rather than subclasses and a project may have a fourth of its own. Streams with no resource path are excluded: they have no identity to compare, and counting them would invent duplicates. The e2e drives the fixture from silence to one playback to two of the same sound and asserts all three — a check that only saw the stacked case would pass against a tool that called everything stacked | a single player with `max_polyphony` above 1 can overlap itself and that cannot be counted from outside it; the note says so |
 
 ## F — Tests
 

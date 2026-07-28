@@ -15,6 +15,7 @@ Usage:
 import argparse
 import base64
 import json
+import math
 import os
 import shutil
 import struct
@@ -49,6 +50,20 @@ config/features=PackedStringArray("4.3")
 ; ask for GL compatibility or the game dies before the debugger ever connects.
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+"""
+
+CHIMES_SCRIPT = """extends Node
+
+# Two players, one stream. Setting play_count to 2 makes the same sound play twice at
+# once - which no bus peak can distinguish from one loud playback, and which is the
+# audio bug an agent working without ears is most likely to ship.
+var play_count := 0:
+	set(value):
+		play_count = value
+		if value >= 1:
+			$One.play()
+		if value >= 2:
+			$Two.play()
 """
 
 SCENE_TEST_SCRIPT = """extends Node
@@ -98,9 +113,11 @@ NOT_A_TEST_SCENE = """[gd_scene format=3 uid="uid://bqxaie2et09"]
 [node name="NotATest" type="Node2D"]
 """
 
-MAIN_SCENE = """[gd_scene load_steps=2 format=3 uid="uid://bqxaie2e001"]
+MAIN_SCENE = """[gd_scene load_steps=4 format=3 uid="uid://bqxaie2e001"]
 
 [ext_resource type="Script" path="res://scripts/target.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/chimes.gd" id="2"]
+[ext_resource type="AudioStream" path="res://audio/chime.wav" id="3"]
 
 [node name="Main" type="Node2D"]
 
@@ -121,6 +138,15 @@ offset_right = 300.0
 offset_bottom = 160.0
 text = "Target"
 script = ExtResource("1")
+
+[node name="Chimes" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="One" type="AudioStreamPlayer" parent="Chimes"]
+stream = ExtResource("3")
+
+[node name="Two" type="AudioStreamPlayer" parent="Chimes"]
+stream = ExtResource("3")
 """
 
 # The button records two different things on purpose. `pressed` fires however the
@@ -329,11 +355,33 @@ def imported_output_of(project, source_relative):
     return None
 
 
+def write_wav(path, seconds=30, rate=8000):
+    """A valid 16-bit PCM mono WAV.
+
+    The stacking check needs a stream with a res:// path: two players sounding the same
+    *file* is what makes them the same sound, and a stream generated in script has no
+    identity to compare. Long enough that it cannot finish during the checks.
+    """
+    frames = seconds * rate
+    samples = bytearray()
+    for i in range(frames):
+        value = int(8000 * math.sin(2 * math.pi * 440 * i / rate))
+        samples += struct.pack("<h", value)
+    with open(path, "wb") as handle:
+        handle.write(b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVE")
+        handle.write(b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16))
+        handle.write(b"data" + struct.pack("<I", len(samples)) + bytes(samples))
+
+
 def build_project(root):
     os.makedirs(os.path.join(root, "scenes"), exist_ok=True)
     os.makedirs(os.path.join(root, "scripts"), exist_ok=True)
     with open(os.path.join(root, "scripts", "target.gd"), "w") as handle:
         handle.write(TARGET_SCRIPT)
+    with open(os.path.join(root, "scripts", "chimes.gd"), "w") as handle:
+        handle.write(CHIMES_SCRIPT)
+    os.makedirs(os.path.join(root, "audio"), exist_ok=True)
+    write_wav(os.path.join(root, "audio", "chime.wav"))
     with open(os.path.join(root, "project.godot"), "w") as handle:
         handle.write(PROJECT_GODOT)
     with open(os.path.join(root, "scenes", "main.tscn"), "w") as handle:
@@ -1225,7 +1273,52 @@ def run(editor_binary, display):
                       "the first bus is not Master: %r" % audio["buses"][0])
                 check("cannot hear" in audio["note"],
                       "the audio state does not say what it cannot tell you: %r" % audio)
-                print("PASS Godot_GetAudioState reported %d buses" % len(audio["buses"]))
+                players = {entry["node_path"]: entry for entry in audio["players"]}
+                check("/root/Main/Chimes/One" in players and "/root/Main/Chimes/Two" in players,
+                      "the audio players in the scene were not found: %r" % sorted(players))
+                check(all(not entry["playing"] for entry in players.values()),
+                      "a sound is playing before anything asked for one: %r" % players)
+                check(audio["stacked"] == [],
+                      "nothing is playing, yet something is reported as stacked: %r" % audio)
+                print("PASS Godot_GetAudioState reported %d buses and %d silent players"
+                      % (len(audio["buses"]), len(players)))
+
+                # One sound playing is not stacking. This half matters as much as the
+                # other: a check that only ever saw the stacked case would pass just as
+                # well against a tool that called everything stacked.
+                call({"jsonrpc": "2.0", "id": 180, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Chimes",
+                                               "property": "play_count", "value": 1}}})
+                reply = call({"jsonrpc": "2.0", "id": 181, "method": "tools/call",
+                              "params": {"name": "Godot_GetAudioState"}})
+                audio = reply["result"]["structuredContent"]
+                sounding = [entry for entry in audio["players"] if entry["playing"]]
+                check(len(sounding) == 1,
+                      "expected exactly one sounding player: %r" % audio["players"])
+                check(audio["stacked"] == [],
+                      "one playback was reported as stacked: %r" % audio["stacked"])
+
+                # Now the same sound on both players. A bus peak cannot tell this from
+                # one loud playback; this is the only thing here that can.
+                call({"jsonrpc": "2.0", "id": 182, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Chimes",
+                                               "property": "play_count", "value": 2}}})
+                reply = call({"jsonrpc": "2.0", "id": 183, "method": "tools/call",
+                              "params": {"name": "Godot_GetAudioState"}})
+                audio = reply["result"]["structuredContent"]
+                check(len(audio["stacked"]) == 1,
+                      "the same sound playing twice was not reported as stacked: %r" % audio)
+                stack = audio["stacked"][0]
+                check(stack["stream"] == "res://audio/chime.wav",
+                      "the stacked entry names the wrong stream: %r" % stack)
+                check(stack["count"] == 2 and sorted(stack["node_paths"]) ==
+                      ["/root/Main/Chimes/One", "/root/Main/Chimes/Two"],
+                      "the stacked entry does not name both players: %r" % stack)
+                check("stacked" in audio["note"] and "more than one player" in audio["note"],
+                      "the note does not mention the stacking it found: %r" % audio["note"])
+                print("PASS Godot_GetAudioState found one sound playing on two players at once")
 
                 reply = call({"jsonrpc": "2.0", "id": 127, "method": "tools/call",
                               "params": {"name": "Godot_SetTimeScale",

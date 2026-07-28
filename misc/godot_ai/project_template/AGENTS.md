@@ -132,9 +132,11 @@ confidence.
 Do not plan around these. If your verification needs one, use the host-side harness
 below, register a project command, or record the gap honestly as unverified.
 
-- **You cannot hear the game.** `Godot_GetAudioState` reports buses, volumes, mute and
-  peak levels — enough to answer whether a sound *played*, never whether it sounded
-  right. Record that distinction rather than blurring it.
+- **You cannot hear the game.** `Godot_GetAudioState` reports buses, volumes, mute,
+  peak levels, every audio player, and any sound playing on more than one player at
+  once — enough to answer whether a sound *played* and whether it played twice, never
+  whether it sounded right. Record that distinction rather than blurring it. One thing
+  it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
 - **No editor-side *drag*.** `Godot_SendEditorInput` does moves, clicks and keys, so
