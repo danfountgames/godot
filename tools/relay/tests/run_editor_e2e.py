@@ -65,6 +65,19 @@ var drag_had_button := false
 var scroll_up := 0
 var scroll_down := 0
 
+# A cancelled touch is not a release. The engine models it as pressed = false *and*
+# canceled = true, so `is_released()` is false for it - a game that collapses the two
+# fires the button the player was dragging away from when a notification arrives.
+var touch_released := 0
+var touch_canceled := 0
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch and not event.pressed:
+		if event.canceled:
+			touch_canceled += 1
+		else:
+			touch_released += 1
+
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		if event.button_mask != 0:
@@ -1260,6 +1273,37 @@ def run(editor_binary, display):
                                          "arguments": {"action": "nonsense"}}})
                 check(refused(reply), "an unknown gamepad action was accepted")
                 print("PASS Godot_SendTouchInput and Godot_SendGamepadInput deliver events")
+
+                # A cancelled touch is not a release, and the difference is the whole
+                # reason this exists: a game that collapses the two fires the button the
+                # player was dragging away from when a notification arrives. Both counts
+                # are asserted, so a tool that sent an ordinary release and called it a
+                # cancellation fails.
+                before_released = surface("touch_released")
+                before_canceled = surface("touch_canceled")
+                call({"jsonrpc": "2.0", "id": 196, "method": "tools/call",
+                      "params": {"name": "Godot_SendTouchInput",
+                                 "arguments": {"action": "down", "x": 700, "y": 300}}})
+                reply = call({"jsonrpc": "2.0", "id": 197, "method": "tools/call",
+                              "params": {"name": "Godot_SendTouchInput",
+                                         "arguments": {"action": "cancel", "x": 700, "y": 300}}})
+                check(not refused(reply), "cancelling a touch failed: %s" % refusal_text(reply))
+                check(surface("touch_canceled") == before_canceled + 1,
+                      "the game did not see a cancelled touch")
+                check(surface("touch_released") == before_released,
+                      "the cancellation was delivered as an ordinary release, which is the "
+                      "one thing it must not be")
+
+                # And the other direction, so the check cannot pass by calling
+                # everything a cancellation.
+                call({"jsonrpc": "2.0", "id": 198, "method": "tools/call",
+                      "params": {"name": "Godot_SendTouchInput",
+                                 "arguments": {"action": "tap", "x": 700, "y": 300}}})
+                check(surface("touch_released") == before_released + 1,
+                      "a normal tap did not produce a release")
+                check(surface("touch_canceled") == before_canceled + 1,
+                      "a normal tap was reported as a cancellation")
+                print("PASS Godot_SendTouchInput cancels a touch as a cancellation, not a release")
 
                 # --- the trace ---------------------------------------------------
                 # Everything above was sent through this editor, so the game's own

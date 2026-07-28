@@ -139,8 +139,6 @@ below, register a project command, or record the gap honestly as unverified.
   it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
-- **No touch cancellation.** A touch the OS takes away — a notification, an incoming
-  call — cannot be simulated, so that recovery path stays unverified.
 - **Runtime errors carry a call site, not a call stack.** `Godot_GetRuntimeErrors`
   gives you file, line, function, message and kind. For anything deeper, read the
   Output log.
@@ -186,6 +184,10 @@ below, register a project command, or record the gap honestly as unverified.
   without having watched the run, and `1 failed` is not something you can act on.
   `Godot_ListSceneTests` finds scenes named `test_*.tscn`. The game is stopped after a
   run either way, so a test never leaks into the next thing you do.
+- **A cancelled touch is not a release.** `Godot_SendTouchInput` takes
+  `action: "cancel"` — the touch the OS takes away when a notification or a call
+  arrives. The engine's `is_released()` is false for it. Test it: a game that collapses
+  the two fires whatever button the player was dragging away from.
 - **A drag is one call, and `steps` matters.** `Godot_SendPointerInput` and
   `Godot_SendEditorInput` take `action: "drag"` with `to_x`/`to_y` and a step count. The
   motion between the ends is the whole content of a drag — a slider, a camera or a swipe

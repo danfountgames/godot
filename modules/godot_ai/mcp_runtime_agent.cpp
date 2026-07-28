@@ -1362,25 +1362,37 @@ Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r
 		return Dictionary();
 	}
 
-	auto touch = [&](bool p_pressed) {
+	// A cancel is `pressed = false` *and* `canceled = true`, which is how the engine
+	// itself models it: `InputEvent::is_released()` is `!pressed && !canceled`, so a
+	// cancelled touch is deliberately not a release. That distinction is the whole
+	// point - a game that treats the two alike fires the button the player was dragging
+	// away from.
+	auto touch = [&](bool p_pressed, bool p_canceled) {
 		Ref<InputEventScreenTouch> event;
 		event.instantiate();
 		event->set_index(index);
 		event->set_position(position);
 		event->set_pressed(p_pressed);
+		event->set_canceled(p_canceled);
 		input->parse_input_event(event);
 	};
 
 	int events = 0;
 	if (action == "down") {
-		touch(true);
+		touch(true, false);
 		events = 1;
 	} else if (action == "up") {
-		touch(false);
+		touch(false, false);
+		events = 1;
+	} else if (action == "cancel") {
+		// The touch the operating system takes away: a notification, an incoming call,
+		// a gesture the system claimed. A game has to survive it, and until now there
+		// was no way to put one into that state.
+		touch(false, true);
 		events = 1;
 	} else if (action == "tap") {
-		touch(true);
-		touch(false);
+		touch(true, false);
+		touch(false, false);
 		events = 2;
 	} else if (action == "drag") {
 		Ref<InputEventScreenDrag> event;
@@ -1393,7 +1405,8 @@ Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r
 		input->parse_input_event(event);
 		events = 1;
 	} else {
-		r_error = vformat("unknown touch action '%s'; expected down, up, tap or drag", action);
+		r_error = vformat("unknown touch action '%s'; expected down, up, cancel, tap or drag",
+				action);
 		return Dictionary();
 	}
 

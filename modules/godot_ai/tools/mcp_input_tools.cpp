@@ -529,9 +529,15 @@ Dictionary touch_schema() {
 	Vector<String> actions;
 	actions.push_back("down");
 	actions.push_back("up");
+	actions.push_back("cancel");
 	actions.push_back("tap");
 	actions.push_back("drag");
-	properties["action"] = MCPSchema::enum_property("Touch phase.", actions, "tap");
+	properties["action"] = MCPSchema::enum_property(
+			"Touch phase. 'cancel' is the touch the operating system takes away - a "
+			"notification, an incoming call - which a game must not treat as a release: the "
+			"engine's own is_released() is false for it, and a game that ignores the "
+			"difference fires the button the player was dragging away from.",
+			actions, "tap");
 	properties["x"] = MCPSchema::integer_property("Horizontal position in game window pixels.");
 	properties["y"] = MCPSchema::integer_property("Vertical position in game window pixels.");
 	properties["index"] = MCPSchema::integer_property(
@@ -622,9 +628,11 @@ void mcp_register_input_tools() {
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SendTouchInput", "send_touch",
-			"Deliver real touch events to the running game: tap, press, release or drag, with a "
-			"finger index so multi-touch and gesture thresholds can be exercised. A game that "
-			"only ever receives mouse events has not been tested on a touch device.",
+			"Deliver real touch events to the running game: tap, press, release, cancel or drag, "
+			"with a finger index so multi-touch and gesture thresholds can be exercised. A game "
+			"that only ever receives mouse events has not been tested on a touch device, and one "
+			"that has never had a touch cancelled has not been tested against a notification "
+			"arriving mid-gesture.",
 			MCP_CAP_SIMULATE_INPUT, touch_schema()))));
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
