@@ -161,6 +161,9 @@ below, register a project command, or record the gap honestly as unverified.
 - **To know whether a dialog is open, ask, do not photograph.** `Godot_ListWindows`
   names every open window, works with no display at all, and cannot be misread the way
   a screenshot can. Reach for a capture when you need to judge how something *looks*.
+- **The two write tools disagree about their argument name.** `Godot_WriteTextFile`
+  takes `text`; `Godot_WriteUserFile` takes `content`. Nothing about that is guessable —
+  read the schema rather than assuming the one you used last time.
 - **Never measure a coordinate off a screenshot.** `Godot_FindControl` gives you the
   screen rectangle and centre of any editor control by its text, name, class or tooltip
   — and of the *rows* of a Tree or ItemList, including the buttons drawn inside them,

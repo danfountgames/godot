@@ -33,8 +33,10 @@ interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
 every capture now carries its own provenance, and group F: the project's own test scenes
 are discoverable and runnable without a shell, and group E: stacked audio is detected
-structurally. **40 of the ledger's 41 items are VERIFIED**; G3 (save-corruption fixtures) is
-IMPLEMENTED and unproven, because no game here has a save system to corrupt. The chat
+structurally. **All 41 items in the interface ledger are VERIFIED**, including the five sub-clauses a
+later audit found the rows had glossed over: pointer drag and scroll, touch
+cancellation, error stack traces, stacking across a burst, and a save-corruption fixture
+proven against a game that actually has saves. The chat
 cancellation frame is caught end to end - the tools built for group I are what made that
 possible, by locating and pressing the dock's Cancel button.
 
@@ -104,7 +106,7 @@ All of the following on the current working tree, in one sweep:
   script starts itself, including a real 1152x648 screenshot, a running game's scene
   tree (`root > Main > Player, Hud, Field, Target, EnemySpawner`), a runtime edit that
   leaves the scene file byte-identical, and a question answered by clicking its dialog.
-  59 tools are advertised over `tools/list`.
+  60 tools are advertised over `tools/list`.
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
   visual tools refusing as they should.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md`, `CLAUDE.md` and

@@ -109,6 +109,53 @@ func _gui_input(event: InputEvent) -> void:
 			scroll_down += 1
 """
 
+SAVES_SCRIPT = """extends Node
+
+# A save system with a recovery path, so that "the tool can write a malformed save" can
+# become "a malformed save is survived". Without a game that has saves there is nothing
+# for a corruption fixture to be a fixture *of*.
+const SAVE_PATH := "user://save.json"
+
+var slot := {"level": 1, "score": 0}
+# Mirrored as a plain int: Godot_GetRuntimeProperty returns anything that is not a
+# scalar in Godot's own text form, so reading `slot` back means parsing a string.
+var level := 1
+var load_result := ""
+
+var save_now := 0:
+	set(value):
+		save_now = value
+		if value > 0:
+			_write()
+
+var load_now := 0:
+	set(value):
+		load_now = value
+		if value > 0:
+			_read()
+
+func _write() -> void:
+	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	file.store_string(JSON.stringify(slot))
+	file.close()
+
+func _read() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
+		load_result = "missing"
+		return
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(SAVE_PATH))
+	# The recovery path. A save that will not parse must not take the game down, and
+	# must not be quietly treated as a fresh start either - the player is told.
+	if typeof(parsed) != TYPE_DICTIONARY or not parsed.has("level"):
+		slot = {"level": 1, "score": 0}
+		level = 1
+		load_result = "recovered"
+		return
+	slot = parsed
+	level = int(slot["level"])
+	load_result = "loaded"
+"""
+
 CHIMES_SCRIPT = """extends Node
 
 # Two players, one stream. Setting play_count to 2 makes the same sound play twice at
@@ -189,12 +236,13 @@ NOT_A_TEST_SCENE = """[gd_scene format=3 uid="uid://bqxaie2et09"]
 [node name="NotATest" type="Node2D"]
 """
 
-MAIN_SCENE = """[gd_scene load_steps=5 format=3 uid="uid://bqxaie2e001"]
+MAIN_SCENE = """[gd_scene load_steps=6 format=3 uid="uid://bqxaie2e001"]
 
 [ext_resource type="Script" path="res://scripts/target.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/chimes.gd" id="2"]
 [ext_resource type="AudioStream" path="res://audio/chime.wav" id="3"]
 [ext_resource type="Script" path="res://scripts/surface.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/saves.gd" id="5"]
 
 [node name="Main" type="Node2D"]
 
@@ -222,6 +270,9 @@ offset_top = 100.0
 offset_right = 900.0
 offset_bottom = 500.0
 script = ExtResource("4")
+
+[node name="Saves" type="Node" parent="."]
+script = ExtResource("5")
 
 [node name="Chimes" type="Node" parent="."]
 script = ExtResource("2")
@@ -466,6 +517,8 @@ def build_project(root):
         handle.write(CHIMES_SCRIPT)
     with open(os.path.join(root, "scripts", "surface.gd"), "w") as handle:
         handle.write(SURFACE_SCRIPT)
+    with open(os.path.join(root, "scripts", "saves.gd"), "w") as handle:
+        handle.write(SAVES_SCRIPT)
     os.makedirs(os.path.join(root, "audio"), exist_ok=True)
     write_wav(os.path.join(root, "audio", "chime.wav"))
     with open(os.path.join(root, "project.godot"), "w") as handle:
@@ -1575,13 +1628,21 @@ def run(editor_binary, display):
                       "the window named the wrong sound or count: %r" % burst)
                 check(burst["at_frame"] > 0, "the window does not say when it happened: %r" % burst)
 
-                # And the proof that this catches what a snapshot cannot: by now the
-                # burst is long over, and asking directly finds nothing at all.
-                reply = call({"jsonrpc": "2.0", "id": 188, "method": "tools/call",
-                              "params": {"name": "Godot_GetAudioState"}})
+                # And the proof that this catches what a snapshot cannot: the burst is
+                # transient, so a snapshot taken once it is over finds nothing at all.
+                # Waited for rather than assumed - an unthrottled game can run 60 frames
+                # in less time than the burst lasts, and that is a fact about this
+                # machine, not about the tool.
+                deadline = time.time() + 15
+                while time.time() < deadline:
+                    reply = call({"jsonrpc": "2.0", "id": 188, "method": "tools/call",
+                                  "params": {"name": "Godot_GetAudioState"}})
+                    if reply["result"]["structuredContent"]["stacked"] == []:
+                        break
+                    time.sleep(0.5)
                 check(reply["result"]["structuredContent"]["stacked"] == [],
-                      "the burst is somehow still audible, so this proves nothing about "
-                      "windows: %r" % reply["result"]["structuredContent"]["stacked"])
+                      "the burst never ended, so it proves nothing about windows: %r"
+                      % reply["result"]["structuredContent"]["stacked"])
 
                 # Pointed at an idle game it must report nothing, or it would call
                 # everything stacked and the check above would be meaningless.
@@ -1594,6 +1655,75 @@ def run(editor_binary, display):
                 check("not the same as nothing ever stacking" in idle["note"],
                       "the empty result does not say what it does not prove: %r" % idle["note"])
                 print("PASS Godot_DetectAudioStacking caught a burst no snapshot could see")
+
+                # --- G3: a deliberately corrupted save ---------------------------
+                # The user-data tools are the mechanism for writing a malformed save.
+                # That only becomes a *verified* capability against a game that has a
+                # save system and a recovery path, so the fixture has one.
+                def saves(field):
+                    probe = call({"jsonrpc": "2.0", "id": 201, "method": "tools/call",
+                                  "params": {"name": "Godot_GetRuntimeProperty",
+                                             "arguments": {"path": "/root/Main/Saves",
+                                                           "property": field}}})
+                    check(not refused(probe),
+                          "reading Saves.%s failed: %s" % (field, refusal_text(probe)))
+                    return probe["result"]["structuredContent"]["value"]
+
+                def set_saves(field, value, identifier):
+                    reply = call({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                                  "params": {"name": "Godot_SetRuntimeProperty",
+                                             "arguments": {"path": "/root/Main/Saves",
+                                                           "property": field, "value": value}}})
+                    check(not refused(reply),
+                          "setting Saves.%s failed: %s" % (field, refusal_text(reply)))
+
+                # A good save first: the editor's tools have to be looking at the same
+                # user:// the game writes to, or nothing below means anything.
+                set_saves("save_now", 1, 202)
+                reply = call({"jsonrpc": "2.0", "id": 203, "method": "tools/call",
+                              "params": {"name": "Godot_ListUserFiles"}})
+                names = [entry["path"] for entry
+                         in reply["result"]["structuredContent"]["files"]]
+                check("user://save.json" in names,
+                      "the game's save is not visible to the user-data tools: %r" % names)
+
+                # A save the tool wrote must load as a save, or "recovered" below would
+                # only prove that the game cannot read anything at all.
+                reply = call({"jsonrpc": "2.0", "id": 204, "method": "tools/call",
+                              "params": {"name": "Godot_WriteUserFile",
+                                         "arguments": {"path": "user://save.json",
+                                                       "content": '{"level": 7, "score": 42}'}}})
+                check(not refused(reply), "writing a save failed: %s" % refusal_text(reply))
+                set_saves("load_now", 1, 205)
+                check(saves("load_result") == "loaded",
+                      "a valid save written by the tool did not load: %r" % saves("load_result"))
+                check(saves("level") == 7,
+                      "the loaded save has the wrong contents: %r" % saves("level"))
+
+                # Now the corruption fixture: truncated JSON, which is what a save
+                # interrupted by a crash or a full disk actually looks like.
+                reply = call({"jsonrpc": "2.0", "id": 206, "method": "tools/call",
+                              "params": {"name": "Godot_WriteUserFile",
+                                         "arguments": {"path": "user://save.json",
+                                                       "content": '{"level": 7, "sc'}}})
+                check(not refused(reply),
+                      "writing a malformed save failed: %s" % refusal_text(reply))
+                set_saves("load_now", 2, 207)
+                check(saves("load_result") == "recovered",
+                      "the game did not report recovering from a corrupt save: %r"
+                      % saves("load_result"))
+                check(saves("level") == 1,
+                      "the recovery did not fall back to a fresh slot: %r" % saves("level"))
+
+                # And it is still running. A recovery path that takes the game down with
+                # it is not a recovery path, and every check above would still pass if
+                # the game had died immediately afterwards.
+                reply = call({"jsonrpc": "2.0", "id": 208, "method": "tools/call",
+                              "params": {"name": "Godot_GetPerformanceMetrics"}})
+                check(not refused(reply),
+                      "the game did not survive loading a corrupt save: %s"
+                      % refusal_text(reply))
+                print("PASS a save corrupted through Godot_WriteUserFile is survived and reported")
 
                 reply = call({"jsonrpc": "2.0", "id": 127, "method": "tools/call",
                               "params": {"name": "Godot_SetTimeScale",
