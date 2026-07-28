@@ -39,6 +39,11 @@ jobs:
       - name: Cross-compile the relay for Windows
         run: tools/relay/build.sh --windows
 
+      # Builds from the tracked tree only, so a missing file or a build that relies
+      # on local state fails here rather than for whoever clones it next.
+      - name: Verify a clean checkout builds and packages
+        run: python3 tools/relay/tests/run_clean_checkout.py
+
   editor:
     name: Editor module tests and end-to-end
     needs: relay

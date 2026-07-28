@@ -190,7 +190,18 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   BLOCKED to IMPLEMENTED: the code exists and compiles, and only *running* it on a
   Windows or macOS host remains outside this environment.
 
+### S-12 packaging and audit coverage (C2, F6, F7)
+- `package.sh` assembles the distributable: relay binaries, example skills, README,
+  INSTALL.md, and the MIT licence and copyright notices that redistributing a derived
+  Godot binary requires.
+- `run_clean_checkout.py` exports the tracked tree with `git archive`, then builds,
+  tests and packages inside it. It caught an uncommitted `package.sh` on its very
+  first run, which is exactly the class of mistake it exists to catch.
+- Audit tests close F7: allowed and refused calls are both recorded, entries append,
+  a multi-line argument cannot break the one-object-per-line format, and client
+  approval is denied by default with only the exact automation opt-in accepted.
+
 ### Next
-- S-12:
+- S-13:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

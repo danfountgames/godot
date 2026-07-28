@@ -18,8 +18,8 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | F3 | MCP | NDJSON JSON-RPC framing + dispatch on the editor side | F2 | VERIFIED | `mcp_service.cpp` `_poll_peer`/`_handle_line` | `run_editor_e2e.py` | 12/12 live checks over real NDJSON frames | none |
 | F4 | MCP | Tool registry: register/unregister, duplicates, schemas, capabilities | F1 | VERIFIED | `mcp_tool_registry.cpp`, `mcp_schema.cpp` | `tests/test_mcp_registry.h` | 24 doctest cases pass | none |
 | F5 | SEC | Project-root confinement incl. traversal and symlink escape | F1 | VERIFIED | `mcp_paths.cpp` | `tests/test_mcp_paths.h` | traversal/scheme/symlink cases pass | none |
-| F6 | SEC | Permission model: capabilities, allow/ask/deny, client approval, read-only | F4 | IMPLEMENTED | `mcp_permissions.cpp`, `mcp_service.cpp` | `tests/test_mcp_paths.h`, `test_mcp_protocol.h` | policy evaluation fully covered | interactive approval UI (U2); approval persistence untested |
-| F7 | SEC | Audit log with secret redaction | F6 | IMPLEMENTED | `mcp_audit.cpp`, `mcp_tool.cpp` | redaction covered in `test_mcp_registry.h` | summaries redact `api_key` | no test that the log file is written//rotated |
+| F6 | SEC | Permission model: capabilities, allow/ask/deny, client approval, read-only | F4 | VERIFIED | `mcp_permissions.cpp`, `mcp_service.cpp` | `tests/test_mcp_paths.h`, `test_mcp_protocol.h`, `test_mcp_audit.h` | policy resolution, read-only, approval-mode narrowing, deny-by-default client approval | approval *persistence* rides on EditorSettings, which does not exist headlessly |
+| F7 | SEC | Audit log with secret redaction | F6 | VERIFIED | `mcp_audit.cpp`, `mcp_tool.cpp` | `tests/test_mcp_audit.h` | allowed and refused calls both recorded, appends, one object per line, secrets redacted at source | none |
 | F8 | SEC/PRI | Checkpoints created before mutation and restorable | F5,F6 | VERIFIED | `mcp_checkpoints.cpp`, `mcp_protocol.cpp`, `tools/mcp_checkpoint_tools.cpp` | `tests/test_mcp_checkpoints.h`, `run_editor_e2e.py` | restore compares contents byte for byte; created files are removed again; live round trip through the protocol | git-backed variant not implemented (snapshot only) |
 
 ## Protocol
@@ -83,7 +83,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | D3 | MCP | Example Godot `SKILL.md` that actually loads | S2 | VERIFIED | none — `misc/godot_ai/skills/scene-cleanup/` is copied into the e2e project and read back over the protocol, so the shipped file is the one proven to load |
 | D4 | — | `CLAUDE.md` continuity protocol (required deliverable) | — | VERIFIED | none — section present and kept current |
 | C1 | CI | CI wiring for relay tests, module tests, clean build | R2,F4 | IMPLEMENTED | `.github/workflows/godot_ai.yml` added and locally equivalent commands all pass; not yet observed green on GitHub Actions |
-| C2 | PKG | Packaging: install layout, licences, clean checkout | R1,D1 | NOT_STARTED | all |
+| C2 | PKG | Packaging: install layout, licences, clean checkout | R1,D1 | VERIFIED | `tools/relay/package.sh`, `tools/relay/tests/run_clean_checkout.py` | bundle contains the binaries, MIT notices, INSTALL.md and the example skill; the tracked tree builds, tests and packages from scratch |
 
 ## Optional (explicitly marked optional by the specification)
 

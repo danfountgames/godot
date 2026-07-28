@@ -25,8 +25,13 @@ against a running editor.
 
 ## Current vertical slice
 
-S-12 (next): packaging (C2), then the remaining coverage gaps (U1/U2 dialog tests,
-F6/F7 persistence and audit-file tests).
+S-13 (next): the last coverage gap — drive `MCPApprovalsDialog::refresh()` and the
+approve/revoke paths headlessly (U1, U2).
+
+S-12 (done): packaging and the audit-log gap. `package.sh` produces a distributable
+bundle with the MIT notices; `run_clean_checkout.py` proves the tracked tree builds,
+tests and packages with no local state, and caught an uncommitted file on its first
+run.
 
 S-11 (done): the relay's platform seam. Every socket, stdio, filesystem and signal
 call now goes through `platform::`, with a POSIX backend that behaves exactly as
@@ -77,14 +82,13 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-C2 (next). Just completed: R8 → IMPLEMENTED (was BLOCKED; the Windows path now
-exists and is compile-verified, only runtime verification remains blocked).
+U1, U2 (next). Just completed: C2, F6, F7 → VERIFIED.
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- Module suite: 50 cases, 341 assertions, all pass. Full engine suite from the
+- Module suite: 54 cases, 358 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
 - `python3 tools/relay/tests/run_editor_e2e.py` → 31/31 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
@@ -125,8 +129,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start C2 by seeing what the editor build already installs:
+Give the approvals dialog headless coverage; it needs a settings stand-in:
 
 ```sh
-grep -rn "install\|InstallAs" SConstruct platform/linuxbsd/SCsub | head
+grep -n "set_allow_override\|is_client_approved" modules/godot_ai/mcp_skills.h modules/godot_ai/mcp_service.h
 ```

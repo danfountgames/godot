@@ -2,12 +2,16 @@
 
 At most five ordered actions. The first must be immediately executable.
 
-1. Add packaging: install the relay next to the editor binary, ship licence notices,
-   and add a clean-checkout smoke test. — C2 — verified by building and running both
-   from a fresh clone.
-3. Give U1/U2 real coverage: drive `MCPApprovalsDialog::refresh()` and the
-   approve/revoke paths against a stub settings store. — U1, U2 — verified by those
-   tests passing headlessly.
-4. Cover F6/F7's untested edges: approval persistence across a restart, and that the
-   audit log file is actually written and contains the redacted summary. — F6, F7 —
-   verified by tests over a temporary settings/audit location.
+1. Give `MCPApprovalsDialog` headless coverage: build it with a stub service, call
+   `refresh()`, and assert it lists pending clients and every discovered skill with
+   the right status and buttons. — U2 — verified by that test passing headlessly.
+2. Cover the palette/menu registration: assert the commands exist after the service
+   enters the tree. — U1 — verified by the same test run.
+3. Cover approval persistence: an `EditorSettings` stand-in so approve/revoke can be
+   asserted to survive, closing the last F6 caveat. — F6 — verified headlessly.
+4. Re-read `docs/godot-ai-clone-spec.md` end to end against the ledger and correct any
+   entry whose evidence no longer matches the code. — all — verified by the audit
+   finding no discrepancies.
+5. Consider the optional tranche (O1–O4) only after the above: in-editor chat UI,
+   packaged agent backends, export-template integration, remote HTTP transport. Each
+   is explicitly optional in the specification and none is started.
