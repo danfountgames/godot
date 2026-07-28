@@ -69,9 +69,17 @@ bool MCPRuntimeBridge::capture(const String &p_message, const Array &p_data, int
 			continue;
 		}
 		const MCPDeferred::Token token = pending[i].token;
+		const Callable transform = pending[i].transform;
 		pending.remove_at(i);
 		if (ok) {
-			MCPDeferred::complete(token, payload);
+			Dictionary answer = payload;
+			if (transform.is_valid()) {
+				const Variant transformed = transform.call(payload);
+				if (transformed.get_type() == Variant::DICTIONARY) {
+					answer = transformed;
+				}
+			}
+			MCPDeferred::complete(token, answer);
 		} else {
 			MCPDeferred::fail(token, MCPToolError::INVALID_STATE,
 					String(payload.get("message", "the running game refused the request")));
@@ -88,7 +96,7 @@ bool MCPRuntimeBridge::is_game_reachable() const {
 	return debugger && debugger->get_default_debugger() && debugger->get_default_debugger()->is_session_active();
 }
 
-MCPDeferred::Token MCPRuntimeBridge::send(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds) {
+MCPDeferred::Token MCPRuntimeBridge::send(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds, const Callable &p_transform) {
 	EditorDebuggerNode *debugger = EditorDebuggerNode::get_singleton();
 	if (!debugger || !is_game_reachable()) {
 		return MCPDeferred::INVALID_TOKEN;
@@ -98,6 +106,7 @@ MCPDeferred::Token MCPRuntimeBridge::send(const String &p_command, const Diction
 	entry.request_id = vformat("r%d", next_request++);
 	entry.token = MCPDeferred::begin(p_timeout_seconds);
 	entry.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
+	entry.transform = p_transform;
 	pending.push_back(entry);
 
 	Array message;

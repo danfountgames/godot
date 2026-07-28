@@ -55,6 +55,7 @@
 #include "core/string/ustring.h"
 #include "core/variant/array.h"
 #include "core/variant/dictionary.h"
+#include "core/variant/variant.h"
 
 // The debugger message namespace shared by both ends of the channel. Editor-side
 // requests arrive as `godot_ai:<command>`; replies go back as `godot_ai:reply`.
@@ -73,6 +74,14 @@ class MCPRuntimeAgent {
 	// Commands.
 	static Dictionary _ping(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _send_pointer(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _send_key(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _capture(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _get_property(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _set_property(const Dictionary &p_arguments, String &r_error);
+
+	// Turns a value that arrived as JSON into the type the property actually holds.
+	// Returns false when no honest conversion exists.
+	static bool _coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error);
 
 public:
 	// Installs the capture handler. Safe to call more than once; does nothing in an

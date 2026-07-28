@@ -36,7 +36,12 @@
 #include "core/debugger/engine_debugger.h"
 #include "core/input/input.h"
 #include "core/input/input_event.h"
+#include "core/io/dir_access.h"
+#include "core/templates/local_vector.h"
+#include "core/io/image.h"
+#include "core/os/keyboard.h"
 #include "core/os/os.h"
+#include "core/variant/variant_parser.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
@@ -121,6 +126,18 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "send_pointer") {
 		return _send_pointer(p_arguments, r_error);
+	}
+	if (p_command == "send_key") {
+		return _send_key(p_arguments, r_error);
+	}
+	if (p_command == "capture") {
+		return _capture(p_arguments, r_error);
+	}
+	if (p_command == "get_property") {
+		return _get_property(p_arguments, r_error);
+	}
+	if (p_command == "set_property") {
+		return _set_property(p_arguments, r_error);
 	}
 	r_error = vformat("unknown runtime command '%s'", p_command);
 	return Dictionary();
@@ -230,6 +247,295 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 	result["events"] = events;
 	result["window_width"] = window_size.width;
 	result["window_height"] = window_size.height;
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_error) {
+	Input *input = Input::get_singleton();
+	if (!input || !SceneTree::get_singleton()) {
+		r_error = "the running game cannot receive input";
+		return Dictionary();
+	}
+
+	const String action = p_arguments.has("action") ? String(p_arguments["action"]) : String("type");
+	const bool shift = p_arguments.has("shift") ? (bool)p_arguments["shift"] : false;
+	const bool ctrl = p_arguments.has("ctrl") ? (bool)p_arguments["ctrl"] : false;
+	const bool alt = p_arguments.has("alt") ? (bool)p_arguments["alt"] : false;
+	const bool meta = p_arguments.has("meta") ? (bool)p_arguments["meta"] : false;
+
+	auto make_event = [&](Key p_keycode, char32_t p_unicode, bool p_pressed) {
+		Ref<InputEventKey> event;
+		event.instantiate();
+		event->set_keycode(p_keycode);
+		event->set_physical_keycode(p_keycode);
+		event->set_unicode(p_unicode);
+		event->set_pressed(p_pressed);
+		event->set_shift_pressed(shift);
+		event->set_ctrl_pressed(ctrl);
+		event->set_alt_pressed(alt);
+		event->set_meta_pressed(meta);
+		input->parse_input_event(event);
+	};
+
+	int events = 0;
+
+	if (action == "type") {
+		const String text = p_arguments.has("text") ? String(p_arguments["text"]) : String();
+		if (text.is_empty()) {
+			r_error = "typing needs some text";
+			return Dictionary();
+		}
+		// One press and release per character, carrying the unicode value - which is
+		// what a LineEdit reads. Sending only a keycode types nothing for most
+		// characters, and sending only unicode leaves shortcuts unreachable.
+		for (int i = 0; i < text.length(); i++) {
+			const char32_t character = text[i];
+			Key keycode = Key::NONE;
+			if (character >= 'a' && character <= 'z') {
+				keycode = (Key)((char32_t)Key::A + (character - 'a'));
+			} else if (character >= 'A' && character <= 'Z') {
+				keycode = (Key)((char32_t)Key::A + (character - 'A'));
+			} else if (character >= '0' && character <= '9') {
+				keycode = (Key)((char32_t)Key::KEY_0 + (character - '0'));
+			} else if (character == ' ') {
+				keycode = Key::SPACE;
+			}
+			make_event(keycode, character, true);
+			make_event(keycode, character, false);
+			events += 2;
+		}
+	} else {
+		const String key_name = p_arguments.has("key") ? String(p_arguments["key"]) : String();
+		if (key_name.is_empty()) {
+			r_error = "press and release need a key name, such as Enter or Escape";
+			return Dictionary();
+		}
+		const Key keycode = find_keycode(key_name);
+		if (keycode == Key::NONE) {
+			r_error = vformat("'%s' is not a key name this engine recognises", key_name);
+			return Dictionary();
+		}
+		if (action == "press") {
+			make_event(keycode, 0, true);
+			events = 1;
+		} else if (action == "release") {
+			make_event(keycode, 0, false);
+			events = 1;
+		} else if (action == "tap") {
+			make_event(keycode, 0, true);
+			make_event(keycode, 0, false);
+			events = 2;
+		} else {
+			r_error = vformat("unknown key action '%s'; expected type, press, release or tap", action);
+			return Dictionary();
+		}
+	}
+
+	Dictionary result;
+	result["action"] = action;
+	result["events"] = events;
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_capture(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no viewport to capture";
+		return Dictionary();
+	}
+	Ref<ViewportTexture> texture = tree->get_root()->get_texture();
+	if (texture.is_null()) {
+		r_error = "the running game's viewport has no texture yet";
+		return Dictionary();
+	}
+	Ref<Image> image = texture->get_image();
+	if (image.is_null() || image->is_empty()) {
+		r_error = "the running game has not rendered a frame yet";
+		return Dictionary();
+	}
+
+	// Written to a file rather than returned inline: the debugger channel is a
+	// message bus for small payloads, and a screenshot is not small. The editor reads
+	// it back from disk and decides what to do with it.
+	const String directory = OS::get_singleton()->get_user_data_dir().path_join("godot_ai_captures");
+	Ref<DirAccess> access = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	if (access.is_valid() && !access->dir_exists(directory)) {
+		access->make_dir_recursive(directory);
+	}
+	const String path = directory.path_join(vformat("frame_%d.png", OS::get_singleton()->get_ticks_msec()));
+	const Error error = image->save_png(path);
+	if (error != OK) {
+		r_error = vformat("could not write the capture to %s", path);
+		return Dictionary();
+	}
+
+	Dictionary result;
+	result["path"] = path;
+	result["width"] = image->get_width();
+	result["height"] = image->get_height();
+	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no scene tree";
+		return Dictionary();
+	}
+	const String path = p_arguments.has("path") ? String(p_arguments["path"]) : String();
+	const String property = p_arguments.has("property") ? String(p_arguments["property"]) : String();
+	if (path.is_empty() || property.is_empty()) {
+		r_error = "reading a property needs a node path and a property name";
+		return Dictionary();
+	}
+
+	Node *node = tree->get_root()->get_node_or_null(NodePath(path));
+	if (!node) {
+		r_error = vformat("no node at '%s' in the running game", path);
+		return Dictionary();
+	}
+
+	bool valid = false;
+	const Variant value = node->get(property, &valid);
+	if (!valid) {
+		r_error = vformat("'%s' has no property '%s'", path, property);
+		return Dictionary();
+	}
+
+	Dictionary result;
+	result["path"] = path;
+	result["property"] = property;
+	result["type"] = Variant::get_type_name(value.get_type());
+	// Scalars survive JSON untouched; everything else would either be mangled or
+	// refused, so it goes back in Godot's own text form, which round-trips.
+	switch (value.get_type()) {
+		case Variant::BOOL:
+		case Variant::INT:
+		case Variant::FLOAT:
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+			result["value"] = value;
+			break;
+		default:
+			result["value"] = String(value);
+			break;
+	}
+	String text;
+	VariantWriter::write_to_string(value, text);
+	result["text"] = text;
+	return result;
+}
+
+bool MCPRuntimeAgent::_coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error) {
+	if (p_value.get_type() == p_target) {
+		r_out = p_value;
+		return true;
+	}
+
+	// A value that arrived as JSON has only arrays, numbers, strings and booleans to
+	// work with, so a Vector2 shows up as [x, y]. Building the real type from that is
+	// the difference between setting a property and silently doing nothing: Object::set
+	// does not convert, it just refuses, and it refuses quietly.
+	if (p_value.get_type() == Variant::ARRAY) {
+		const Array values = p_value;
+		Vector<Variant> arguments;
+		for (int i = 0; i < values.size(); i++) {
+			arguments.push_back(values[i]);
+		}
+		LocalVector<const Variant *> pointers;
+		for (uint32_t i = 0; i < (uint32_t)arguments.size(); i++) {
+			pointers.push_back(&arguments[i]);
+		}
+		Callable::CallError call_error;
+		Variant constructed;
+		Variant::construct(p_target, constructed, pointers.ptr(), (int)pointers.size(), call_error);
+		if (call_error.error == Callable::CallError::CALL_OK) {
+			r_out = constructed;
+			return true;
+		}
+		r_error = vformat("cannot build a %s from %d values", Variant::get_type_name(p_target), values.size());
+		return false;
+	}
+
+	// Numbers and strings convert where Godot itself says they can.
+	if (Variant::can_convert(p_value.get_type(), p_target)) {
+		Callable::CallError call_error;
+		const Variant *argument = &p_value;
+		Variant converted;
+		Variant::construct(p_target, converted, &argument, 1, call_error);
+		if (call_error.error == Callable::CallError::CALL_OK) {
+			r_out = converted;
+			return true;
+		}
+	}
+
+	r_error = vformat("cannot use a %s as a %s",
+			Variant::get_type_name(p_value.get_type()), Variant::get_type_name(p_target));
+	return false;
+}
+
+Dictionary MCPRuntimeAgent::_set_property(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no scene tree";
+		return Dictionary();
+	}
+	const String path = p_arguments.has("path") ? String(p_arguments["path"]) : String();
+	const String property = p_arguments.has("property") ? String(p_arguments["property"]) : String();
+	if (path.is_empty() || property.is_empty()) {
+		r_error = "setting a property needs a node path and a property name";
+		return Dictionary();
+	}
+	if (!p_arguments.has("value")) {
+		r_error = "setting a property needs a value";
+		return Dictionary();
+	}
+
+	Node *node = tree->get_root()->get_node_or_null(NodePath(path));
+	if (!node) {
+		r_error = vformat("no node at '%s' in the running game", path);
+		return Dictionary();
+	}
+
+	bool valid = false;
+	const Variant current = node->get(property, &valid);
+	if (!valid) {
+		r_error = vformat("'%s' has no property '%s'", path, property);
+		return Dictionary();
+	}
+
+	Variant value;
+	String coerce_error;
+	if (!_coerce(p_arguments["value"], current.get_type(), value, coerce_error)) {
+		r_error = vformat("'%s.%s' is a %s: %s", path, property,
+				Variant::get_type_name(current.get_type()), coerce_error);
+		return Dictionary();
+	}
+
+	node->set(property, value);
+
+	// Read back rather than assume. Object::set is silent about refusing, and a tool
+	// that reports success it did not verify is worse than one that fails.
+	const Variant applied = node->get(property, &valid);
+	if (!valid || applied != value) {
+		String wanted;
+		String got;
+		VariantWriter::write_to_string(value, wanted);
+		VariantWriter::write_to_string(applied, got);
+		r_error = vformat("'%s.%s' did not take the value: wanted %s, holds %s",
+				path, property, wanted, got);
+		return Dictionary();
+	}
+
+	Dictionary result;
+	result["path"] = path;
+	result["property"] = property;
+	result["persistent"] = false;
+	result["type"] = Variant::get_type_name(applied.get_type());
+	String text;
+	VariantWriter::write_to_string(applied, text);
+	result["text"] = text;
 	return result;
 }
 

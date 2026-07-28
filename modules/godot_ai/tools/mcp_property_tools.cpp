@@ -31,6 +31,7 @@
 #include "mcp_builtin_tools.h"
 
 #include "../mcp_deferred.h"
+#include "../mcp_runtime_bridge.h"
 #include "../mcp_tool_registry.h"
 
 #include "core/os/os.h"
@@ -347,92 +348,53 @@ class SetRuntimePropertyTool : public MCPTool {
 public:
 	virtual String get_tool_name() const override { return "Godot_SetRuntimeProperty"; }
 	virtual String get_description() const override {
-		return "Set a property on a node in the RUNNING game. The change is NOT persistent: "
-			   "it is lost as soon as the game stops, and it never reaches the scene file. "
-			   "To make a lasting change, use Godot_SetSceneProperty.";
+		return "Set a property on a node in the *running* game. The change affects the running "
+			   "game only and is discarded when it stops - it is not written to the project. "
+			   "Use Godot_SetSceneProperty for a change that must survive.";
 	}
-	// Driving the running game, not editing the project: nothing persistent can come
-	// out of this, so it is gated with play-mode rather than as a project mutation.
-	virtual MCPCapability get_capability() const override { return MCP_CAP_RUN_PROJECT; }
-
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
 	virtual Dictionary get_input_schema() const override {
 		Dictionary properties;
 		properties["path"] = MCPSchema::string_property(
-				"Node path in the running game, e.g. '/root/Main/Player'.");
-		properties["property"] = MCPSchema::string_property("Property name.");
-		properties["value"] = MCPSchema::any_property("New value. Vectors and colours are arrays, e.g. [128, 64].");
+				"Node path in the running game, such as /root/Main/Player.");
+		properties["property"] = MCPSchema::string_property("Property name, such as position.");
+		properties["value"] = MCPSchema::any_property(
+				"New value. A structured type may be given as an array - [64, 32] for a "
+				"Vector2 - and is converted to whatever the property actually holds.");
 		Vector<String> required;
 		required.push_back("path");
 		required.push_back("property");
+		required.push_back("value");
 		return MCPSchema::object_schema(properties, required);
 	}
 	virtual Dictionary get_output_schema() const override {
 		Dictionary properties;
 		properties["path"] = MCPSchema::string_property("Node that was changed.");
-		properties["property"] = MCPSchema::string_property("Property that was set.");
-		properties["persistent"] = MCPSchema::bool_property("Always false: this is lost when the game stops.");
+		properties["property"] = MCPSchema::string_property("Property that was changed.");
+		properties["persistent"] = MCPSchema::bool_property("Always false: runtime edits do not persist.");
+		properties["type"] = MCPSchema::string_property("Godot type the property holds.");
+		properties["text"] = MCPSchema::string_property("The value the property now holds, read back.");
 		return MCPSchema::object_schema(properties);
 	}
 
-	String pending_path;
-	String pending_property;
-	Variant pending_value;
-
-	// Returns the result once the tree is available; Variant() means "still waiting".
-	// An error is reported by returning a result the protocol turns into a failure,
-	// because a poller has no error channel of its own.
-	Variant _apply() {
-		if (!remote_tree_ready()) {
-			return Variant();
-		}
-		EditorDebuggerTree *tree = EditorDebuggerNode::get_singleton()->get_remote_tree();
-		const ObjectID id = tree->get_object_id_for_path(pending_path);
-		ScriptEditorDebugger *debugger = EditorDebuggerNode::get_singleton()->get_current_debugger();
-		if (id.is_null() || !debugger) {
-			Dictionary failure;
-			failure["error"] = vformat("no node at '%s' in the running game; paths there start at '/root'", pending_path);
-			return failure;
-		}
-		debugger->update_remote_object(id, pending_property, pending_value);
-
-		Dictionary result;
-		result["path"] = pending_path;
-		result["property"] = pending_property;
-		result["persistent"] = false;
-		return result;
-	}
-
-public:
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
-		EditorDebuggerTree *tree = get_remote_tree(r_error, get_tool_name());
-		if (!tree) {
+		if (!EditorNode::get_singleton() || !EditorInterface::get_singleton()) {
+			r_error.set(MCPToolError::UNSUPPORTED, "this process has no running Godot editor");
 			return Dictionary();
 		}
-
-		pending_path = String(p_arguments["path"]).strip_edges();
-		pending_property = p_arguments["property"];
-		pending_value = p_arguments.has("value") ? p_arguments["value"] : Variant();
-
-		// Deliberately *not* short-circuiting on remote_tree_ready(). The editor keeps
-		// the last tree it was sent, and the first one arrives as soon as the game is
-		// up - often before the main scene has been instantiated. Returning that
-		// because it "is ready" makes every later call hand back the same bare root,
-		// so an agent polling for its scene waits forever on a cached answer. Always
-		// ask again; the wait below is what makes that cheap.
-		request_remote_tree();
-		if (false) {
-			const Variant applied = _apply();
-			const Dictionary result = applied;
-			if (result.has("error")) {
-				r_error.set(MCPToolError::NOT_FOUND, result["error"]);
-				return Dictionary();
-			}
-			return result;
+		MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
+		if (!bridge || !bridge->is_game_reachable()) {
+			r_error.set(MCPToolError::INVALID_STATE,
+					"no game is running; start one with Godot_PlayCurrentScene or "
+					"Godot_PlayMainScene first");
+			return Dictionary();
 		}
-
-		request_remote_tree();
-		return MCPDeferred::make_deferred_result(
-				MCPDeferred::begin_polled(10.0, callable_mp(this, &SetRuntimePropertyTool::_apply)));
+		// Sent through the runtime agent rather than the debugger's generic
+		// set_object_property, which hands the value to Object::set unconverted. A
+		// Vector2 property given a JSON [64, 32] is simply refused there, silently, and
+		// the tool used to report success anyway. The agent knows the property's real
+		// type, converts to it, and reads the value back before answering.
+		return MCPDeferred::make_deferred_result(bridge->send("set_property", p_arguments));
 	}
 };
 

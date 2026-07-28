@@ -43,6 +43,7 @@
 #include "mcp_deferred.h"
 
 #include "core/object/ref_counted.h"
+#include "core/variant/callable.h"
 #include "core/variant/dictionary.h"
 #include "editor/plugins/editor_debugger_plugin.h"
 
@@ -53,6 +54,10 @@ class MCPRuntimeBridge : public EditorDebuggerPlugin {
 		String request_id;
 		MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
 		double deadline = 0.0;
+		// Applied to the game's reply before the client sees it, for the cases where
+		// the useful answer needs something only the editor can do - reading back the
+		// screenshot the game just wrote, for instance.
+		Callable transform;
 	};
 
 	Vector<Pending> pending;
@@ -74,7 +79,7 @@ public:
 
 	// Sends a command and returns a deferred token the caller should hand back to the
 	// protocol layer. Returns INVALID_TOKEN when no game is running.
-	MCPDeferred::Token send(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds = 10.0);
+	MCPDeferred::Token send(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds = 10.0, const Callable &p_transform = Callable());
 
 	// Fails every pending request; called when the game goes away.
 	void abandon_all(const String &p_reason);

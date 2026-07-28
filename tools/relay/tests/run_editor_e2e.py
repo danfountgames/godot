@@ -59,6 +59,12 @@ MAIN_SCENE = """[gd_scene load_steps=2 format=3 uid="uid://bqxaie2e001"]
 
 [node name="Hud" type="CanvasLayer" parent="."]
 
+[node name="Field" type="LineEdit" parent="Hud"]
+offset_left = 100.0
+offset_top = 200.0
+offset_right = 400.0
+offset_bottom = 240.0
+
 [node name="Target" type="Button" parent="Hud"]
 offset_left = 100.0
 offset_top = 100.0
@@ -546,6 +552,14 @@ def run(editor_binary, display):
         check(refused(reply), "pointer input was accepted with no game running")
         check("no game is running" in refusal_text(reply),
               "the input refusal does not explain itself: %r" % refusal_text(reply))
+
+        for identifier, name in ((76, "Godot_SendKeyInput"), (77, "Godot_CaptureGame"),
+                                 (78, "Godot_GetRuntimeProperty")):
+            arguments = {"path": "/root/Main", "property": "name"} \
+                if name == "Godot_GetRuntimeProperty" else {}
+            reply = call({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                          "params": {"name": name, "arguments": arguments}})
+            check(refused(reply), "%s was accepted with no game running" % name)
         print("PASS runtime tools refuse cleanly while nothing is running")
 
         # --- deferred responses -----------------------------------------------
@@ -725,6 +739,90 @@ def run(editor_binary, display):
                 check("outside the game window" in refusal_text(reply),
                       "the refusal does not explain itself: %r" % refusal_text(reply))
                 print("PASS Godot_SendPointerInput refuses coordinates off the window")
+
+                # --- reading runtime state back --------------------------------
+                # Godot_SetRuntimeProperty set the player's position earlier. Until now
+                # nothing could confirm it from the game's own state rather than from
+                # the tool's own report, which is not evidence of anything.
+                reply = call({"jsonrpc": "2.0", "id": 92, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(reply["result"]["isError"] is False,
+                      "reading a runtime property failed: %s" % refusal_text(reply))
+                value = reply["result"]["structuredContent"]
+                check(value["type"] == "Vector2",
+                      "the property came back as the wrong type: %r" % value)
+                check("64" in value["text"] and "32" in value["text"],
+                      "the runtime property does not hold what was written to it: %r" % value)
+                print("PASS Godot_GetRuntimeProperty read the value back out of the game")
+
+                reply = call({"jsonrpc": "2.0", "id": 93, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Nope",
+                                                       "property": "position"}}})
+                check(refused(reply), "reading a property of a node that does not exist succeeded")
+
+                reply = call({"jsonrpc": "2.0", "id": 94, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "not_a_property"}}})
+                check(refused(reply), "reading a property that does not exist succeeded")
+                print("PASS Godot_GetRuntimeProperty refuses unknown nodes and properties")
+
+                # --- typing into the running game ------------------------------
+                # Click the field first, then type: characters go to whatever holds
+                # focus, exactly as they would for a player.
+                reply = call({"jsonrpc": "2.0", "id": 95, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"x": 250, "y": 220}}})
+                check(reply["result"]["isError"] is False,
+                      "clicking the text field failed: %s" % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 96, "method": "tools/call",
+                              "params": {"name": "Godot_SendKeyInput",
+                                         "arguments": {"action": "type", "text": "hello"}}})
+                check(reply["result"]["isError"] is False,
+                      "typing failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["events"] == 10,
+                      "five characters should be five presses and five releases: %r"
+                      % reply["result"]["structuredContent"])
+
+                # The proof: the field's own text. Nothing here set it - the characters
+                # had to travel the input pipeline into the focused control.
+                reply = call({"jsonrpc": "2.0", "id": 97, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Hud/Field",
+                                                       "property": "text"}}})
+                check(reply["result"]["isError"] is False,
+                      "reading the typed text failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["value"] == "hello",
+                      "the typed characters did not reach the field: %r"
+                      % reply["result"]["structuredContent"])
+                print("PASS Godot_SendKeyInput typed into the running game")
+
+                reply = call({"jsonrpc": "2.0", "id": 98, "method": "tools/call",
+                              "params": {"name": "Godot_SendKeyInput",
+                                         "arguments": {"action": "tap", "key": "NotAKey"}}})
+                check(refused(reply), "an unknown key name was accepted")
+                print("PASS Godot_SendKeyInput refuses a key name it does not know")
+
+                # --- seeing the running game -----------------------------------
+                reply = call({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
+                              "params": {"name": "Godot_CaptureGame"}})
+                check(reply["result"]["isError"] is False,
+                      "capturing the game failed: %s" % refusal_text(reply))
+                shot = reply["result"]["structuredContent"]
+                check(shot["width"] > 100 and shot["height"] > 100,
+                      "the game capture is implausibly small: %r" % shot)
+                with open(shot["path"], "rb") as handle:
+                    check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                          "the game capture is not a PNG")
+                images = [c for c in reply["result"]["content"] if c["type"] == "image"]
+                check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
+                      "the game capture was not returned inline")
+                print("PASS Godot_CaptureGame photographed the running game (%dx%d)"
+                      % (shot["width"], shot["height"]))
             elif has_display:
                 raise Failure("the running game never reported its scene tree")
             else:

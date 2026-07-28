@@ -19,7 +19,7 @@ that its signal fired.
 |---|---|---|---|---|---|
 | A1 | Runtime agent channel (editor ↔ running game) | — | VERIFIED | `mcp_runtime_agent.{h,cpp}` in the game process, `mcp_runtime_bridge.{h,cpp}` in the editor, over the remote debugger. Request/reply correlation with deferred tokens; a game that stops mid-request fails its callers immediately rather than making them wait out the timeout. Exercised by every A2 check in `run_editor_e2e.py` | none |
 | A2 | `Godot_SendPointerInput` | simulate_input | VERIFIED | `tools/mcp_input_tools.cpp`. move/press/release/click through `Input::parse_input_event()`. Proven in `run_editor_e2e.py` by a button that records both its `pressed` signal *and* whether `_gui_input` saw an `InputEventMouseButton` — a shortcut implementation passes the first and fails the second. Refuses with no game running, and off-window coordinates | touch/keys are A3–A4 |
-| A3 | `Godot_SendKeyInput` | simulate_input | NOT_STARTED | — | all |
+| A3 | `Godot_SendKeyInput` | simulate_input | VERIFIED | `tools/mcp_input_tools.cpp`, `_send_key` in the agent. type/press/release/tap through `Input::parse_input_event()`, each character carrying its unicode value because that is what a `LineEdit` reads. Proven in `run_editor_e2e.py` by clicking a field, typing, and reading the field's own `text` back out of the game — nothing in the test sets that text. Refuses unknown key names | modifiers are implemented but not asserted |
 | A4 | `Godot_SendTouchInput` | simulate_input | NOT_STARTED | — | all |
 | A5 | `Godot_SendGamepadInput` | simulate_input | NOT_STARTED | — | all |
 | A6 | `Godot_GetInputTrace` | read_runtime | NOT_STARTED | — | all |
@@ -28,7 +28,7 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| B1 | `Godot_CaptureGame` | read_runtime | NOT_STARTED | — | all |
+| B1 | `Godot_CaptureGame` | read_runtime | VERIFIED | `tools/mcp_input_tools.cpp`, `_capture` in the agent. The game saves a PNG of its own viewport and reports the path; the editor reads it back and returns it inline when small enough — pixels do not travel the debugger bus, which is a message channel. Asserted in `run_editor_e2e.py` on PNG magic bytes, plausible size and the inline block | frame sequences are B2 |
 | B2 | `Godot_CaptureFrameSequence` | read_runtime | NOT_STARTED | — | all |
 | B3 | `Godot_CaptureEditorWindow` (incl. popups) | read_project | NOT_STARTED | — | all |
 | B4 | Capture metadata on every image | — | NOT_STARTED | — | all |
@@ -37,7 +37,7 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| C1 | `Godot_GetRuntimeProperty` | read_runtime | NOT_STARTED | — | all |
+| C1 | `Godot_GetRuntimeProperty` | read_runtime | VERIFIED | `tools/mcp_input_tools.cpp`, `_get_property` in the agent. Returns the value JSON can carry plus Godot's own text form, which round-trips for every type. Refuses unknown nodes and unknown properties. **It immediately earned its place**: reading back what `Godot_SetRuntimeProperty` claimed to have written showed the write had never happened | none |
 | C2 | `Godot_GetRuntimeNodeInfo` | read_runtime | NOT_STARTED | — | all |
 | C3 | `Godot_WaitForRuntimeCondition` | read_runtime | NOT_STARTED | — | all |
 | C4 | `Godot_GetRuntimeErrors` (structured) | read_runtime | NOT_STARTED | — | all |
@@ -104,6 +104,13 @@ that its signal fired.
 |---|---|---|---|---|---|
 | K1 | `Godot_CreateCheckpoint` (named, on demand) | edit_files | NOT_STARTED | — | all |
 | K2 | `Godot_DiffCheckpoint` | read_project | NOT_STARTED | — | all |
+
+## Bugs this tranche found in existing tools
+
+| ID | Bug | Status |
+|---|---|---|
+| Y-1 | `Godot_SetRuntimeProperty` reported success while doing nothing whenever the value's JSON type did not match the property's real type. It went through the debugger's generic `scene:set_object_property`, which hands the value to `Object::set` unconverted — and `Object::set` refuses silently. A `Vector2` given `[64, 32]` simply stayed `(0, 0)`. The old test only asserted that the *scene file* was unchanged, so it never noticed. Now routed through the runtime agent, which knows the property's real type, converts to it, and **reads the value back before answering** | FIXED, covered by `run_editor_e2e.py` |
+| Y-2 | `Godot_GetRuntimeSceneTree` returned the editor's cached tree whenever one existed, and the first tree arrives before the main scene is instantiated — so an agent polling while a game booted got a bare `root` for ever | FIXED |
 
 ## New capability classes
 
