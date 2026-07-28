@@ -59,33 +59,46 @@ python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 \
     --path ~/games/my-game --editor
 ```
 
-## What was corrected from the original draft
+## How this relates to the fork
 
-The draft this came from assumed an interface richer than the one that exists. Those
-assumptions are the expensive kind: an agent plans a verification strategy around a
-tool, then discovers mid-session that it was never there. The corrections:
+The draft this came from assumed an interface richer than the one that existed. Rather
+than only correcting the document, most of those assumptions have since been **built**
+— see `docs/godot-ai-agent-interface-spec.md` and `.agent/INTERFACE_LEDGER.md` in the
+engine repository for what exists, what does not, and why.
 
-- **There is no virtual input tool.** Nothing in the MCP surface injects mouse,
-  keyboard, touch or gamepad input. Real-input validation — which `AGENTS.md` still
-  requires — comes from the host (`xdotool` against a real or virtual display), and
-  `tools/relay/tests/run_editor_ui_e2e.py` is a working example to copy.
-- **`Godot_CaptureViewport` photographs the editor, not the running game.** A game in
-  its own window, and editor dialogs, are separate OS windows and will not appear.
-  Capture those at the host level.
-- **There is no profiler, video capture, input-trace recorder, audio inspection, or
-  test-runner tool.** Performance and audio claims must come from instrumentation the
-  agent adds, and the limitation must be recorded rather than papered over.
-- **Filesystem tools cannot reach `user://`**, where saves normally live.
+What the fork gained because this template asked for it:
+
+- **Real input into the running game**: `Godot_SendPointerInput`, `SendKeyInput`,
+  `SendTouchInput`, `SendGamepadInput`, delivered through the same entry point the
+  platform layer uses for physical hardware — plus `Godot_GetInputTrace`, so a claimed
+  interaction is checkable rather than arguable.
+- **Seeing the game**: `Godot_CaptureGame` for the running game, and
+  `Godot_CaptureEditorWindow` for the whole screen including dialogs.
+- **Runtime state**: `GetRuntimeProperty`, `GetRuntimeNodeInfo`,
+  `WaitForRuntimeCondition` (so nothing sleeps), `GetRuntimeErrors` with file and line,
+  `GetPerformanceMetrics`, `GetGameWindowInfo`, `SetGameWindowSize`.
+- **Saves**: the `user://` tools, so save/load and corrupt-save recovery can be tested
+  at all.
+- **Project settings and named checkpoints.**
+
+What is still genuinely absent is listed in `AGENTS.md`, and is short: audio
+inspection, a test runner, frame-sequence capture, editor-side input injection, and
+arbitrary shell execution — the last deliberately and permanently.
+
+Two things the draft never mentioned, both still true and both worth knowing before a
+first session:
+
 - **Mutating tools are `ask` by default**, so an unattended agent is refused until
-  permission is granted. The draft never mentioned this, and it is the single most
-  likely way a first session stalls.
+  permission is granted. This is the single most likely way a first session stalls.
 - **The launched game inherits the project's renderer, not the editor's command line**
   — which is why `project.godot` here asks for `gl_compatibility`.
-- Two host-input behaviours that cost real debugging time are documented: nothing
-  restores X input focus when a popup closes, and typed characters only land after the
-  target field is clicked.
-- `BLOCKED` is narrowed to genuinely external conditions. "Needs a display" is not one
-  of them, because the fork ships a display.
+
+And two host-input behaviours that cost real debugging time, which still apply when
+driving the *editor's* own UI: nothing restores X input focus when a popup closes, and
+typed characters only land after the target field is clicked.
+
+`BLOCKED` is narrowed to genuinely external conditions. "Needs a display" is not one of
+them, because the fork ships a display.
 
 The structure, voice and standards of the original are otherwise intact — in
 particular the separation that matters most: the agent may build the game efficiently

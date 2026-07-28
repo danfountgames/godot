@@ -30,7 +30,7 @@ that its signal fired.
 |---|---|---|---|---|---|
 | B1 | `Godot_CaptureGame` | read_runtime | VERIFIED | `tools/mcp_input_tools.cpp`, `_capture` in the agent. The game saves a PNG of its own viewport and reports the path; the editor reads it back and returns it inline when small enough — pixels do not travel the debugger bus, which is a message channel. Asserted in `run_editor_e2e.py` on PNG magic bytes, plausible size and the inline block | frame sequences are B2 |
 | B2 | `Godot_CaptureFrameSequence` | read_runtime | NOT_STARTED | — | all |
-| B3 | `Godot_CaptureEditorWindow` (incl. popups) | read_project | NOT_STARTED | — | all |
+| B3 | `Godot_CaptureEditorWindow` (incl. popups) | read_project | VERIFIED | `DisplayServer::screen_get_image`, so dialogs and the game's own window appear — they are separate OS windows and invisible to a viewport capture. Asserted in the e2e to be at least as large as the viewport capture, and to be a real PNG. Refuses headless, and refuses platforms whose display server cannot capture | none |
 | B4 | Capture metadata on every image | — | NOT_STARTED | — | all |
 
 ## C — Runtime inspection
@@ -78,7 +78,7 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| H1 | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` | edit_files | NOT_STARTED | — | all |
+| H1 | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` | edit_files | VERIFIED | reads one setting or lists the ones this project actually sets — not the thousands of engine defaults that would bury them. Writes match the existing type before saving, because `project.godot` is typed and a viewport width written as a string silently does nothing. The e2e reads the change back out of the file, not out of the tool's report, and asserts a checkpoint was taken | none |
 | H2 | `Godot_SetGameWindowSize` | run_project | VERIFIED | resizes the running game so a resolution matrix does not need a relaunch per size, and reports the size that was *applied* alongside the one requested — a window manager is free to refuse, and a matrix built on requested sizes proves nothing. Absurd sizes refused | none |
 | H3 | `Godot_GetGameWindowInfo` | read_runtime | VERIFIED | window and viewport size, aspect, content scale. Asserted against `Godot_CaptureGame` in the e2e: the two must agree about how big the game is, or one of them is lying about what a screenshot means | none |
 
@@ -102,7 +102,7 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| K1 | `Godot_CreateCheckpoint` (named, on demand) | edit_files | NOT_STARTED | — | all |
+| K1 | `Godot_CreateCheckpoint` (named, on demand) | edit_files | VERIFIED | snapshots named files under a label, for the moment before a sequence of risky changes rather than only before one tool's write. The e2e creates one, clobbers the file, restores through it, and checks the original contents came back | none |
 | K2 | `Godot_DiffCheckpoint` | read_project | NOT_STARTED | — | all |
 
 ## Bugs this tranche found in existing tools
@@ -118,4 +118,4 @@ that its signal fired.
 |---|---|---|---|
 | X-1 | `simulate_input` capability class, ask-by-default | VERIFIED | none — added to `MCPCapability`, defaults to `ask`, and is distinct from `run_project` because input can do anything a player can |
 | X-2 | `read_user_data` / `edit_user_data` classes | VERIFIED | both ask-by-default. Reading is `ask` where reading the *project* is `allow`, because this is the player's data rather than the developer's source |
-| X-3 | Template `AGENTS.md` updated as capabilities land | NOT_STARTED | all |
+| X-3 | Template `AGENTS.md` updated as capabilities land | VERIFIED | the template listed 25 tools and told agents input injection, runtime reads, performance and `user://` did not exist. All of that is now built, so leaving it would have been worse than the original error — it would have told an agent to fall back to a host harness for something the product does. Now lists 46 tools, and the "does not provide" section is down to audio, a test runner, frame sequences, editor-side input, and shell execution |

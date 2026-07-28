@@ -61,5 +61,6 @@ void mcp_register_capture_tools();
 void mcp_register_ask_user_tool();
 void mcp_register_input_tools();
 void mcp_register_user_data_tools();
+void mcp_register_project_config_tools();
 
 #endif // MCP_BUILTIN_TOOLS_H

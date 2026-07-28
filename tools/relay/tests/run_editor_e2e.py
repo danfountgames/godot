@@ -637,6 +637,23 @@ def run(editor_binary, display):
             print("PASS Godot_CaptureViewport produced a real %dx%d image"
                   % (shot["width"], shot["height"]))
 
+            # The whole screen, which is the only capture that contains a dialog -
+            # every dialog is a separate OS window and so invisible to the viewport.
+            reply = call({"jsonrpc": "2.0", "id": 81, "method": "tools/call",
+                          "params": {"name": "Godot_CaptureEditorWindow"}})
+            check(reply["result"]["isError"] is False,
+                  "capturing the editor window failed: %s" % refusal_text(reply))
+            window_shot = reply["result"]["structuredContent"]
+            check(window_shot["width"] >= shot["width"],
+                  "the screen capture is smaller than the viewport capture: %r vs %r"
+                  % (window_shot, shot))
+            on_disk = os.path.join(project, window_shot["path"].replace("res://", ""))
+            with open(on_disk, "rb") as handle:
+                check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                      "the editor window capture is not a PNG")
+            print("PASS Godot_CaptureEditorWindow captured the whole screen (%dx%d)"
+                  % (window_shot["width"], window_shot["height"]))
+
         # --- output log -------------------------------------------------------
         # The AI service announces itself in the Output panel at startup, so that
         # message is a fact about this editor that the tool must be able to see.
@@ -1079,6 +1096,67 @@ def run(editor_binary, display):
                                  "arguments": {"path": "user://saves/slot1.json"}}})
         check(refused(reply), "the deleted save was still readable")
         print("PASS Godot_DeleteUserFile demands confirmation, then deletes")
+
+        # --- project settings and on-demand checkpoints ------------------------
+        reply = call({"jsonrpc": "2.0", "id": 130, "method": "tools/call",
+                      "params": {"name": "Godot_GetProjectSetting",
+                                 "arguments": {"name": "application/run/main_scene"}}})
+        check(reply["result"]["isError"] is False,
+              "reading a project setting failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["value"] == "res://scenes/main.tscn",
+              "the main scene setting is wrong: %r" % reply["result"]["structuredContent"])
+
+        reply = call({"jsonrpc": "2.0", "id": 131, "method": "tools/call",
+                      "params": {"name": "Godot_GetProjectSetting"}})
+        names = reply["result"]["structuredContent"]["settings"]
+        check("application/run/main_scene" in names,
+              "listing settings omitted one the project sets: %r" % names)
+
+        reply = call({"jsonrpc": "2.0", "id": 132, "method": "tools/call",
+                      "params": {"name": "Godot_GetProjectSetting",
+                                 "arguments": {"name": "nope/not/a/setting"}}})
+        check(refused(reply), "reading a setting that does not exist succeeded")
+
+        reply = call({"jsonrpc": "2.0", "id": 133, "method": "tools/call",
+                      "params": {"name": "Godot_SetProjectSetting",
+                                 "arguments": {"name": "display/window/size/viewport_width",
+                                               "value": 800}}})
+        check(reply["result"]["isError"] is False,
+              "writing a project setting failed: %s" % refusal_text(reply))
+        # Read back from the file, not from the tool's own report.
+        with open(os.path.join(project, "project.godot")) as handle:
+            check("viewport_width=800" in handle.read().replace(" ", ""),
+                  "the setting did not reach project.godot")
+        check(reply["result"].get("_meta", {}).get("checkpoint"),
+              "changing a project setting was not checkpointed")
+        print("PASS project settings read, list, write and checkpoint")
+
+        reply = call({"jsonrpc": "2.0", "id": 134, "method": "tools/call",
+                      "params": {"name": "Godot_CreateCheckpoint",
+                                 "arguments": {"label": "before the risky bit",
+                                               "paths": ["res://notes.txt"]}}})
+        check(reply["result"]["isError"] is False,
+              "creating a checkpoint failed: %s" % refusal_text(reply))
+        manual_checkpoint = reply["result"]["structuredContent"]["checkpoint"]
+
+        # Change the file, then put it back through the named point.
+        call({"jsonrpc": "2.0", "id": 135, "method": "tools/call",
+              "params": {"name": "Godot_WriteTextFile",
+                         "arguments": {"path": "res://notes.txt", "content": "clobbered"}}})
+        reply = call({"jsonrpc": "2.0", "id": 136, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"id": manual_checkpoint}}})
+        check(not refused(reply),
+              "restoring the manual checkpoint failed: %s" % refusal_text(reply))
+        with open(os.path.join(project, "notes.txt")) as handle:
+            check(handle.read().startswith("hello"),
+                  "the manual checkpoint did not restore the original file")
+
+        reply = call({"jsonrpc": "2.0", "id": 137, "method": "tools/call",
+                      "params": {"name": "Godot_CreateCheckpoint",
+                                 "arguments": {"paths": ["res://nope.txt"]}}})
+        check(refused(reply), "a checkpoint of a file that does not exist was accepted")
+        print("PASS Godot_CreateCheckpoint marks a point that Godot_RestoreCheckpoint returns to")
 
         # --- checkpoints ------------------------------------------------------
         # The write above must have produced a checkpoint; restoring it has to remove

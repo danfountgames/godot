@@ -102,44 +102,48 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (25)
+## Tools exposed over MCP (46)
 
 | Area | Tools |
 |---|---|
 | Status | `Godot_GetEditorStatus` (includes `display_server` and `can_render`) |
 | Project files | `Godot_ListScenes`, `Godot_ListAssets`, `Godot_ReadTextFile`, `Godot_WriteTextFile`, `Godot_SearchProject` |
+| Project settings | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` |
 | Scenes | `Godot_OpenScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
 | Undo | `Godot_UndoLastAction`, `Godot_RedoLastAction` |
 | Play mode | `Godot_PlayCurrentScene`, `Godot_PlayMainScene`, `Godot_StopPlaying` |
-| Running game | `Godot_GetRuntimeSceneTree`, `Godot_SetRuntimeProperty` |
+| **Real input** | `Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput`, `Godot_SendGamepadInput`, `Godot_GetInputTrace` |
+| Running game | `Godot_GetRuntimeSceneTree`, `Godot_GetRuntimeProperty`, `Godot_SetRuntimeProperty`, `Godot_GetRuntimeNodeInfo`, `Godot_WaitForRuntimeCondition`, `Godot_GetRuntimeErrors`, `Godot_GetGameWindowInfo`, `Godot_SetGameWindowSize` |
+| Performance | `Godot_GetPerformanceMetrics` |
 | Output | `Godot_ReadOutputLog` |
-| Visual | `Godot_CaptureViewport` |
+| Visual | `Godot_CaptureViewport` (the editor's viewport), `Godot_CaptureGame` (the running game), `Godot_CaptureEditorWindow` (the whole screen, dialogs included) |
+| Saves and settings | `Godot_ListUserFiles`, `Godot_ReadUserFile`, `Godot_WriteUserFile`, `Godot_DeleteUserFile` |
 | User | `Godot_AskUser` |
 | Skills | `Godot_ListSkills`, `Godot_ReadSkill` |
-| Checkpoints | `Godot_ListCheckpoints`, `Godot_RestoreCheckpoint` |
+| Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint` |
 
 ## What the interface does **not** provide
 
 Do not plan around these. If your verification needs one, use the host-side harness
 below, register a project command, or record the gap honestly as unverified.
 
-- **No virtual mouse, keyboard, touch, or gamepad input tool.** Nothing in the MCP
-  surface injects input into the running game. Real-input validation comes from the
-  host harness (`xdotool` on a real or virtual display), not from a `Godot_*` tool.
-- **No profiler, frame-timing, or memory-inspection tool.**
-- **No video capture and no input-trace recorder.** Capture frame sequences yourself.
 - **No audio inspection.** You cannot hear or measure audio through the interface.
+  Verify structurally — that the file imported, the bus is right, the real player
+  action triggers it — and record what you could not check.
 - **No test-runner tool.** Run tests from the shell.
+- **No frame-sequence capture.** `Godot_CaptureGame` gives one frame at a time; if you
+  need to see a transition, take several and say when each was taken.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary.
-- **No `user://` access.** Filesystem tools are confined to the project root, and the
-  confinement is re-checked after symlink resolution.
+- **No editor-side input injection.** The input tools drive the *running game*. To
+  drive the editor's own UI — a dialog, the command palette — use the host harness.
 
 ## Sharp edges that will cost you a session if you miss them
 
-- **`Godot_CaptureViewport` captures the editor viewport, not the game window.** A
-  running game in its own window will not appear in it, and neither will editor
-  dialogs or popups, which are separate OS windows. It refuses outright when the
-  editor is headless.
+- **Three captures, three different questions.** `Godot_CaptureGame` photographs the
+  running game — that is the one a playtest wants. `Godot_CaptureViewport` photographs
+  the editor's viewport. `Godot_CaptureEditorWindow` photographs the whole screen, and
+  is the only one that contains a dialog, because every dialog is a separate OS window.
+  Reviewing the wrong one is easy and looks exactly like a bug in the game.
 - **A headless editor cannot render.** Check `Godot_GetEditorStatus.can_render`
   *before* planning visual verification, rather than discovering it from a refusal.
 - **The game inherits the *project's* renderer, not the editor's command line.** Under
@@ -147,7 +151,10 @@ below, register a project command, or record the gap honestly as unverified.
   game dies before the debugger connects. This template already sets it.
 - **Runtime edits are not persistent, by design.** `Godot_SetRuntimeProperty` changes
   the running game and leaves the scene file untouched. Use `Godot_SetSceneProperty`
-  for changes that must survive stopping the game.
+  for changes that must survive stopping the game. Values arriving as JSON are
+  converted to the property's real type — `[64, 32]` becomes a `Vector2` — and the
+  write is read back before the tool answers, so a write that does not take is an
+  error rather than a success.
 - **Mutating tools are `ask` by default** (`edit_files`, `edit_scene`, `run_project`).
   An autonomous session that has not been granted them will be refused every time.
   See *First run* below.
@@ -627,9 +634,31 @@ still traverse the intended interface.
 Real-input testing is mandatory for player-facing flows — and **the MCP interface
 cannot do it.** There is no input-injection tool. Input comes from the host.
 
-## The harness
+## Input into the running game: use the tools
 
-On a machine with no screen, the fork ships a virtual display:
+`Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput` and
+`Godot_SendGamepadInput` deliver events through `Input::parse_input_event()` — the same
+entry point the platform layer uses for physical hardware. They are real input, and
+they need no display of their own.
+
+Aim by asking, not by guessing: `Godot_GetRuntimeNodeInfo` reports a Control's actual
+on-screen rectangle, so a click can target the centre the *game* reported rather than a
+coordinate copied out of a scene file. The test then says what it means and the event
+is still real.
+
+Never sleep. `Godot_WaitForRuntimeCondition` waits until a property reaches a value or
+fails with what it actually found. "Wait two seconds and hope" is the usual reason a
+test passes on a fast machine and fails on a loaded one, and it hides the difference
+between slow and broken.
+
+`Godot_GetInputTrace` returns what was delivered and when, so "a click was sent" and "a
+click arrived" stop being the same sentence.
+
+## The harness: for the editor's own UI
+
+The tools above cover the game. Driving the *editor* — a dialog, the command palette —
+still needs host-level input. On a machine with no screen, the fork ships a virtual
+display:
 
 ```sh
 python3 tools/virtual_display.py --probe     # what is possible here
@@ -642,9 +671,9 @@ example before writing your own.
 
 Use the highest-fidelity path available, in order:
 
-1. host-level virtual mouse, keyboard, touch or gamepad input (`xdotool`, or the
-   platform equivalent)
-2. input injection that still traverses Godot's normal `Input` and GUI event pipeline
+1. the `Godot_Send*Input` tools, for anything in the running game
+2. host-level virtual input (`xdotool`, or the platform equivalent), for the editor's
+   own windows
 3. semantic control activation **only** as a diagnostic aid, never as black-box proof
 
 ## Two failures that will waste hours
@@ -819,12 +848,14 @@ pixels unstable.
 failure and recovery, save/quit/relaunch/resume, settings persistence, content unlock,
 completion flow.
 
-**Performance** — measure representative gameplay, not empty scenes. Record frame
-time, slow frames, memory, object counts, draw calls, physics cost, load time, import
-time, transition time, shader stalls. Note that the interface exposes **no profiler**:
-gather timing from in-game instrumentation you add, and say so in the evidence. Use the
-specification's budgets; if none are supplied, choose reasonable target-platform
-budgets, record them, and validate on representative hardware.
+**Performance** — measure representative gameplay, not empty scenes.
+`Godot_GetPerformanceMetrics` samples frame rate, frame and physics time, memory,
+object and node counts and draw calls. One call is one sample: take a window of them
+across real play before treating any of it as a verdict on a budget, and record the
+worst frame rather than the mean. Load, import and transition times still need
+instrumentation you add. Use the specification's budgets; if none are supplied, choose
+reasonable target-platform budgets, record them, and validate on representative
+hardware.
 
 ---
 
@@ -899,9 +930,14 @@ Developer familiarity is not evidence that onboarding is clear.
 9. confirm failure does not destroy recoverable data
 10. verify settings and progression independently
 
-Do not verify save behaviour only by inspecting the serialized file. Note that the
-filesystem tools cannot reach `user://`, where saves normally live — inspect saves
-from the host shell or from inside the running game.
+Do not verify save behaviour only by inspecting the serialized file. `Godot_ReadUserFile`
+and `Godot_ListUserFiles` reach `user://`, where saves live, and `Godot_WriteUserFile`
+is how a deliberately malformed save gets written so the recovery path can be tested at
+all. Writing a save to reach a game state is not the same as playing to it, and proves
+nothing about whether a player could.
+
+`Godot_DeleteUserFile` needs `confirm=true`: there is no checkpoint for user data, so
+a deleted save is gone.
 
 ---
 
@@ -915,6 +951,11 @@ where applicable.
 For each, inspect clipping, safe areas, anchors, text wrapping, control size,
 pointer/touch targeting, gameplay visibility, camera framing, modal behaviour,
 transitions and screenshots.
+
+`Godot_SetGameWindowSize` resizes the running game, so a matrix does not need a
+relaunch per size. Check the `applied` size it reports rather than the one you asked
+for — a window manager is free to refuse, and a matrix built on requested sizes proves
+nothing.
 
 Do not resize the editor viewport and assume the runtime result matches.
 
