@@ -23,9 +23,13 @@ Verify with `pkg-config --exists xcursor xinerama xrandr xi alsa`.
 
 ## Tests
 
-- Engine doctest: `bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"`.
-  **Run it from outside the repository** (`cd /tmp && …`): the binary's working
-  directory is what a misbehaving fixture would damage.
+- Module doctest: `bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"`
+  — runs from any directory.
+- **Full engine suite must run from the repository root.** The GDScript runner,
+  completion and LSP suites resolve their test data relative to the working directory
+  and fail with "Invalid test directory" / "Could not open specified root directory"
+  when run elsewhere. That is not a regression; check it from the root before
+  concluding anything broke. Baseline with this module: 922 cases, ~2.4M assertions.
 - Module test headers are auto-discovered from `modules/<name>/tests/test_*.h` via
   `modules/modules_tests.gen.h` when `tests=yes`; no manual registration.
 - Relay: `python3 tools/relay/tests/run_tests.py` — the fastest meaningful signal.

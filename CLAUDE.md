@@ -69,8 +69,12 @@ Build dependencies on a bare Ubuntu container (once; `apt-get update` first, or
 # Editor build. SCU build is REQUIRED for acceptable speed: ~8 min clean on 4 cores.
 scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no scu_build=yes tests=yes -j$(nproc)
 
-# Engine unit tests (doctest). Module tests live in modules/godot_ai/tests/.
+# This module's tests (doctest). Runnable from any directory.
 bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
+
+# Full engine suite. Must run from the repository root: several in-tree suites
+# resolve their test data relative to the working directory.
+./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test
 
 # Relay build (seconds, no engine dependency).
 tools/relay/build.sh
@@ -82,8 +86,11 @@ python3 tools/relay/tests/run_tests.py
 python3 tools/relay/tests/run_editor_e2e.py
 ```
 
-Run the engine test binary from a directory you do not mind touching; prefer
-`--headless` and never from `/`.
+Run the module's own suite from any directory; **run the full engine suite from the
+repository root** (`./bin/godot… --headless --test`), because several in-tree suites
+resolve their test data relative to the working directory. The reason the working
+directory used to be dangerous is fixed at the source — fixtures delete through
+`mcp_test_remove_tree()` — not by choosing a different directory.
 
 ## Engineering rules
 

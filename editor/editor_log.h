@@ -185,6 +185,23 @@ protected:
 
 public:
 	void add_message(const String &p_msg, MessageType p_type = MSG_TYPE_STD);
+
+	// Read access to the collected output, so tooling (the AI service's
+	// Godot_ReadOutputLog) can report what the editor and the running game printed
+	// without scraping the RichTextLabel.
+	int get_message_count() const { return messages.size(); }
+	String get_message_text(int p_index) const {
+		ERR_FAIL_INDEX_V(p_index, messages.size(), String());
+		return messages[p_index].text;
+	}
+	MessageType get_message_type(int p_index) const {
+		ERR_FAIL_INDEX_V(p_index, messages.size(), MSG_TYPE_STD);
+		return messages[p_index].type;
+	}
+	int get_message_repeat_count(int p_index) const {
+		ERR_FAIL_INDEX_V(p_index, messages.size(), 0);
+		return messages[p_index].count;
+	}
 	void set_tool_button(Button *p_tool_button);
 	void register_undo_redo(UndoRedo *p_undo_redo);
 	void deinit();

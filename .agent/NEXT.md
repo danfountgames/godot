@@ -2,10 +2,7 @@
 
 At most five ordered actions. The first must be immediately executable.
 
-1. Add `Godot_ReadOutputLog`, backed by the editor log, with a level filter and a
-   line limit. — T9 — verified by an e2e check that a message the editor printed
-   appears in the tool's output.
-2. Add `Godot_SetSceneProperty` (persistent, undoable, `edit_scene`) and
+1. Add `Godot_SetSceneProperty` (persistent, undoable, `edit_scene`) and
    `Godot_SetRuntimeProperty` (play-mode only, `read_runtime`/`run_project`), with
    the distinction stated in both names and descriptions. — T15 — verified by an e2e
    check that a runtime edit does not survive stopping the game.

@@ -107,7 +107,20 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - `Godot_ListCheckpoints` / `Godot_RestoreCheckpoint`, with restore putting contents
   back byte for byte and removing files the tool had created.
 
+### S-07 output log (T9)
+- `EditorLog` kept its messages private, so the fork adds read accessors rather than
+  scraping the RichTextLabel. This is the kind of hook the specification says a fork
+  exists to provide.
+- `Godot_ReadOutputLog` filters by problem level and substring, then keeps the newest
+  N matches - filtering after truncating would return fewer matches than requested.
+- Also corrected a piece of guidance that was wrong: the **full** engine suite must
+  run from the repository root, because the GDScript runner, completion and LSP
+  suites resolve test data relative to the working directory. Running it from /tmp
+  produced failures that looked like regressions and were not. The module's own suite
+  runs from anywhere, and fixture safety comes from `mcp_test_remove_tree()`, not
+  from the choice of working directory.
+
 ### Next
-- S-07: `Godot_ReadOutputLog` and the runtime/persistent property split (T9, T15),
+- S-07 continues: the runtime/persistent property split (T15),
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

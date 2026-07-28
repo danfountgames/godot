@@ -48,4 +48,7 @@ void mcp_register_skill_tools();
 // Listing and restoring the file snapshots taken before mutating tools run.
 void mcp_register_checkpoint_tools();
 
+// Reading the editor Output panel, which also carries the running game's output.
+void mcp_register_output_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

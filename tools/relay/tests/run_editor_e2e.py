@@ -161,7 +161,8 @@ def run(editor_binary):
                          "Godot_ReadTextFile", "Godot_WriteTextFile", "Godot_SearchProject",
                          "Godot_ManageNode", "Godot_UndoLastAction",
                          "Godot_ListSkills", "Godot_ReadSkill",
-                         "Godot_ListCheckpoints", "Godot_RestoreCheckpoint"):
+                         "Godot_ListCheckpoints", "Godot_RestoreCheckpoint",
+                         "Godot_ReadOutputLog"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -343,12 +344,35 @@ def run(editor_binary):
         # The effect is checked on disk, not taken from the tool's own report.
         with open(os.path.join(project, "written.txt")) as handle:
             check(handle.read() == "written through MCP", "file content does not match")
+        # Held separately: later calls reuse `reply`, and the checkpoint check below
+        # needs the metadata from this specific write.
+        write_reply = reply
         print("PASS Godot_WriteTextFile")
+
+        # --- output log -------------------------------------------------------
+        # The AI service announces itself in the Output panel at startup, so that
+        # message is a fact about this editor that the tool must be able to see.
+        reply = call({"jsonrpc": "2.0", "id": 60, "method": "tools/call",
+                      "params": {"name": "Godot_ReadOutputLog",
+                                 "arguments": {"contains": "Godot AI service"}}})
+        check(reply["result"]["isError"] is False,
+              "reading the output log failed: %s" % reply["result"]["content"][0]["text"])
+        messages = reply["result"]["structuredContent"]["messages"]
+        check(any("listening on" in m["text"] for m in messages),
+              "the service startup message was not in the output log: %r" % messages)
+        check(messages[0]["type"] == "editor", "message type was not classified")
+        print("PASS Godot_ReadOutputLog returned editor output")
+
+        reply = call({"jsonrpc": "2.0", "id": 61, "method": "tools/call",
+                      "params": {"name": "Godot_ReadOutputLog",
+                                 "arguments": {"contains": "this string appears nowhere"}}})
+        check(reply["result"]["structuredContent"]["messages"] == [],
+              "a filter that matches nothing still returned messages")
 
         # --- checkpoints ------------------------------------------------------
         # The write above must have produced a checkpoint; restoring it has to remove
         # the file, because it did not exist beforehand.
-        created_checkpoint = reply["result"].get("_meta", {}).get("checkpoint")
+        created_checkpoint = write_reply["result"].get("_meta", {}).get("checkpoint")
         check(created_checkpoint, "the mutating write did not report a checkpoint")
 
         reply = call({"jsonrpc": "2.0", "id": 50, "method": "tools/call",

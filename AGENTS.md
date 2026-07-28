@@ -42,7 +42,8 @@ libxrandr-dev libasound2-dev`, plus `pip install scons`. Run `apt-get update` fi
 
 ```sh
 python3 tools/relay/tests/run_tests.py                 # fastest signal, no engine build
-cd /tmp && <repo>/bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
+bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
+./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test   # full suite, from the repo root
 python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~30s
 ```
 
@@ -50,7 +51,9 @@ python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~30s
   failures unreadable.
 - Run the end-to-end script after any change to tool behaviour, path handling, or
   the protocol. It has already caught a defect that unit tests missed.
-- Run the engine test binary from **outside** the checkout.
+- The module's own suite runs from any directory. The **full** engine suite must run
+  from the repository root: several in-tree suites resolve their test data relative to
+  the working directory and fail with "Invalid test directory" elsewhere.
 
 ## Safety rules
 

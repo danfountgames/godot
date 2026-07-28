@@ -25,8 +25,8 @@ against a running editor.
 
 ## Current vertical slice
 
-S-07 (next): `Godot_ReadOutputLog` (T9) and the runtime/persistent property split
-(T15), then the approvals UI (U1, U2).
+S-07 (in progress): `Godot_ReadOutputLog` (T9) is done. Remaining in this slice: the
+runtime/persistent property split (T15), then the approvals UI (U1, U2).
 
 S-06 (done): checkpoints. Snapshots are taken by the protocol layer before any
 mutating tool runs, from paths the tool itself declares, and stored outside the
@@ -57,9 +57,9 @@ T9, T15 (next). Just completed: F8, T8 → VERIFIED.
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
-- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 44 cases,
-  318 assertions, all pass.
-- `python3 tools/relay/tests/run_editor_e2e.py` → 23/23 checks pass against a live
+- Module suite: 44 cases, 318 assertions, all pass. Full engine suite from the
+  repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
+- `python3 tools/relay/tests/run_editor_e2e.py` → 25/25 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
   trip verified against the saved scene file, and the shipped example skill read back
   over the protocol.
@@ -97,8 +97,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start T9 by finding what the editor log exposes to read back:
+Start T15 by finding how the editor pushes property changes into the running game:
 
 ```sh
-grep -n "add_message\|MessageType\|class EditorLog" editor/editor_log.h | head -20
+grep -rn "live_debug\|set_object_property" editor/debugger/editor_debugger_node.h | head -20
 ```
