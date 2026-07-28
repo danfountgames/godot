@@ -1,0 +1,82 @@
+name: 🤖 Godot AI tooling
+on:
+  push:
+    paths:
+      - "tools/relay/**"
+      - "modules/godot_ai/**"
+      - ".github/workflows/godot_ai.yml"
+  pull_request:
+    paths:
+      - "tools/relay/**"
+      - "modules/godot_ai/**"
+      - ".github/workflows/godot_ai.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: godot-ai-${{github.head_ref || github.run_number}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  # The relay is engine-independent and builds in seconds, so it gates the slower
+  # editor job: a broken transport should fail in under a minute, not after a build.
+  relay:
+    name: Relay build and integration tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the relay
+        run: tools/relay/build.sh
+
+      - name: Run relay integration tests
+        run: python3 tools/relay/tests/run_tests.py
+
+  editor:
+    name: Editor module tests and end-to-end
+    needs: relay
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libx11-dev libxcursor-dev libxinerama-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev \
+            libudev-dev libxi-dev libxrandr-dev
+          python3 -m pip install scons
+
+      - name: Restore SCons cache
+        uses: actions/cache@v4
+        with:
+          path: ${{github.workspace}}/.scons_cache/
+          key: godot-ai-${{github.ref}}-${{github.sha}}
+          restore-keys: |
+            godot-ai-${{github.ref}}-
+            godot-ai-
+
+      - name: Build the editor with tests
+        env:
+          SCONS_CACHE: ${{github.workspace}}/.scons_cache/
+        run: |
+          scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no \
+            scu_build=yes tests=yes warnings=extra werror=yes -j$(nproc)
+
+      - name: Build the relay
+        run: tools/relay/build.sh
+
+      # Run from outside the checkout: the test binary's working directory is what a
+      # misbehaving fixture would damage.
+      - name: Run module unit tests
+        run: |
+          cd "${RUNNER_TEMP}"
+          "${GITHUB_WORKSPACE}/bin/godot.linuxbsd.editor.dev.x86_64" \
+            --headless --test --test-case="*[godot_ai]*"
+
+      - name: Run end-to-end test against a live editor
+        run: python3 tools/relay/tests/run_editor_e2e.py

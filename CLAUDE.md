@@ -5,6 +5,9 @@ Project instructions for Claude Code sessions working in this repository.
 This is a fork of **Godot Engine 4.3-dev** that adds a Unity-style AI tooling stack
 (MCP server in the editor, an external stdio relay, skills, permissions, checkpoints).
 
+Tool-neutral repository rules live in @AGENTS.md — read it as well; this file adds
+only the Claude Code-specific workflow on top.
+
 ## Autonomous implementation continuity
 
 Every session working on the AI tooling specification MUST start with this protocol.
@@ -74,6 +77,9 @@ tools/relay/build.sh
 
 # Relay integration tests (fast loop, no engine build).
 python3 tools/relay/tests/run_tests.py
+
+# Whole stack: launches a headless editor and drives it through the real relay.
+python3 tools/relay/tests/run_editor_e2e.py
 ```
 
 Run the engine test binary from a directory you do not mind touching; prefer
