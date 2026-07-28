@@ -2,19 +2,18 @@
 
 At most five ordered actions. The first must be immediately executable.
 
-1. Implement `SKILL.md` discovery over project (`res://ai_skills/**`), user
-   (`<editor data>/godot_ai/skills/**`) and plugin (`addons/*/ai_skills/**`) roots,
-   with YAML-frontmatter parsing (name, description, enabled, editor-version gate,
-   tools). — S1, S2 — verified by doctest over a fixture tree including malformed
-   frontmatter, duplicate names and a version gate that excludes this build.
-2. Add the allow/deny trust state: discovered skills are denied until the user
-   allows them, persisted in editor settings, and exposed through the protocol.
-   — S3, S5 — verified by a test that a denied skill is discoverable but not usable.
-3. Ship the example `scene-cleanup` skill from the specification and assert it loads.
-   — D3 — verified by the discovery test finding it with its declared tool list.
-4. Implement checkpoints for mutating tools (git-backed when the project is a repo,
-   snapshot otherwise) and prove restoration in a test. — F8 — verified by mutating,
-   restoring, and comparing file contents.
-5. Add `Godot_ReadOutputLog` and the runtime/persistent property split
-   (`Godot_SetRuntimeProperty` vs `Godot_SetSceneProperty`). — T9, T15 — verified by
-   e2e coverage that a runtime edit does not survive stopping the game.
+1. Implement checkpoints: before any mutating tool runs, snapshot the files it is
+   about to touch under `$GODOT_AI_HOME/checkpoints/<project>/<id>/`, with a manifest
+   recording tool, arguments summary and file hashes. — F8 — verified by a test that
+   mutates, restores, and compares file contents byte for byte.
+2. Expose `Godot_ListCheckpoints` and `Godot_RestoreCheckpoint`, and wire creation
+   into `MCPProtocol::_handle_tools_call` so no mutating tool can bypass it.
+   — F8 — verified by an e2e round trip: write file, restore, confirm old content.
+3. Add `Godot_ReadOutputLog` backed by the editor log. — T9 — verified by an e2e
+   check that a message printed by the editor appears in the tool's output.
+4. Add `Godot_SetSceneProperty` and `Godot_SetRuntimeProperty` so persistent and
+   play-mode edits stay distinguishable. — T15 — verified by an e2e check that the
+   runtime edit does not survive stopping the game.
+5. Add the approvals UI: a settings section listing pending clients and discovered
+   skills with allow/deny, plus command palette entries. — U1, U2 — verified by
+   manual inspection plus a test of the underlying approve/revoke calls.

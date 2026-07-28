@@ -25,8 +25,13 @@ against a running editor.
 
 ## Current vertical slice
 
-S-05 (next): skills — `SKILL.md` discovery, frontmatter parsing and the allow/deny
-trust state (S1–S3).
+S-06 (next): checkpoints (F8) — create one before any mutating tool runs, and prove
+restoration in a test.
+
+S-05 (done): skills. Discovery across project/plugin/user roots, frontmatter
+parsing with editor-version gating, deny-by-default trust, on-demand supporting
+resources, and `Godot_ListSkills`/`Godot_ReadSkill`. The shipped example skill is
+copied into the e2e project and read back over the protocol.
 
 S-04 (done): `Godot_ManageNode` (create/delete/rename/reparent) plus
 `Godot_UndoLastAction`/`Godot_RedoLastAction`, all through `EditorUndoRedoManager`
@@ -42,17 +47,18 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-S1, S2, S3 (next). Just completed: T3, T5 → VERIFIED.
+F8 (next). Just completed: S1–S5, D3 → VERIFIED.
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
-- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 32 cases,
-  218 assertions, all pass.
-- `python3 tools/relay/tests/run_editor_e2e.py` → 18/18 checks pass against a live
+- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 39 cases,
+  282 assertions, all pass.
+- `python3 tools/relay/tests/run_editor_e2e.py` → 21/21 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
-  trip verified against the saved scene file.
+  trip verified against the saved scene file, and the shipped example skill read back
+  over the protocol.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md` and
   `.github/workflows/godot_ai.yml` are in place. The workflow has not yet been
   observed running on GitHub Actions.
@@ -87,8 +93,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start the skills slice by deciding the discovery roots, then write the fixture tree:
+Start checkpoints by deciding the storage shape, then write the failing restore test:
 
 ```sh
-grep -rn "get_config_dir\|get_data_dir" editor/editor_paths.h | head
+grep -rn "class EditorVCSInterface" editor/plugins/version_control_editor_plugin.h | head
 ```

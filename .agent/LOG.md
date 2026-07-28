@@ -79,6 +79,21 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   original parent is restored) → save (asserting the node reached the .tscn on disk)
   → delete → undo, plus refusals that must leave the scene untouched. 18/18 checks.
 
+### S-05 skills (S1–S5, D3)
+- `MCPSkills`: discovery across project (`res://ai_skills`), plugin
+  (`addons/*/ai_skills`) and user roots in precedence order, a small YAML-frontmatter
+  parser reporting the offending line number, editor-version gating, deny-by-default
+  trust, and supporting resources loaded on demand and confined to the skill folder.
+- Duplicate names keep the first and flag the rest rather than silently shadowing.
+  Broken skills are returned with a `problem` instead of vanishing, so a user can see
+  why their file did not load.
+- `Godot_ListSkills` / `Godot_ReadSkill` expose them over the protocol.
+- The shipped `misc/godot_ai/skills/scene-cleanup/` is copied into the e2e project and
+  read back through the relay, so D3 is a fact about the artifact, not a fixture.
+- `GODOT_AI_AUTO_APPROVE=1` now also trusts discovered skills; it has one meaning
+  throughout: "no human is present to decide", and must be set deliberately.
+
 ### Next
-- S-05: skills (S1–S3, D3), then checkpoints (F8), then `Godot_ReadOutputLog` and the
-  runtime/persistent property split (T9, T15), screenshots (T12) and ask-user (T13).
+- S-06: checkpoints (F8), then `Godot_ReadOutputLog` and the runtime/persistent
+  property split (T9, T15), the approvals UI (U1, U2), screenshots (T12) and
+  ask-user (T13).

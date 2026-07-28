@@ -42,4 +42,7 @@ void mcp_register_project_tools();
 // Structural scene editing, which goes through the editor's undo history.
 void mcp_register_scene_tools();
 
+// Skill discovery and reading. Filesystem-only, so usable without an editor.
+void mcp_register_skill_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

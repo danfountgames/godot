@@ -67,6 +67,17 @@ def refused(reply):
     return reply.get("result", {}).get("isError") is True
 
 
+def install_example_skill(root):
+    """Copies the shipped example skill into the project's discovery root.
+
+    The skill that gets exercised here is the same file the repository ships, so
+    "the example skill loads" is a fact about the artifact, not about a fixture.
+    """
+    source = os.path.join(REPO_ROOT, "misc", "godot_ai", "skills", "scene-cleanup")
+    destination = os.path.join(root, "ai_skills", "scene-cleanup")
+    shutil.copytree(source, destination)
+
+
 def build_project(root):
     os.makedirs(os.path.join(root, "scenes"), exist_ok=True)
     with open(os.path.join(root, "project.godot"), "w") as handle:
@@ -75,6 +86,7 @@ def build_project(root):
         handle.write(MAIN_SCENE)
     with open(os.path.join(root, "notes.txt"), "w") as handle:
         handle.write("hello from a project text file\n")
+    install_example_skill(root)
 
 
 def wait_for_instance(instances_dir, process, timeout=120.0):
@@ -147,7 +159,8 @@ def run(editor_binary):
         names = [tool["name"] for tool in reply["result"]["tools"]]
         for expected in ("Godot_ListScenes", "Godot_OpenScene", "Godot_GetEditedSceneTree",
                          "Godot_ReadTextFile", "Godot_WriteTextFile", "Godot_SearchProject",
-                         "Godot_ManageNode", "Godot_UndoLastAction"):
+                         "Godot_ManageNode", "Godot_UndoLastAction",
+                         "Godot_ListSkills", "Godot_ReadSkill"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -161,8 +174,11 @@ def run(editor_binary):
                       "params": {"name": "Godot_SearchProject",
                                  "arguments": {"query": "Sprite2D"}}})
         matches = reply["result"]["structuredContent"]["matches"]
-        check(len(matches) == 1 and matches[0]["path"] == "res://scenes/main.tscn",
-              "search did not find the node type: %r" % matches)
+        # Other project files legitimately mention the type, so assert on the match
+        # that must be there rather than on the total.
+        scene_matches = [m for m in matches if m["path"] == "res://scenes/main.tscn"]
+        check(len(scene_matches) == 1, "search did not find the node type in the scene: %r" % matches)
+        check(scene_matches[0]["line"] == 5, "search reported the wrong line: %r" % scene_matches[0])
         print("PASS Godot_SearchProject")
 
         reply = call({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
@@ -277,6 +293,46 @@ def run(editor_binary):
         check(sorted(scene_node_names()) == ["EnemySpawner", "Hud", "Main", "Player"],
               "a refused operation still changed the scene: %r" % scene_node_names())
         print("PASS structural refusals leave the scene untouched")
+
+        # --- skills -----------------------------------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 40, "method": "tools/call",
+                      "params": {"name": "Godot_ListSkills"}})
+        skills = {skill["name"]: skill for skill in reply["result"]["structuredContent"]["skills"]}
+        check("scene-cleanup" in skills, "the shipped example skill was not discovered")
+        found = skills["scene-cleanup"]
+        check(found["source"] == "project", "skill reported the wrong root: %r" % found["source"])
+        check("Godot_ManageNode" in found["tools"], "skill did not declare its tools")
+        check(found.get("problem") is None, "skill reported a problem: %r" % found.get("problem"))
+        print("PASS Godot_ListSkills found the shipped example skill")
+
+        reply = call({"jsonrpc": "2.0", "id": 41, "method": "tools/call",
+                      "params": {"name": "Godot_ReadSkill",
+                                 "arguments": {"name": "scene-cleanup"}}})
+        check(reply["result"]["isError"] is False,
+              "reading the skill failed: %s" % reply["result"]["content"][0]["text"])
+        text = reply["result"]["structuredContent"]["text"]
+        check(text.startswith("You are a Godot scene-maintenance specialist."),
+              "skill instructions were not returned with the frontmatter stripped")
+        print("PASS Godot_ReadSkill returned the instructions")
+
+        reply = call({"jsonrpc": "2.0", "id": 42, "method": "tools/call",
+                      "params": {"name": "Godot_ReadSkill",
+                                 "arguments": {"name": "scene-cleanup",
+                                               "resource": "references/naming.md"}}})
+        check("PascalCase" in reply["result"]["structuredContent"]["text"],
+              "the supporting file was not loaded on demand")
+
+        reply = call({"jsonrpc": "2.0", "id": 43, "method": "tools/call",
+                      "params": {"name": "Godot_ReadSkill",
+                                 "arguments": {"name": "scene-cleanup",
+                                               "resource": "../../../etc/passwd"}}})
+        check(refused(reply), "a skill resource escaped its own folder")
+
+        reply = call({"jsonrpc": "2.0", "id": 44, "method": "tools/call",
+                      "params": {"name": "Godot_ReadSkill",
+                                 "arguments": {"name": "no-such-skill"}}})
+        check(refused(reply), "an unknown skill was accepted")
+        print("PASS skill resources load on demand and stay confined")
 
         reply = call({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
                       "params": {"name": "Godot_WriteTextFile",

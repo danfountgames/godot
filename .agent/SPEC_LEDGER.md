@@ -70,17 +70,17 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 
 | ID | Spec | Requirement | Deps | Status | Remaining |
 |---|---|---|---|---|---|
-| S1 | MCP | `SKILL.md` discovery across project/user/plugin roots | F5 | NOT_STARTED | all |
-| S2 | MCP | Frontmatter parsing incl. version gating and tool list | S1 | NOT_STARTED | all |
-| S3 | SEC | Skills untrusted by default; allow/deny persisted | S2,F6 | NOT_STARTED | all |
-| S4 | MCP | Supporting resources loaded on demand | S2 | NOT_STARTED | all |
-| S5 | MCP | Skills exposed over the protocol and refreshed live | S3,P5 | NOT_STARTED | all |
+| S1 | MCP | `SKILL.md` discovery across project/user/plugin roots | F5 | VERIFIED | `mcp_skills.cpp` `get_roots`/`discover` | `tests/test_mcp_skills.h`, `run_editor_e2e.py` | project/plugin/user roots; shipped example skill discovered live | none |
+| S2 | MCP | Frontmatter parsing incl. version gating and tool list | S1 | VERIFIED | `mcp_skills.cpp` `parse`/`version_satisfied` | `tests/test_mcp_skills.h` | malformed, unterminated, nameless, disabled, quoted, version-gated cases | none |
+| S3 | SEC | Skills untrusted by default; allow/deny persisted | S2,F6 | VERIFIED | `MCPSkills::is_allowed`/`set_allowed` | `tests/test_mcp_skills.h` | denied by default; instructions and resources both refused until allowed | approval UI (U2) |
+| S4 | MCP | Supporting resources loaded on demand | S2 | VERIFIED | `MCPSkills::read_resource` | `tests/test_mcp_skills.h`, `run_editor_e2e.py` | on-demand load; traversal out of the skill folder refused | none |
+| S5 | MCP | Skills exposed over the protocol and refreshed live | S3,P5 | VERIFIED | `tools/mcp_skill_tools.cpp` | `run_editor_e2e.py` | Godot_ListSkills/Godot_ReadSkill exercised over the real protocol | live re-scan on change not asserted |
 | U1 | PRI | Command palette entries | F2 | NOT_STARTED | all |
 | U2 | SEC | Settings/status UI incl. approvals | F6,S3 | NOT_STARTED | all |
 | U3 | PRI | Headless execution hook | F3 | NOT_STARTED | all |
 | D1 | PKG | Developer + user documentation | — | VERIFIED | none for the shipped surface — `modules/godot_ai/README.md` covers architecture, client setup, permissions, the tool catalogue, the registration API and troubleshooting; extend it as tools land |
 | D2 | PKG | `AGENTS.md` repository guidance artifact | — | VERIFIED | none — `AGENTS.md` present, imported by `CLAUDE.md` |
-| D3 | MCP | Example Godot `SKILL.md` that actually loads | S2 | NOT_STARTED | all |
+| D3 | MCP | Example Godot `SKILL.md` that actually loads | S2 | VERIFIED | none — `misc/godot_ai/skills/scene-cleanup/` is copied into the e2e project and read back over the protocol, so the shipped file is the one proven to load |
 | D4 | — | `CLAUDE.md` continuity protocol (required deliverable) | — | VERIFIED | none — section present and kept current |
 | C1 | CI | CI wiring for relay tests, module tests, clean build | R2,F4 | IMPLEMENTED | `.github/workflows/godot_ai.yml` added and locally equivalent commands all pass; not yet observed green on GitHub Actions |
 | C2 | PKG | Packaging: install layout, licences, clean checkout | R1,D1 | NOT_STARTED | all |
