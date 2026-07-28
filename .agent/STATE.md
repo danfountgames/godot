@@ -27,7 +27,7 @@ against a running editor.
 
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
-`.agent/INTERFACE_LEDGER.md` tracks it. 59 tools are advertised over `tools/list`.
+`.agent/INTERFACE_LEDGER.md` tracks it. 60 tools are advertised over `tools/list`.
 Group I is complete: the editor's own
 interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
@@ -40,8 +40,11 @@ proven against a game that actually has saves. The chat
 cancellation frame is caught end to end - the tools built for group I are what made that
 possible, by locating and pressing the dock's Cancel button.
 
-Six real bugs have fallen out of it so far, all fixed and covered — see the
-"Bugs this tranche found" table in the interface ledger. Two were found by
+Six real bugs have fallen out of it, all fixed and covered — see the
+"Bugs this tranche found" table in the interface ledger. A later audit of the ledger
+against the spec's own wording found something else worth remembering: five rows said
+"none remaining" while a named part of the requirement did not exist. Re-read the
+requirement, not the row. Two were found by
 `Godot_ListWindows` on its first run: a timed-out `Godot_AskUser` left a dead dialog on
 screen whose buttons did nothing, and the same tool gave a caller who omitted
 `timeout_seconds` a one-second deadline instead of the declared 300. The latest was in
@@ -68,9 +71,6 @@ answered by a genuine pointer click on a choice button (Escape returns
 
 What remains is honest:
 
-- **T13 free text** — not yet driven by typing. This was recorded as impossible and
-  that was wrong: typing works once the field is clicked (see `run_editor_ui_e2e.py`),
-  so it is a check that has not been written.
 - **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
 - **C1** — every workflow command passes locally; never observed green on Actions.
 - **O1 cancellation** — now caught end to end in `run_editor_ui_e2e.py`: a turn is left
@@ -83,7 +83,8 @@ What remains is honest:
 ## Ledger IDs in this slice
 
 All 55 specification requirements are VERIFIED except R8 (needs another operating
-system) and C1 (needs GitHub Actions itself), both IMPLEMENTED. X1 and X2 cover the
+system) and C1 (needs GitHub Actions itself), both IMPLEMENTED. All 41 interface-ledger
+items are VERIFIED. X1 and X2 cover the
 virtual display and the editor's render-capability reporting.
 
 ## Last verified state
