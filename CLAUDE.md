@@ -101,6 +101,11 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
 - This tree is Godot **4.3**, not 4.6. The editor source is **flat**
   (`editor/editor_file_system.cpp`), not `editor/file_system/...`. The specification
   quotes 4.6-era paths; map them onto this tree, do not "fix" the spec.
+- **`Dictionary::operator[]` inserts a null for a missing key, even through a
+  `const Dictionary &`.** Reading an optional argument that way silently adds it, and
+  the call is then rejected by schema validation as wrongly typed. Always
+  `has()`-guard, or use `get(key, default)`. A regression test in
+  `tests/test_mcp_checkpoints.h` pins this for every mutating tool.
 - Follow Godot conventions: licence header on every new file, `p_` parameter prefix,
   `_` private-method prefix, `memnew`/`memdelete`, `Ref<>` for RefCounted,
   `String`/`Dictionary`/`Array` over STL in engine code.

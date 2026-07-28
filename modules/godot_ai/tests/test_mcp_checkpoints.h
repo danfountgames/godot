@@ -231,6 +231,29 @@ TEST_CASE("[godot_ai] Mutating file tools declare what they will write") {
 	CHECK(reader->get_checkpoint_paths(arguments).is_empty());
 }
 
+TEST_CASE("[godot_ai] get_checkpoint_paths must not mutate the arguments it inspects") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	if (!registry->has_tool("Godot_WriteTextFile")) {
+		mcp_register_project_tools();
+	}
+
+	// Dictionary::operator[] inserts a null for a missing key even through a const
+	// reference. get_checkpoint_paths() runs *before* schema validation, so a tool
+	// that reads an optional argument without has() poisons the arguments and the
+	// call is then rejected as wrongly typed. This caught exactly that bug.
+	for (const String &name : registry->get_tool_names()) {
+		const Ref<MCPTool> tool = registry->get_tool(name);
+		if (tool.is_null() || !tool->is_mutating()) {
+			continue;
+		}
+		Dictionary arguments;
+		const int before = arguments.size();
+		tool->get_checkpoint_paths(arguments);
+		CHECK_MESSAGE(arguments.size() == before,
+				vformat("%s::get_checkpoint_paths() added keys to the arguments", name).utf8().get_data());
+	}
+}
+
 } // namespace TestMCPCheckpoints
 
 #endif // TEST_MCP_CHECKPOINTS_H

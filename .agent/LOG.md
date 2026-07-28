@@ -148,7 +148,21 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - U1/U2 are recorded as IMPLEMENTED rather than VERIFIED: the editor constructs both
   in every headless run, so they cannot crash it, but nothing here can click a button.
 
+### S-09 screenshots (T12)
+- `Godot_CaptureViewport` refuses when the display server is headless rather than
+  returning a blank image presented as if it were the editor.
+- Tools can now supply their own MCP content blocks through `_content`, which is how
+  the PNG is returned inline; a screenshot has no useful text rendering.
+- Found a genuine engine trap while testing: `Dictionary::operator[]` inserts a null
+  for a missing key even through a `const Dictionary &`, because the private data
+  pointer does not propagate constness. `get_checkpoint_paths()` runs before schema
+  validation, so an unguarded read poisoned the arguments and the call was rejected
+  with a confusing "'path' must be of type string" about a key the caller never sent.
+  Fixed, promoted to CLAUDE.md, and pinned by a test that checks every mutating tool.
+- T12 is IMPLEMENTED, not VERIFIED: nothing here has a display, so the refusal is
+  verified and the image itself is not.
+
 ### Next
-- S-09:
+- S-10:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

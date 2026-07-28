@@ -25,8 +25,13 @@ against a running editor.
 
 ## Current vertical slice
 
-S-09 (next): `Godot_CaptureViewport` (T12) and `Godot_AskUser` (T13), then the
-Winsock port that would unblock R8.
+S-10 (next): `Godot_AskUser` (T13). It needs deferred tool responses - a modal cannot
+block the editor's main thread, and the service answers synchronously today - so it is
+an architecture change, not just another tool. Then the Winsock port (R8).
+
+S-09 (done): `Godot_CaptureViewport`. Refuses headless rather than returning a blank
+image, saves a PNG in the project, and returns it inline as an MCP image block when
+small enough. Tools can now supply their own content blocks via `_content`.
 
 S-08 (done): the approvals dialog (U2), command palette and Tools menu entries (U1),
 and the relay's one-shot `--call` mode (U3). The dialog and commands are constructed
@@ -62,15 +67,16 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-T12, T13 (next). Just completed: U3 → VERIFIED; U1, U2 → IMPLEMENTED.
+T13 (next). Just completed: T12 → IMPLEMENTED (headless refusal verified; visual
+output needs a display).
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- Module suite: 44 cases, 318 assertions, all pass. Full engine suite from the
+- Module suite: 45 cases, 319 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
-- `python3 tools/relay/tests/run_editor_e2e.py` → 29/29 checks pass against a live
+- `python3 tools/relay/tests/run_editor_e2e.py` → 30/30 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
   trip verified against the saved scene file, and the shipped example skill read back
   over the protocol.
@@ -108,8 +114,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start T12 by finding how the editor captures a viewport image:
+Start T13 by deciding how a tool call can be answered later than it was received:
 
 ```sh
-grep -rn "get_texture()->get_image\|SceneTree::get_root()" editor/editor_node.cpp | head
+grep -n "handle_message" modules/godot_ai/mcp_protocol.h
 ```

@@ -54,4 +54,7 @@ void mcp_register_output_tools();
 // Persistent and runtime property edits, kept deliberately separate.
 void mcp_register_property_tools();
 
+// Screenshots of what the editor is rendering.
+void mcp_register_capture_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

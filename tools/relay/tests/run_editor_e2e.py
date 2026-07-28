@@ -55,6 +55,14 @@ def check(condition, message):
         raise Failure(message)
 
 
+def refusal_text(reply):
+    """The human-readable reason a call was refused, whichever shape it came in."""
+    if "error" in reply:
+        return reply["error"]["message"]
+    content = reply.get("result", {}).get("content", [])
+    return content[0]["text"] if content else ""
+
+
 def refused(reply):
     """True when a tools/call was refused, either way the server can refuse.
 
@@ -163,7 +171,8 @@ def run(editor_binary):
                          "Godot_ListSkills", "Godot_ReadSkill",
                          "Godot_ListCheckpoints", "Godot_RestoreCheckpoint",
                          "Godot_ReadOutputLog", "Godot_SetSceneProperty",
-                         "Godot_SetRuntimeProperty", "Godot_GetRuntimeSceneTree"):
+                         "Godot_SetRuntimeProperty", "Godot_GetRuntimeSceneTree",
+                         "Godot_CaptureViewport"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -387,6 +396,16 @@ def run(editor_binary):
                       "params": {"name": "Godot_GetRuntimeSceneTree"}})
         check(refused(reply), "the runtime scene tree was returned with no game running")
         print("PASS runtime tools refuse cleanly while nothing is running")
+
+        # --- screenshots ------------------------------------------------------
+        # This editor is headless, so the honest answer is a refusal that names the
+        # reason - not a blank image presented as if it were the editor.
+        reply = call({"jsonrpc": "2.0", "id": 80, "method": "tools/call",
+                      "params": {"name": "Godot_CaptureViewport"}})
+        check(refused(reply), "a headless editor produced a screenshot")
+        check("headless" in refusal_text(reply),
+              "the capture refusal does not name the reason: %r" % refusal_text(reply))
+        print("PASS Godot_CaptureViewport refuses cleanly when headless")
 
         # --- output log -------------------------------------------------------
         # The AI service announces itself in the Output panel at startup, so that

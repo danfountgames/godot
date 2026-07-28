@@ -61,6 +61,18 @@ Verify with `pkg-config --exists xcursor xinerama xrandr xi alsa`.
   only notices the disconnect when it next writes. The same applies to a listening
   socket and `accept()`.
 
+## Engine gotchas
+
+- `Dictionary::operator[]` **inserts** a null for a missing key even when the
+  dictionary is reached through a `const Dictionary &`: the private data pointer does
+  not propagate constness, so the const overload ends up calling the mutating HashMap
+  operator. Reading an optional argument this way before validation makes the call
+  fail with a confusing "must be of type" error about a key the caller never sent.
+  Use `has()` or `get(key, default)`.
+- `EditorInterface::get_singleton()` is non-null in any editor build, including the
+  headless unit-test binary, because `register_editor_types()` creates it. Its methods
+  dereference `EditorNode`, which is null there. Guard on both.
+
 ## Harness gotchas
 
 - Foreground `sleep` is blocked; use background commands or `until <cond>; do sleep 2; done`.

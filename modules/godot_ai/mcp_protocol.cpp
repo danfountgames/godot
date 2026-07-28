@@ -82,20 +82,30 @@ Dictionary MCPProtocol::make_notification(const String &p_method, const Dictiona
 
 Dictionary MCPProtocol::make_tool_result(const Dictionary &p_structured, const Dictionary &p_output_schema) {
 	Dictionary result;
+	Dictionary structured = p_structured;
 
-	// Every result carries a text rendering: clients that cannot consume structured
-	// content still get something a model can read.
+	// A tool may supply its own MCP content blocks - an image, for instance, which
+	// has no useful text rendering. `_content` is stripped from the structured data
+	// so it does not appear twice in the response.
+	Array content;
+	if (structured.has("_content") && Variant(structured["_content"]).get_type() == Variant::ARRAY) {
+		content = structured["_content"];
+		structured = structured.duplicate();
+		structured.erase("_content");
+	}
+
+	// Every result also carries a text rendering: clients that cannot consume
+	// structured content still get something a model can read.
 	Dictionary text_content;
 	text_content["type"] = "text";
-	text_content["text"] = JSON::stringify(p_structured, "  ");
-	Array content;
+	text_content["text"] = JSON::stringify(structured, "  ");
 	content.push_back(text_content);
 
 	result["content"] = content;
 	result["isError"] = false;
 	// structuredContent is only meaningful when the tool declared an output schema.
 	if (!p_output_schema.is_empty()) {
-		result["structuredContent"] = p_structured;
+		result["structuredContent"] = structured;
 	}
 	return result;
 }
