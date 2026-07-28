@@ -139,9 +139,6 @@ below, register a project command, or record the gap honestly as unverified.
   it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
-- **Runtime errors carry a call site, not a call stack.** `Godot_GetRuntimeErrors`
-  gives you file, line, function, message and kind. For anything deeper, read the
-  Output log.
 - **Stacking detection is a snapshot.** `Godot_GetAudioState` sees sounds stacked *at
   the moment you ask*. A sound that doubles and clears between two calls is invisible;
   to catch a burst, ask repeatedly while you send the input.

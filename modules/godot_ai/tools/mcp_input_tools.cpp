@@ -651,9 +651,11 @@ void mcp_register_input_tools() {
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_GetRuntimeErrors", "runtime_errors",
-			"Return errors and warnings the running game has reported, with file, line and "
-			"function. Godot_ReadOutputLog gives the same events as prose; this keeps the "
-			"structure, which is what a diagnosis actually needs.",
+			"Return errors and warnings the running game has reported, with file, line, "
+			"function, and the script call stack as it stood when the error was raised. "
+			"Godot_ReadOutputLog gives the same events as prose; this keeps the structure, "
+			"which is what a diagnosis actually needs - the call site says where it broke, and "
+			"the stack says which caller got it there.",
 			MCP_CAP_READ_RUNTIME, clearable_schema("error list")))));
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(

@@ -71,6 +71,24 @@ var scroll_down := 0
 var touch_released := 0
 var touch_canceled := 0
 
+# An error raised three calls deep. The handler's own file and line give the call site;
+# only a real stack shows the route that reached it, which is what tells you which of a
+# helper's callers passed the bad value.
+var trigger_deep_error := false:
+	set(value):
+		trigger_deep_error = value
+		if value:
+			_level_one()
+
+func _level_one() -> void:
+	_level_two()
+
+func _level_two() -> void:
+	_level_three()
+
+func _level_three() -> void:
+	push_error("E2E_DEEP_ERROR")
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and not event.pressed:
 		if event.canceled:
@@ -1352,6 +1370,33 @@ def run(editor_binary, display):
                 check(entry["file"].endswith(".cpp") or entry["file"].endswith(".gd"),
                       "the error names no source at all: %r" % entry)
                 print("PASS Godot_GetRuntimeErrors captured a real error with file and line")
+
+                # The call site is one frame. The route that reached it is what tells
+                # you which of a helper's callers passed the bad value, and the stack
+                # has unwound by the time anyone asks - so it has to be captured at the
+                # moment the error is raised.
+                call({"jsonrpc": "2.0", "id": 199, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Hud/Surface",
+                                               "property": "trigger_deep_error", "value": True}}})
+                reply = call({"jsonrpc": "2.0", "id": 200, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeErrors"}})
+                deep = [e for e in reply["result"]["structuredContent"]["errors"]
+                        if "E2E_DEEP_ERROR" in e.get("message", "")]
+                check(deep, "the deliberate deep error was not captured")
+                stack = deep[0].get("stack", [])
+                functions = [frame["function"] for frame in stack]
+                check("_level_three" in functions and "_level_two" in functions
+                      and "_level_one" in functions,
+                      "the stack does not show the route to the error, only its call "
+                      "site: %r" % functions)
+                check(functions.index("_level_three") < functions.index("_level_one"),
+                      "the stack is not innermost-first: %r" % functions)
+                for frame in stack:
+                    check(frame["source"].endswith(".gd") and frame["line"] > 0,
+                          "a stack frame names no script and line: %r" % frame)
+                print("PASS Godot_GetRuntimeErrors carries the script call stack (%d frames)"
+                      % len(stack))
 
                 # --- resolution matrix -------------------------------------------
                 reply = call({"jsonrpc": "2.0", "id": 120, "method": "tools/call",

@@ -70,6 +70,35 @@ Array g_trace;
 const int MAX_ERROR_ENTRIES = 128;
 Array g_errors;
 
+// The script call stack as it stands at the moment the error is raised.
+//
+// The handler's own file, line and function are the call *site* - one frame, and usually
+// the engine's rather than the script's. What a diagnosis needs is the route that got
+// there: which of three callers of a helper passed the bad value. This has to be
+// gathered inside the handler, because by the time anyone asks the stack has unwound.
+//
+// Only available while the script debugger is running, which it is for a game launched
+// from the editor - the frames are what the debugger already maintains for breakpoints.
+Array capture_script_stack() {
+	Array frames;
+	for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+		ScriptLanguage *language = ScriptServer::get_language(i);
+		if (!language) {
+			continue;
+		}
+		const int levels = language->debug_get_stack_level_count();
+		for (int level = 0; level < levels; level++) {
+			Dictionary frame;
+			frame["language"] = language->get_name();
+			frame["source"] = language->debug_get_stack_level_source(level);
+			frame["function"] = language->debug_get_stack_level_function(level);
+			frame["line"] = language->debug_get_stack_level_line(level);
+			frames.push_back(frame);
+		}
+	}
+	return frames;
+}
+
 void error_handler(void *p_user, const char *p_function, const char *p_file, int p_line, const char *p_error, const char *p_explanation, bool p_editor_notify, ErrorHandlerType p_type) {
 	Dictionary entry;
 	entry["function"] = String::utf8(p_function);
@@ -91,6 +120,7 @@ void error_handler(void *p_user, const char *p_function, const char *p_file, int
 			entry["kind"] = "error";
 			break;
 	}
+	entry["stack"] = capture_script_stack();
 	if (g_errors.size() >= MAX_ERROR_ENTRIES) {
 		g_errors.remove_at(0);
 	}
