@@ -63,6 +63,15 @@ def main():
             return 1
         print("PASS the relay suite passes from a clean checkout")
 
+        # The virtual display is what lets a machine with no screen verify the visual
+        # tools, so a checkout that cannot start one is missing something that matters.
+        code, output = run([sys.executable, "tools/tests/run_tests.py"], checkout)
+        if code != 0:
+            print("FAIL the tooling suite fails from a clean checkout:\n%s" % output,
+                  file=sys.stderr)
+            return 1
+        print("PASS the tooling suite passes from a clean checkout")
+
         code, output = run(["tools/relay/package.sh", "--output",
                             os.path.join(workspace, "package")], checkout)
         if code != 0:
