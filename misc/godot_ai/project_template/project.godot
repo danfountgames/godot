@@ -1,0 +1,29 @@
+; Bootstrap project for agent-driven game production.
+;
+; Deliberately almost empty: the agent builds the game from docs/GAME_SPEC.md. What is
+; here exists because getting it wrong costs a debugging session, not because a game
+; needs it.
+
+config_version=5
+
+[application]
+
+config/name="Godot AI Bootstrap"
+config/description="Replace this with your game. See docs/GAME_SPEC.md."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[rendering]
+
+; A launched game inherits the *project's* renderer, not the editor's command line. On
+; a machine with no GPU - a container, CI, or the virtual display the tooling provides
+; - Vulkan is unavailable and the game dies before the debugger can connect. GL
+; compatibility is what makes runtime inspection work there. Change this only if you
+; know the target machine has a GPU.
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

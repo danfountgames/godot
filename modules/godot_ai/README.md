@@ -309,6 +309,16 @@ confinement as every tool path, and are truncated with a note rather than silent
 cut. A turn in flight can be cancelled, which tells the client to stop and refuses any
 answer that arrives afterwards.
 
+## Starting a game project
+
+`misc/godot_ai/project_template/` is a bootstrap project for agent-driven game
+production: a near-empty Godot project plus the `AGENTS.md` / `CLAUDE.md` instructions
+an autonomous agent needs to build a game in it with these tools. Copy it, write
+`docs/GAME_SPEC.md`, and point a client at the editor. Its README covers the
+permission grant a first unattended session needs, and the parts of the interface that
+do *not* exist — there is no input-injection tool, so real-input verification comes
+from the host harness.
+
 ## Exported games
 
 They get none of this. The module is editor-only (`config.py` `can_build`), because
