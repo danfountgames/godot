@@ -356,7 +356,64 @@ def run(editor_binary, display):
               "skill, so the coordinates it reports are not where the button is"
               % buttons[0])
         print("PASS Godot_FindControl located the skill's Allow button and a click there worked")
-        close_dialog(d, dialog)
+
+        # --- I1: the editor's own input, from the product instead of the harness -
+        # Everything above used xdotool to click. This closes the dialog through
+        # Godot_SendEditorInput, and the dialog going away is the proof: it only closes
+        # if a real event reached the right control in the right window.
+        reply = call({"jsonrpc": "2.0", "id": 14, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"text": "Close",
+                                               "window": "Godot AI: Clients and Skills"}}})
+        check(not refused(reply), "finding the Close button failed: %s" % refusal_text(reply))
+        closers = reply["result"]["structuredContent"]["matches"]
+        check(closers, "the approvals dialog has no button labelled Close")
+
+        reply = call({"jsonrpc": "2.0", "id": 15, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "click",
+                                               "x": closers[0]["center_x"],
+                                               "y": closers[0]["center_y"]}}})
+        check(not refused(reply), "sending editor input failed: %s" % refusal_text(reply))
+        delivered = reply["result"]["structuredContent"]
+        check(delivered["window"] == "Godot AI: Clients and Skills",
+              "the click went to the wrong window: %r" % delivered)
+        check(delivered["events"] == 3,
+              "a click should be a move, a press and a release: %r" % delivered)
+
+        deadline = time.time() + 10
+        while time.time() < deadline and dialog in visible_windows(d):
+            time.sleep(0.5)
+        check(dialog not in visible_windows(d),
+              "the approvals dialog is still open, so the click Godot_SendEditorInput "
+              "reported as delivered did not reach the button")
+        print("PASS Godot_SendEditorInput clicked the dialog's own button and closed it")
+
+        # Keyboard, through the same tool: reopen the dialog and dismiss it with Escape.
+        dialog = open_approvals_dialog(d, editor_window)
+        reply = call({"jsonrpc": "2.0", "id": 16, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "key_tap", "key": "Escape"}}})
+        check(not refused(reply), "sending a key to the editor failed: %s" % refusal_text(reply))
+        deadline = time.time() + 10
+        while time.time() < deadline and dialog in visible_windows(d):
+            time.sleep(0.5)
+        check(dialog not in visible_windows(d),
+              "Escape sent through Godot_SendEditorInput did not dismiss the dialog")
+        print("PASS Godot_SendEditorInput delivered a keystroke that dismissed the dialog")
+
+        reply = call({"jsonrpc": "2.0", "id": 17, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "click", "x": 30000, "y": 30000}}})
+        check(refused(reply), "a click outside every editor window was accepted")
+        check("not inside any" in refusal_text(reply),
+              "the refusal does not say why: %r" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 18, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "key_tap", "key": "NotAKeyName"}}})
+        check(refused(reply), "an unknown key name was accepted")
+        print("PASS Godot_SendEditorInput refuses off-window points and unknown keys")
 
         # --- O1: the chat panel borrows this client's model ---------------------
         # The editor has no model. It asks whichever client is attached to run one, so

@@ -1469,6 +1469,31 @@ def run(editor_binary, display):
               "the window filter was ignored")
         print("PASS Godot_FindControl locates editor controls and combines its criteria")
 
+        reply = call({"jsonrpc": "2.0", "id": 159, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "nonsense"}}})
+        check(refused(reply), "an unknown editor input action was accepted")
+
+        if not has_display:
+            # A headless editor has no display-server dispatch, so an event would vanish
+            # silently. The refusal is the honest answer; reporting a delivery would not be.
+            reply = call({"jsonrpc": "2.0", "id": 160, "method": "tools/call",
+                          "params": {"name": "Godot_SendEditorInput",
+                                     "arguments": {"action": "click", "x": 10, "y": 10}}})
+            check(refused(reply), "a headless editor claimed to have received a click")
+            check("headless" in refusal_text(reply),
+                  "the refusal does not name the reason: %r" % refusal_text(reply))
+            print("PASS Godot_SendEditorInput refuses cleanly when headless")
+        else:
+            # Aimed at nothing in particular, and asserted only on where it went: this
+            # runs against the live editor, so it must not press anything.
+            reply = call({"jsonrpc": "2.0", "id": 161, "method": "tools/call",
+                          "params": {"name": "Godot_SendEditorInput",
+                                     "arguments": {"action": "move", "x": 5, "y": 5,
+                                                   "window": "No Such Window"}}})
+            check(refused(reply), "the window filter did not restrict where input could go")
+            print("PASS Godot_SendEditorInput honours its window filter")
+
         # The question's own reply can arrive in the middle of this, so replies are
         # matched by id rather than taken in order.
         question_reply = [None]

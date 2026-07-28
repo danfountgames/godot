@@ -102,7 +102,7 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (56)
+## Tools exposed over MCP (57)
 
 | Area | Tools |
 |---|---|
@@ -124,7 +124,7 @@ confidence.
 | Skills | `Godot_ListSkills`, `Godot_ReadSkill` |
 | Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint`, `Godot_DiffCheckpoint` |
 | Asset pipeline | `Godot_GetImportStatus`, `Godot_ReimportAsset`, `Godot_WaitForImportQueue` |
-| Editor windows | `Godot_ListWindows`, `Godot_FindControl` |
+| Editor UI | `Godot_ListWindows`, `Godot_FindControl`, `Godot_SendEditorInput` |
 
 ## What the interface does **not** provide
 
@@ -136,10 +136,9 @@ below, register a project command, or record the gap honestly as unverified.
   right. Record that distinction rather than blurring it.
 - **No test-runner tool.** Run tests from the shell.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary.
-- **No editor-side input injection.** The input tools drive the *running game*. To
-  drive the editor's own UI — a dialog, the command palette — use the host harness.
-  `Godot_ListWindows` tells you what is open and `Godot_FindControl` tells you exactly
-  where to click, but the click itself still comes from the harness.
+- **No editor-side *drag*.** `Godot_SendEditorInput` does moves, clicks and keys, so
+  a dialog, a menu or the command palette is reachable; dragging a dock or a curve
+  handle is not.
 
 ## Sharp edges that will cost you a session if you miss them
 
@@ -156,6 +155,12 @@ below, register a project command, or record the gap honestly as unverified.
   — and of the *rows* of a Tree or ItemList, including the buttons drawn inside them,
   which are not nodes and whose only label is a tooltip. An offset you measured once
   stops being true when a theme, a font size or a window size changes; this does not.
+  Feed the centre straight to `Godot_SendEditorInput`.
+- **Two input tools, and never the wrong one.** `Godot_SendPointerInput` and
+  `Godot_SendKeyInput` drive the *running game*; `Godot_SendEditorInput` drives the
+  *editor*. Clicking the editor changes your project. Clicking the game does not. They
+  are separate tools so that you always know which you just did — do not reach for the
+  editor one to interact with the game.
 - **A changed asset is not an imported asset.** Writing a `.png` into the project does
   not give you a texture; the editor's importer has to run, and until it does the game
   keeps loading the old one. After touching any asset on disk, call

@@ -28,8 +28,10 @@ against a running editor.
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
 `.agent/INTERFACE_LEDGER.md` tracks it. Groups A–E, G, H, J and K are verified; 55 tools
-are registered. What is left is I1 (editor-side input), B4 (capture metadata),
-F1–F3 (scene tests) and E2 (duplicate/stacking detection).
+are registered — 57 over `tools/list`. Group I is now complete too: the editor's own
+interface is listable (`Godot_ListWindows`), addressable by what it says
+(`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). What is left is B4
+(capture metadata), F1–F3 (scene tests) and E2 (duplicate/stacking detection).
 
 Six real bugs have fallen out of it so far, all fixed and covered — see the
 "Bugs this tranche found" table in the interface ledger. Two were found by
@@ -66,7 +68,8 @@ What remains is honest:
 - **C1** — every workflow command passes locally; never observed green on Actions.
 - **O1 cancellation** — `notifications/cancelled` is sent by the service and the
   conversation's handling of a cancelled turn is unit-tested, but the frame itself is
-  not caught in an end-to-end run.
+  not caught in an end-to-end run. No longer blocked on anything: `Godot_FindControl`
+  and `Godot_SendEditorInput` can locate and press the dock's Cancel button.
 
 ## Ledger IDs in this slice
 
@@ -85,13 +88,15 @@ All of the following on the current working tree, in one sweep:
   pass — no regression from the editor accessors this module added.
 - `python3 tools/relay/tests/run_editor_ui_e2e.py` → all checks pass, driving the real
   editor by keyboard and pointer: the palette, the approvals dialog, a chat turn
-  answered by the connected client's model, and a skill allowed by clicking the
-  rectangle `Godot_FindControl` reported for its button.
+  answered by the connected client's model, a skill allowed by clicking the rectangle
+  `Godot_FindControl` reported for its button, and the approvals dialog closed twice
+  through `Godot_SendEditorInput` — once by a click on its Close button, once by
+  Escape.
 - `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a display the
   script starts itself, including a real 1152x648 screenshot, a running game's scene
   tree (`root > Main > Player, Hud, Field, Target, EnemySpawner`), a runtime edit that
   leaves the scene file byte-identical, and a question answered by clicking its dialog.
-  56 tools are advertised over `tools/list`.
+  57 tools are advertised over `tools/list`.
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
   visual tools refusing as they should.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md`, `CLAUDE.md` and

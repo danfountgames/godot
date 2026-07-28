@@ -40,12 +40,20 @@
 // buttons inside them are not nodes at all; a tool that could only find Controls would
 // find the Tree and leave the caller to guess where row three starts. That guess has
 // already cost this project a session.
+//
+// And then acting on what was found. Editor input is kept in its own tool, with its own
+// name and its own place in the documentation, for the same reason runtime property
+// edits are kept apart from persistent ones: clicking the editor changes the project,
+// clicking the game does not, and a caller must never have to infer which it just did.
 
 #include "mcp_builtin_tools.h"
 
 #include "../mcp_tool_registry.h"
 
+#include "core/input/input.h"
+#include "core/input/input_event.h"
 #include "core/object/object.h"
+#include "core/os/keyboard.h"
 #include "core/os/os.h"
 #include "core/variant/array.h"
 #include "scene/gui/control.h"
@@ -383,10 +391,361 @@ public:
 	}
 };
 
+// The screen rectangle a window occupies, in the same coordinates Godot_FindControl
+// reports. An embedded window is drawn inside its parent, so its own position is
+// relative to that parent's client area and the native origin has to be folded in.
+Rect2i window_screen_rect(Window *p_window) {
+	Point2i origin = p_window->get_position();
+	if (p_window->is_embedded()) {
+		for (Node *node = p_window->get_parent(); node; node = node->get_parent()) {
+			Window *parent = Object::cast_to<Window>(node);
+			if (parent && !parent->is_embedded()) {
+				origin += parent->get_position();
+				break;
+			}
+		}
+	}
+	return Rect2i(origin, p_window->get_size());
+}
+
+// Which window a screen point belongs to, and where in the *native* window's client
+// area it lands.
+//
+// Native windows and embedded ones need opposite treatment, and both occur: the editor
+// gives its dialogs real OS windows normally and embeds them in single-window mode.
+// A native dialog is addressed by its own window id with coordinates relative to
+// itself; an embedded one has no window id of its own, so the event is addressed to the
+// window it is embedded in and the root viewport forwards it on by position.
+struct Target {
+	Window *window = nullptr;
+	DisplayServer::WindowID window_id = DisplayServer::INVALID_WINDOW_ID;
+	Point2i local;
+};
+
+void collect_windows(Node *p_node, Vector<Window *> &r_windows) {
+	Window *window = Object::cast_to<Window>(p_node);
+	if (window && window->is_visible()) {
+		r_windows.push_back(window);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		collect_windows(p_node->get_child(i), r_windows);
+	}
+}
+
+bool resolve_target(const Point2i &p_point, const String &p_window_title, Target &r_target,
+		String &r_error) {
+	SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+	if (!tree || !tree->get_root()) {
+		r_error = "the editor has no scene tree";
+		return false;
+	}
+
+	Vector<Window *> windows;
+	collect_windows(tree->get_root(), windows);
+
+	Window *hit = nullptr;
+	Vector<String> titles;
+	for (Window *window : windows) {
+		const Rect2i rect = window_screen_rect(window);
+		titles.push_back(vformat("'%s' at (%d, %d) %dx%d", window->get_title(), rect.position.x,
+				rect.position.y, rect.size.width, rect.size.height));
+		if (!p_window_title.is_empty() && window->get_title() != p_window_title) {
+			continue;
+		}
+		if (rect.has_point(p_point)) {
+			// Later in tree order wins. Dialogs are created after the editor they open
+			// over, so this picks the dialog rather than what is behind it - and a click
+			// meant for a dialog that landed behind it would be worse than no click,
+			// because it would be a change to the project nobody asked for.
+			hit = window;
+		}
+	}
+
+	if (!hit) {
+		if (!p_window_title.is_empty()) {
+			r_error = vformat("(%d, %d) is not inside a visible window titled '%s'", p_point.x,
+					p_point.y, p_window_title);
+		} else {
+			r_error = vformat("(%d, %d) is not inside any of the editor's windows: %s", p_point.x,
+					p_point.y, String(", ").join(titles));
+		}
+		return false;
+	}
+
+	// Walk out to the window that owns an OS window: that is the one the display server
+	// can deliver to, and the coordinate space the event has to be expressed in.
+	Window *native = hit;
+	while (native && native->is_embedded()) {
+		native = containing_window(native->get_parent());
+	}
+	if (!native) {
+		r_error = "the window at that point is not attached to anything the display server owns";
+		return false;
+	}
+
+	r_target.window = hit;
+	r_target.window_id = native->get_window_id();
+	r_target.local = p_point - native->get_position();
+	return true;
+}
+
+class SendEditorInputTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_SendEditorInput"; }
+	virtual String get_description() const override {
+		return "Send a real pointer or keyboard event to the *editor's* interface - a dialog "
+			   "button, a menu, a panel. Coordinates are screen coordinates, exactly as "
+			   "Godot_FindControl and Godot_ListWindows report them. This drives the editor, "
+			   "not the running game: for the game use Godot_SendPointerInput and "
+			   "Godot_SendKeyInput, which are deliberately separate tools. Treat it as you "
+			   "would a hand on the mouse - it can open menus and confirm dialogs, and a click "
+			   "aimed at a stale coordinate lands on whatever is there now.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_SIMULATE_INPUT; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["action"] = MCPSchema::string_property(
+				"move, press, release, click, type, key_press, key_release or key_tap.", "click");
+		properties["x"] = MCPSchema::integer_property("Screen x, for the pointer actions.", 0);
+		properties["y"] = MCPSchema::integer_property("Screen y, for the pointer actions.", 0);
+		properties["button"] = MCPSchema::integer_property(
+				"Mouse button: 1 left, 2 right, 3 middle.", 1);
+		properties["text"] = MCPSchema::string_property("Text to type, for 'type'.");
+		properties["key"] = MCPSchema::string_property(
+				"Key name for the key actions, such as Enter, Escape or F5.");
+		properties["window"] = MCPSchema::string_property(
+				"Require the point to be inside the window with this title. Without it the "
+				"topmost window containing the point receives the event.");
+		properties["shift"] = MCPSchema::bool_property("Hold Shift.", false);
+		properties["ctrl"] = MCPSchema::bool_property("Hold Ctrl.", false);
+		properties["alt"] = MCPSchema::bool_property("Hold Alt.", false);
+		properties["meta"] = MCPSchema::bool_property("Hold Meta/Super/Command.", false);
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["action"] = MCPSchema::string_property("The action that was performed.");
+		properties["events"] = MCPSchema::integer_property("How many input events were delivered.");
+		properties["window"] = MCPSchema::string_property("Title of the window that received them.");
+		properties["window_x"] = MCPSchema::integer_property(
+				"Where the event landed inside the receiving native window.");
+		properties["window_y"] = MCPSchema::integer_property(
+				"Where the event landed inside the receiving native window.");
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (!EditorNode::get_singleton() || !EditorInterface::get_singleton()) {
+			r_error.set(MCPToolError::UNSUPPORTED,
+					"'Godot_SendEditorInput' needs a running Godot editor");
+			return Dictionary();
+		}
+		DisplayServer *display = DisplayServer::get_singleton();
+		if (!display || display->get_name() == "headless") {
+			// A headless editor has no display server dispatch function, so events would
+			// vanish silently. Saying so beats reporting a delivery that never happened.
+			r_error.set(MCPToolError::UNSUPPORTED,
+					"this editor is running headless, so nothing can receive input");
+			return Dictionary();
+		}
+		Input *input = Input::get_singleton();
+		if (!input) {
+			r_error.set(MCPToolError::UNSUPPORTED, "this editor has no input singleton");
+			return Dictionary();
+		}
+
+		const String action = String(p_arguments.get("action", "click")).strip_edges();
+		const bool shift = (bool)p_arguments.get("shift", false);
+		const bool ctrl = (bool)p_arguments.get("ctrl", false);
+		const bool alt = (bool)p_arguments.get("alt", false);
+		const bool meta = (bool)p_arguments.get("meta", false);
+		const String window_title = String(p_arguments.get("window", String())).strip_edges();
+
+		const bool is_pointer = action == "move" || action == "press" || action == "release" ||
+				action == "click";
+		const bool is_key = action == "type" || action == "key_press" ||
+				action == "key_release" || action == "key_tap";
+		if (!is_pointer && !is_key) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("unknown action '%s'; expected move, press, release, click, type, "
+							"key_press, key_release or key_tap",
+							action));
+			return Dictionary();
+		}
+
+		Dictionary result;
+		result["action"] = action;
+		int events = 0;
+
+		if (is_pointer) {
+			const Point2i point((int)p_arguments.get("x", 0), (int)p_arguments.get("y", 0));
+			Target target;
+			String error;
+			if (!resolve_target(point, window_title, target, error)) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS, error);
+				return Dictionary();
+			}
+			const int button = (int)p_arguments.get("button", 1);
+			if (button < 1 || button > 3) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS,
+						vformat("button %d is not 1 (left), 2 (right) or 3 (middle)", button));
+				return Dictionary();
+			}
+
+			const Vector2 local = target.local;
+			auto motion = [&]() {
+				Ref<InputEventMouseMotion> event;
+				event.instantiate();
+				event->set_window_id(target.window_id);
+				event->set_position(local);
+				event->set_global_position(local);
+				event->set_relative(local - input->get_mouse_position());
+				input->parse_input_event(event);
+			};
+			auto press = [&](bool p_pressed) {
+				Ref<InputEventMouseButton> event;
+				event.instantiate();
+				event->set_window_id(target.window_id);
+				event->set_position(local);
+				event->set_global_position(local);
+				event->set_button_index((MouseButton)button);
+				event->set_pressed(p_pressed);
+				event->set_button_mask(p_pressed ? mouse_button_to_mask((MouseButton)button)
+												 : BitField<MouseButtonMask>());
+				event->set_shift_pressed(shift);
+				event->set_ctrl_pressed(ctrl);
+				event->set_alt_pressed(alt);
+				event->set_meta_pressed(meta);
+				input->parse_input_event(event);
+			};
+
+			if (action == "move") {
+				motion();
+				events = 1;
+			} else if (action == "press") {
+				motion();
+				press(true);
+				events = 2;
+			} else if (action == "release") {
+				press(false);
+				events = 1;
+			} else {
+				// A click is a press and a release. Sending only the press leaves the
+				// control latched, and every later interaction inherits that.
+				motion();
+				press(true);
+				press(false);
+				events = 3;
+			}
+
+			result["window"] = target.window->get_title();
+			result["window_x"] = target.local.x;
+			result["window_y"] = target.local.y;
+		} else {
+			// Keyboard input follows focus, not coordinates: whichever control the editor
+			// considers focused receives it. Addressing it to a window the user is not
+			// typing in would be a lie dressed as precision.
+			DisplayServer::WindowID window_id = display->get_focused_window();
+			if (window_id == DisplayServer::INVALID_WINDOW_ID) {
+				window_id = DisplayServer::MAIN_WINDOW_ID;
+			}
+
+			auto key_event = [&](Key p_keycode, char32_t p_unicode, bool p_pressed) {
+				Ref<InputEventKey> event;
+				event.instantiate();
+				event->set_window_id(window_id);
+				event->set_keycode(p_keycode);
+				event->set_physical_keycode(p_keycode);
+				event->set_unicode(p_unicode);
+				event->set_pressed(p_pressed);
+				event->set_shift_pressed(shift);
+				event->set_ctrl_pressed(ctrl);
+				event->set_alt_pressed(alt);
+				event->set_meta_pressed(meta);
+				input->parse_input_event(event);
+			};
+
+			if (action == "type") {
+				const String text = p_arguments.get("text", String());
+				if (text.is_empty()) {
+					r_error.set(MCPToolError::INVALID_ARGUMENTS, "typing needs some text");
+					return Dictionary();
+				}
+				for (int i = 0; i < text.length(); i++) {
+					const char32_t character = text[i];
+					Key keycode = Key::NONE;
+					if (character >= 'a' && character <= 'z') {
+						keycode = (Key)((char32_t)Key::A + (character - 'a'));
+					} else if (character >= 'A' && character <= 'Z') {
+						keycode = (Key)((char32_t)Key::A + (character - 'A'));
+					} else if (character >= '0' && character <= '9') {
+						keycode = (Key)((char32_t)Key::KEY_0 + (character - '0'));
+					} else if (character == ' ') {
+						keycode = Key::SPACE;
+					}
+					// The unicode value is what a LineEdit reads; the keycode is what a
+					// shortcut matches. Both are needed, for the same reason as in the
+					// game-side tool.
+					key_event(keycode, character, true);
+					key_event(keycode, character, false);
+					events += 2;
+				}
+				result["text"] = text;
+			} else {
+				const String key_name = String(p_arguments.get("key", String())).strip_edges();
+				if (key_name.is_empty()) {
+					r_error.set(MCPToolError::INVALID_ARGUMENTS,
+							"the key actions need a key name, such as Enter or Escape");
+					return Dictionary();
+				}
+				const Key keycode = find_keycode(key_name);
+				if (keycode == Key::NONE) {
+					r_error.set(MCPToolError::INVALID_ARGUMENTS,
+							vformat("'%s' is not a key name this engine recognises", key_name));
+					return Dictionary();
+				}
+				if (action == "key_press") {
+					key_event(keycode, 0, true);
+					events = 1;
+				} else if (action == "key_release") {
+					key_event(keycode, 0, false);
+					events = 1;
+				} else {
+					key_event(keycode, 0, true);
+					key_event(keycode, 0, false);
+					events = 2;
+				}
+				result["key"] = key_name;
+			}
+
+			Window *focused = nullptr;
+			SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+			if (tree && tree->get_root()) {
+				Vector<Window *> windows;
+				collect_windows(tree->get_root(), windows);
+				for (Window *window : windows) {
+					if (window->get_window_id() == window_id) {
+						focused = window;
+					}
+				}
+			}
+			result["window"] = focused ? focused->get_title() : String();
+			result["window_x"] = 0;
+			result["window_y"] = 0;
+		}
+
+		result["events"] = events;
+		return result;
+	}
+};
+
 } // namespace
 
 void mcp_register_editor_ui_tools() {
 	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
 	ERR_FAIL_NULL(registry);
 	registry->register_tool(Ref<MCPTool>(memnew(FindControlTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(SendEditorInputTool)));
 }
