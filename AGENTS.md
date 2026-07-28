@@ -24,6 +24,8 @@ Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
 - `modules/godot_ai/tools/` — the built-in `Godot_*` tools
 - `modules/godot_ai/tests/` — doctest cases, auto-included when built with `tests=yes`
 - `tools/relay/` — the standalone `godot-ai-relay` binary and its tests
+- `tools/virtual_display.py` — an in-memory X server, so an editor can draw where there
+  is no screen; `tools/tests/` covers it
 - `editor/` — engine editor code this module drives (4.3 layout: flat, not `editor/scene/…`)
 - `.agent/` — persistent implementation state; read it before starting
 
@@ -44,9 +46,20 @@ libxrandr-dev libasound2-dev`, plus `pip install scons`. Run `apt-get update` fi
 
 ```sh
 python3 tools/relay/tests/run_tests.py                 # fastest signal, no engine build
+python3 tools/tests/run_tests.py                       # virtual display, no engine build
 bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
 ./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test   # full suite, from the repo root
-python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~30s
+python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~40s
+python3 tools/relay/tests/run_editor_e2e.py --headless # the same, forced without a display
+```
+
+The end-to-end run starts a virtual display (`tools/virtual_display.py`) when the
+machine has no screen, so it verifies the visual tools rather than only their refusals.
+It needs `xvfb x11-utils libgl1-mesa-dri`; without them it degrades to the headless
+path and says so. Run any editor by hand the same way:
+
+```sh
+python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path <project> --editor
 ```
 
 - Run the relay suite before the editor suite; a broken transport makes editor

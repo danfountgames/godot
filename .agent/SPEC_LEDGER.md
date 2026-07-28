@@ -60,11 +60,11 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | T8 | MCP | `Godot_WriteTextFile` + filesystem refresh | F5,F8 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | content asserted on disk, not from the tool report | none |
 | T9 | MCP | `Godot_ReadOutputLog` | F2 | VERIFIED | `tools/mcp_output_tools.cpp`, accessor added to `editor/editor_log.h` | `run_editor_e2e.py` | the service startup message is read back through the tool, with type classification and filtering | none |
 | T10 | MCP | `Godot_PlayCurrentScene` / `Godot_PlayMainScene` | F6 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | play reports the game as running against a live editor | none |
-| T11 | MCP | `Godot_StopPlaying` | T10 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | after stop, nothing is running; `was_playing` is not pinned down because a headless game may already have exited | none |
-| T12 | MCP | `Godot_CaptureViewport` incl. headless rejection | F6 | NOT_STARTED | — | — | — | all |
-| T13 | MCP | `Godot_AskUser` | F2 | NOT_STARTED | — | — | — | all |
+| T11 | MCP | `Godot_StopPlaying` | T10 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | under a virtual display, stop reports `was_playing: true` and leaves nothing running; headless the postcondition alone is asserted, because that game may already have exited | none |
+| T12 | MCP | `Godot_CaptureViewport` incl. headless rejection | F6 | VERIFIED | `tools/mcp_capture_tools.cpp` | `run_editor_e2e.py` (both modes) | under a virtual display it saves a real 1152x648 PNG and returns it as an inline image block, asserted by magic bytes and size; headless it refuses and names the reason and the fix | none |
+| T13 | MCP | `Godot_AskUser` | F2 | VERIFIED | `tools/mcp_ask_user_tool.cpp`, `mcp_deferred.cpp` | `tests/test_mcp_deferred.h`, `run_editor_e2e.py` | a real pointer click on a choice button returns that choice, Escape comes back as `cancelled: true`, and an unanswered question times out while the editor keeps serving | typed free text cannot be verified here: without a window manager no window takes X input focus, so a `LineEdit` never receives characters |
 | T14 | MCP | `Godot_SearchProject` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | match line numbers, case sensitivity, empty query | none |
-| T15 | SEC | Runtime vs persistent edits kept distinct | T5,T10 | VERIFIED | `tools/mcp_property_tools.cpp`, lookup added to `editor/debugger/editor_debugger_tree.*` | `run_editor_e2e.py` | scene edit survives save/reopen; runtime tools refuse cleanly with no game running, and report `persistent: false` | live runtime edit needs a game running under a display |
+| T15 | SEC | Runtime vs persistent edits kept distinct | T5,T10 | VERIFIED | `tools/mcp_property_tools.cpp`, lookup added to `editor/debugger/editor_debugger_tree.*` | `run_editor_e2e.py` | scene edit survives save/reopen; against a running game the runtime tree is read live and a runtime edit leaves the scene file byte-identical; refusals with no game running still hold | none |
 
 ## Skills, UX, docs, packaging
 
@@ -75,14 +75,14 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | S3 | SEC | Skills untrusted by default; allow/deny persisted | S2,F6 | VERIFIED | `MCPSkills::is_allowed`/`set_allowed` | `tests/test_mcp_skills.h` | denied by default; instructions and resources both refused until allowed | approval UI (U2) |
 | S4 | MCP | Supporting resources loaded on demand | S2 | VERIFIED | `MCPSkills::read_resource` | `tests/test_mcp_skills.h`, `run_editor_e2e.py` | on-demand load; traversal out of the skill folder refused | none |
 | S5 | MCP | Skills exposed over the protocol and refreshed live | S3,P5 | VERIFIED | `tools/mcp_skill_tools.cpp` | `run_editor_e2e.py` | Godot_ListSkills/Godot_ReadSkill exercised over the real protocol | live re-scan on change not asserted |
-| U1 | PRI | Command palette entries | F2 | IMPLEMENTED | three palette commands plus a Tools menu entry; registration is exercised by every headless e2e run, but invoking them has no automated coverage |
-| U2 | SEC | Settings/status UI incl. approvals | F6,S3 | IMPLEMENTED | `MCPApprovalsDialog` lists pending clients and discovered skills with allow/revoke. Its status/decision logic is extracted into `mcp_skill_status_text()` and covered by tests; the editor constructs the dialog in every headless e2e run. Only the rendering and clicking are unverified, which needs a display |
+| U1 | PRI | Command palette entries | F2 | IMPLEMENTED | three palette commands plus a Tools menu entry, registered on every e2e run; invoking them from the palette still has no automated coverage, though the editor is now driven through a real display and pointer, so this is coverage that has not been written rather than coverage that cannot be |
+| U2 | SEC | Settings/status UI incl. approvals | F6,S3 | IMPLEMENTED | `MCPApprovalsDialog` lists pending clients and discovered skills with allow/revoke; its status/decision logic is extracted into `mcp_skill_status_text()` and covered by tests, and the editor constructs it on every e2e run. Godot dialogs are now proven clickable under the virtual display (T13), so what is missing is a test that clicks *this* dialog |
 | U3 | PRI | Headless execution hook | F3 | VERIFIED | `--call`/`--arguments` one-shot mode in the relay; 4 relay tests plus a live e2e call, with distinct exit codes for tool failure and unreachable editor |
 | D1 | PKG | Developer + user documentation | — | VERIFIED | none for the shipped surface — `modules/godot_ai/README.md` covers architecture, client setup, permissions, the tool catalogue, the registration API and troubleshooting; extend it as tools land |
 | D2 | PKG | `AGENTS.md` repository guidance artifact | — | VERIFIED | none — `AGENTS.md` present, imported by `CLAUDE.md` |
 | D3 | MCP | Example Godot `SKILL.md` that actually loads | S2 | VERIFIED | none — `misc/godot_ai/skills/scene-cleanup/` is copied into the e2e project and read back over the protocol, so the shipped file is the one proven to load |
 | D4 | — | `CLAUDE.md` continuity protocol (required deliverable) | — | VERIFIED | none — section present and kept current |
-| C1 | CI | CI wiring for relay tests, module tests, clean build | R2,F4 | IMPLEMENTED | `.github/workflows/godot_ai.yml` added and locally equivalent commands all pass; not yet observed green on GitHub Actions |
+| C1 | CI | CI wiring for relay tests, module tests, clean build | R2,F4 | IMPLEMENTED | `.github/workflows/godot_ai.yml` covers the relay, the virtual display, the module suite and both end-to-end modes; every command passes locally, but the workflow has not been observed green on GitHub Actions from here |
 | C2 | PKG | Packaging: install layout, licences, clean checkout | R1,D1 | VERIFIED | `tools/relay/package.sh`, `tools/relay/tests/run_clean_checkout.py` | bundle contains the binaries, MIT notices, INSTALL.md and the example skill; the tracked tree builds, tests and packages from scratch |
 
 ## Optional (explicitly marked optional by the specification)
@@ -93,3 +93,13 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | O2 | Packaged agent backends / AI Gateway equivalent | NOT_STARTED |
 | O3 | Export-template AI integration | NOT_STARTED |
 | O4 | Multi-user / remote Streamable HTTP MCP | NOT_STARTED |
+
+## Beyond the specification
+
+Requested during implementation, not derived from `docs/godot-ai-clone-spec.md`. Held
+to the same bar as everything above.
+
+| ID | Requirement | Status | Code | Tests | Evidence | Remaining |
+|---|---|---|---|---|---|---|
+| X1 | A virtual display, so an agent on a machine with no screen can verify what the editor draws | VERIFIED | `tools/virtual_display.py` | `tools/tests/run_tests.py` (14 cases), `run_editor_e2e.py` | starts `Xvfb`, waits until it answers, supplies software-GL environment and the matching renderer; reuses a working `DISPLAY`, refuses to trust one that answers nothing, degrades honestly with no X server. With it the end-to-end run verifies a real screenshot, a running game's scene tree, and a question answered by clicking — all of which previously only had refusal paths | typed text input needs a window manager focus model this environment does not provide (see T13) |
+| X2 | The editor reports whether it can render | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | `Godot_GetEditorStatus` returns `display_server` and `can_render`, so a client can tell whether the visual tools will work without calling one and reading the refusal; `Godot_CaptureViewport`'s headless refusal names the fix | none |

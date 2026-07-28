@@ -31,6 +31,14 @@ jobs:
       - name: Run relay integration tests
         run: python3 tools/relay/tests/run_tests.py
 
+      # The virtual display has no engine dependency either, so it is checked on the
+      # fast job rather than after a ten-minute build.
+      - name: Install a virtual display
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb x11-utils
+
+      - name: Run tooling tests
+        run: python3 tools/tests/run_tests.py
+
       # The Windows backend cannot be run here, but keeping it compiling is what
       # stops it rotting between releases.
       - name: Install the Windows cross-compiler
@@ -64,6 +72,15 @@ jobs:
             libudev-dev libxi-dev libxrandr-dev
           python3 -m pip install scons
 
+      # A CI runner has no screen, so the end-to-end run would otherwise only be able
+      # to check that the visual tools refuse. With these it starts its own display and
+      # checks that they work: a real screenshot, a running game reporting its tree,
+      # and a question answered by clicking the dialog (xdotool).
+      - name: Install a virtual display and software OpenGL
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            xvfb x11-utils libgl1-mesa-dri xdotool
+
       - name: Restore SCons cache
         uses: actions/cache@v4
         with:
@@ -91,5 +108,11 @@ jobs:
           "${GITHUB_WORKSPACE}/bin/godot.linuxbsd.editor.dev.x86_64" \
             --headless --test --test-case="*[godot_ai]*"
 
+      # Starts its own virtual display, so this covers screenshots, the play lifecycle
+      # and runtime scene-tree inspection, not just their refusal paths.
       - name: Run end-to-end test against a live editor
         run: python3 tools/relay/tests/run_editor_e2e.py
+
+      # The refusal paths still have to hold on a machine that really has no display.
+      - name: Run end-to-end test headless
+        run: python3 tools/relay/tests/run_editor_e2e.py --headless

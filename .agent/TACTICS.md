@@ -73,6 +73,45 @@ Verify with `pkg-config --exists xcursor xinerama xrandr xi alsa`.
   headless unit-test binary, because `register_editor_types()` creates it. Its methods
   dereference `EditorNode`, which is null there. Guard on both.
 
+## Working with a display where there is none
+
+- `tools/virtual_display.py` starts `Xvfb`, waits until it actually answers, and hands
+  back the environment (`DISPLAY` plus software-GL variables). `ensure()` reuses a
+  working `DISPLAY`, starts one otherwise, and returns an unusable display rather than
+  raising when it cannot. `run_editor_e2e.py` calls it, so the visual checks run
+  everywhere `Xvfb` is installed.
+  Packages: `xvfb x11-utils libgl1-mesa-dri`.
+- **Do not trust `DISPLAY` from the environment.** A container image can export one
+  that was never started; the editor then fails in a way that looks like a rendering
+  bug. Probe it (`xdpyinfo -display`) before using it.
+- **llvmpipe has no Vulkan.** The editor needs `--rendering-driver opengl3` plus
+  `LIBGL_ALWAYS_SOFTWARE=1`.
+- **The game process inherits the *project's* renderer, not the editor's command
+  line.** An editor started with `--rendering-driver opengl3` still launches a game
+  that tries Vulkan and dies immediately, taking runtime inspection with it. Put
+  `renderer/rendering_method="gl_compatibility"` in `project.godot`.
+- **The editor only requests the remote scene tree while the Remote panel is
+  visible.** Nothing else asks for it, and nothing signals when it arrives, so a tool
+  that wants it must call `request_remote_tree()` and then poll —
+  `MCPDeferred::begin_polled()` exists for exactly this shape of answer.
+- A capture that succeeds returns an **image** block and no text. Test helpers that
+  format a failure message from `content[0]["text"]` run eagerly and crash on success.
+
+## Driving the editor's GUI from a test
+
+- `xdotool` (package `xdotool`) works against a virtual display. Find the dialog by
+  diffing `xdotool search --onlyvisible --name .` before and after the call that opens
+  it; `getwindowgeometry --shell` then gives coordinates to aim at.
+- **Mouse clicks, `Return` and `Escape` all reach the editor. Typed characters do
+  not.** Without a window manager no window takes X input focus, so a `LineEdit` never
+  receives text, while `Return`/`Escape` still resolve the dialog (they are handled by
+  the Window, not the focused control). Verify free-form answers through a *choices*
+  question, which is fully clickable.
+- Running `openbox` does not fix typing, and its decorations shift the geometry that
+  `getwindowgeometry` reports, so clicks computed from it miss. Leave the display bare.
+- Do not pin a click to a fixed pixel offset: walk fractions of the dialog's height
+  until one lands. With a single choice, whatever answer arrives is unambiguous.
+
 ## Editor behaviour that trips tests
 
 - **Running the game clears the editor's Output panel.** Any test that reads back log

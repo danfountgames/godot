@@ -208,6 +208,7 @@ scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no scu_build=y
 tools/relay/build.sh
 
 python3 tools/relay/tests/run_tests.py       # relay: transport, discovery, lifecycle
+python3 tools/tests/run_tests.py             # the virtual display
 cd /tmp && <repo>/bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
 python3 tools/relay/tests/run_editor_e2e.py  # whole stack against a live editor
 ```
@@ -215,6 +216,35 @@ python3 tools/relay/tests/run_editor_e2e.py  # whole stack against a live editor
 Run the engine test binary from outside the checkout. Fixtures create scratch data
 under the cache directory and delete it through `mcp_test_remove_tree()`, which
 refuses any path outside that directory.
+
+## Working without a screen
+
+Some of this toolset is only meaningful on screen: `Godot_CaptureViewport` photographs
+the editor, `Godot_AskUser` puts a dialog in front of someone, and a launched game has
+to stay alive long enough to report its scene tree. A container has none of that, and
+an editor started there runs headless — the visual tools then refuse, correctly but
+uselessly.
+
+`tools/virtual_display.py` supplies the missing screen. It starts an X server that
+renders into memory, points Mesa's software OpenGL at it, and gives the editor the
+renderer that stack can actually serve:
+
+```sh
+python3 tools/virtual_display.py --probe          # what is possible on this machine
+python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 \
+    --path /path/to/project --editor              # run the editor with a display
+```
+
+Nothing is simulated: the editor opens a real display, draws through a real GL
+implementation, and a screenshot taken through it is what a user would have seen.
+`run_editor_e2e.py` calls the same module, so it verifies screenshots and runtime
+inspection anywhere `Xvfb` is installed, and falls back to checking the refusal paths
+where it is not (`--headless` forces that fallback).
+
+Ask the editor which it has rather than guessing: `Godot_GetEditorStatus` reports
+`display_server` and `can_render`.
+
+Install the dependencies with `apt-get install -y xvfb x11-utils libgl1-mesa-dri`.
 
 ## Troubleshooting
 

@@ -223,3 +223,46 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - Nothing is blocked on more implementation here. See NEXT.md.
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.
+
+## S-15 — the repository supplies its own display
+
+### Done
+- Added `tools/virtual_display.py`: starts `Xvfb`, waits until the display genuinely
+  answers, supplies the software-GL environment and the renderer arguments that stack
+  can serve. Reuses a working `DISPLAY`, refuses to trust one that answers nothing,
+  and returns an unusable display rather than raising when no X server exists.
+  Usable as a library, as a command wrapper, and as `--probe`.
+- `tools/tests/run_tests.py`: 14 cases over real X servers, including the
+  degraded-environment path with the X server mocked away.
+- `run_editor_e2e.py` now starts a display itself; `--headless` forces the old path.
+  Both modes pass.
+- Turned four requirements from "refusal path tested" into verified behaviour:
+  a real 1152x648 screenshot returned inline (T12), a running game's scene tree read
+  live and a runtime edit that leaves the scene file byte-identical (T15),
+  `was_playing` on stop (T11), and a question answered by a real pointer click with
+  Escape reported as a cancellation (T13).
+- `Godot_GetEditorStatus` now reports `display_server` and `can_render`;
+  `Godot_CaptureViewport`'s headless refusal names the fix (X2).
+- CI installs `xvfb x11-utils libgl1-mesa-dri xdotool` and runs both end-to-end modes.
+
+### Found
+- A real product bug the refusal paths had been hiding: the editor only requests the
+  remote scene tree while its Remote panel is visible, and nothing signals when it
+  arrives. `MCPDeferred::begin_polled()` was added so the runtime tools request it and
+  wait.
+- A launched game inherits the *project's* renderer, not the editor's command line, so
+  it died on Vulkan under software rendering until the test project asked for
+  `gl_compatibility`.
+- A successful capture returns an image block and no text; the e2e's failure-message
+  helper indexed `content[0]["text"]` eagerly and crashed on success.
+
+### Not done
+- Typed free text into the ask-user dialog: without a window manager no window takes X
+  input focus, so a `LineEdit` never receives characters. `Return` and `Escape` still
+  work, and choice questions are fully clickable. `openbox` does not fix it and makes
+  click geometry wrong.
+- U1/U2 UI clicking: now possible, not yet written.
+
+### Next
+- See NEXT.md. The remaining gaps are tests not yet written (U1, U2), another
+  operating system (R8), or GitHub Actions itself (C1).

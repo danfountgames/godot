@@ -25,91 +25,56 @@ against a running editor.
 
 ## Current vertical slice
 
-S-14 (done): specification re-audit. 45 of 55 requirements are VERIFIED. What remains
-is honest, not deferred work:
+S-15 (done): the virtual display. The gaps that had been recorded as environmental
+were not: a container can have a screen if the repository gives it one. Adding
+`tools/virtual_display.py` and wiring it into the end-to-end run turned four
+requirements from "refusal path tested" into verified behaviour, and found a real
+product bug on the way — the editor only requests the remote scene tree while its
+Remote panel is visible, so `Godot_GetRuntimeSceneTree` had to ask for it and wait
+(`MCPDeferred::begin_polled`).
 
-- **T12, T13, U1, U2** — implemented and exercised as far as a machine without a
-  display can: the refusal paths, the decision logic and the deferral mechanics are
-  tested; rendering and clicking are not.
+Now verified against a live editor drawing on a real display: a 1152x648 screenshot
+returned as an inline image, a running game's scene tree read live, a runtime property
+edit that leaves the scene file byte-identical, `was_playing` on stop, and a question
+answered by a genuine pointer click on a choice button (Escape returns
+`cancelled: true`).
+
+What remains is honest:
+
+- **U1, U2** — the palette entries and the approvals dialog are constructed on every
+  run, and Godot dialogs are now proven clickable, so these need tests written rather
+  than an environment that permits them.
+- **T13 free text** — typed characters never reach a `LineEdit`: with no window manager
+  no window takes X input focus. `Return` and `Escape` still resolve the dialog, and
+  choice questions are fully clickable. Adding `openbox` does not fix it.
 - **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
-- **C1** — the workflow's commands all pass locally; it has never been observed green
-  on GitHub Actions from here.
-- **O1–O4** — explicitly optional in the specification, and not started.
-
-S-13 (done): extracted the approvals dialog's status/decision logic into
-`mcp_skill_status_text()` so what the UI *decides* is tested even though what it
-*draws* cannot be. The dialog now only renders what that function returns.
-
-S-12 (done): packaging and the audit-log gap. `package.sh` produces a distributable
-bundle with the MIT notices; `run_clean_checkout.py` proves the tracked tree builds,
-tests and packages with no local state, and caught an uncommitted file on its first
-run.
-
-S-11 (done): the relay's platform seam. Every socket, stdio, filesystem and signal
-call now goes through `platform::`, with a POSIX backend that behaves exactly as
-before (all 39 tests still pass) and a Winsock backend that cross-compiles under
-mingw. The hard part was waiting: Windows cannot poll a console handle and a socket
-together, so its backend reads stdin on a thread.
-
-S-10 (done): deferred tool responses and `Godot_AskUser`. A tool can now return a
-token instead of a result; the service holds the client's request id and answers when
-the token completes or its deadline passes. Exactly one response per call is
-guaranteed: late answers are dropped, and a disconnecting client abandons its tokens.
-
-S-09 (done): `Godot_CaptureViewport`. Refuses headless rather than returning a blank
-image, saves a PNG in the project, and returns it inline as an MCP image block when
-small enough. Tools can now supply their own content blocks via `_content`.
-
-S-08 (done): the approvals dialog (U2), command palette and Tools menu entries (U1),
-and the relay's one-shot `--call` mode (U3). The dialog and commands are constructed
-in every headless e2e run, so they cannot crash the editor, but the UI itself cannot
-be clicked without a display - recorded as IMPLEMENTED, not VERIFIED.
-
-S-07 (done): `Godot_ReadOutputLog` (T9) and the persistent/runtime property split
-(T15). `Godot_SetSceneProperty` is undoable and survives a save; `Godot_SetRuntimeProperty`
-and `Godot_GetRuntimeSceneTree` drive the running game and say `persistent: false`
-in their results as well as their descriptions. A path lookup was added to
-`EditorDebuggerTree`, which previously only exposed the user's current selection.
-
-S-06 (done): checkpoints. Snapshots are taken by the protocol layer before any
-mutating tool runs, from paths the tool itself declares, and stored outside the
-project. Restore puts files back byte for byte and removes files the tool created.
-
-S-05 (done): skills. Discovery across project/plugin/user roots, frontmatter
-parsing with editor-version gating, deny-by-default trust, on-demand supporting
-resources, and `Godot_ListSkills`/`Godot_ReadSkill`. The shipped example skill is
-copied into the e2e project and read back over the protocol.
-
-S-04 (done): `Godot_ManageNode` (create/delete/rename/reparent) plus
-`Godot_UndoLastAction`/`Godot_RedoLastAction`, all through `EditorUndoRedoManager`
-following the scene tree dock's own patterns. The unit test found a real crash: the
-editor tools guarded on `EditorInterface::get_singleton()`, which exists in any
-editor build including the test binary, while its methods dereference `EditorNode`.
-Both are now required before any editor call.
-
-S-03 (done): end-to-end verification. `tools/relay/tests/run_editor_e2e.py` launches a
-headless editor, waits for the instance descriptor, and drives the full MCP session
-through the real relay. It found and fixed a real defect: joining onto `res://`
-produced `res:/…`, which also made `Godot_SearchProject` silently return nothing.
+- **C1** — every workflow command passes locally; never observed green on Actions.
+- **O1–O4** — explicitly optional in the specification, not started.
 
 ## Ledger IDs in this slice
 
-Specification re-audit (next). Just completed: U2 decision logic covered; U1/U2 stay
-IMPLEMENTED because rendering and clicking need a display.
+T11, T12, T13, T15 promoted to VERIFIED; U1, U2, C1 restated; X1 and X2 added under
+"Beyond the specification". 49 of 55 specification requirements are VERIFIED.
 
 ## Last verified state
 
-- Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
-- `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
-- Module suite: 57 cases, 379 assertions, all pass. Full engine suite from the
-  repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
-- `python3 tools/relay/tests/run_editor_e2e.py` → 31/31 checks pass against a live
-  headless editor, including a create/rename/reparent/undo/save/delete/undo round
-  trip verified against the saved scene file, and the shipped example skill read back
-  over the protocol.
-- Documentation (`modules/godot_ai/README.md`), `AGENTS.md` and
-  `.github/workflows/godot_ai.yml` are in place. The workflow has not yet been
-  observed running on GitHub Actions.
+All of the following on the current working tree, in one sweep:
+
+- `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
+- `python3 tools/tests/run_tests.py` → 14/14 pass (the virtual display).
+- Module suite: 57 cases, 379 assertions, all pass.
+- Full engine suite from the repository root: 935 cases, 2,395,071 assertions, all
+  pass — no regression from the editor accessors this module added.
+- `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a display the
+  script starts itself, including a real 1152x648 screenshot, a running game's scene
+  tree (`root > Main > Player, Hud, EnemySpawner`), a runtime edit that leaves the
+  scene file byte-identical, and a question answered by clicking its dialog.
+- `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
+  visual tools refusing as they should.
+- Documentation (`modules/godot_ai/README.md`), `AGENTS.md`, `CLAUDE.md` and
+  `.github/workflows/godot_ai.yml` are current. The workflow now installs
+  `xvfb x11-utils libgl1-mesa-dri xdotool` and runs both end-to-end modes; it has still
+  never been observed running on GitHub Actions.
 
 ## Working-tree expectations
 
@@ -132,19 +97,25 @@ None.
 - Run the engine test binary from outside the repository (`cd /tmp`) as defence in
   depth.
 - Windows and macOS relay behaviour cannot be *run* here. The Windows backend is
-  cross-compiled in CI so it cannot rot, but nothing has executed it; same for any
-  screenshot output, which needs a display.
+  cross-compiled in CI so it cannot rot, but nothing has executed it.
+- **Do not record a gap as environmental without trying.** Screenshots, dialogs and
+  runtime inspection were all recorded that way and none of them had to be; the
+  display was one `apt-get install xvfb` away, and treating it as unreachable hid a
+  real bug. `tools/virtual_display.py` exists now — use it.
 
 ## Last completed command
 
-`python3 tools/relay/tests/run_editor_e2e.py` → all checks passed; committed and
-pushed as `7d8fa581f5`.
+The full sweep above, then commit and push.
 
 ## Next command
 
-The next session should pick from the optional tranche or close a display-dependent
-gap on a machine that has one. Start by confirming the ledger still matches reality:
+Confirm the ledger still matches reality before doing anything else:
 
 ```sh
-python3 tools/relay/tests/run_tests.py && python3 tools/relay/tests/run_editor_e2e.py
+python3 tools/relay/tests/run_tests.py && python3 tools/tests/run_tests.py \
+    && python3 tools/relay/tests/run_editor_e2e.py
 ```
+
+The visual checks need `xvfb x11-utils libgl1-mesa-dri xdotool`; without them the run
+still passes, having quietly degraded to the refusal paths, so check the first line of
+its output to see which mode it ran in.

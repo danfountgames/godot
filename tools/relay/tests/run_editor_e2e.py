@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -25,6 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from relay_harness import REPO_ROOT, RELAY_BINARY, RelayProcess  # noqa: E402
 
+sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+
+import virtual_display  # noqa: E402
+
 DEFAULT_EDITOR = os.path.join(REPO_ROOT, "bin", "godot.linuxbsd.editor.dev.x86_64")
 
 PROJECT_GODOT = """config_version=5
@@ -34,6 +39,14 @@ PROJECT_GODOT = """config_version=5
 config/name="AI E2E Project"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3")
+
+[rendering]
+
+; The *game* process inherits the project's renderer, not the editor's command line.
+; Software rendering under a virtual display cannot do Vulkan, so the project has to
+; ask for GL compatibility or the game dies before the debugger ever connects.
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
 """
 
 MAIN_SCENE = """[gd_scene format=3 uid="uid://bqxaie2e001"]
@@ -59,8 +72,12 @@ def refusal_text(reply):
     """The human-readable reason a call was refused, whichever shape it came in."""
     if "error" in reply:
         return reply["error"]["message"]
-    content = reply.get("result", {}).get("content", [])
-    return content[0]["text"] if content else ""
+    # A successful call may answer with an image block and no text at all, and this
+    # runs eagerly to build every check's failure message - so never index blindly.
+    for block in reply.get("result", {}).get("content", []):
+        if block.get("type") == "text":
+            return block["text"]
+    return ""
 
 
 def refused(reply):
@@ -84,6 +101,78 @@ def install_example_skill(root):
     source = os.path.join(REPO_ROOT, "misc", "godot_ai", "skills", "scene-cleanup")
     destination = os.path.join(root, "ai_skills", "scene-cleanup")
     shutil.copytree(source, destination)
+
+
+def xdotool(display, *args):
+    """Runs xdotool against `display`, returning (status, output)."""
+    environment = dict(os.environ)
+    environment["DISPLAY"] = display
+    result = subprocess.run(["xdotool"] + list(args), env=environment,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    return result.returncode, result.stdout.decode().strip()
+
+
+def visible_windows(display):
+    status, output = xdotool(display, "search", "--onlyvisible", "--name", ".")
+    return set(output.split()) if status == 0 else set()
+
+
+def window_geometry(display, window):
+    _, output = xdotool(display, "getwindowgeometry", "--shell", window)
+    fields = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    return {key: int(value) for key, value in fields.items() if value.lstrip("-").isdigit()}
+
+
+def open_question(relay, display, identifier, arguments):
+    """Asks a question and waits for its dialog to appear on screen."""
+    before = visible_windows(display)
+    relay.send_message({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                        "params": {"name": "Godot_AskUser", "arguments": arguments}})
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        appeared = visible_windows(display) - before
+        if appeared:
+            # Let the window finish laying out before anything is aimed at it.
+            time.sleep(1.0)
+            return appeared.pop()
+        time.sleep(0.3)
+    raise Failure("no dialog window appeared for the question")
+
+
+def click_an_answer(relay, display, choices):
+    """Clicks a choice button and returns the answer that came back.
+
+    The button's exact offset depends on how the dialog lays out its text, which is
+    not something a test should be pinned to - so this walks down the dialog until a
+    click lands. A single choice keeps the result unambiguous: whatever answer arrives
+    can only have come from that button.
+    """
+    window = open_question(relay, display, 92,
+                           {"question": "Which planet?", "choices": list(choices),
+                            "timeout_seconds": 60})
+    box = window_geometry(display, window)
+    for fraction in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8):
+        x = box["X"] + box["WIDTH"] // 2
+        y = box["Y"] + int(box["HEIGHT"] * fraction)
+        xdotool(display, "mousemove", str(x), str(y), "click", "1")
+        reply = relay.read_message(timeout=3)
+        if reply is not None:
+            check(reply["result"]["isError"] is False,
+                  "clicking the dialog produced an error: %s" % refusal_text(reply))
+            return reply["result"]["structuredContent"]
+    raise Failure("no click on the dialog produced an answer (geometry %r)" % box)
+
+
+def dismiss_a_question(relay, display):
+    """Presses Escape on the dialog and returns the answer that came back."""
+    open_question(relay, display, 93,
+                  {"question": "Never mind?", "timeout_seconds": 60})
+    xdotool(display, "key", "Escape")
+    reply = relay.read_message(timeout=20)
+    check(reply is not None, "dismissing the dialog produced no response at all")
+    check(reply["result"]["isError"] is False,
+          "dismissing the dialog produced an error: %s" % refusal_text(reply))
+    return reply["result"]["structuredContent"]
 
 
 def build_project(root):
@@ -110,7 +199,7 @@ def wait_for_instance(instances_dir, process, timeout=120.0):
     raise Failure("the editor never wrote an instance descriptor")
 
 
-def run(editor_binary):
+def run(editor_binary, display):
     if not os.path.exists(editor_binary):
         raise Failure("editor binary not found at %s" % editor_binary)
 
@@ -120,13 +209,21 @@ def run(editor_binary):
     os.makedirs(home)
     build_project(project)
 
-    environment = dict(os.environ)
+    environment = display.environment()
     environment["GODOT_AI_HOME"] = home
     # Automation opt-in: skips the first-connection approval a human would give.
     environment["GODOT_AI_AUTO_APPROVE"] = "1"
 
+    # With a display we can verify what a headless editor genuinely cannot show: that a
+    # screenshot is a real image, and that the running game reports its tree. The
+    # display is virtual unless the machine has a real one; either way the editor draws
+    # for real, and the checks below are the same checks a human would make.
+    has_display = display.usable
+    command = [editor_binary, "--path", project, "--editor"] + display.godot_arguments()
+    print("running %s" % ("with display %s" % display.display if has_display else "headless"))
+
     editor = subprocess.Popen(
-        [editor_binary, "--headless", "--path", project, "--editor"],
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         env=environment,
@@ -218,7 +315,7 @@ def run(editor_binary):
                                  "arguments": {"action": "create", "type": "Node2D",
                                                "name": "Spawner", "parent": "."}}})
         check(reply["result"]["isError"] is False,
-              "create failed: %s" % reply["result"]["content"][0]["text"])
+              "create failed: %s" % refusal_text(reply))
         check(reply["result"]["structuredContent"]["node"]["name"] == "Spawner",
               "created node has the wrong name")
         check("Spawner" in scene_node_names(), "created node is not in the scene tree")
@@ -282,7 +379,7 @@ def run(editor_binary):
                       "params": {"name": "Godot_ManageNode",
                                  "arguments": {"action": "delete", "path": "."}}})
         check(refused(reply), "deleting the scene root was allowed")
-        check("root" in reply["result"]["content"][0]["text"],
+        check("root" in refusal_text(reply),
               "root-delete refusal does not explain itself")
 
         reply = call({"jsonrpc": "2.0", "id": 30, "method": "tools/call",
@@ -321,7 +418,7 @@ def run(editor_binary):
                       "params": {"name": "Godot_ReadSkill",
                                  "arguments": {"name": "scene-cleanup"}}})
         check(reply["result"]["isError"] is False,
-              "reading the skill failed: %s" % reply["result"]["content"][0]["text"])
+              "reading the skill failed: %s" % refusal_text(reply))
         text = reply["result"]["structuredContent"]["text"]
         check(text.startswith("You are a Godot scene-maintenance specialist."),
               "skill instructions were not returned with the frontmatter stripped")
@@ -365,7 +462,7 @@ def run(editor_binary):
                                  "arguments": {"path": "Player", "property": "position",
                                                "value": [128, 64]}}})
         check(reply["result"]["isError"] is False,
-              "setting a scene property failed: %s" % reply["result"]["content"][0]["text"])
+              "setting a scene property failed: %s" % refusal_text(reply))
         check(reply["result"]["structuredContent"]["persistent"] is True,
               "a scene property edit did not report itself as persistent")
 
@@ -389,7 +486,7 @@ def run(editor_binary):
                                  "arguments": {"path": "/root/Main/Player",
                                                "property": "position", "value": [1, 2]}}})
         check(refused(reply), "a runtime property edit was accepted with no game running")
-        check("running" in reply["result"]["content"][0]["text"],
+        check("running" in refusal_text(reply),
               "the refusal does not explain that the game is not running")
 
         reply = call({"jsonrpc": "2.0", "id": 74, "method": "tools/call",
@@ -418,15 +515,50 @@ def run(editor_binary):
         check(reply["result"]["isError"] is False, "the editor stopped serving after a deferred call")
         print("PASS Godot_AskUser deferred the response and timed out cleanly")
 
+        # --- answering the question for real ----------------------------------
+        # A timeout only proves the plumbing. This drives the dialog the way a person
+        # would: a real pointer, on a real window, hitting a real button.
+        if has_display and shutil.which("xdotool"):
+            answer = click_an_answer(relay, display.display, ["mercury"])
+            check(answer == {"answer": "mercury", "cancelled": False},
+                  "clicking a choice did not return it: %r" % answer)
+            print("PASS Godot_AskUser returned the choice that was clicked")
+
+            answer = dismiss_a_question(relay, display.display)
+            check(answer["cancelled"] is True,
+                  "dismissing the dialog was not reported as a cancellation: %r" % answer)
+            print("PASS Godot_AskUser reports a dismissed question as cancelled")
+        elif has_display:
+            print("SKIP clicking the dialog: xdotool is not installed")
+
         # --- screenshots ------------------------------------------------------
         # This editor is headless, so the honest answer is a refusal that names the
         # reason - not a blank image presented as if it were the editor.
         reply = call({"jsonrpc": "2.0", "id": 80, "method": "tools/call",
                       "params": {"name": "Godot_CaptureViewport"}})
-        check(refused(reply), "a headless editor produced a screenshot")
-        check("headless" in refusal_text(reply),
-              "the capture refusal does not name the reason: %r" % refusal_text(reply))
-        print("PASS Godot_CaptureViewport refuses cleanly when headless")
+        if not has_display:
+            check(refused(reply), "a headless editor produced a screenshot")
+            check("headless" in refusal_text(reply),
+                  "the capture refusal does not name the reason: %r" % refusal_text(reply))
+            print("PASS Godot_CaptureViewport refuses cleanly when headless")
+        else:
+            check(reply["result"]["isError"] is False,
+                  "capture failed: %s" % refusal_text(reply))
+            shot = reply["result"]["structuredContent"]
+            check(shot["width"] > 200 and shot["height"] > 200,
+                  "the capture is implausibly small: %r" % shot)
+            on_disk = os.path.join(project, shot["path"].replace("res://", ""))
+            with open(on_disk, "rb") as handle:
+                header = handle.read(8)
+            check(header == b"\x89PNG\r\n\x1a\n", "the saved capture is not a PNG")
+            check(os.path.getsize(on_disk) > 5000,
+                  "the capture is too small to be a rendered editor: %d bytes"
+                  % os.path.getsize(on_disk))
+            images = [c for c in reply["result"]["content"] if c["type"] == "image"]
+            check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
+                  "the inline image block is not a PNG")
+            print("PASS Godot_CaptureViewport produced a real %dx%d image"
+                  % (shot["width"], shot["height"]))
 
         # --- output log -------------------------------------------------------
         # The AI service announces itself in the Output panel at startup, so that
@@ -435,7 +567,7 @@ def run(editor_binary):
                       "params": {"name": "Godot_ReadOutputLog",
                                  "arguments": {"contains": "Godot AI service"}}})
         check(reply["result"]["isError"] is False,
-              "reading the output log failed: %s" % reply["result"]["content"][0]["text"])
+              "reading the output log failed: %s" % refusal_text(reply))
         messages = reply["result"]["structuredContent"]["messages"]
         check(any("listening on" in m["text"] for m in messages),
               "the service startup message was not in the output log: %r" % messages)
@@ -448,19 +580,21 @@ def run(editor_binary):
         check(reply["result"]["structuredContent"]["messages"] == [],
               "a filter that matches nothing still returned messages")
 
-        # --- play lifecycle --------
+        # --- play lifecycle ---------------------------------------------------
         # Deliberately after the output-log checks: starting the game clears the
-        # editor's Output panel, which would wipe the messages those checks read.------------------------------------------------
+        # editor's Output panel, which would wipe the messages those checks read.
         reply = call({"jsonrpc": "2.0", "id": 85, "method": "tools/call",
                       "params": {"name": "Godot_PlayCurrentScene"}})
+        if has_display:
+            check(reply.get("result", {}).get("isError") is False,
+                  "play failed even with a display: %s" % refusal_text(reply))
         if reply.get("result", {}).get("isError") is False:
             playing = reply["result"]["structuredContent"]["playing"]
             check(playing is True, "the editor reported the game as not running after play")
 
             # Runtime inspection needs the game to attach a debugger session and
-            # report its tree. That does not happen reliably with a headless game, so
-            # it is probed and reported rather than asserted - claiming it passed
-            # here would be claiming something this environment cannot show.
+            # report its tree. A headless game may exit before it ever does, so this is
+            # probed there and asserted where a display exists.
             deadline = time.time() + 10
             tree = None
             while time.time() < deadline:
@@ -471,19 +605,40 @@ def run(editor_binary):
                     break
                 time.sleep(0.5)
             if tree is not None:
-                check(any(n["name"] == "Main" for n in tree["nodes"]),
-                      "the runtime tree does not contain the scene root: %r" % tree["nodes"])
-                print("PASS Godot_GetRuntimeSceneTree saw the running game")
+                names = [n["name"] for n in tree["nodes"]]
+                check("Main" in names and "Player" in names,
+                      "the runtime tree does not match the scene: %r" % names)
+                print("PASS Godot_GetRuntimeSceneTree saw the running game: %r" % names)
+
+                # The whole point of the runtime/persistent split: this edit must not
+                # reach the file on disk.
+                before = open(os.path.join(project, "scenes", "main.tscn")).read()
+                reply = call({"jsonrpc": "2.0", "id": 88, "method": "tools/call",
+                              "params": {"name": "Godot_SetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position",
+                                                       "value": [64, 32]}}})
+                check(reply["result"]["isError"] is False,
+                      "runtime property edit failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["persistent"] is False,
+                      "a runtime edit claimed to be persistent")
+                after = open(os.path.join(project, "scenes", "main.tscn")).read()
+                check(before == after, "a runtime edit changed the scene file on disk")
+                print("PASS Godot_SetRuntimeProperty applied without touching the project")
+            elif has_display:
+                raise Failure("the running game never reported its scene tree")
             else:
                 print("SKIP runtime tree: the headless game did not report one")
 
             reply = call({"jsonrpc": "2.0", "id": 87, "method": "tools/call",
                           "params": {"name": "Godot_StopPlaying"}})
             # A headless game with an empty scene may already have exited by now, so
-            # `was_playing` is not something this environment can pin down. What must
-            # hold either way is the postcondition: nothing is running afterwards.
+            # `was_playing` can only be pinned down where the game actually stayed up.
             check(reply["result"]["structuredContent"]["playing"] is False,
                   "the game was still running after stop")
+            if has_display:
+                check(reply["result"]["structuredContent"]["was_playing"] is True,
+                      "stop did not report that a game had been running")
             print("PASS play reported a running game and stop left nothing running")
         else:
             # Running a game needs more than a headless editor on some systems; say so
@@ -516,7 +671,7 @@ def run(editor_binary):
                       "params": {"name": "Godot_RestoreCheckpoint",
                                  "arguments": {"id": created_checkpoint}}})
         check(reply["result"]["isError"] is False,
-              "restore failed: %s" % reply["result"]["content"][0]["text"])
+              "restore failed: %s" % refusal_text(reply))
         check(reply["result"]["structuredContent"]["files_removed"] == 1,
               "restore did not remove the file the tool had created")
         check(not os.path.exists(os.path.join(project, "written.txt")),
@@ -532,7 +687,7 @@ def run(editor_binary):
                       "params": {"name": "Godot_ReadTextFile",
                                  "arguments": {"path": "res://../../etc/passwd"}}})
         check(reply["result"]["isError"] is True, "project escape was not refused")
-        check("outside the project" in reply["result"]["content"][0]["text"],
+        check("outside the project" in refusal_text(reply),
               "escape refusal does not explain itself")
         print("PASS project escape refused")
 
@@ -580,9 +735,17 @@ def run(editor_binary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--editor", default=DEFAULT_EDITOR)
+    parser.add_argument("--headless", action="store_true",
+                        help="skip the display checks even where a display is available")
     args = parser.parse_args()
+
+    # Start a display rather than assume one: on a container this is the difference
+    # between verifying the visual tools and merely verifying that they refuse.
+    display = (virtual_display.VirtualDisplay("", 0, 0, 0) if args.headless
+               else virtual_display.ensure(width=1280, height=800))
     try:
-        run(args.editor)
+        with display:
+            run(args.editor, display)
     except Failure as failure:
         print("FAIL %s" % failure, file=sys.stderr)
         return 1

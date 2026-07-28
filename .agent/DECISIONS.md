@@ -106,3 +106,38 @@ Durable decisions that are not obvious from the resulting code.
   reach outside its own scratch directory. The incident also established the
   commit-and-push-per-slice rule in `CLAUDE.md`.
 - **Spec IDs:** affects all engine-side test entries.
+
+## DEC-0007 — The repository supplies its own display, at the launcher and not inside the engine
+
+- **Date:** 2026-07-28
+- **Context:** Screenshots, dialogs and a running game's scene tree all need a screen.
+  This container has none, so those requirements had been recorded as environmental
+  gaps — the tools' refusal paths were tested, their success paths were not. That is a
+  bad trade: the visual half of the toolset is the half a text-only agent can least
+  afford to leave unverified, and treating it as unreachable hid a real product bug
+  (the editor only requests the remote scene tree while its Remote panel is visible).
+- **Decision:** Ship `tools/virtual_display.py`. It starts `Xvfb`, waits until the
+  display actually answers, and hands back the environment and renderer arguments the
+  editor needs. `run_editor_e2e.py` calls it, so the visual checks run by default
+  wherever `Xvfb` exists. The editor process itself is unchanged: it opens a real
+  display and renders through Mesa's software OpenGL.
+- **Alternatives considered:**
+  - *A virtual `DisplayServer` inside the engine.* It would remove the `Xvfb`
+    dependency, but it means writing and maintaining a display backend whose output
+    nothing else validates — a screenshot from it would prove that the fake backend
+    works, not that the editor draws correctly. Rejected: the point of the exercise is
+    fidelity to what a user sees.
+  - *The editor spawning `Xvfb` itself.* Rejected: the editor would be launching
+    processes to fix its own environment, which cuts against "tools never execute
+    shell commands" and makes the engine responsible for a deployment concern. A
+    launcher is the right layer; `Godot_GetEditorStatus` reports `can_render` and
+    `Godot_CaptureViewport`'s refusal names the fix, so a client is told what to do
+    without the engine doing it.
+  - *Requiring the caller to arrange a display.* Rejected: that is what produced the
+    stale "environmental" statuses in the first place.
+- **Consequences:** `xvfb x11-utils libgl1-mesa-dri xdotool` become CI dependencies for
+  the editor job. Where they are absent, everything still runs and the display checks
+  degrade to the refusal paths, so no machine is locked out. Test projects must ask for
+  `gl_compatibility`: a launched game inherits the *project's* renderer, not the
+  editor's command line, and llvmpipe has no Vulkan.
+- **Spec IDs:** T11, T12, T13, T15, U1, U2, C1, X1, X2.

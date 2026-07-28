@@ -56,6 +56,8 @@ never put task progress, logs, or temporary next actions in `CLAUDE.md`.
 | `modules/godot_ai/tests/` | doctest unit tests, auto-included when `tests=yes` |
 | `tools/relay/` | Standalone `godot-ai-relay` stdio↔TCP bridge (no engine dependency) |
 | `tools/relay/tests/` | Python integration tests for the relay (fast, no engine build) |
+| `tools/virtual_display.py` | Starts an X server in memory so the editor can draw on a machine with no screen |
+| `tools/tests/` | Tests for the standalone tooling (currently the virtual display) |
 | `.agent/` | Persistent implementation-control workspace |
 
 ## Canonical commands
@@ -82,7 +84,15 @@ tools/relay/build.sh
 # Relay integration tests (fast loop, no engine build).
 python3 tools/relay/tests/run_tests.py
 
-# Whole stack: launches a headless editor and drives it through the real relay.
+# Virtual-display tests (fast loop, no engine build).
+python3 tools/tests/run_tests.py
+
+# Anything that must be seen: run it under a virtual display.
+python3 tools/virtual_display.py --probe
+python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path <project> --editor
+
+# Whole stack: starts a display if the machine has none, launches the editor on it,
+# and drives it through the real relay. `--headless` forces the no-display path.
 python3 tools/relay/tests/run_editor_e2e.py
 ```
 
@@ -96,6 +106,12 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
 
 - **Prefer the fast loop.** Relay/protocol work is verifiable in seconds via
   `tools/relay/tests/run_tests.py`. Only rebuild the engine when editor C++ changed.
+- **A missing screen is not an external blocker.** Screenshots, dialogs and a running
+  game's scene tree all need a display, and this container has none — so the repository
+  starts one: `tools/virtual_display.py`. Reach for it before recording anything as
+  environmental. Doing so turned up a real product bug that the refusal paths hid: the
+  editor only requests the remote scene tree while its Remote panel is visible, so
+  `Godot_GetRuntimeSceneTree` had to ask for it and wait.
 - Record `In-flight operation` in `.agent/STATE.md` before starting a build.
   Incremental rebuilds after a module-only change take well under a minute.
 - This tree is Godot **4.3**, not 4.6. The editor source is **flat**
