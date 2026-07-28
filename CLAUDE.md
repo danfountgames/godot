@@ -94,6 +94,9 @@ python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path 
 # Whole stack: starts a display if the machine has none, launches the editor on it,
 # and drives it through the real relay. `--headless` forces the no-display path.
 python3 tools/relay/tests/run_editor_e2e.py
+
+# The editor's own UI, driven by keyboard and pointer (needs xdotool; skips without).
+python3 tools/relay/tests/run_editor_ui_e2e.py
 ```
 
 Run the module's own suite from any directory; **run the full engine suite from the

@@ -86,7 +86,10 @@ void MCPApprovalsDialog::refresh() {
 			item->set_text(COLUMN_STATUS, TTR("Waiting for approval"));
 			item->set_meta("kind", "client");
 			item->set_meta("name", client);
-			item->add_button(COLUMN_ACTION, Ref<Texture2D>(), BUTTON_TOGGLE, false, TTR("Allow"));
+			// A button with no icon draws nothing: the user would see an empty Action
+			// column and no way to approve anything. The label is only the tooltip.
+			item->add_button(COLUMN_ACTION, tree->get_editor_theme_icon(SNAME("ImportCheck")),
+					BUTTON_TOGGLE, false, TTR("Allow this client"));
 			pending_count++;
 		}
 	}
@@ -116,8 +119,10 @@ void MCPApprovalsDialog::refresh() {
 
 		// A skill that cannot run is not a decision the user should be offered.
 		if (can_toggle) {
-			item->add_button(COLUMN_ACTION, Ref<Texture2D>(), BUTTON_TOGGLE, false,
-					skill.allowed ? TTR("Revoke") : TTR("Allow"));
+			item->add_button(COLUMN_ACTION,
+					tree->get_editor_theme_icon(skill.allowed ? SNAME("Remove") : SNAME("ImportCheck")),
+					BUTTON_TOGGLE, false,
+					skill.allowed ? TTR("Revoke this skill") : TTR("Allow this skill"));
 		}
 	}
 

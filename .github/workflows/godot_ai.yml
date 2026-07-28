@@ -116,3 +116,8 @@ jobs:
       # The refusal paths still have to hold on a machine that really has no display.
       - name: Run end-to-end test headless
         run: python3 tools/relay/tests/run_editor_e2e.py --headless
+
+      # Drives the editor by keyboard and pointer: the command palette, and the
+      # approvals dialog that is the only way a client or a skill gets allowed.
+      - name: Run editor UI end-to-end test
+        run: python3 tools/relay/tests/run_editor_ui_e2e.py

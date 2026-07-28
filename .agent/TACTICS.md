@@ -102,13 +102,18 @@ Verify with `pkg-config --exists xcursor xinerama xrandr xi alsa`.
 - `xdotool` (package `xdotool`) works against a virtual display. Find the dialog by
   diffing `xdotool search --onlyvisible --name .` before and after the call that opens
   it; `getwindowgeometry --shell` then gives coordinates to aim at.
-- **Mouse clicks, `Return` and `Escape` all reach the editor. Typed characters do
-  not.** Without a window manager no window takes X input focus, so a `LineEdit` never
-  receives text, while `Return`/`Escape` still resolve the dialog (they are handled by
-  the Window, not the focused control). Verify free-form answers through a *choices*
-  question, which is fully clickable.
-- Running `openbox` does not fix typing, and its decorations shift the geometry that
+- **Typing works, but only after clicking the field first.** Characters go to whatever
+  holds *Godot* focus, and a freshly opened dialog or palette usually focuses a button
+  instead of its text field - so `Return` submits an empty value and the typing appears
+  to have vanished. Click the field, then type.
+- **Nothing restores X input focus when a popup closes**, because there is no window
+  manager. After a dialog is dismissed, keystrokes go to a destroyed window and are
+  lost, which looks exactly like a keyboard shortcut that stopped working. Call
+  `xdotool windowfocus --sync <editor window>` before each keystroke sequence.
+- Running `openbox` does not help, and its decorations shift the geometry that
   `getwindowgeometry` reports, so clicks computed from it miss. Leave the display bare.
+- Take a screenshot when a UI check fails (`xwd -root | convert`), **before** the
+  teardown that closes the editor — otherwise the evidence is a black screen.
 - Do not pin a click to a fixed pixel offset: walk fractions of the dialog's height
   until one lands. With a single choice, whatever answer arrives is unambiguous.
 
