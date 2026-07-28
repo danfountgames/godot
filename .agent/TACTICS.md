@@ -73,6 +73,17 @@ Verify with `pkg-config --exists xcursor xinerama xrandr xi alsa`.
   headless unit-test binary, because `register_editor_types()` creates it. Its methods
   dereference `EditorNode`, which is null there. Guard on both.
 
+## Cross-platform
+
+- `tools/relay/build.sh --windows` cross-compiles the relay with mingw
+  (`apt-get install g++-mingw-w64-x86-64`). It cannot be run here, but it keeps the
+  Windows backend compiling.
+- Windows cannot wait on a console/pipe handle and a socket in one call: `WSAPoll`
+  takes sockets only. The Windows backend therefore reads stdin on a thread, which is
+  why `platform::wait_for_input()` exists rather than a bare `poll()`.
+- `_dupenv_s` and friends are MSVC-only and do not exist under mingw; use the Win32
+  API (`GetEnvironmentVariableA`) instead.
+
 ## Harness gotchas
 
 - Foreground `sleep` is blocked; use background commands or `until <cond>; do sleep 2; done`.

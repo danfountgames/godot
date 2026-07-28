@@ -25,7 +25,14 @@ against a running editor.
 
 ## Current vertical slice
 
-S-11 (next): the Winsock port that would unblock R8, then packaging (C2).
+S-12 (next): packaging (C2), then the remaining coverage gaps (U1/U2 dialog tests,
+F6/F7 persistence and audit-file tests).
+
+S-11 (done): the relay's platform seam. Every socket, stdio, filesystem and signal
+call now goes through `platform::`, with a POSIX backend that behaves exactly as
+before (all 39 tests still pass) and a Winsock backend that cross-compiles under
+mingw. The hard part was waiting: Windows cannot poll a console handle and a socket
+together, so its backend reads stdin on a thread.
 
 S-10 (done): deferred tool responses and `Godot_AskUser`. A tool can now return a
 token instead of a result; the service holds the client's request id and answers when
@@ -70,8 +77,8 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-R8, C2 (next). Just completed: P6 → VERIFIED; T13 → IMPLEMENTED (the deferral and
-timeout are verified; a human clicking an answer needs a display).
+C2 (next). Just completed: R8 → IMPLEMENTED (was BLOCKED; the Windows path now
+exists and is compile-verified, only runtime verification remains blocked).
 
 ## Last verified state
 
@@ -107,8 +114,9 @@ None.
   after every verified slice; never run a recursive delete rooted at the CWD.
 - Run the engine test binary from outside the repository (`cd /tmp`) as defence in
   depth.
-- macOS/Windows relay verification and any GPU/viewport work (screenshots) cannot run
-  in this container; expect those to stay BLOCKED with recorded reasons.
+- Windows and macOS relay behaviour cannot be *run* here. The Windows backend is
+  cross-compiled in CI so it cannot rot, but nothing has executed it; same for any
+  screenshot output, which needs a display.
 
 ## Last completed command
 
@@ -117,8 +125,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start R8 by listing every POSIX socket call the relay makes:
+Start C2 by seeing what the editor build already installs:
 
 ```sh
-grep -n "socket(\|connect(\|recv(\|send(\|poll(\|close(" tools/relay/src/relay.cpp
+grep -rn "install\|InstallAs" SConstruct platform/linuxbsd/SCsub | head
 ```

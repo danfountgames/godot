@@ -44,7 +44,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | R5 | MCP | Documented flag set | R1 | VERIFIED | `relay_parse_options` | CLI tests | per-option usage errors, exit code 2 | none |
 | R6 | CI | Clean shutdown, no orphans, socket release | R1 | VERIFIED | `Relay::run`, `disconnect` | lifecycle tests | EOF and SIGTERM both exit 0 | none |
 | R7 | SEC/CI | stdout purity | R1 | VERIFIED | `write_stdout_line`, `handle_editor_line` | purity tests | every stdout line is a JSON object | none |
-| R8 | CI/PKG | macOS and Windows relay behaviour | R1 | BLOCKED | POSIX sockets in `relay.cpp` | — | Linux only in this environment | Winsock port; macOS/Windows hosts unavailable here (see STATE.md) |
+| R8 | CI/PKG | macOS and Windows relay behaviour | R1 | IMPLEMENTED | `tools/relay/src/platform*.{h,cpp}` | POSIX backend covered by all 39 relay tests; Windows backend cross-compiled in CI | POSIX unchanged and green; Windows builds clean under mingw | runtime verification on macOS/Windows hosts, which this environment does not have |
 
 ## Tools
 

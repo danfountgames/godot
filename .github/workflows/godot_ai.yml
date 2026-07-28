@@ -31,6 +31,14 @@ jobs:
       - name: Run relay integration tests
         run: python3 tools/relay/tests/run_tests.py
 
+      # The Windows backend cannot be run here, but keeping it compiling is what
+      # stops it rotting between releases.
+      - name: Install the Windows cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64
+
+      - name: Cross-compile the relay for Windows
+        run: tools/relay/build.sh --windows
+
   editor:
     name: Editor module tests and end-to-end
     needs: relay

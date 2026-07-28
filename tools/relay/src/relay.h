@@ -32,6 +32,7 @@
 #define GODOT_AI_RELAY_RELAY_H
 
 #include "json.h"
+#include "platform.h"
 
 #include <string>
 #include <utility>
@@ -116,7 +117,7 @@ extern const char *RELAY_VERSION;
 class Relay {
 	RelayOptions options;
 
-	int socket_fd = -1;
+	platform::SocketHandle socket = platform::INVALID_SOCKET_HANDLE;
 	bool connected = false;
 	bool handshake_complete = false;
 	std::string fatal_bridge_error; // Non-empty once the bridge is unusable.

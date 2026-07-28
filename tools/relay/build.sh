@@ -14,6 +14,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 CXX=${CXX:-c++}
 output="$repo_root/bin/godot-ai-relay"
 flags="-O2"
+extra_libs=""
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -24,6 +25,14 @@ while [ $# -gt 0 ]; do
 	--output)
 		output="$2"
 		shift 2
+		;;
+	--windows)
+		# Cross-compile check. The Windows backend cannot be run here, but it can be
+		# kept compiling, which is what stops it rotting between releases.
+		CXX="x86_64-w64-mingw32-g++"
+		output="$repo_root/bin/godot-ai-relay.exe"
+		extra_libs="-lws2_32 -static"
+		shift
 		;;
 	*)
 		echo "build.sh: unknown option: $1" >&2
@@ -39,6 +48,9 @@ mkdir -p "$(dirname "$output")"
 	-o "$output" \
 	"$script_dir/src/main.cpp" \
 	"$script_dir/src/relay.cpp" \
-	"$script_dir/src/json.cpp"
+	"$script_dir/src/json.cpp" \
+	"$script_dir/src/platform_posix.cpp" \
+	"$script_dir/src/platform_windows.cpp" \
+	$extra_libs
 
 echo "built $output"

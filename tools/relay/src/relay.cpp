@@ -30,22 +30,13 @@
 
 #include "relay.h"
 
+#include "platform.h"
+
 #include <algorithm>
-#include <cerrno>
-#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-#include <arpa/inet.h>
-#include <dirent.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 namespace godot_ai {
 
@@ -57,12 +48,6 @@ const char *RELAY_BRIDGE_VERSION = "1";
 static const size_t MAX_FRAME_BYTES = 32u * 1024u * 1024u;
 
 static const char *HELLO_ID = "godot-ai-relay/hello";
-
-static volatile sig_atomic_t g_terminate = 0;
-
-static void handle_signal(int) {
-	g_terminate = 1;
-}
 
 // ----------------------------------------------------------------- options ---
 
@@ -237,13 +222,13 @@ std::string relay_home_dir(const RelayOptions &p_options) {
 	if (!p_options.home.empty()) {
 		return p_options.home;
 	}
-	const char *env = getenv("GODOT_AI_HOME");
-	if (env && *env) {
+	const std::string env = platform::environment("GODOT_AI_HOME");
+	if (!env.empty()) {
 		return env;
 	}
-	const char *home = getenv("HOME");
-	if (home && *home) {
-		return std::string(home) + "/.godot-ai";
+	const std::string home = platform::home_directory();
+	if (!home.empty()) {
+		return home + "/.godot-ai";
 	}
 	return ".godot-ai";
 }
@@ -252,37 +237,16 @@ std::string relay_instances_dir(const RelayOptions &p_options) {
 	return relay_home_dir(p_options) + "/instances";
 }
 
-static bool read_file(const std::string &p_path, std::string &r_contents) {
-	FILE *file = fopen(p_path.c_str(), "rb");
-	if (!file) {
-		return false;
-	}
-	char buffer[4096];
-	size_t read_bytes = 0;
-	r_contents.clear();
-	while ((read_bytes = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-		r_contents.append(buffer, read_bytes);
-	}
-	fclose(file);
-	return true;
-}
-
 std::vector<InstanceDescriptor> relay_discover_instances(const RelayOptions &p_options) {
 	std::vector<InstanceDescriptor> instances;
 	const std::string dir_path = relay_instances_dir(p_options);
-	DIR *dir = opendir(dir_path.c_str());
-	if (!dir) {
-		return instances;
-	}
-	struct dirent *entry = nullptr;
-	while ((entry = readdir(dir)) != nullptr) {
-		const std::string name = entry->d_name;
+	for (const std::string &name : platform::list_directory(dir_path)) {
 		if (name.size() < 6 || name.compare(name.size() - 5, 5, ".json") != 0) {
 			continue;
 		}
 		const std::string path = dir_path + "/" + name;
 		std::string contents;
-		if (!read_file(path, contents)) {
+		if (!platform::read_file(path, contents)) {
 			continue;
 		}
 		JSONValueRef value = json_parse(contents);
@@ -312,7 +276,6 @@ std::vector<InstanceDescriptor> relay_discover_instances(const RelayOptions &p_o
 		descriptor.protocol_version = value->get_string_or("protocol_version", "");
 		instances.push_back(descriptor);
 	}
-	closedir(dir);
 
 	std::sort(instances.begin(), instances.end(), [](const InstanceDescriptor &a, const InstanceDescriptor &b) {
 		return a.started_at > b.started_at;
@@ -324,15 +287,7 @@ static std::string normalize_path(const std::string &p_path) {
 	if (p_path.empty()) {
 		return p_path;
 	}
-	char resolved[4096];
-	if (realpath(p_path.c_str(), resolved)) {
-		return resolved;
-	}
-	std::string out = p_path;
-	while (out.size() > 1 && out.back() == '/') {
-		out.pop_back();
-	}
-	return out;
+	return platform::real_path(p_path);
 }
 
 bool relay_select_instance(const std::vector<InstanceDescriptor> &p_instances, const RelayOptions &p_options, InstanceDescriptor &r_selected, std::string &r_error) {
@@ -374,9 +329,9 @@ bool relay_select_instance(const std::vector<InstanceDescriptor> &p_instances, c
 // ------------------------------------------------------------------- relay ---
 
 Relay::~Relay() {
-	if (socket_fd >= 0) {
-		close(socket_fd);
-		socket_fd = -1;
+	if (socket != platform::INVALID_SOCKET_HANDLE) {
+		platform::socket_close(socket);
+		socket = platform::INVALID_SOCKET_HANDLE;
 	}
 }
 
@@ -392,17 +347,7 @@ void Relay::log(LogLevel p_level, const std::string &p_message) const {
 void Relay::write_stdout_line(const std::string &p_line) const {
 	// stdout carries protocol frames only; everything else goes to stderr.
 	const std::string frame = p_line + "\n";
-	size_t written = 0;
-	while (written < frame.size()) {
-		const ssize_t result = write(STDOUT_FILENO, frame.data() + written, frame.size() - written);
-		if (result < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			return;
-		}
-		written += (size_t)result;
-	}
+	platform::write_stdout(frame.data(), frame.size());
 }
 
 std::string Relay::id_key(const JSONValueRef &p_id) {
@@ -454,40 +399,21 @@ bool Relay::ensure_connected(std::string &r_error) {
 		log(LOG_INFO, "selected editor instance pid " + std::to_string(selected.pid) + " on port " + std::to_string(port));
 	}
 
-	const int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0) {
-		r_error = std::string("socket() failed: ") + strerror(errno);
-		return false;
-	}
-
-	struct sockaddr_in address;
-	memset(&address, 0, sizeof(address));
-	address.sin_family = AF_INET;
-	address.sin_port = htons((uint16_t)port);
-	if (inet_pton(AF_INET, host.c_str(), &address.sin_addr) != 1) {
-		close(fd);
-		r_error = "invalid editor host address: " + host;
-		return false;
-	}
-
-	if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
-		const std::string reason = strerror(errno);
-		close(fd);
+	std::string reason;
+	const platform::SocketHandle handle = platform::socket_connect(host, port, reason);
+	if (handle == platform::INVALID_SOCKET_HANDLE) {
 		if (!selected_instance.path.empty()) {
 			// The descriptor pointed at a port nothing is listening on: the editor died
 			// without cleaning up. Prune it so the next attempt is accurate.
 			log(LOG_WARN, "pruning stale instance descriptor " + selected_instance.path);
-			unlink(selected_instance.path.c_str());
+			platform::remove_file(selected_instance.path);
 			selected_instance = InstanceDescriptor();
 		}
 		r_error = "could not connect to the Godot editor on " + host + ":" + std::to_string(port) + " (" + reason + ")";
 		return false;
 	}
 
-	int one = 1;
-	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-
-	socket_fd = fd;
+	socket = handle;
 	connected = true;
 	socket_buffer.clear();
 	log(LOG_INFO, "connected to editor on " + host + ":" + std::to_string(port));
@@ -509,22 +435,11 @@ bool Relay::ensure_connected(std::string &r_error) {
 }
 
 bool Relay::socket_send_line(const std::string &p_line) {
-	if (socket_fd < 0) {
+	if (socket == platform::INVALID_SOCKET_HANDLE) {
 		return false;
 	}
 	const std::string frame = p_line + "\n";
-	size_t written = 0;
-	while (written < frame.size()) {
-		const ssize_t result = send(socket_fd, frame.data() + written, frame.size() - written, MSG_NOSIGNAL);
-		if (result < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			return false;
-		}
-		written += (size_t)result;
-	}
-	return true;
+	return platform::socket_send(socket, frame.data(), frame.size()) >= 0;
 }
 
 bool Relay::perform_handshake(std::string &r_error, int &r_error_code) {
@@ -540,11 +455,13 @@ bool Relay::perform_handshake(std::string &r_error, int &r_error_code) {
 	params->set("approval_mode", JSONValue::make_string(modes[options.approval_mode]));
 	std::string client_name = options.client_name;
 	if (client_name.empty()) {
-		const char *env = getenv("GODOT_AI_CLIENT_NAME");
-		client_name = env && *env ? env : "unknown-client";
+		client_name = platform::environment("GODOT_AI_CLIENT_NAME");
+		if (client_name.empty()) {
+			client_name = "unknown-client";
+		}
 	}
 	params->set("client_name", JSONValue::make_string(client_name));
-	params->set("pid", JSONValue::make_number((double)getpid()));
+	params->set("pid", JSONValue::make_number((double)platform::process_id()));
 
 	JSONValueRef request = JSONValue::make_object();
 	request->set("jsonrpc", JSONValue::make_string("2.0"));
@@ -564,23 +481,17 @@ bool Relay::perform_handshake(std::string &r_error, int &r_error_code) {
 	const int slice_ms = 100;
 	int waited_ms = 0;
 	while (true) {
-		if (g_terminate) {
+		if (platform::is_terminating()) {
 			r_error = "interrupted while waiting for the editor handshake";
 			return false;
 		}
-		struct pollfd fds;
-		fds.fd = socket_fd;
-		fds.events = POLLIN;
-		fds.revents = 0;
-		const int ready = poll(&fds, 1, slice_ms);
-		if (ready < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			r_error = std::string("handshake poll failed: ") + strerror(errno);
+		bool stdin_ready = false;
+		bool socket_ready = false;
+		if (!platform::wait_for_input(socket, slice_ms, false, stdin_ready, socket_ready)) {
+			r_error = "waiting for the editor handshake failed";
 			return false;
 		}
-		if (ready == 0) {
+		if (!socket_ready) {
 			waited_ms += slice_ms;
 			if (waited_ms >= options.handshake_timeout_ms) {
 				r_error = "the editor accepted the connection but did not answer the bridge handshake within " +
@@ -591,7 +502,7 @@ bool Relay::perform_handshake(std::string &r_error, int &r_error_code) {
 		}
 
 		char chunk[4096];
-		const ssize_t read_bytes = recv(socket_fd, chunk, sizeof(chunk), 0);
+		const long read_bytes = platform::socket_recv(socket, chunk, sizeof(chunk));
 		if (read_bytes <= 0) {
 			r_error = "the editor closed the connection during the bridge handshake";
 			return false;
@@ -641,9 +552,9 @@ bool Relay::perform_handshake(std::string &r_error, int &r_error_code) {
 }
 
 void Relay::disconnect(const std::string &p_reason, bool p_fail_pending) {
-	if (socket_fd >= 0) {
-		close(socket_fd);
-		socket_fd = -1;
+	if (socket != platform::INVALID_SOCKET_HANDLE) {
+		platform::socket_close(socket);
+		socket = platform::INVALID_SOCKET_HANDLE;
 	}
 	connected = false;
 	handshake_complete = false;
@@ -789,23 +700,17 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 			newline = socket_buffer.find('\n');
 		}
 
-		if (g_terminate) {
+		if (platform::is_terminating()) {
 			r_error = "interrupted";
 			return false;
 		}
-		struct pollfd fds;
-		fds.fd = socket_fd;
-		fds.events = POLLIN;
-		fds.revents = 0;
-		const int ready = poll(&fds, 1, slice_ms);
-		if (ready < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			r_error = std::string("poll failed: ") + strerror(errno);
+		bool stdin_ready = false;
+		bool socket_ready = false;
+		if (!platform::wait_for_input(socket, slice_ms, false, stdin_ready, socket_ready)) {
+			r_error = "waiting for the editor failed";
 			return false;
 		}
-		if (ready == 0) {
+		if (!socket_ready) {
 			waited_ms += slice_ms;
 			if (waited_ms >= timeout_ms) {
 				r_error = "the editor did not answer '" + p_method + "' within 30s";
@@ -814,7 +719,7 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 			continue;
 		}
 		char chunk[8192];
-		const ssize_t read_bytes = recv(socket_fd, chunk, sizeof(chunk), 0);
+		const long read_bytes = platform::socket_recv(socket, chunk, sizeof(chunk));
 		if (read_bytes <= 0) {
 			r_error = "the editor closed the connection while handling '" + p_method + "'";
 			return false;
@@ -824,12 +729,7 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 }
 
 int Relay::run_one_shot() {
-	struct sigaction action;
-	memset(&action, 0, sizeof(action));
-	action.sa_handler = handle_signal;
-	sigaction(SIGINT, &action, nullptr);
-	sigaction(SIGTERM, &action, nullptr);
-	signal(SIGPIPE, SIG_IGN);
+	platform::install_termination_handler();
 
 	std::string error;
 	if (!ensure_connected(error)) {
@@ -893,12 +793,7 @@ int Relay::run_one_shot() {
 }
 
 int Relay::run() {
-	struct sigaction action;
-	memset(&action, 0, sizeof(action));
-	action.sa_handler = handle_signal;
-	sigaction(SIGINT, &action, nullptr);
-	sigaction(SIGTERM, &action, nullptr);
-	signal(SIGPIPE, SIG_IGN);
+	platform::install_termination_handler();
 
 	// Connecting eagerly turns "the editor is not running" into an immediate, clearly
 	// worded stderr diagnostic instead of a confusing failure on the first request.
@@ -909,35 +804,20 @@ int Relay::run() {
 	}
 
 	bool stdin_open = true;
-	while (stdin_open && !g_terminate) {
-		struct pollfd fds[2];
-		int count = 0;
-		fds[count].fd = STDIN_FILENO;
-		fds[count].events = POLLIN;
-		fds[count].revents = 0;
-		const int stdin_index = count++;
-		int socket_index = -1;
-		if (connected && socket_fd >= 0) {
-			fds[count].fd = socket_fd;
-			fds[count].events = POLLIN;
-			fds[count].revents = 0;
-			socket_index = count++;
-		}
-
-		const int ready = poll(fds, (nfds_t)count, 1000);
-		if (ready < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			log(LOG_ERROR, std::string("poll failed: ") + strerror(errno));
+	while (stdin_open && !platform::is_terminating()) {
+		bool stdin_ready = false;
+		bool socket_ready = false;
+		const platform::SocketHandle watched = connected ? socket : platform::INVALID_SOCKET_HANDLE;
+		if (!platform::wait_for_input(watched, 1000, true, stdin_ready, socket_ready)) {
+			log(LOG_ERROR, "waiting for input failed");
 			break;
 		}
 
 		// The editor side is drained first so a disconnect is observed before new
 		// client traffic is forwarded into a dead socket.
-		if (socket_index >= 0 && (fds[socket_index].revents & (POLLIN | POLLHUP | POLLERR))) {
+		if (socket_ready) {
 			char chunk[8192];
-			const ssize_t read_bytes = recv(socket_fd, chunk, sizeof(chunk), 0);
+			const long read_bytes = platform::socket_recv(socket, chunk, sizeof(chunk));
 			if (read_bytes > 0) {
 				socket_buffer.append(chunk, (size_t)read_bytes);
 				size_t newline = std::string::npos;
@@ -953,13 +833,13 @@ int Relay::run() {
 					disconnect("editor frame exceeded the maximum frame size", true);
 				}
 			} else {
-				disconnect(read_bytes == 0 ? "editor disconnected" : strerror(errno), true);
+				disconnect(read_bytes == 0 ? "editor disconnected" : "read error", true);
 			}
 		}
 
-		if (fds[stdin_index].revents & (POLLIN | POLLHUP | POLLERR)) {
+		if (stdin_ready) {
 			char chunk[8192];
-			const ssize_t read_bytes = read(STDIN_FILENO, chunk, sizeof(chunk));
+			const long read_bytes = platform::read_stdin(chunk, sizeof(chunk));
 			if (read_bytes > 0) {
 				stdin_buffer.append(chunk, (size_t)read_bytes);
 				size_t newline = std::string::npos;
@@ -979,14 +859,15 @@ int Relay::run() {
 			} else if (read_bytes == 0) {
 				log(LOG_INFO, "client closed stdin; shutting down");
 				stdin_open = false;
-			} else if (errno != EINTR && errno != EAGAIN) {
-				log(LOG_ERROR, std::string("stdin read failed: ") + strerror(errno));
+			} else if (read_bytes == -1) {
+				// -2 means "nothing yet", which is normal; -1 is a real failure.
+				log(LOG_ERROR, "stdin read failed");
 				stdin_open = false;
 			}
 		}
 	}
 
-	if (g_terminate) {
+	if (platform::is_terminating()) {
 		log(LOG_INFO, "terminating on signal");
 	}
 	disconnect("", false);

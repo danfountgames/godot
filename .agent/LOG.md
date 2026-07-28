@@ -177,7 +177,20 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   the *leaf* of a path, so fixtures could not clean up their own subdirectories; and
   the timeout test asserted on a sub-millisecond deadline against a millisecond clock.
 
+### S-11 platform seam and Windows backend (R8)
+- Every socket, stdio, filesystem, environment and signal call in the relay now goes
+  through `platform::`, so relay.cpp reads identically on both platforms and a
+  Windows regression cannot hide inside the protocol logic.
+- The POSIX backend is a straight extraction: all 39 relay tests still pass, which is
+  what makes the refactor safe to believe.
+- The awkward part is waiting. On POSIX a socket and stdin are both pollable fds; on
+  Windows `WSAPoll` handles sockets only, so the backend reads stdin on a thread and
+  `wait_for_input()` hides the difference.
+- `build.sh --windows` cross-compiles with mingw and CI now runs it. R8 moves from
+  BLOCKED to IMPLEMENTED: the code exists and compiles, and only *running* it on a
+  Windows or macOS host remains outside this environment.
+
 ### Next
-- S-11:
+- S-12:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.
