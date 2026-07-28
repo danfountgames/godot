@@ -31,8 +31,9 @@ and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks 
 are registered — 57 over `tools/list`. Group I is now complete too: the editor's own
 interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
-every capture now carries its own provenance. What is left is F1–F3 (scene tests) and E2
-(duplicate/stacking detection).
+every capture now carries its own provenance, and group F: the project's own test scenes
+are discoverable and runnable without a shell. What is left is E2 (duplicate/stacking
+detection) and an end-to-end catch of the chat cancellation frame.
 
 Six real bugs have fallen out of it so far, all fixed and covered — see the
 "Bugs this tranche found" table in the interface ledger. Two were found by
@@ -97,7 +98,7 @@ All of the following on the current working tree, in one sweep:
   script starts itself, including a real 1152x648 screenshot, a running game's scene
   tree (`root > Main > Player, Hud, Field, Target, EnemySpawner`), a runtime edit that
   leaves the scene file byte-identical, and a question answered by clicking its dialog.
-  57 tools are advertised over `tools/list`.
+  59 tools are advertised over `tools/list`.
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
   visual tools refusing as they should.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md`, `CLAUDE.md` and

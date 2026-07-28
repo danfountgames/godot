@@ -58,6 +58,11 @@ class MCPRuntimeBridge : public EditorDebuggerPlugin {
 		// the useful answer needs something only the editor can do - reading back the
 		// screenshot the game just wrote, for instance.
 		Callable transform;
+		// Set instead of `token` by callers that already own a deferred token of their
+		// own. A tool that has to drive several stages - start a game, then ask it
+		// something - must not create a second token the protocol layer would also try
+		// to answer, so its answer comes back as a call instead.
+		Callable on_reply;
 	};
 
 	Vector<Pending> pending;
@@ -80,6 +85,11 @@ public:
 	// Sends a command and returns a deferred token the caller should hand back to the
 	// protocol layer. Returns INVALID_TOKEN when no game is running.
 	MCPDeferred::Token send(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds = 10.0, const Callable &p_transform = Callable());
+
+	// Sends a command whose answer arrives as a call to `p_on_reply(ok, payload)`
+	// rather than by completing a token. For multi-stage tools; see Pending::on_reply.
+	// False when no game is running.
+	bool request(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds, const Callable &p_on_reply);
 
 	// Fails every pending request; called when the game goes away.
 	void abandon_all(const String &p_reason);

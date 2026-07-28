@@ -102,7 +102,7 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (57)
+## Tools exposed over MCP (59)
 
 | Area | Tools |
 |---|---|
@@ -125,6 +125,7 @@ confidence.
 | Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint`, `Godot_DiffCheckpoint` |
 | Asset pipeline | `Godot_GetImportStatus`, `Godot_ReimportAsset`, `Godot_WaitForImportQueue` |
 | Editor UI | `Godot_ListWindows`, `Godot_FindControl`, `Godot_SendEditorInput` |
+| Tests | `Godot_ListSceneTests`, `Godot_RunSceneTest` |
 
 ## What the interface does **not** provide
 
@@ -134,8 +135,8 @@ below, register a project command, or record the gap honestly as unverified.
 - **You cannot hear the game.** `Godot_GetAudioState` reports buses, volumes, mute and
   peak levels — enough to answer whether a sound *played*, never whether it sounded
   right. Record that distinction rather than blurring it.
-- **No test-runner tool.** Run tests from the shell.
-- **No arbitrary shell execution, ever.** This is a deliberate safety boundary.
+- **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
+  also why a test is a scene rather than a command — see below.
 - **No editor-side *drag*.** `Godot_SendEditorInput` does moves, clicks and keys, so
   a dialog, a menu or the command palette is reachable; dragging a dock or a curve
   handle is not.
@@ -166,6 +167,18 @@ below, register a project command, or record the gap honestly as unverified.
   *editor*. Clicking the editor changes your project. Clicking the game does not. They
   are separate tools so that you always know which you just did — do not reach for the
   editor one to interact with the game.
+- **Tests are scenes, and they report a contract.** `Godot_RunSceneTest` plays a
+  scene and reads two values off its root node, as script properties or node metadata:
+
+  ```gdscript
+  var test_finished := false          # set true when every case has run
+  var test_results: Array = []        # {name, passed, message, duration_ms} per case
+  ```
+
+  Name every case and put a real message on every failure. You will read these results
+  without having watched the run, and `1 failed` is not something you can act on.
+  `Godot_ListSceneTests` finds scenes named `test_*.tscn`. The game is stopped after a
+  run either way, so a test never leaks into the next thing you do.
 - **A changed asset is not an imported asset.** Writing a `.png` into the project does
   not give you a texture; the editor's importer has to run, and until it does the game
   keeps loading the old one. After touching any asset on disk, call

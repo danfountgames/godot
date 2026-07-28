@@ -184,7 +184,80 @@ void MCPRuntimeWatcher::add_profile(const String &p_request_id, int p_frames, do
 	profiles.push_back(profile);
 }
 
+void MCPRuntimeWatcher::add_scene_test(const String &p_request_id, double p_timeout_seconds) {
+	SceneTest test;
+	test.request_id = p_request_id;
+	test.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
+	scene_tests.push_back(test);
+	// A scene that finished before anyone asked has still finished; checking now means
+	// a fast test is not charged a frame it did not need.
+	on_frame();
+}
+
+bool MCPRuntimeWatcher::read_scene_test(bool &r_finished, Array &r_cases) {
+	SceneTree *tree = SceneTree::get_singleton();
+	Node *root = tree ? tree->get_current_scene() : nullptr;
+	if (!root) {
+		return false;
+	}
+
+	// Metadata first, then a script property. A scene with no script can only carry
+	// metadata, and requiring a script would make the simplest test scene impossible.
+	bool declared = false;
+	if (root->has_meta(SNAME("test_finished"))) {
+		r_finished = root->get_meta(SNAME("test_finished"));
+		declared = true;
+	} else {
+		bool valid = false;
+		const Variant value = root->get(SNAME("test_finished"), &valid);
+		if (valid) {
+			r_finished = value;
+			declared = true;
+		}
+	}
+	if (!declared) {
+		return false;
+	}
+
+	if (root->has_meta(SNAME("test_results"))) {
+		const Variant value = root->get_meta(SNAME("test_results"));
+		if (value.get_type() == Variant::ARRAY) {
+			r_cases = value;
+		}
+	} else {
+		bool valid = false;
+		const Variant value = root->get(SNAME("test_results"), &valid);
+		if (valid && value.get_type() == Variant::ARRAY) {
+			r_cases = value;
+		}
+	}
+	return true;
+}
+
 void MCPRuntimeWatcher::on_frame() {
+	const double now_seconds = OS::get_singleton()->get_ticks_msec() / 1000.0;
+	for (int i = scene_tests.size() - 1; i >= 0; i--) {
+		bool finished = false;
+		Array cases;
+		const bool declared = read_scene_test(finished, cases);
+		const bool expired = now_seconds >= scene_tests[i].deadline;
+		if (!finished && !expired) {
+			continue;
+		}
+		Dictionary result;
+		result["finished"] = finished;
+		result["declared"] = declared;
+		result["cases"] = cases;
+		result["scene"] = SceneTree::get_singleton() && SceneTree::get_singleton()->get_current_scene()
+				? SceneTree::get_singleton()->get_current_scene()->get_scene_file_path()
+				: String();
+		const String request_id = scene_tests[i].request_id;
+		scene_tests.remove_at(i);
+		// Answered either way. A test that never finishes is a result, and the caller
+		// needs to be told which of the two happened rather than left to time out.
+		MCPRuntimeAgent::reply(request_id, result);
+	}
+
 	// Frame-driven jobs first: both want this frame, not the state after the watches
 	// have possibly changed it.
 	for (int i = sequences.size() - 1; i >= 0; i--) {
@@ -389,6 +462,20 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 			const double budget = arguments.has("budget_frame_ms") ? (double)arguments["budget_frame_ms"] : 0.0;
 			watcher->add_profile(request_id, frames, budget);
 		}
+		return OK;
+	}
+
+	if (command == "watch_scene_test") {
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		if (!watcher) {
+			_fail(request_id, "the running game cannot schedule frame work");
+			return OK;
+		}
+		const double timeout = arguments.has("timeout_seconds")
+				? (double)arguments["timeout_seconds"]
+				: 60.0;
+		watcher->add_scene_test(request_id, timeout);
 		return OK;
 	}
 

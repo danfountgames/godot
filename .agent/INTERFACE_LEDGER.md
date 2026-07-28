@@ -62,9 +62,9 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| F1 | `Godot_RunSceneTest` | run_project | NOT_STARTED | — | all |
-| F2 | `Godot_ListSceneTests` | read_project | NOT_STARTED | — | all |
-| F3 | Structured per-case results | run_project | NOT_STARTED | — | all |
+| F1 | `Godot_RunSceneTest` | run_project | VERIFIED | `tools/mcp_scene_test_tools.cpp`. Plays a test scene through `play_custom_scene`, watches it from inside the game, and stops it afterwards either way — a test scene left running would be inherited by whatever ran next. A test is a *scene*, never a shell command: a test runner is exactly where the no-arbitrary-execution rule would be quietly broken. Multi-stage, so it needed a bridge that can answer into a callback (`MCPRuntimeBridge::request`) instead of minting a second deferred token the protocol layer would also try to answer. Refuses a second concurrent run, a non-scene path, and a scene that declares none of the contract — the last matters, because reporting '0 failed' about a scene that ran no cases reads as a pass | no way to run every test scene in one call |
+| F2 | `Godot_ListSceneTests` | read_project | VERIFIED | recursive discovery by file-name convention (`test_*.tscn`), with the directory and prefix both overridable. The e2e pins the exact list, checks a prefix nothing uses finds nothing rather than falling back to the default, and refuses a file given as a directory | case names are unknown until a scene runs, and this says so rather than guessing |
+| F3 | Structured per-case results | run_project | VERIFIED | each case comes back as `{name, passed, message, duration_ms}`, plus counts, `succeeded`, the cases' own total time and the wall time including engine startup. `succeeded` is false when nothing ran, so an empty result cannot be read as a pass. The e2e asserts the failing case keeps both its name and its message — '1 failed' is not something anyone can act on | no stack traces; a case reports its own message |
 
 ## G — Saves and `user://`
 

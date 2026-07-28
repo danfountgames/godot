@@ -51,6 +51,53 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 """
 
+SCENE_TEST_SCRIPT = """extends Node
+
+# The contract a test scene declares on its root node. Nothing in the project reads
+# these; the editor's runtime agent does, once a frame, until test_finished is true.
+var test_finished := false
+var test_results: Array = []
+
+@export var include_failure := false
+
+func _ready() -> void:
+	var started := Time.get_ticks_msec()
+	test_results.append({
+		"name": "the scene tree is built",
+		"passed": get_tree() != null,
+		"message": "",
+		"duration_ms": Time.get_ticks_msec() - started,
+	})
+	if include_failure:
+		test_results.append({
+			"name": "a case that is meant to fail",
+			"passed": false,
+			"message": "expected 5, got 4",
+			"duration_ms": 2,
+		})
+	# Finish a couple of frames later, so the watcher has to actually watch rather than
+	# finding the answer already sitting there on its first look.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	test_finished = true
+"""
+
+TEST_SCENE_TEMPLATE = """[gd_scene load_steps=2 format=3 uid="uid://bqxaie2et%02d"]
+
+[ext_resource type="Script" path="res://tests/scene_test.gd" id="1"]
+
+[node name="SceneTest" type="Node"]
+script = ExtResource("1")
+include_failure = %s
+"""
+
+# A scene under tests/ that declares none of the contract. Running it has to be an
+# error that says what is missing, not a pass with nothing in it.
+NOT_A_TEST_SCENE = """[gd_scene format=3 uid="uid://bqxaie2et09"]
+
+[node name="NotATest" type="Node2D"]
+"""
+
 MAIN_SCENE = """[gd_scene load_steps=2 format=3 uid="uid://bqxaie2e001"]
 
 [ext_resource type="Script" path="res://scripts/target.gd" id="1"]
@@ -294,6 +341,17 @@ def build_project(root):
     with open(os.path.join(root, "notes.txt"), "w") as handle:
         handle.write("hello from a project text file\n")
     write_png(os.path.join(root, "sprite.png"))
+
+    os.makedirs(os.path.join(root, "tests"), exist_ok=True)
+    with open(os.path.join(root, "tests", "scene_test.gd"), "w") as handle:
+        handle.write(SCENE_TEST_SCRIPT)
+    with open(os.path.join(root, "tests", "test_green.tscn"), "w") as handle:
+        handle.write(TEST_SCENE_TEMPLATE % (7, "false"))
+    with open(os.path.join(root, "tests", "test_red.tscn"), "w") as handle:
+        handle.write(TEST_SCENE_TEMPLATE % (8, "true"))
+    with open(os.path.join(root, "tests", "test_not_a_test.tscn"), "w") as handle:
+        handle.write(NOT_A_TEST_SCENE)
+
     install_example_skill(root)
 
 
@@ -387,7 +445,14 @@ def run(editor_binary, display):
         reply = call({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                       "params": {"name": "Godot_ListScenes"}})
         scenes = reply["result"]["structuredContent"]["scenes"]
-        check(scenes == ["res://scenes/main.tscn"], "unexpected scene list: %r" % scenes)
+        # Derived from what the fixture writes rather than hard-coded: this list has
+        # already broken once for no reason but the fixture gaining a scene.
+        expected_scenes = sorted(
+            "res://" + os.path.relpath(os.path.join(base, name), project).replace(os.sep, "/")
+            for base, _, files in os.walk(project)
+            for name in files if name.endswith(".tscn"))
+        check(sorted(scenes) == expected_scenes,
+              "unexpected scene list: %r, expected %r" % (sorted(scenes), expected_scenes))
         print("PASS Godot_ListScenes")
 
         reply = call({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -1205,10 +1270,95 @@ def run(editor_binary, display):
                 check(reply["result"]["structuredContent"]["was_playing"] is True,
                       "stop did not report that a game had been running")
             print("PASS play reported a running game and stop left nothing running")
+
+            # --- scene tests --------------------------------------------------
+            # A test here is a scene the engine plays, not a shell command: nothing in
+            # this interface executes one, and a test runner is exactly where that rule
+            # would be quietly broken.
+            if has_display:
+                reply = call({"jsonrpc": "2.0", "id": 170, "method": "tools/call",
+                              "params": {"name": "Godot_RunSceneTest",
+                                         "arguments": {"path": "res://tests/test_green.tscn",
+                                                       "timeout_seconds": 30}}})
+                check(not refused(reply),
+                      "running the passing test scene failed: %s" % refusal_text(reply))
+                run = reply["result"]["structuredContent"]
+                check(run["succeeded"] is True and run["passed"] == 1 and run["failed"] == 0,
+                      "the passing scene did not report a clean run: %r" % run)
+                check(run["cases"][0]["name"] == "the scene tree is built",
+                      "the case came back without its name: %r" % run["cases"])
+                check(run["wall_duration_ms"] > 0, "the run reports no elapsed time: %r" % run)
+
+                # The failing scene has to come back as a *named case with a message*.
+                # A count of failures is not something anyone can act on.
+                reply = call({"jsonrpc": "2.0", "id": 171, "method": "tools/call",
+                              "params": {"name": "Godot_RunSceneTest",
+                                         "arguments": {"path": "res://tests/test_red.tscn",
+                                                       "timeout_seconds": 30}}})
+                check(not refused(reply),
+                      "running the failing test scene failed: %s" % refusal_text(reply))
+                run = reply["result"]["structuredContent"]
+                check(run["succeeded"] is False and run["failed"] == 1 and run["passed"] == 1,
+                      "the failing scene did not report one pass and one failure: %r" % run)
+                failures = [case for case in run["cases"] if not case["passed"]]
+                check(len(failures) == 1, "expected exactly one failing case: %r" % run["cases"])
+                check(failures[0]["name"] == "a case that is meant to fail",
+                      "the failing case lost its name: %r" % failures[0])
+                check(failures[0]["message"] == "expected 5, got 4",
+                      "the failing case lost its message: %r" % failures[0])
+                print("PASS Godot_RunSceneTest reports per-case results, pass and fail alike")
+
+                # A scene that declares nothing is not a test, and saying "0 failed"
+                # about it would read as a pass.
+                reply = call({"jsonrpc": "2.0", "id": 172, "method": "tools/call",
+                              "params": {"name": "Godot_RunSceneTest",
+                                         "arguments": {"path": "res://tests/test_not_a_test.tscn",
+                                                       "timeout_seconds": 15}}})
+                check(refused(reply), "a scene that declares no results was reported as passing")
+                check("test_finished" in refusal_text(reply),
+                      "the refusal does not say what the scene is missing: %r"
+                      % refusal_text(reply))
+                print("PASS a scene without the test contract is an error, not an empty pass")
+
+            reply = call({"jsonrpc": "2.0", "id": 173, "method": "tools/call",
+                          "params": {"name": "Godot_RunSceneTest",
+                                     "arguments": {"path": "res://notes.txt"}}})
+            check(refused(reply), "a text file was accepted as a test scene")
         else:
             # Running a game needs more than a headless editor on some systems; say so
             # rather than pretending the path was exercised.
             print("SKIP play lifecycle: %s" % refusal_text(reply)[:80])
+
+        # --- listing the project's test scenes ---------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 174, "method": "tools/call",
+                      "params": {"name": "Godot_ListSceneTests"}})
+        check(not refused(reply), "listing test scenes failed: %s" % refusal_text(reply))
+        listed = reply["result"]["structuredContent"]
+        paths = sorted(scene["path"] for scene in listed["scenes"])
+        check(paths == ["res://tests/test_green.tscn", "res://tests/test_not_a_test.tscn",
+                        "res://tests/test_red.tscn"],
+              "the wrong scenes were listed as tests: %r" % paths)
+        check(listed["count"] == 3, "the count disagrees with the list: %r" % listed)
+
+        # The convention is the whole discovery rule, so a different prefix must find
+        # nothing rather than quietly falling back to the default.
+        reply = call({"jsonrpc": "2.0", "id": 175, "method": "tools/call",
+                      "params": {"name": "Godot_ListSceneTests",
+                                 "arguments": {"prefix": "spec_"}}})
+        check(reply["result"]["structuredContent"]["count"] == 0,
+              "a prefix nothing uses matched scenes anyway")
+
+        reply = call({"jsonrpc": "2.0", "id": 176, "method": "tools/call",
+                      "params": {"name": "Godot_ListSceneTests",
+                                 "arguments": {"directory": "res://scenes"}}})
+        check(reply["result"]["structuredContent"]["count"] == 0,
+              "a directory with no test scenes reported some")
+
+        reply = call({"jsonrpc": "2.0", "id": 177, "method": "tools/call",
+                      "params": {"name": "Godot_ListSceneTests",
+                                 "arguments": {"directory": "res://notes.txt"}}})
+        check(refused(reply), "a file was accepted as a directory to search")
+        print("PASS Godot_ListSceneTests finds test scenes by convention")
 
         # --- user data --------------------------------------------------------
         # Saves live outside the project, which is why the project tools cannot see

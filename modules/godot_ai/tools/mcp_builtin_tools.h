@@ -69,4 +69,7 @@ void mcp_register_asset_tools();
 // Locating parts of the editor's own interface on screen.
 void mcp_register_editor_ui_tools();
 
+// Discovering and running the project's own test scenes.
+void mcp_register_scene_test_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

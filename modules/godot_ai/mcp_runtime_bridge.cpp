@@ -70,7 +70,12 @@ bool MCPRuntimeBridge::capture(const String &p_message, const Array &p_data, int
 		}
 		const MCPDeferred::Token token = pending[i].token;
 		const Callable transform = pending[i].transform;
+		const Callable on_reply = pending[i].on_reply;
 		pending.remove_at(i);
+		if (on_reply.is_valid()) {
+			on_reply.call(ok, payload);
+			return true;
+		}
 		if (ok) {
 			Dictionary answer = payload;
 			if (transform.is_valid()) {
@@ -116,9 +121,34 @@ MCPDeferred::Token MCPRuntimeBridge::send(const String &p_command, const Diction
 	return entry.token;
 }
 
+bool MCPRuntimeBridge::request(const String &p_command, const Dictionary &p_arguments, double p_timeout_seconds, const Callable &p_on_reply) {
+	EditorDebuggerNode *debugger = EditorDebuggerNode::get_singleton();
+	if (!debugger || !is_game_reachable()) {
+		return false;
+	}
+
+	Pending entry;
+	entry.request_id = vformat("r%d", next_request++);
+	entry.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
+	entry.on_reply = p_on_reply;
+	pending.push_back(entry);
+
+	Array message;
+	message.push_back(entry.request_id);
+	message.push_back(p_arguments);
+	debugger->get_default_debugger()->send_message(String(MCP_RUNTIME_CHANNEL) + ":" + p_command, message);
+	return true;
+}
+
 void MCPRuntimeBridge::abandon_all(const String &p_reason) {
 	for (const Pending &entry : pending) {
-		MCPDeferred::fail(entry.token, MCPToolError::INVALID_STATE, p_reason);
+		if (entry.on_reply.is_valid()) {
+			Dictionary payload;
+			payload["message"] = p_reason;
+			entry.on_reply.call(false, payload);
+		} else {
+			MCPDeferred::fail(entry.token, MCPToolError::INVALID_STATE, p_reason);
+		}
 	}
 	pending.clear();
 }
@@ -141,7 +171,13 @@ void MCPRuntimeBridge::poll() {
 		}
 		const Pending entry = pending[i];
 		pending.remove_at(i);
-		MCPDeferred::fail(entry.token, MCPToolError::INVALID_STATE,
-				"the running game did not answer in time");
+		if (entry.on_reply.is_valid()) {
+			Dictionary payload;
+			payload["message"] = "the running game did not answer in time";
+			entry.on_reply.call(false, payload);
+		} else {
+			MCPDeferred::fail(entry.token, MCPToolError::INVALID_STATE,
+					"the running game did not answer in time");
+		}
 	}
 }

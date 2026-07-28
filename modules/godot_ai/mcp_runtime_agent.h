@@ -97,9 +97,19 @@ class MCPRuntimeWatcher : public Object {
 		double budget_frame_ms = 0.0;
 	};
 
+	// A test scene decides when it has finished, so the only way to know is to look
+	// every frame. The scene's contract is two values on its root node - `test_finished`
+	// and `test_results` - readable as either script properties or node metadata,
+	// because a scene without a script can only carry metadata.
+	struct SceneTest {
+		String request_id;
+		double deadline = 0.0;
+	};
+
 	Vector<Watch> watches;
 	Vector<Sequence> sequences;
 	Vector<Profile> profiles;
+	Vector<SceneTest> scene_tests;
 
 	static MCPRuntimeWatcher *singleton;
 
@@ -108,9 +118,15 @@ public:
 	static void create();
 	static void destroy();
 
+	// Reads a test scene's contract off the root node. False when the scene declares
+	// nothing, which is how "that is not a test scene" is told apart from "it has not
+	// finished yet".
+	static bool read_scene_test(bool &r_finished, Array &r_cases);
+
 	void add(const String &p_request_id, const String &p_path, const String &p_property, const Variant &p_expected, double p_timeout_seconds);
 	void add_sequence(const String &p_request_id, int p_frames, int p_interval_frames);
 	void add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms);
+	void add_scene_test(const String &p_request_id, double p_timeout_seconds);
 	void on_frame();
 };
 
