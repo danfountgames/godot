@@ -55,6 +55,18 @@ def check(condition, message):
         raise Failure(message)
 
 
+def refused(reply):
+    """True when a tools/call was refused, either way the server can refuse.
+
+    Argument-level mistakes come back as JSON-RPC errors (the client asked for
+    something malformed); state-level refusals come back as a tool result with
+    isError set (the request was well-formed but cannot be carried out).
+    """
+    if "error" in reply:
+        return True
+    return reply.get("result", {}).get("isError") is True
+
+
 def build_project(root):
     os.makedirs(os.path.join(root, "scenes"), exist_ok=True)
     with open(os.path.join(root, "project.godot"), "w") as handle:
@@ -134,7 +146,8 @@ def run(editor_binary):
         reply = call({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         names = [tool["name"] for tool in reply["result"]["tools"]]
         for expected in ("Godot_ListScenes", "Godot_OpenScene", "Godot_GetEditedSceneTree",
-                         "Godot_ReadTextFile", "Godot_WriteTextFile", "Godot_SearchProject"):
+                         "Godot_ReadTextFile", "Godot_WriteTextFile", "Godot_SearchProject",
+                         "Godot_ManageNode", "Godot_UndoLastAction"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -165,6 +178,105 @@ def run(editor_binary):
         check(types.get("Player") == "Sprite2D" and types.get("Hud") == "CanvasLayer",
               "scene tree does not match the scene on disk: %r" % types)
         print("PASS Godot_GetEditedSceneTree")
+
+        # --- structural scene editing, undo, and persistence ------------------
+        def scene_node_names():
+            tree = call({"jsonrpc": "2.0", "id": 100, "method": "tools/call",
+                         "params": {"name": "Godot_GetEditedSceneTree"}})
+            return [node["name"] for node in tree["result"]["structuredContent"]["nodes"]]
+
+        reply = call({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "create", "type": "Node2D",
+                                               "name": "Spawner", "parent": "."}}})
+        check(reply["result"]["isError"] is False,
+              "create failed: %s" % reply["result"]["content"][0]["text"])
+        check(reply["result"]["structuredContent"]["node"]["name"] == "Spawner",
+              "created node has the wrong name")
+        check("Spawner" in scene_node_names(), "created node is not in the scene tree")
+        print("PASS Godot_ManageNode create")
+
+        reply = call({"jsonrpc": "2.0", "id": 21, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "rename", "path": "Spawner",
+                                               "name": "EnemySpawner"}}})
+        check(reply["result"]["isError"] is False, "rename failed")
+        names = scene_node_names()
+        check("EnemySpawner" in names and "Spawner" not in names, "rename did not take effect")
+        print("PASS Godot_ManageNode rename")
+
+        reply = call({"jsonrpc": "2.0", "id": 22, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "reparent", "path": "EnemySpawner",
+                                               "new_parent": "Player"}}})
+        check(reply["result"]["isError"] is False, "reparent failed")
+        tree = call({"jsonrpc": "2.0", "id": 23, "method": "tools/call",
+                     "params": {"name": "Godot_GetEditedSceneTree"}})
+        paths = {node["name"]: node["path"] for node in tree["result"]["structuredContent"]["nodes"]}
+        check(paths.get("EnemySpawner") == "Player/EnemySpawner",
+              "reparent left the node at %r" % paths.get("EnemySpawner"))
+        print("PASS Godot_ManageNode reparent")
+
+        # Undo must put the node back where it was, not merely remove it.
+        reply = call({"jsonrpc": "2.0", "id": 24, "method": "tools/call",
+                      "params": {"name": "Godot_UndoLastAction"}})
+        check(reply["result"]["structuredContent"]["performed"] is True, "undo reported nothing to do")
+        tree = call({"jsonrpc": "2.0", "id": 25, "method": "tools/call",
+                     "params": {"name": "Godot_GetEditedSceneTree"}})
+        paths = {node["name"]: node["path"] for node in tree["result"]["structuredContent"]["nodes"]}
+        check(paths.get("EnemySpawner") == "EnemySpawner",
+              "undo did not restore the original parent: %r" % paths.get("EnemySpawner"))
+        print("PASS Godot_UndoLastAction restores the previous parent")
+
+        # Saving is what makes an edit persistent; check the file on disk.
+        reply = call({"jsonrpc": "2.0", "id": 26, "method": "tools/call",
+                      "params": {"name": "Godot_SaveScene"}})
+        check(reply["result"]["structuredContent"]["saved"] is True, "save failed")
+        with open(os.path.join(project, "scenes", "main.tscn")) as handle:
+            saved = handle.read()
+        check("EnemySpawner" in saved, "the created node did not reach the saved scene")
+        print("PASS Godot_SaveScene persisted the change")
+
+        reply = call({"jsonrpc": "2.0", "id": 27, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "delete", "path": "EnemySpawner"}}})
+        check(reply["result"]["isError"] is False, "delete failed")
+        check("EnemySpawner" not in scene_node_names(), "delete did not remove the node")
+
+        reply = call({"jsonrpc": "2.0", "id": 28, "method": "tools/call",
+                      "params": {"name": "Godot_UndoLastAction"}})
+        check(reply["result"]["structuredContent"]["performed"] is True, "undo after delete did nothing")
+        check("EnemySpawner" in scene_node_names(), "undo did not bring the deleted node back")
+        print("PASS Godot_ManageNode delete and undo")
+
+        # Refusals that protect scene integrity.
+        reply = call({"jsonrpc": "2.0", "id": 29, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "delete", "path": "."}}})
+        check(refused(reply), "deleting the scene root was allowed")
+        check("root" in reply["result"]["content"][0]["text"],
+              "root-delete refusal does not explain itself")
+
+        reply = call({"jsonrpc": "2.0", "id": 30, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "reparent", "path": "Player",
+                                               "new_parent": "Player"}}})
+        check(refused(reply), "reparenting a node into itself was allowed")
+
+        reply = call({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "create", "type": "NotARealClass"}}})
+        check(refused(reply), "an unknown class was accepted")
+
+        reply = call({"jsonrpc": "2.0", "id": 32, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "delete", "path": "NoSuchNode"}}})
+        check(refused(reply), "deleting a node that does not exist was allowed")
+
+        # The scene must be unchanged by everything that was refused.
+        check(sorted(scene_node_names()) == ["EnemySpawner", "Hud", "Main", "Player"],
+              "a refused operation still changed the scene: %r" % scene_node_names())
+        print("PASS structural refusals leave the scene untouched")
 
         reply = call({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
                       "params": {"name": "Godot_WriteTextFile",

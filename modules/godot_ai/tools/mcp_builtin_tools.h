@@ -39,4 +39,7 @@ void mcp_register_builtin_tools();
 // so they can be exercised without an editor.
 void mcp_register_project_tools();
 
+// Structural scene editing, which goes through the editor's undo history.
+void mcp_register_scene_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

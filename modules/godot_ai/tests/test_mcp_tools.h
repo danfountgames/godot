@@ -290,6 +290,48 @@ TEST_CASE("[godot_ai] Godot_SearchProject") {
 	}
 }
 
+TEST_CASE("[godot_ai] Scene tools declare edit_scene and refuse without an editor") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	if (!registry->has_tool("Godot_ManageNode")) {
+		mcp_register_scene_tools();
+	}
+
+	// Structural editing is a mutating capability, so a read-only session and a
+	// deny policy can both refuse it without the tool having to check.
+	const Dictionary descriptor = registry->get_tool_descriptor("Godot_ManageNode");
+	const Dictionary meta = descriptor["_meta"];
+	CHECK(String(meta["capability"]) == "edit_scene");
+	CHECK((bool)meta["mutating"]);
+
+	const Dictionary undo_meta = registry->get_tool_descriptor("Godot_UndoLastAction")["_meta"];
+	CHECK(String(undo_meta["capability"]) == "edit_scene");
+
+	SUBCASE("the action enum is enforced by the schema") {
+		Dictionary arguments;
+		arguments["action"] = "explode";
+		MCPToolError error;
+		call("Godot_ManageNode", arguments, error);
+		CHECK(error.kind == MCPToolError::INVALID_ARGUMENTS);
+		CHECK(error.message.contains("create"));
+	}
+
+	SUBCASE("a missing action is reported") {
+		MCPToolError error;
+		call("Godot_ManageNode", Dictionary(), error);
+		CHECK(error.kind == MCPToolError::INVALID_ARGUMENTS);
+		CHECK(error.message.contains("action"));
+	}
+
+	SUBCASE("without an editor it reports unsupported rather than crashing") {
+		Dictionary arguments;
+		arguments["action"] = "create";
+		arguments["type"] = "Node2D";
+		MCPToolError error;
+		call("Godot_ManageNode", arguments, error);
+		CHECK(error.kind == MCPToolError::UNSUPPORTED);
+	}
+}
+
 TEST_CASE("[godot_ai] Editor tools refuse to run without an editor") {
 	// The doctest binary has no EditorInterface, which is exactly the state these
 	// tools must report clearly rather than crash in.

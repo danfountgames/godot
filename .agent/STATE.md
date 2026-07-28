@@ -25,8 +25,15 @@ against a running editor.
 
 ## Current vertical slice
 
-S-04 (next): `Godot_ManageNode` — create/delete/reparent/rename through
-`EditorUndoRedoManager`, with undo/redo asserted against real scene state.
+S-05 (next): skills — `SKILL.md` discovery, frontmatter parsing and the allow/deny
+trust state (S1–S3).
+
+S-04 (done): `Godot_ManageNode` (create/delete/rename/reparent) plus
+`Godot_UndoLastAction`/`Godot_RedoLastAction`, all through `EditorUndoRedoManager`
+following the scene tree dock's own patterns. The unit test found a real crash: the
+editor tools guarded on `EditorInterface::get_singleton()`, which exists in any
+editor build including the test binary, while its methods dereference `EditorNode`.
+Both are now required before any editor call.
 
 S-03 (done): end-to-end verification. `tools/relay/tests/run_editor_e2e.py` launches a
 headless editor, waits for the instance descriptor, and drives the full MCP session
@@ -35,16 +42,17 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-T5 (new). Just completed: F2, F3, T1, T2, T4, T6, T7, T8, T14 → VERIFIED.
+S1, S2, S3 (next). Just completed: T3, T5 → VERIFIED.
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
 - `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
-- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 31 cases,
-  204 assertions, all pass.
-- `python3 tools/relay/tests/run_editor_e2e.py` → 12/12 checks pass against a live
-  headless editor.
+- Editor build clean; `--headless --test --test-case="*[godot_ai]*"` → 32 cases,
+  218 assertions, all pass.
+- `python3 tools/relay/tests/run_editor_e2e.py` → 18/18 checks pass against a live
+  headless editor, including a create/rename/reparent/undo/save/delete/undo round
+  trip verified against the saved scene file.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md` and
   `.github/workflows/godot_ai.yml` are in place. The workflow has not yet been
   observed running on GitHub Actions.
@@ -79,9 +87,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start T5 by reading how the editor itself reparents nodes, then write the failing
-test first:
+Start the skills slice by deciding the discovery roots, then write the fixture tree:
 
 ```sh
-grep -n "create_action\|add_do_method" editor/scene_tree_dock.cpp | head -40
+grep -rn "get_config_dir\|get_data_dir" editor/editor_paths.h | head
 ```

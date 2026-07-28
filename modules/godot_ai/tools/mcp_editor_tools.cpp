@@ -35,14 +35,20 @@
 
 #include "core/variant/array.h"
 #include "editor/editor_interface.h"
+#include "editor/editor_node.h"
 #include "scene/main/node.h"
 
 namespace {
 
-// Every editor tool goes through this: without an EditorInterface there is no editor
-// to drive, and saying so plainly beats crashing or lying about success.
+// Every editor tool goes through this: without a live editor there is nothing to
+// drive, and saying so plainly beats crashing or lying about success.
+//
+// EditorInterface alone is not enough. It is created by register_editor_types(), so
+// it exists in any editor build - including the headless unit-test binary - while
+// EditorNode does not. Most EditorInterface methods dereference EditorNode, so
+// checking only the former segfaults instead of refusing.
 static bool require_editor(MCPToolError &r_error, const String &p_tool) {
-	if (EditorInterface::get_singleton()) {
+	if (EditorNode::get_singleton() && EditorInterface::get_singleton()) {
 		return true;
 	}
 	r_error.set(MCPToolError::UNSUPPORTED,
@@ -337,6 +343,7 @@ void mcp_register_builtin_tools() {
 	ERR_FAIL_NULL(registry);
 
 	mcp_register_project_tools();
+	mcp_register_scene_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));

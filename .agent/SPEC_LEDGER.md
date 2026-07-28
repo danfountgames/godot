@@ -52,9 +52,9 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 |---|---|---|---|---|---|---|---|---|
 | T1 | MCP | `Godot_ListScenes` | F4,F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | paths round-trip through another tool; live listing matches disk | none |
 | T2 | MCP | `Godot_OpenScene` | T1 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | live open returns the real scene root | none |
-| T3 | MCP | `Godot_SaveScene` | T2 | IMPLEMENTED | `tools/mcp_editor_tools.cpp` | — | — | e2e, dirty-state semantics |
+| T3 | MCP | `Godot_SaveScene` | T2 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | saved scene on disk contains the created node | none |
 | T4 | MCP | `Godot_GetEditedSceneTree` | T2 | VERIFIED | `tools/mcp_editor_tools.cpp` | `run_editor_e2e.py` | live tree matches the scene on disk | none |
-| T5 | MCP | `Godot_ManageNode` with undo/redo | T4,F8 | NOT_STARTED | — | — | — | all |
+| T5 | MCP | `Godot_ManageNode` with undo/redo | T4,F8 | VERIFIED | `tools/mcp_scene_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | create/rename/reparent/delete + undo asserted against live scene state and the saved file | none |
 | T6 | MCP | `Godot_ListAssets` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h` | extension filtering covered | none |
 | T7 | MCP | `Godot_ReadTextFile` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | reads, directory/missing/escape refusals | none |
 | T8 | MCP | `Godot_WriteTextFile` + filesystem refresh | F5,F8 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | content asserted on disk, not from the tool report | checkpoint integration (F8) |
@@ -64,7 +64,7 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | T12 | MCP | `Godot_CaptureViewport` incl. headless rejection | F6 | NOT_STARTED | — | — | — | all |
 | T13 | MCP | `Godot_AskUser` | F2 | NOT_STARTED | — | — | — | all |
 | T14 | MCP | `Godot_SearchProject` | F5 | VERIFIED | `tools/mcp_project_tools.cpp` | `tests/test_mcp_tools.h`, `run_editor_e2e.py` | match line numbers, case sensitivity, empty query | none |
-| T15 | SEC | Runtime vs persistent edits kept distinct | T5,T10 | IN_PROGRESS | tool descriptions/`instructions` state the distinction | — | — | `Godot_SetRuntimeProperty`/`Godot_SetSceneProperty` |
+| T15 | SEC | Runtime vs persistent edits kept distinct | T5,T10 | IN_PROGRESS | tool descriptions and `initialize` instructions state the distinction; `Godot_ManageNode` documents that saving is separate | — | — | `Godot_SetRuntimeProperty`/`Godot_SetSceneProperty` still absent |
 
 ## Skills, UX, docs, packaging
 

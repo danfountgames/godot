@@ -63,7 +63,22 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - `.github/workflows/godot_ai.yml` runs the relay suite first (fast, no engine
   build), then the editor build, module tests and the end-to-end script.
 
+### S-04 structural scene editing (T3, T5)
+- `Godot_ManageNode` (create/delete/rename/reparent) and
+  `Godot_UndoLastAction`/`Godot_RedoLastAction`, following the patterns in
+  `editor/scene_tree_dock.cpp`: `add_do_reference` on creation, owner restoration for
+  every owned descendant on undo of a delete, index restoration on reparent, and
+  refusals for the scene root, internal nodes, nodes owned by an instanced sub-scene,
+  and reparenting into a descendant.
+- The unit test caught a real crash: `require_editor()` guarded on
+  `EditorInterface::get_singleton()`, but that singleton is created by
+  `register_editor_types()` and therefore exists in the headless test binary, while
+  its methods dereference `EditorNode`. Both singletons are now required. The same
+  flaw was present in every editor tool.
+- e2e extended to a full round trip: create → rename → reparent → undo (asserting the
+  original parent is restored) → save (asserting the node reached the .tscn on disk)
+  → delete → undo, plus refusals that must leave the scene untouched. 18/18 checks.
+
 ### Next
-- S-04: `Godot_ManageNode` through `EditorUndoRedoManager` (T5) — the largest
-  remaining must-have. Then skills (S1–S3), checkpoints (F8), runtime inspection and
-  screenshots (T9, T12, T15), and the ask-user tool (T13).
+- S-05: skills (S1–S3, D3), then checkpoints (F8), then `Godot_ReadOutputLog` and the
+  runtime/persistent property split (T9, T15), screenshots (T12) and ask-user (T13).
