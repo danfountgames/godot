@@ -60,6 +60,10 @@ never put task progress, logs, or temporary next actions in `CLAUDE.md`.
 | `tools/tests/` | Tests for the standalone tooling (currently the virtual display) |
 | `.agent/` | Persistent implementation-control workspace |
 
+The editor's chat panel borrows a *connected client's* model through MCP sampling
+(`mcp_chat.h`). The editor holds no credentials and calls no vendor API; if you are
+adding to it, keep it that way.
+
 ## Canonical commands
 
 Build dependencies on a bare Ubuntu container (once; `apt-get update` first, or

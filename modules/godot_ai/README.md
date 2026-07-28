@@ -287,6 +287,28 @@ The HTTP entry references `${GODOT_AI_HTTP_TOKEN}` rather than a token: configur
 files get copied, synced and pasted into bug reports, so `--install-backend` refuses
 to write a secret into one.
 
+## The chat panel
+
+*AI Chat* is an editor dock, and a command palette entry (**Godot AI: Chat**) that
+opens it with the caret already in the input.
+
+The editor has no model. It has no API key, no vendor account, and no business
+acquiring either — so the panel does not call a model at all. It asks the *client*
+to, through MCP's `sampling/createMessage`: whichever agent is already connected to
+this editor has a model, and sampling exists precisely so a server can borrow one.
+Credentials stay where they already are, the choice of model stays where the user
+already made it, and the panel works with whatever client is attached rather than one
+this fork happened to bundle. With no sampling-capable client connected, the panel
+says exactly that instead of failing quietly.
+
+The conversation is kept in the editor's own settings directory, not in the project,
+so it survives closing the editor without becoming an asset that gets imported or
+committed. *Attach Edited Scene* stages the current scene for the next message; its
+contents are read when the message is sent, go through the same project-root
+confinement as every tool path, and are truncated with a note rather than silently
+cut. A turn in flight can be cancelled, which tells the client to stop and refuses any
+answer that arrives afterwards.
+
 ## Exported games
 
 They get none of this. The module is editor-only (`config.py` `can_build`), because

@@ -46,15 +46,15 @@ What remains is honest:
   so it is a check that has not been written.
 - **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
 - **C1** — every workflow command passes locally; never observed green on Actions.
-- **O1** — the in-editor chat UI, the one optional feature still not started.
-  O2, O3 and O4 are done and verified.
+- **O1 cancellation** — `notifications/cancelled` is sent by the service and the
+  conversation's handling of a cancelled turn is unit-tested, but the frame itself is
+  not caught in an end-to-end run.
 
 ## Ledger IDs in this slice
 
-T11, T12, T13, T15, U1 and U2 promoted to VERIFIED; C1 restated; X1 and X2 added
-under "Beyond the specification". 51 of 55 specification requirements are VERIFIED;
-what is left is R8 (another operating system), C1 (GitHub Actions itself) and the
-four optional features.
+All 55 specification requirements are VERIFIED except R8 (needs another operating
+system) and C1 (needs GitHub Actions itself), both IMPLEMENTED. X1 and X2 cover the
+virtual display and the editor's render-capability reporting.
 
 ## Last verified state
 
@@ -62,9 +62,12 @@ All of the following on the current working tree, in one sweep:
 
 - `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
 - `python3 tools/tests/run_tests.py` → 14/14 pass (the virtual display).
-- Module suite: 57 cases, 379 assertions, all pass.
-- Full engine suite from the repository root: 935 cases, 2,395,071 assertions, all
+- Module suite: 62 cases, 425 assertions, all pass.
+- Full engine suite from the repository root: 940 cases, 2,395,117 assertions, all
   pass — no regression from the editor accessors this module added.
+- `python3 tools/relay/tests/run_editor_ui_e2e.py` → 9 checks pass, driving the real
+  editor by keyboard and pointer: the palette, the approvals dialog, and a chat turn
+  answered by the connected client's model.
 - `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a display the
   script starts itself, including a real 1152x648 screenshot, a running game's scene
   tree (`root > Main > Player, Hud, EnemySpawner`), a runtime edit that leaves the

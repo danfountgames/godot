@@ -207,6 +207,11 @@ bool MCPProtocol::_handle_initialize(const Dictionary &p_params, const Variant &
 	}
 	r_session.protocol_version = negotiated;
 
+	if (p_params.has("capabilities")) {
+		const Dictionary client_capabilities = p_params["capabilities"];
+		r_session.supports_sampling = client_capabilities.has("sampling");
+	}
+
 	if (p_params.has("clientInfo")) {
 		const Dictionary client_info = p_params["clientInfo"];
 		r_session.mcp_client_name = client_info.has("name") ? String(client_info["name"]) : String();

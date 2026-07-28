@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  mcp_permissions.h                                                     */
+/*  mcp_chat_dock.h                                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,64 +28,58 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef MCP_PERMISSIONS_H
-#define MCP_PERMISSIONS_H
+// The chat panel. It renders MCPChat and nothing else decides anything here - what a
+// turn is, when it may be sent, what happens to a cancelled one, all of that lives in
+// mcp_chat.h where it can be tested without a screen.
 
-#include "mcp_types.h"
+#ifndef MCP_CHAT_DOCK_H
+#define MCP_CHAT_DOCK_H
 
-// Per-connection state established by the bridge handshake. Permission decisions are
-// a function of this plus the tool's capability class, so they can be reasoned about
-// (and unit-tested) without a live socket.
-struct MCPSession {
-	String client_name = "unknown-client";
-	String client_id; // Stable identity used for stored approvals.
-	int64_t relay_pid = 0;
-	bool read_only = false;
-	MCPPolicy approval_mode = MCP_POLICY_ASK;
+#include "mcp_chat.h"
 
-	// Set once the user has approved this client for this project.
-	bool client_approved = false;
+#include "scene/gui/box_container.h"
 
-	// MCP session state.
-	bool initialized = false;
-	String protocol_version;
-	String mcp_client_name;
-	String mcp_client_version;
+class Button;
+class Label;
+class LineEdit;
+class RichTextLabel;
+class MCPService;
 
-	// The client offered `sampling` at initialize, so the editor may borrow its model
-	// (see mcp_chat.h). Absent capability means absent feature: asking anyway would
-	// hang a chat turn on a client that will never answer.
-	bool supports_sampling = false;
-};
+class MCPChatDock : public VBoxContainer {
+	GDCLASS(MCPChatDock, VBoxContainer);
 
-// Resolves "may this client run this tool right now?" from user policy, the session's
-// requested mode, and the tool's capability class.
-class MCPPermissions {
+	Ref<MCPChat> chat;
+	MCPService *service = nullptr;
+
+	RichTextLabel *transcript = nullptr;
+	LineEdit *input = nullptr;
+	Button *send_button = nullptr;
+	Button *cancel_button = nullptr;
+	Button *attach_button = nullptr;
+	Button *clear_button = nullptr;
+	Label *status = nullptr;
+
+	void _send();
+	void _cancel();
+	void _clear();
+	void _attach_edited_scene();
+	void _on_chat_changed();
+
+protected:
+	void _notification(int p_what);
+
 public:
-	enum Outcome {
-		OUTCOME_ALLOW,
-		OUTCOME_PROMPT, // Requires an interactive decision before running.
-		OUTCOME_DENY,
-	};
+	explicit MCPChatDock(MCPService *p_service);
 
-	struct Decision {
-		Outcome outcome = OUTCOME_DENY;
-		String reason;
+	// Refreshes the transcript and the state of every control.
+	void refresh();
 
-		bool is_allowed() const { return outcome == OUTCOME_ALLOW; }
-	};
+	// Shown from the command palette: makes the panel visible and puts the caret in
+	// the input, so the palette entry is a way to start typing rather than a way to
+	// look at a panel.
+	void focus_input();
 
-	// Editor-settings-backed policy, with the specification's defaults when no
-	// EditorSettings exists (headless runs and unit tests).
-	static MCPPolicy get_policy(MCPCapability p_capability);
-	static void set_policy_override(MCPCapability p_capability, MCPPolicy p_policy);
-	static void clear_policy_overrides();
-	static MCPPolicy get_default_policy(MCPCapability p_capability);
-
-	static Decision evaluate(const MCPSession &p_session, MCPCapability p_capability, const String &p_tool_name);
-
-	// Registers the editor settings this module reads. Called by the service.
-	static void register_editor_settings();
+	Ref<MCPChat> get_chat() const { return chat; }
 };
 
-#endif // MCP_PERMISSIONS_H
+#endif // MCP_CHAT_DOCK_H

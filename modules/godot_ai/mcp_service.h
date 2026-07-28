@@ -38,6 +38,7 @@
 #include "editor/editor_plugin.h"
 
 class MCPApprovalsDialog;
+class MCPChatDock;
 
 // Editor-side half of the bridge: a loopback listener that godot-ai-relay connects
 // to, following the lifecycle pattern of the in-tree debug adapter server.
@@ -52,6 +53,15 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 		int64_t token = 0;
 		Ref<MCPTool> tool;
 		String checkpoint;
+	};
+
+	// A request this editor sent *to* a client - the reverse of everything else here.
+	// MCP calls it sampling: the editor has no model, so it borrows the client's.
+	struct OutgoingRequest {
+		int64_t id = 0;
+		String peer_address;
+		Ref<RefCounted> owner; // Kept alive until the answer arrives.
+		double deadline = 0.0;
 	};
 
 	struct Peer {
@@ -77,6 +87,14 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	Vector<String> pending_clients;
 
 	MCPApprovalsDialog *approvals_dialog = nullptr;
+	MCPChatDock *chat_dock = nullptr;
+
+	Vector<OutgoingRequest> outgoing;
+	int64_t next_outgoing_id = 1;
+	// Whether a client offering sampling was attached last time we looked. The chat
+	// panel says "no client offers a model" when there is none, and that sentence has
+	// to stop being true the moment one connects.
+	bool sampling_was_available = false;
 
 	void _register_editor_commands();
 	void _show_approvals();
@@ -95,6 +113,11 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 
 	void _on_tools_changed();
 	void _poll_deferred();
+	void _poll_outgoing();
+	// Routes a client's answer to a request the editor sent. Returns true when the
+	// frame was one of ours and must not go to the protocol handler.
+	bool _route_outgoing_response(Peer *p_peer, const Dictionary &p_message);
+	void _show_chat();
 
 	// The peer whose message is being handled, so defer_response() knows who to hold
 	// the request for. Only valid inside _handle_line.
@@ -116,6 +139,12 @@ public:
 	void approve_client_name(const String &p_client_name);
 	void revoke_client_name(const String &p_client_name);
 	static bool is_client_approved(const String &p_client_name);
+
+	// Sends `sampling/createMessage` to a client that offered sampling, and returns a
+	// request id, or 0 when no such client is connected. `p_owner` is told the answer.
+	int64_t send_sampling_request(const Dictionary &p_params, const Ref<RefCounted> &p_owner);
+	void cancel_sampling_request(int64_t p_request);
+	bool has_sampling_client() const;
 
 	// MCPProtocol::Delegate.
 	virtual bool approve_client(MCPSession &p_session, String &r_reason) override;
