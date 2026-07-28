@@ -40,6 +40,9 @@
 #include "core/templates/local_vector.h"
 #include "core/io/image.h"
 #include "core/os/keyboard.h"
+#include "main/performance.h"
+#include "core/object/script_language.h"
+#include "scene/gui/control.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
 #include "scene/main/scene_tree.h"
@@ -66,6 +69,105 @@ void MCPRuntimeAgent::install() {
 	installed = true;
 }
 
+MCPRuntimeWatcher *MCPRuntimeWatcher::singleton = nullptr;
+
+void MCPRuntimeWatcher::create() {
+	if (singleton) {
+		return;
+	}
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree) {
+		return;
+	}
+	singleton = memnew(MCPRuntimeWatcher);
+	// Checked once a frame, which is the finest granularity the game itself has.
+	tree->connect("process_frame", callable_mp(singleton, &MCPRuntimeWatcher::on_frame));
+}
+
+void MCPRuntimeWatcher::destroy() {
+	if (!singleton) {
+		return;
+	}
+	if (SceneTree::get_singleton()) {
+		SceneTree::get_singleton()->disconnect("process_frame", callable_mp(singleton, &MCPRuntimeWatcher::on_frame));
+	}
+	memdelete(singleton);
+	singleton = nullptr;
+}
+
+void MCPRuntimeWatcher::add(const String &p_request_id, const String &p_path, const String &p_property, const Variant &p_expected, double p_timeout_seconds) {
+	Watch watch;
+	watch.request_id = p_request_id;
+	watch.path = p_path;
+	watch.property = p_property;
+	watch.expected = p_expected;
+	watch.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
+	watches.push_back(watch);
+	// Check immediately: a condition that is already true should not cost a frame, and
+	// more importantly should not look like it took one.
+	on_frame();
+}
+
+void MCPRuntimeWatcher::on_frame() {
+	if (watches.is_empty()) {
+		return;
+	}
+	SceneTree *tree = SceneTree::get_singleton();
+	const double now = OS::get_singleton()->get_ticks_msec() / 1000.0;
+
+	for (int i = watches.size() - 1; i >= 0; i--) {
+		const Watch watch = watches[i];
+		Node *node = tree && tree->get_root() ? tree->get_root()->get_node_or_null(NodePath(watch.path)) : nullptr;
+
+		if (node) {
+			bool valid = false;
+			const Variant current = node->get(watch.property, &valid);
+			if (valid) {
+				Variant expected;
+				String ignored;
+				// The expected value arrives as JSON, so it needs the same conversion a
+				// write does before it can be compared with what the game holds.
+				if (!MCPRuntimeAgent::coerce(watch.expected, current.get_type(), expected, ignored)) {
+					expected = watch.expected;
+				}
+				if (current == expected) {
+					Dictionary result;
+					result["path"] = watch.path;
+					result["property"] = watch.property;
+					result["satisfied"] = true;
+					String text;
+					VariantWriter::write_to_string(current, text);
+					result["text"] = text;
+					watches.remove_at(i);
+					MCPRuntimeAgent::reply(watch.request_id, result);
+					continue;
+				}
+			}
+		}
+
+		if (watch.deadline <= now) {
+			// Say what it was waiting for and what it found: "timed out" alone sends the
+			// reader back to the game to work out which half was wrong.
+			String wanted;
+			VariantWriter::write_to_string(watch.expected, wanted);
+			String found = "the node does not exist";
+			if (node) {
+				bool valid = false;
+				const Variant current = node->get(watch.property, &valid);
+				if (valid) {
+					VariantWriter::write_to_string(current, found);
+				} else {
+					found = "the property does not exist";
+				}
+			}
+			watches.remove_at(i);
+			MCPRuntimeAgent::fail(watch.request_id,
+					vformat("'%s.%s' did not become %s within the timeout; it is %s",
+							watch.path, watch.property, wanted, found));
+		}
+	}
+}
+
 void MCPRuntimeAgent::uninstall() {
 	if (!installed) {
 		return;
@@ -73,6 +175,7 @@ void MCPRuntimeAgent::uninstall() {
 	if (EngineDebugger::is_active()) {
 		EngineDebugger::unregister_message_capture(MCP_RUNTIME_CHANNEL);
 	}
+	MCPRuntimeWatcher::destroy();
 	installed = false;
 }
 
@@ -110,6 +213,22 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 		arguments = p_args[1];
 	}
 
+	// A wait answers when the game reaches the state, or when its deadline passes, so
+	// it must not be answered here as well - exactly one reply per request.
+	if (command == "wait_for") {
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		const String path = arguments.has("path") ? String(arguments["path"]) : String();
+		const String property = arguments.has("property") ? String(arguments["property"]) : String();
+		if (!watcher || path.is_empty() || property.is_empty() || !arguments.has("equals")) {
+			_fail(request_id, "waiting needs a node path, a property name and a value to wait for");
+			return OK;
+		}
+		const double timeout = arguments.has("timeout_seconds") ? (double)arguments["timeout_seconds"] : 10.0;
+		watcher->add(request_id, path, property, arguments["equals"], timeout);
+		return OK;
+	}
+
 	String error;
 	const Dictionary result = _handle(command, arguments, error);
 	if (error.is_empty()) {
@@ -138,6 +257,15 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "set_property") {
 		return _set_property(p_arguments, r_error);
+	}
+	if (p_command == "node_info") {
+		return _node_info(p_arguments, r_error);
+	}
+	if (p_command == "performance") {
+		return _performance(p_arguments, r_error);
+	}
+	if (p_command == "window_info") {
+		return _window_info(p_arguments, r_error);
 	}
 	r_error = vformat("unknown runtime command '%s'", p_command);
 	return Dictionary();
@@ -427,7 +555,7 @@ Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String 
 	return result;
 }
 
-bool MCPRuntimeAgent::_coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error) {
+bool MCPRuntimeAgent::coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error) {
 	if (p_value.get_type() == p_target) {
 		r_out = p_value;
 		return true;
@@ -507,7 +635,7 @@ Dictionary MCPRuntimeAgent::_set_property(const Dictionary &p_arguments, String 
 
 	Variant value;
 	String coerce_error;
-	if (!_coerce(p_arguments["value"], current.get_type(), value, coerce_error)) {
+	if (!coerce(p_arguments["value"], current.get_type(), value, coerce_error)) {
 		r_error = vformat("'%s.%s' is a %s: %s", path, property,
 				Variant::get_type_name(current.get_type()), coerce_error);
 		return Dictionary();
@@ -536,6 +664,99 @@ Dictionary MCPRuntimeAgent::_set_property(const Dictionary &p_arguments, String 
 	String text;
 	VariantWriter::write_to_string(applied, text);
 	result["text"] = text;
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_node_info(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no scene tree";
+		return Dictionary();
+	}
+	const String path = p_arguments.has("path") ? String(p_arguments["path"]) : String();
+	Node *node = path.is_empty() ? nullptr : tree->get_root()->get_node_or_null(NodePath(path));
+	if (!node) {
+		r_error = vformat("no node at '%s' in the running game", path);
+		return Dictionary();
+	}
+
+	Dictionary result;
+	result["path"] = path;
+	result["name"] = node->get_name();
+	result["type"] = node->get_class();
+	const Ref<Script> script = node->get_script();
+	result["script"] = script.is_valid() ? script->get_path() : String();
+
+	Array groups;
+	List<Node::GroupInfo> group_list;
+	node->get_groups(&group_list);
+	for (const Node::GroupInfo &group : group_list) {
+		groups.push_back(String(group.name));
+	}
+	result["groups"] = groups;
+
+	Array children;
+	for (int i = 0; i < node->get_child_count(); i++) {
+		children.push_back(node->get_child(i)->get_name());
+	}
+	result["children"] = children;
+
+	// Geometry, when the node has any. An agent aiming input needs to know where a
+	// control is far more often than it needs the rest of this.
+	CanvasItem *canvas_item = Object::cast_to<CanvasItem>(node);
+	result["visible"] = canvas_item ? canvas_item->is_visible() : true;
+	Control *control = Object::cast_to<Control>(node);
+	if (control) {
+		const Rect2 rect = control->get_global_rect();
+		Dictionary geometry;
+		geometry["x"] = rect.position.x;
+		geometry["y"] = rect.position.y;
+		geometry["width"] = rect.size.width;
+		geometry["height"] = rect.size.height;
+		geometry["center_x"] = rect.position.x + rect.size.width / 2.0;
+		geometry["center_y"] = rect.position.y + rect.size.height / 2.0;
+		result["rect"] = geometry;
+	}
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_performance(const Dictionary &p_arguments, String &r_error) {
+	Performance *performance = Performance::get_singleton();
+	if (!performance) {
+		r_error = "this build has no performance monitors";
+		return Dictionary();
+	}
+	Dictionary result;
+	result["fps"] = performance->get_monitor(Performance::TIME_FPS);
+	result["frame_time_ms"] = performance->get_monitor(Performance::TIME_PROCESS) * 1000.0;
+	result["physics_time_ms"] = performance->get_monitor(Performance::TIME_PHYSICS_PROCESS) * 1000.0;
+	result["static_memory_bytes"] = performance->get_monitor(Performance::MEMORY_STATIC);
+	result["object_count"] = performance->get_monitor(Performance::OBJECT_COUNT);
+	result["node_count"] = performance->get_monitor(Performance::OBJECT_NODE_COUNT);
+	result["draw_calls"] = performance->get_monitor(Performance::RENDER_TOTAL_DRAW_CALLS_IN_FRAME);
+	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	// One sample is a data point, not a measurement. Say so rather than let a caller
+	// treat an instant as a budget verdict.
+	result["note"] = "a single sample; measure a window of frames before judging a budget";
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_window_info(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no window";
+		return Dictionary();
+	}
+	Window *window = tree->get_root();
+	Dictionary result;
+	const Size2i size = window->get_size();
+	result["width"] = size.width;
+	result["height"] = size.height;
+	const Size2i visible = window->get_visible_rect().size;
+	result["viewport_width"] = visible.width;
+	result["viewport_height"] = visible.height;
+	result["aspect"] = size.height > 0 ? (double)size.width / (double)size.height : 0.0;
+	result["content_scale_factor"] = window->get_content_scale_factor();
 	return result;
 }
 

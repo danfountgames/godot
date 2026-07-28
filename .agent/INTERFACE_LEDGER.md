@@ -38,8 +38,8 @@ that its signal fired.
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
 | C1 | `Godot_GetRuntimeProperty` | read_runtime | VERIFIED | `tools/mcp_input_tools.cpp`, `_get_property` in the agent. Returns the value JSON can carry plus Godot's own text form, which round-trips for every type. Refuses unknown nodes and unknown properties. **It immediately earned its place**: reading back what `Godot_SetRuntimeProperty` claimed to have written showed the write had never happened | none |
-| C2 | `Godot_GetRuntimeNodeInfo` | read_runtime | NOT_STARTED | — | all |
-| C3 | `Godot_WaitForRuntimeCondition` | read_runtime | NOT_STARTED | — | all |
+| C2 | `Godot_GetRuntimeNodeInfo` | read_runtime | VERIFIED | class, script, groups, children, visibility, and a Control's on-screen rect. The e2e uses that rect to aim a real click at the node's reported centre instead of a coordinate copied from the fixture — semantic targeting without making the input fake | partially covers I2 |
+| C3 | `Godot_WaitForRuntimeCondition` | read_runtime | VERIFIED | `MCPRuntimeWatcher` checks every frame inside the game and answers once, on satisfaction or deadline. Covered both ways in `run_editor_e2e.py`: a condition that becomes true, and one that never does — where the failure names the value it actually found (`it is 2`) rather than only saying it timed out | none |
 | C4 | `Godot_GetRuntimeErrors` (structured) | read_runtime | NOT_STARTED | — | all |
 | C5 | `Godot_SetTimeScale` | run_project | NOT_STARTED | — | all |
 
@@ -47,7 +47,7 @@ that its signal fired.
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| D1 | `Godot_GetPerformanceMetrics` | read_runtime | NOT_STARTED | — | all |
+| D1 | `Godot_GetPerformanceMetrics` | read_runtime | VERIFIED | fps, frame and physics time, static memory, object and node counts, draw calls. Carries a `note` saying one call is one sample, so a caller does not read an instant as a budget verdict | windows and verdicts are D2/D3 |
 | D2 | `Godot_ProfileWindow` (distribution, worst frame) | read_runtime | NOT_STARTED | — | all |
 | D3 | Budget comparison verdicts | read_runtime | NOT_STARTED | — | all |
 
@@ -80,7 +80,7 @@ that its signal fired.
 |---|---|---|---|---|---|
 | H1 | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` | edit_files | NOT_STARTED | — | all |
 | H2 | `Godot_SetGameWindowSize` | run_project | NOT_STARTED | — | all |
-| H3 | `Godot_GetGameWindowInfo` | read_runtime | NOT_STARTED | — | all |
+| H3 | `Godot_GetGameWindowInfo` | read_runtime | VERIFIED | window and viewport size, aspect, content scale. Asserted against `Godot_CaptureGame` in the e2e: the two must agree about how big the game is, or one of them is lying about what a screenshot means | none |
 
 ## I — Editor UI automation
 

@@ -823,6 +823,78 @@ def run(editor_binary, display):
                       "the game capture was not returned inline")
                 print("PASS Godot_CaptureGame photographed the running game (%dx%d)"
                       % (shot["width"], shot["height"]))
+
+                # --- describing a node, and aiming at it by name ----------------
+                reply = call({"jsonrpc": "2.0", "id": 100, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeNodeInfo",
+                                         "arguments": {"path": "/root/Main/Hud/Target"}}})
+                check(reply["result"]["isError"] is False,
+                      "describing a node failed: %s" % refusal_text(reply))
+                info = reply["result"]["structuredContent"]
+                check(info["type"] == "Button", "wrong class: %r" % info)
+                check(info["script"].endswith("target.gd"), "script not reported: %r" % info)
+                check("rect" in info, "a Control reported no geometry: %r" % info)
+                print("PASS Godot_GetRuntimeNodeInfo described the node and where it is")
+
+                # Aim at the centre the game itself reported, rather than at a
+                # coordinate copied from the fixture. The click is still real.
+                centre = (int(info["rect"]["center_x"]), int(info["rect"]["center_y"]))
+                reply = call({"jsonrpc": "2.0", "id": 101, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"x": centre[0], "y": centre[1]}}})
+                check(reply["result"]["isError"] is False,
+                      "clicking the reported centre failed: %s" % refusal_text(reply))
+
+                # --- waiting for the game to reach a state ----------------------
+                # press_count is now 2: the earlier click plus this one. Waiting for it
+                # asserts the click landed without anything sleeping.
+                reply = call({"jsonrpc": "2.0", "id": 102, "method": "tools/call",
+                              "params": {"name": "Godot_WaitForRuntimeCondition",
+                                         "arguments": {"path": "/root/Main/Hud/Target",
+                                                       "property": "press_count",
+                                                       "equals": 2,
+                                                       "timeout_seconds": 10}}})
+                check(reply["result"]["isError"] is False,
+                      "waiting for the press count failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["satisfied"] is True,
+                      "the wait did not report satisfaction: %r"
+                      % reply["result"]["structuredContent"])
+                print("PASS Godot_WaitForRuntimeCondition saw the game reach the state")
+
+                before = time.time()
+                reply = call({"jsonrpc": "2.0", "id": 103, "method": "tools/call",
+                              "params": {"name": "Godot_WaitForRuntimeCondition",
+                                         "arguments": {"path": "/root/Main/Hud/Target",
+                                                       "property": "press_count",
+                                                       "equals": 999,
+                                                       "timeout_seconds": 2}}})
+                check(refused(reply), "waiting for something untrue eventually succeeded")
+                # The failure has to say what it found, or the reader goes back to the
+                # game to work out which half was wrong.
+                check("it is 2" in refusal_text(reply),
+                      "the timeout does not report the actual value: %r" % refusal_text(reply))
+                check(time.time() - before >= 1.5,
+                      "the wait returned too fast to have waited")
+                print("PASS Godot_WaitForRuntimeCondition times out and says what it saw")
+
+                # --- performance and window ------------------------------------
+                reply = call({"jsonrpc": "2.0", "id": 104, "method": "tools/call",
+                              "params": {"name": "Godot_GetPerformanceMetrics"}})
+                check(reply["result"]["isError"] is False,
+                      "sampling performance failed: %s" % refusal_text(reply))
+                metrics = reply["result"]["structuredContent"]
+                check(metrics["node_count"] > 0, "no nodes reported: %r" % metrics)
+                check("sample" in metrics["note"], "the sample is not qualified: %r" % metrics)
+                print("PASS Godot_GetPerformanceMetrics sampled the running game")
+
+                reply = call({"jsonrpc": "2.0", "id": 105, "method": "tools/call",
+                              "params": {"name": "Godot_GetGameWindowInfo"}})
+                check(reply["result"]["isError"] is False,
+                      "reading the window failed: %s" % refusal_text(reply))
+                window = reply["result"]["structuredContent"]
+                check(window["width"] == shot["width"] and window["height"] == shot["height"],
+                      "the window and the capture disagree about size: %r vs %r" % (window, shot))
+                print("PASS Godot_GetGameWindowInfo agrees with the capture")
             elif has_display:
                 raise Failure("the running game never reported its scene tree")
             else:

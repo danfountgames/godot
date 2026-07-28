@@ -52,6 +52,7 @@
 
 #ifdef TOOLS_ENABLED
 
+#include "core/object/class_db.h"
 #include "core/string/ustring.h"
 #include "core/variant/array.h"
 #include "core/variant/dictionary.h"
@@ -60,6 +61,35 @@
 // The debugger message namespace shared by both ends of the channel. Editor-side
 // requests arrive as `godot_ai:<command>`; replies go back as `godot_ai:reply`.
 #define MCP_RUNTIME_CHANNEL "godot_ai"
+
+// Waits that resolve when the game reaches a state, checked every frame.
+//
+// This exists so an agent never has to sleep. "Wait 2 seconds and hope" is the single
+// most common source of tests that pass on a fast machine and fail on a loaded one;
+// "wait until the score is 10, or fail after 5 seconds" is a statement about the game.
+class MCPRuntimeWatcher : public Object {
+	GDCLASS(MCPRuntimeWatcher, Object);
+
+	struct Watch {
+		String request_id;
+		String path;
+		String property;
+		Variant expected;
+		double deadline = 0.0;
+	};
+
+	Vector<Watch> watches;
+
+	static MCPRuntimeWatcher *singleton;
+
+public:
+	static MCPRuntimeWatcher *get_singleton() { return singleton; }
+	static void create();
+	static void destroy();
+
+	void add(const String &p_request_id, const String &p_path, const String &p_property, const Variant &p_expected, double p_timeout_seconds);
+	void on_frame();
+};
 
 class MCPRuntimeAgent {
 	static bool installed;
@@ -78,10 +108,11 @@ class MCPRuntimeAgent {
 	static Dictionary _capture(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _get_property(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _set_property(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _node_info(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _performance(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _window_info(const Dictionary &p_arguments, String &r_error);
 
-	// Turns a value that arrived as JSON into the type the property actually holds.
-	// Returns false when no honest conversion exists.
-	static bool _coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error);
+
 
 public:
 	// Installs the capture handler. Safe to call more than once; does nothing in an
@@ -91,6 +122,14 @@ public:
 
 	// The engine's own capture entry point.
 	static Error parse_message(void *p_user, const String &p_message, const Array &p_args, bool &r_captured);
+
+	// Turns a value that arrived as JSON into the type the property actually holds.
+	// Returns false when no honest conversion exists.
+	static bool coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error);
+
+	// Used by the watcher to answer a wait it started.
+	static void reply(const String &p_request_id, const Dictionary &p_result) { _reply(p_request_id, p_result); }
+	static void fail(const String &p_request_id, const String &p_message) { _fail(p_request_id, p_message); }
 };
 
 #endif // TOOLS_ENABLED

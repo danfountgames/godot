@@ -282,6 +282,153 @@ public:
 	}
 };
 
+class WaitForRuntimeConditionTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_WaitForRuntimeCondition"; }
+	virtual String get_description() const override {
+		return "Wait until a property of a node in the running game equals a value, or fail after "
+			   "a timeout. Use this instead of waiting a fixed time: 'wait two seconds and hope' "
+			   "is the usual reason a test passes on a fast machine and fails on a loaded one, "
+			   "and it hides the difference between slow and broken.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Node path, such as /root/Main/Player.");
+		properties["property"] = MCPSchema::string_property("Property to watch.");
+		properties["equals"] = MCPSchema::any_property(
+				"The value to wait for. Converted to the property's real type, so [64, 32] "
+				"matches a Vector2.");
+		properties["timeout_seconds"] = MCPSchema::integer_property(
+				"How long to wait before failing.", 10);
+		Vector<String> required;
+		required.push_back("path");
+		required.push_back("property");
+		required.push_back("equals");
+		return MCPSchema::object_schema(properties, required);
+	}
+
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Node that was watched.");
+		properties["property"] = MCPSchema::string_property("Property that was watched.");
+		properties["satisfied"] = MCPSchema::bool_property("Always true when this succeeds.");
+		properties["text"] = MCPSchema::string_property("The value when the wait was satisfied.");
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPRuntimeBridge *bridge = nullptr;
+		if (!require_running_game(r_error, &bridge)) {
+			return Dictionary();
+		}
+		// The bridge's own deadline sits past the wait's, so the game gets to answer -
+		// including with its own, more useful, "it is still X" failure.
+		const double timeout = p_arguments.has("timeout_seconds")
+				? (double)p_arguments["timeout_seconds"]
+				: 10.0;
+		return MCPDeferred::make_deferred_result(
+				bridge->send("wait_for", p_arguments, timeout + 5.0));
+	}
+};
+
+class GetRuntimeNodeInfoTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_GetRuntimeNodeInfo"; }
+	virtual String get_description() const override {
+		return "Describe a node in the running game: class, script, groups, children, visibility, "
+			   "and - for a Control - where it actually is on screen, which is what pointer input "
+			   "needs in order to aim at something by name rather than by guessed coordinates.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Node path, such as /root/Main/Hud/Play.");
+		Vector<String> required;
+		required.push_back("path");
+		return MCPSchema::object_schema(properties, required);
+	}
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Node that was described.");
+		properties["name"] = MCPSchema::string_property("Node name.");
+		properties["type"] = MCPSchema::string_property("Class name.");
+		properties["script"] = MCPSchema::string_property("Attached script, empty when none.");
+		properties["groups"] = MCPSchema::array_property("Groups the node is in.",
+				MCPSchema::string_property("Group name."));
+		properties["children"] = MCPSchema::array_property("Child node names.",
+				MCPSchema::string_property("Child name."));
+		properties["visible"] = MCPSchema::bool_property("Whether it is visible.");
+		properties["rect"] = MCPSchema::object_schema(Dictionary(), Vector<String>(), true);
+		return MCPSchema::object_schema(properties);
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPRuntimeBridge *bridge = nullptr;
+		if (!require_running_game(r_error, &bridge)) {
+			return Dictionary();
+		}
+		return MCPDeferred::make_deferred_result(bridge->send("node_info", p_arguments));
+	}
+};
+
+class GetPerformanceMetricsTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_GetPerformanceMetrics"; }
+	virtual String get_description() const override {
+		return "Sample the running game's performance monitors: frame rate, frame and physics "
+			   "time, memory, object and node counts, draw calls. One call is one sample - "
+			   "measure a window of frames before treating it as a verdict on a budget.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
+	virtual Dictionary get_input_schema() const override { return MCPSchema::object_schema(Dictionary()); }
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["fps"] = MCPSchema::integer_property("Frames per second.");
+		properties["frame_time_ms"] = MCPSchema::integer_property("Process time this frame.");
+		properties["physics_time_ms"] = MCPSchema::integer_property("Physics time this frame.");
+		properties["static_memory_bytes"] = MCPSchema::integer_property("Static memory in use.");
+		properties["object_count"] = MCPSchema::integer_property("Live objects.");
+		properties["node_count"] = MCPSchema::integer_property("Live nodes.");
+		properties["draw_calls"] = MCPSchema::integer_property("Draw calls this frame.");
+		properties["note"] = MCPSchema::string_property("What this sample does and does not show.");
+		return MCPSchema::object_schema(properties, Vector<String>(), true);
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPRuntimeBridge *bridge = nullptr;
+		if (!require_running_game(r_error, &bridge)) {
+			return Dictionary();
+		}
+		return MCPDeferred::make_deferred_result(bridge->send("performance", p_arguments));
+	}
+};
+
+class GetGameWindowInfoTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_GetGameWindowInfo"; }
+	virtual String get_description() const override {
+		return "Report the running game's window and viewport size, aspect ratio and content "
+			   "scale - what a screenshot means, and what coordinate space pointer input is in.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
+	virtual Dictionary get_input_schema() const override { return MCPSchema::object_schema(Dictionary()); }
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["width"] = MCPSchema::integer_property("Window width in pixels.");
+		properties["height"] = MCPSchema::integer_property("Window height in pixels.");
+		properties["viewport_width"] = MCPSchema::integer_property("Visible viewport width.");
+		properties["viewport_height"] = MCPSchema::integer_property("Visible viewport height.");
+		return MCPSchema::object_schema(properties, Vector<String>(), true);
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPRuntimeBridge *bridge = nullptr;
+		if (!require_running_game(r_error, &bridge)) {
+			return Dictionary();
+		}
+		return MCPDeferred::make_deferred_result(bridge->send("window_info", p_arguments));
+	}
+};
+
 } // namespace
 
 void mcp_register_input_tools() {
@@ -291,4 +438,8 @@ void mcp_register_input_tools() {
 	registry->register_tool(Ref<MCPTool>(memnew(SendKeyInputTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(CaptureGameTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(GetRuntimePropertyTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(WaitForRuntimeConditionTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(GetRuntimeNodeInfoTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(GetPerformanceMetricsTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(GetGameWindowInfoTool)));
 }
