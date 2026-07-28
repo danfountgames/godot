@@ -78,7 +78,28 @@ class MCPRuntimeWatcher : public Object {
 		double deadline = 0.0;
 	};
 
+	// Capturing a sequence and measuring a window of frames are the same shape as a
+	// watch: both need to be there every frame, and both answer once.
+	struct Sequence {
+		String request_id;
+		int remaining = 0;
+		int interval_frames = 1;
+		int countdown = 0;
+		Array paths;
+	};
+
+	struct Profile {
+		String request_id;
+		int remaining = 0;
+		double worst_frame_ms = 0.0;
+		double total_ms = 0.0;
+		int samples = 0;
+		double budget_frame_ms = 0.0;
+	};
+
 	Vector<Watch> watches;
+	Vector<Sequence> sequences;
+	Vector<Profile> profiles;
 
 	static MCPRuntimeWatcher *singleton;
 
@@ -88,6 +109,8 @@ public:
 	static void destroy();
 
 	void add(const String &p_request_id, const String &p_path, const String &p_property, const Variant &p_expected, double p_timeout_seconds);
+	void add_sequence(const String &p_request_id, int p_frames, int p_interval_frames);
+	void add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms);
 	void on_frame();
 };
 
@@ -116,6 +139,8 @@ class MCPRuntimeAgent {
 	static Dictionary _input_trace(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _runtime_errors(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _resize_window(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _time_scale(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _audio_state(const Dictionary &p_arguments, String &r_error);
 
 	// Every injected event is recorded, so "a click was sent" and "a click arrived" can
 	// be told apart after the fact rather than argued about.
@@ -135,6 +160,9 @@ public:
 	// Turns a value that arrived as JSON into the type the property actually holds.
 	// Returns false when no honest conversion exists.
 	static bool coerce(const Variant &p_value, Variant::Type p_target, Variant &r_out, String &r_error);
+
+	// Saves one frame of the running game and returns its path, or an empty string.
+	static String capture_frame(String &r_error);
 
 	// Used by the watcher to answer a wait it started.
 	static void reply(const String &p_request_id, const Dictionary &p_result) { _reply(p_request_id, p_result); }

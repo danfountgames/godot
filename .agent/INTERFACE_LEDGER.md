@@ -29,7 +29,7 @@ that its signal fired.
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
 | B1 | `Godot_CaptureGame` | read_runtime | VERIFIED | `tools/mcp_input_tools.cpp`, `_capture` in the agent. The game saves a PNG of its own viewport and reports the path; the editor reads it back and returns it inline when small enough — pixels do not travel the debugger bus, which is a message channel. Asserted in `run_editor_e2e.py` on PNG magic bytes, plausible size and the inline block | frame sequences are B2 |
-| B2 | `Godot_CaptureFrameSequence` | read_runtime | NOT_STARTED | — | all |
+| B2 | `Godot_CaptureFrameSequence` | read_runtime | VERIFIED | the watcher captures on consecutive frames inside the game, each tagged with frame number and millisecond. One screenshot cannot show whether feedback began within 100ms or whether a transition dropped a frame; a sequence can. The e2e asserts the frames are distinct, ordered, and real PNGs | none |
 | B3 | `Godot_CaptureEditorWindow` (incl. popups) | read_project | VERIFIED | `DisplayServer::screen_get_image`, so dialogs and the game's own window appear — they are separate OS windows and invisible to a viewport capture. Asserted in the e2e to be at least as large as the viewport capture, and to be a real PNG. Refuses headless, and refuses platforms whose display server cannot capture | none |
 | B4 | Capture metadata on every image | — | NOT_STARTED | — | all |
 
@@ -41,21 +41,21 @@ that its signal fired.
 | C2 | `Godot_GetRuntimeNodeInfo` | read_runtime | VERIFIED | class, script, groups, children, visibility, and a Control's on-screen rect. The e2e uses that rect to aim a real click at the node's reported centre instead of a coordinate copied from the fixture — semantic targeting without making the input fake | partially covers I2 |
 | C3 | `Godot_WaitForRuntimeCondition` | read_runtime | VERIFIED | `MCPRuntimeWatcher` checks every frame inside the game and answers once, on satisfaction or deadline. Covered both ways in `run_editor_e2e.py`: a condition that becomes true, and one that never does — where the failure names the value it actually found (`it is 2`) rather than only saying it timed out | none |
 | C4 | `Godot_GetRuntimeErrors` (structured) | read_runtime | VERIFIED | an engine error handler installed in the game keeps file, line, function, message and kind — where `Godot_ReadOutputLog` has the same events only as prose. Checked against an error the test deliberately causes, not against an empty list, which would pass whether the feature worked or not. Note that `push_error` reports the engine's call site; only a genuine script fault carries a `.gd` path | none |
-| C5 | `Godot_SetTimeScale` | run_project | NOT_STARTED | — | all |
+| C5 | `Godot_SetTimeScale` | run_project | VERIFIED | speeds up a long route without waiting through it, and says plainly that it is not for a playtest or a timing measurement — physics steps, animation and input timing all change, and a bug that only appears at normal speed is exactly the kind it hides. Zero and absurd scales refused | not refused *during* a playtest; that is the agent's discipline, not the tool's |
 
 ## D — Performance
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
 | D1 | `Godot_GetPerformanceMetrics` | read_runtime | VERIFIED | fps, frame and physics time, static memory, object and node counts, draw calls. Carries a `note` saying one call is one sample, so a caller does not read an instant as a budget verdict | windows and verdicts are D2/D3 |
-| D2 | `Godot_ProfileWindow` (distribution, worst frame) | read_runtime | NOT_STARTED | — | all |
-| D3 | Budget comparison verdicts | read_runtime | NOT_STARTED | — | all |
+| D2 | `Godot_ProfileWindow` (distribution, worst frame) | read_runtime | VERIFIED | samples frame time across a window and reports mean *and worst*. Judging on the worst is the point: a mean that meets a budget while one frame in sixty takes 40ms is a mean hiding a stutter the player can feel | percentiles beyond mean/worst not kept |
+| D3 | Budget comparison verdicts | read_runtime | VERIFIED | `budget_frame_ms` turns the sample into a verdict rather than numbers to interpret, and names the worst frame when it fails. Exercised both ways in the e2e — a budget nothing could miss and one nothing could meet | none |
 
 ## E — Audio
 
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
-| E1 | `Godot_GetAudioState` (buses, playbacks, peaks) | read_runtime | NOT_STARTED | — | all |
+| E1 | `Godot_GetAudioState` (buses, playbacks, peaks) | read_runtime | VERIFIED | bus names, volumes, mute/solo and current peak levels — peaks are how "did a sound play" is answered without hearing it. Carries a note saying what it cannot tell you, because whether audio *sounds right* is not something this can establish and pretending otherwise would be worse than the gap | per-playback detail not exposed |
 | E2 | Duplicate/stacking detection | read_runtime | NOT_STARTED | — | all |
 
 ## F — Tests

@@ -257,6 +257,10 @@ Dictionary MCPSchema::integer_property(const String &p_description, const Varian
 	return make_property("integer", p_description, p_default);
 }
 
+Dictionary MCPSchema::number_property(const String &p_description, const Variant &p_default) {
+	return make_property("number", p_description, p_default);
+}
+
 Dictionary MCPSchema::enum_property(const String &p_description, const Vector<String> &p_values, const Variant &p_default) {
 	Dictionary property = make_property("string", p_description, p_default);
 	Array values;

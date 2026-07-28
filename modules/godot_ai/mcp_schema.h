@@ -55,6 +55,8 @@ public:
 	static Dictionary string_property(const String &p_description, const Variant &p_default = Variant());
 	static Dictionary bool_property(const String &p_description, const Variant &p_default = Variant());
 	static Dictionary integer_property(const String &p_description, const Variant &p_default = Variant());
+	// For quantities that are genuinely fractional - a frame budget is 16.7ms, not 16.
+	static Dictionary number_property(const String &p_description, const Variant &p_default = Variant());
 	static Dictionary enum_property(const String &p_description, const Vector<String> &p_values, const Variant &p_default = Variant());
 	static Dictionary array_property(const String &p_description, const Dictionary &p_items);
 	// A property with no type constraint, for arguments whose shape depends on what

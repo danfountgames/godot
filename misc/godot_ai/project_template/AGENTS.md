@@ -114,9 +114,11 @@ confidence.
 | Play mode | `Godot_PlayCurrentScene`, `Godot_PlayMainScene`, `Godot_StopPlaying` |
 | **Real input** | `Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput`, `Godot_SendGamepadInput`, `Godot_GetInputTrace` |
 | Running game | `Godot_GetRuntimeSceneTree`, `Godot_GetRuntimeProperty`, `Godot_SetRuntimeProperty`, `Godot_GetRuntimeNodeInfo`, `Godot_WaitForRuntimeCondition`, `Godot_GetRuntimeErrors`, `Godot_GetGameWindowInfo`, `Godot_SetGameWindowSize` |
-| Performance | `Godot_GetPerformanceMetrics` |
+| Performance | `Godot_GetPerformanceMetrics`, `Godot_ProfileWindow` |
+| Audio | `Godot_GetAudioState` |
+| Pace | `Godot_SetTimeScale` |
 | Output | `Godot_ReadOutputLog` |
-| Visual | `Godot_CaptureViewport` (the editor's viewport), `Godot_CaptureGame` (the running game), `Godot_CaptureEditorWindow` (the whole screen, dialogs included) |
+| Visual | `Godot_CaptureViewport` (the editor's viewport), `Godot_CaptureGame` (the running game), `Godot_CaptureFrameSequence` (several consecutive frames), `Godot_CaptureEditorWindow` (the whole screen, dialogs included) |
 | Saves and settings | `Godot_ListUserFiles`, `Godot_ReadUserFile`, `Godot_WriteUserFile`, `Godot_DeleteUserFile` |
 | User | `Godot_AskUser` |
 | Skills | `Godot_ListSkills`, `Godot_ReadSkill` |
@@ -127,12 +129,10 @@ confidence.
 Do not plan around these. If your verification needs one, use the host-side harness
 below, register a project command, or record the gap honestly as unverified.
 
-- **No audio inspection.** You cannot hear or measure audio through the interface.
-  Verify structurally — that the file imported, the bus is right, the real player
-  action triggers it — and record what you could not check.
+- **You cannot hear the game.** `Godot_GetAudioState` reports buses, volumes, mute and
+  peak levels — enough to answer whether a sound *played*, never whether it sounded
+  right. Record that distinction rather than blurring it.
 - **No test-runner tool.** Run tests from the shell.
-- **No frame-sequence capture.** `Godot_CaptureGame` gives one frame at a time; if you
-  need to see a transition, take several and say when each was taken.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary.
 - **No editor-side input injection.** The input tools drive the *running game*. To
   drive the editor's own UI — a dialog, the command palette — use the host harness.
@@ -850,10 +850,11 @@ completion flow.
 
 **Performance** — measure representative gameplay, not empty scenes.
 `Godot_GetPerformanceMetrics` samples frame rate, frame and physics time, memory,
-object and node counts and draw calls. One call is one sample: take a window of them
-across real play before treating any of it as a verdict on a budget, and record the
-worst frame rather than the mean. Load, import and transition times still need
-instrumentation you add. Use the specification's budgets; if none are supplied, choose
+object and node counts and draw calls — one call is one sample. For a judgement, use
+`Godot_ProfileWindow`: it measures a window of frames and reports the mean *and the
+worst*, and with `budget_frame_ms` returns a verdict. Judge on the worst. A mean that
+meets a budget while one frame in sixty takes 40ms is a mean hiding a stutter the
+player can feel. Load, import and transition times still need instrumentation you add. Use the specification's budgets; if none are supplied, choose
 reasonable target-platform budgets, record them, and validate on representative
 hardware.
 
@@ -967,9 +968,11 @@ Verify the file imported, the correct bus and volume, that the real player actio
 triggers it, that it is not duplicated, that rapid input behaves, that pause and
 settings behave, and that transitions do not leak or stack audio.
 
-**The interface exposes no audio inspection and an agent cannot listen.** Inspect
-playback state, bus activity, timing and file correctness from inside the game, and
-record the limitation honestly rather than claiming the sound is correct.
+`Godot_GetAudioState` gives bus state and current peak levels, so "a sound played when
+the player clicked" is answerable: sample the peaks before and after the input. **An
+agent still cannot listen.** Whether the sound is the right sound, mixed well, or
+pleasant is outside what any of this establishes — record that limitation rather than
+letting a peak reading stand in for it.
 
 ---
 

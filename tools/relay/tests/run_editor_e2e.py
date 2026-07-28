@@ -1016,6 +1016,74 @@ def run(editor_binary, display):
                                          "arguments": {"width": 8, "height": 8}}})
                 check(refused(reply), "an absurd window size was accepted")
                 print("PASS Godot_SetGameWindowSize resized the game and reports what applied")
+
+                # --- frame sequences, profiling, audio, time scale ---------------
+                reply = call({"jsonrpc": "2.0", "id": 123, "method": "tools/call",
+                              "params": {"name": "Godot_CaptureFrameSequence",
+                                         "arguments": {"frames": 4}}})
+                check(reply["result"]["isError"] is False,
+                      "capturing a frame sequence failed: %s" % refusal_text(reply))
+                frames = reply["result"]["structuredContent"]["frames"]
+                check(len(frames) == 4, "wrong number of frames: %r" % frames)
+                numbers = [f["frame"] for f in frames]
+                check(numbers == sorted(numbers) and len(set(numbers)) == 4,
+                      "the frames are not distinct and in order: %r" % numbers)
+                for entry in frames:
+                    with open(entry["path"], "rb") as handle:
+                        check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                              "a sequence frame is not a PNG: %r" % entry)
+                print("PASS Godot_CaptureFrameSequence captured %d distinct frames" % len(frames))
+
+                reply = call({"jsonrpc": "2.0", "id": 124, "method": "tools/call",
+                              "params": {"name": "Godot_ProfileWindow",
+                                         "arguments": {"frames": 20, "budget_frame_ms": 1000}}})
+                check(reply["result"]["isError"] is False,
+                      "profiling failed: %s" % refusal_text(reply))
+                profile = reply["result"]["structuredContent"]
+                check(profile["frames"] == 20, "wrong sample count: %r" % profile)
+                check(profile["worst_frame_ms"] >= profile["mean_frame_ms"],
+                      "the worst frame is below the mean: %r" % profile)
+                check(profile["within_budget"] is True,
+                      "a 1000ms budget was somehow exceeded: %r" % profile)
+                check("verdict" in profile, "a budget produced no verdict: %r" % profile)
+
+                # And a budget nothing can meet, so the verdict is exercised both ways.
+                reply = call({"jsonrpc": "2.0", "id": 125, "method": "tools/call",
+                              "params": {"name": "Godot_ProfileWindow",
+                                         "arguments": {"frames": 5, "budget_frame_ms": 0.0001}}})
+                strict = reply["result"]["structuredContent"]
+                check(strict["within_budget"] is False,
+                      "an impossible budget was reported as met: %r" % strict)
+                check("worst frame" in strict["verdict"],
+                      "the failing verdict does not name the worst frame: %r" % strict)
+                print("PASS Godot_ProfileWindow judges the worst frame against a budget")
+
+                reply = call({"jsonrpc": "2.0", "id": 126, "method": "tools/call",
+                              "params": {"name": "Godot_GetAudioState"}})
+                check(reply["result"]["isError"] is False,
+                      "reading audio state failed: %s" % refusal_text(reply))
+                audio = reply["result"]["structuredContent"]
+                check(audio["buses"], "no audio buses reported: %r" % audio)
+                check(audio["buses"][0]["name"] == "Master",
+                      "the first bus is not Master: %r" % audio["buses"][0])
+                check("cannot hear" in audio["note"],
+                      "the audio state does not say what it cannot tell you: %r" % audio)
+                print("PASS Godot_GetAudioState reported %d buses" % len(audio["buses"]))
+
+                reply = call({"jsonrpc": "2.0", "id": 127, "method": "tools/call",
+                              "params": {"name": "Godot_SetTimeScale",
+                                         "arguments": {"scale": 2}}})
+                check(reply["result"]["isError"] is False,
+                      "setting the time scale failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["scale"] == 2,
+                      "the time scale did not take: %r" % reply["result"]["structuredContent"])
+                reply = call({"jsonrpc": "2.0", "id": 128, "method": "tools/call",
+                              "params": {"name": "Godot_SetTimeScale",
+                                         "arguments": {"scale": 0}}})
+                check(refused(reply), "a time scale of zero was accepted")
+                call({"jsonrpc": "2.0", "id": 129, "method": "tools/call",
+                      "params": {"name": "Godot_SetTimeScale", "arguments": {"scale": 1}}})
+                print("PASS Godot_SetTimeScale changes and restores the pace of the game")
             elif has_display:
                 raise Failure("the running game never reported its scene tree")
             else:

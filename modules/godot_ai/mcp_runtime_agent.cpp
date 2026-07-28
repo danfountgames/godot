@@ -41,6 +41,7 @@
 #include "core/io/image.h"
 #include "core/os/keyboard.h"
 #include "main/performance.h"
+#include "servers/audio_server.h"
 #include "core/object/script_language.h"
 #include "scene/gui/control.h"
 #include "core/os/os.h"
@@ -165,7 +166,90 @@ void MCPRuntimeWatcher::add(const String &p_request_id, const String &p_path, co
 	on_frame();
 }
 
+void MCPRuntimeWatcher::add_sequence(const String &p_request_id, int p_frames, int p_interval_frames) {
+	Sequence sequence;
+	sequence.request_id = p_request_id;
+	sequence.remaining = p_frames;
+	sequence.interval_frames = p_interval_frames;
+	sequence.countdown = 0;
+	sequences.push_back(sequence);
+}
+
+void MCPRuntimeWatcher::add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms) {
+	Profile profile;
+	profile.request_id = p_request_id;
+	profile.remaining = p_frames;
+	profile.budget_frame_ms = p_budget_frame_ms;
+	profiles.push_back(profile);
+}
+
 void MCPRuntimeWatcher::on_frame() {
+	// Frame-driven jobs first: both want this frame, not the state after the watches
+	// have possibly changed it.
+	for (int i = sequences.size() - 1; i >= 0; i--) {
+		Sequence &sequence = sequences.write[i];
+		if (sequence.countdown > 0) {
+			sequence.countdown--;
+			continue;
+		}
+		String error;
+		const String path = MCPRuntimeAgent::capture_frame(error);
+		if (path.is_empty()) {
+			const String request_id = sequence.request_id;
+			sequences.remove_at(i);
+			MCPRuntimeAgent::fail(request_id, error);
+			continue;
+		}
+		Dictionary entry;
+		entry["path"] = path;
+		entry["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+		entry["msec"] = (int64_t)OS::get_singleton()->get_ticks_msec();
+		sequence.paths.push_back(entry);
+		sequence.countdown = sequence.interval_frames - 1;
+		sequence.remaining--;
+
+		if (sequence.remaining <= 0) {
+			Dictionary result;
+			result["frames"] = sequence.paths;
+			result["count"] = sequence.paths.size();
+			const String request_id = sequence.request_id;
+			sequences.remove_at(i);
+			MCPRuntimeAgent::reply(request_id, result);
+		}
+	}
+
+	for (int i = profiles.size() - 1; i >= 0; i--) {
+		Profile &profile = profiles.write[i];
+		Performance *performance = Performance::get_singleton();
+		const double frame_ms = performance
+				? performance->get_monitor(Performance::TIME_PROCESS) * 1000.0
+				: 0.0;
+		profile.total_ms += frame_ms;
+		profile.worst_frame_ms = MAX(profile.worst_frame_ms, frame_ms);
+		profile.samples++;
+		profile.remaining--;
+
+		if (profile.remaining <= 0) {
+			Dictionary result;
+			result["frames"] = profile.samples;
+			result["mean_frame_ms"] = profile.samples > 0 ? profile.total_ms / profile.samples : 0.0;
+			// The worst frame is the one a player notices. A mean that meets a budget
+			// while one frame in sixty takes 40ms is a mean that is hiding a stutter.
+			result["worst_frame_ms"] = profile.worst_frame_ms;
+			if (profile.budget_frame_ms > 0.0) {
+				result["budget_frame_ms"] = profile.budget_frame_ms;
+				result["within_budget"] = profile.worst_frame_ms <= profile.budget_frame_ms;
+				result["verdict"] = profile.worst_frame_ms <= profile.budget_frame_ms
+						? "every frame in the window met the budget"
+						: vformat("the worst frame took %.2fms against a budget of %.2fms",
+								  profile.worst_frame_ms, profile.budget_frame_ms);
+			}
+			const String request_id = profile.request_id;
+			profiles.remove_at(i);
+			MCPRuntimeAgent::reply(request_id, result);
+		}
+	}
+
 	if (watches.is_empty()) {
 		return;
 	}
@@ -276,6 +360,28 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 
 	// A wait answers when the game reaches the state, or when its deadline passes, so
 	// it must not be answered here as well - exactly one reply per request.
+	if (command == "capture_sequence" || command == "profile_window") {
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		if (!watcher) {
+			_fail(request_id, "the running game cannot schedule frame work");
+			return OK;
+		}
+		const int frames = arguments.has("frames") ? (int)arguments["frames"] : 10;
+		if (frames < 1 || frames > 240) {
+			_fail(request_id, "ask for between 1 and 240 frames");
+			return OK;
+		}
+		if (command == "capture_sequence") {
+			const int interval = arguments.has("every_n_frames") ? (int)arguments["every_n_frames"] : 1;
+			watcher->add_sequence(request_id, frames, interval < 1 ? 1 : interval);
+		} else {
+			const double budget = arguments.has("budget_frame_ms") ? (double)arguments["budget_frame_ms"] : 0.0;
+			watcher->add_profile(request_id, frames, budget);
+		}
+		return OK;
+	}
+
 	if (command == "wait_for") {
 		MCPRuntimeWatcher::create();
 		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
@@ -342,6 +448,12 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "resize_window") {
 		return _resize_window(p_arguments, r_error);
+	}
+	if (p_command == "time_scale") {
+		return _time_scale(p_arguments, r_error);
+	}
+	if (p_command == "audio_state") {
+		return _audio_state(p_arguments, r_error);
 	}
 	r_error = vformat("unknown runtime command '%s'", p_command);
 	return Dictionary();
@@ -553,21 +665,21 @@ Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_e
 	return result;
 }
 
-Dictionary MCPRuntimeAgent::_capture(const Dictionary &p_arguments, String &r_error) {
+String MCPRuntimeAgent::capture_frame(String &r_error) {
 	SceneTree *tree = SceneTree::get_singleton();
 	if (!tree || !tree->get_root()) {
 		r_error = "the running game has no viewport to capture";
-		return Dictionary();
+		return String();
 	}
 	Ref<ViewportTexture> texture = tree->get_root()->get_texture();
 	if (texture.is_null()) {
 		r_error = "the running game's viewport has no texture yet";
-		return Dictionary();
+		return String();
 	}
 	Ref<Image> image = texture->get_image();
 	if (image.is_null() || image->is_empty()) {
 		r_error = "the running game has not rendered a frame yet";
-		return Dictionary();
+		return String();
 	}
 
 	// Written to a file rather than returned inline: the debugger channel is a
@@ -578,18 +690,76 @@ Dictionary MCPRuntimeAgent::_capture(const Dictionary &p_arguments, String &r_er
 	if (access.is_valid() && !access->dir_exists(directory)) {
 		access->make_dir_recursive(directory);
 	}
-	const String path = directory.path_join(vformat("frame_%d.png", OS::get_singleton()->get_ticks_msec()));
-	const Error error = image->save_png(path);
-	if (error != OK) {
+	const String path = directory.path_join(vformat("frame_%d_%d.png",
+			(int64_t)Engine::get_singleton()->get_process_frames(),
+			OS::get_singleton()->get_ticks_usec()));
+	if (image->save_png(path) != OK) {
 		r_error = vformat("could not write the capture to %s", path);
+		return String();
+	}
+	return path;
+}
+
+Dictionary MCPRuntimeAgent::_capture(const Dictionary &p_arguments, String &r_error) {
+	const String path = capture_frame(r_error);
+	if (path.is_empty()) {
 		return Dictionary();
 	}
+	Ref<Image> image = Image::load_from_file(path);
 
 	Dictionary result;
 	result["path"] = path;
-	result["width"] = image->get_width();
-	result["height"] = image->get_height();
+	result["width"] = image.is_valid() ? image->get_width() : 0;
+	result["height"] = image.is_valid() ? image->get_height() : 0;
 	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_time_scale(const Dictionary &p_arguments, String &r_error) {
+	const double scale = p_arguments.has("scale") ? (double)p_arguments["scale"] : 1.0;
+	if (scale <= 0.0 || scale > 100.0) {
+		r_error = "a time scale must be greater than 0 and no more than 100";
+		return Dictionary();
+	}
+	Engine::get_singleton()->set_time_scale(scale);
+
+	Dictionary result;
+	result["scale"] = Engine::get_singleton()->get_time_scale();
+	// Said plainly, because a fast-forwarded run is not a playtest: physics steps,
+	// animation and input timing all change, and a bug that only appears at 1x is
+	// exactly the kind this would hide.
+	result["note"] = "time scale changes how the game runs; do not use it during a playtest "
+					 "or a timing measurement";
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_audio_state(const Dictionary &p_arguments, String &r_error) {
+	AudioServer *server = AudioServer::get_singleton();
+	if (!server) {
+		r_error = "the running game has no audio server";
+		return Dictionary();
+	}
+
+	Array buses;
+	for (int i = 0; i < server->get_bus_count(); i++) {
+		Dictionary bus;
+		bus["index"] = i;
+		bus["name"] = server->get_bus_name(i);
+		bus["volume_db"] = server->get_bus_volume_db(i);
+		bus["mute"] = server->is_bus_mute(i);
+		bus["solo"] = server->is_bus_solo(i);
+		// The peak is how "did a sound actually play" gets answered without hearing it:
+		// silence sits at the floor, and anything audible does not.
+		bus["peak_left_db"] = server->get_bus_peak_volume_left_db(i, 0);
+		bus["peak_right_db"] = server->get_bus_peak_volume_right_db(i, 0);
+		buses.push_back(bus);
+	}
+
+	Dictionary result;
+	result["buses"] = buses;
+	result["output_latency_ms"] = server->get_output_latency() * 1000.0;
+	result["note"] = "an agent cannot hear this; peaks and bus state are structural evidence, "
+					 "and whether it sounds right is not something this can tell you";
 	return result;
 }
 

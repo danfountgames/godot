@@ -497,7 +497,7 @@ Dictionary gamepad_schema() {
 	properties["device"] = MCPSchema::integer_property("Device index.", 0);
 	properties["button"] = MCPSchema::integer_property("JoyButton index, for button actions.", 0);
 	properties["axis"] = MCPSchema::integer_property("JoyAxis index, for action=axis.", 0);
-	properties["value"] = MCPSchema::integer_property("Axis value from -1 to 1.", 0);
+	properties["value"] = MCPSchema::number_property("Axis value from -1 to 1.", 0);
 	return MCPSchema::object_schema(properties);
 }
 
@@ -505,6 +505,32 @@ Dictionary clearable_schema(const String &p_what) {
 	Dictionary properties;
 	properties["clear"] = MCPSchema::bool_property(
 			vformat("Empty the %s after returning it, so the next call starts fresh.", p_what), false);
+	return MCPSchema::object_schema(properties);
+}
+
+Dictionary sequence_schema() {
+	Dictionary properties;
+	properties["frames"] = MCPSchema::integer_property(
+			"How many frames to capture, 1 to 240.", 10);
+	properties["every_n_frames"] = MCPSchema::integer_property(
+			"Capture one frame out of every N, to cover a longer span.", 1);
+	return MCPSchema::object_schema(properties);
+}
+
+Dictionary profile_schema() {
+	Dictionary properties;
+	properties["frames"] = MCPSchema::integer_property(
+			"How many frames to measure, 1 to 240.", 60);
+	properties["budget_frame_ms"] = MCPSchema::number_property(
+			"Frame-time budget in milliseconds. When given, the result carries a verdict "
+			"judged on the worst frame rather than the mean.", 0);
+	return MCPSchema::object_schema(properties);
+}
+
+Dictionary time_scale_schema() {
+	Dictionary properties;
+	properties["scale"] = MCPSchema::number_property(
+			"Multiplier for the passage of time: 2 runs twice as fast, 1 is normal.", 1);
 	return MCPSchema::object_schema(properties);
 }
 
@@ -559,6 +585,36 @@ void mcp_register_input_tools() {
 			"function. Godot_ReadOutputLog gives the same events as prose; this keeps the "
 			"structure, which is what a diagnosis actually needs.",
 			MCP_CAP_READ_RUNTIME, clearable_schema("error list")))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_CaptureFrameSequence", "capture_sequence",
+			"Capture several consecutive frames of the running game, each tagged with its frame "
+			"number and time. One screenshot cannot show whether feedback began within 100ms or "
+			"whether a transition dropped a frame; a sequence can.",
+			MCP_CAP_READ_RUNTIME, sequence_schema(), 60.0))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_ProfileWindow", "profile_window",
+			"Measure frame time across a window of frames and report the mean and the worst "
+			"frame. Judge against the worst: a mean that meets a budget while one frame in sixty "
+			"takes 40ms is a mean hiding a stutter the player can feel. Give budget_frame_ms to "
+			"get a verdict rather than numbers to interpret.",
+			MCP_CAP_READ_RUNTIME, profile_schema(), 60.0))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_GetAudioState", "audio_state",
+			"Report the running game's audio buses: volumes, mute and solo state, and current "
+			"peak levels. An agent cannot hear the game, and this does not pretend otherwise - "
+			"peaks answer whether a sound played, not whether it sounded right.",
+			MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(Dictionary())))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_SetTimeScale", "time_scale",
+			"Speed up or slow down the running game, for walking a long route without waiting "
+			"through it. Not for a playtest and not for a timing measurement: physics steps, "
+			"animation and input timing all change, and a bug that only appears at normal speed "
+			"is exactly the kind this hides.",
+			MCP_CAP_RUN_PROJECT, time_scale_schema()))));
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetGameWindowSize", "resize_window",
