@@ -46,6 +46,7 @@
 #include "scene/gui/control.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
+#include "core/os/time.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
@@ -212,6 +213,15 @@ void MCPRuntimeWatcher::on_frame() {
 			Dictionary result;
 			result["frames"] = sequence.paths;
 			result["count"] = sequence.paths.size();
+			// The same provenance a single capture carries. A sequence is more likely to
+			// be quoted as evidence about pacing than any one frame, which is exactly
+			// when a time scale other than 1 makes it worthless.
+			result["time_scale"] = Engine::get_singleton()->get_time_scale();
+			if (SceneTree::get_singleton() && SceneTree::get_singleton()->get_root()) {
+				const Size2i size = SceneTree::get_singleton()->get_root()->get_size();
+				result["window_width"] = size.width;
+				result["window_height"] = size.height;
+			}
 			const String request_id = sequence.request_id;
 			sequences.remove_at(i);
 			MCPRuntimeAgent::reply(request_id, result);
@@ -711,7 +721,22 @@ Dictionary MCPRuntimeAgent::_capture(const Dictionary &p_arguments, String &r_er
 	result["path"] = path;
 	result["width"] = image.is_valid() ? image->get_width() : 0;
 	result["height"] = image.is_valid() ? image->get_height() : 0;
+
+	// What this is a picture of, gathered here because only the game process knows it.
+	// The time scale in particular: a frame captured at 5x is not evidence about how the
+	// game plays, and by the time the image reaches a report there is nothing left to
+	// say that it was.
 	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	result["time_scale"] = Engine::get_singleton()->get_time_scale();
+	result["game_time_seconds"] = Time::get_singleton()->get_ticks_msec() / 1000.0;
+	SceneTree *tree = SceneTree::get_singleton();
+	if (tree && tree->get_root()) {
+		const Size2i size = tree->get_root()->get_size();
+		result["window_width"] = size.width;
+		result["window_height"] = size.height;
+		Node *scene = tree->get_current_scene();
+		result["scene"] = scene ? scene->get_scene_file_path() : String();
+	}
 	return result;
 }
 

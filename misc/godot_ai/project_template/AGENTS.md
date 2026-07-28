@@ -142,6 +142,11 @@ below, register a project command, or record the gap honestly as unverified.
 
 ## Sharp edges that will cost you a session if you miss them
 
+- **Every capture says what it is a picture of.** `source`, `subject`, `captured_at`,
+  and a `note` when something limits it as evidence. Quote those alongside any image you
+  put in a report — an image on its own cannot say whether it was the editor, the whole
+  screen or the game. Game captures also carry the frame number and the **time scale**:
+  if that is not 1, the frame tells you nothing about pacing, and the note will say so.
 - **Three captures, three different questions.** `Godot_CaptureGame` photographs the
   running game — that is the one a playtest wants. `Godot_CaptureViewport` photographs
   the editor's viewport. `Godot_CaptureEditorWindow` photographs the whole screen, and

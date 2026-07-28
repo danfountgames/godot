@@ -30,6 +30,7 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "../mcp_capture_metadata.h"
 #include "../mcp_deferred.h"
 #include "../mcp_runtime_bridge.h"
 #include "../mcp_tool_registry.h"
@@ -200,7 +201,15 @@ public:
 		properties["width"] = MCPSchema::integer_property("Image width in pixels.");
 		properties["height"] = MCPSchema::integer_property("Image height in pixels.");
 		properties["frame"] = MCPSchema::integer_property("Which frame of the game this is.");
+		properties["time_scale"] = MCPSchema::number_property(
+				"The game's time scale when the frame was taken.");
+		properties["game_time_seconds"] = MCPSchema::number_property(
+				"How long the game process had been running.");
+		properties["window_width"] = MCPSchema::integer_property("The game window's width.");
+		properties["window_height"] = MCPSchema::integer_property("The game window's height.");
+		properties["scene"] = MCPSchema::string_property("Scene the game was running.");
 		properties["inlined"] = MCPSchema::bool_property("True when the image is also in the response.");
+		MCPCaptureMetadata::declare(properties);
 		return MCPSchema::object_schema(properties);
 	}
 
@@ -221,6 +230,22 @@ public:
 	static Dictionary _inline_image(const Dictionary &p_result) {
 		Dictionary result = p_result;
 		result["inlined"] = false;
+
+		// The game reported the facts only it can know; this is where they become a
+		// statement about what the image is worth.
+		MCPCaptureMetadata::stamp(result, MCPCaptureMetadata::SOURCE_GAME_WINDOW,
+				vformat("the running game's window at frame %d",
+						(int64_t)result.get("frame", 0)));
+		const double scale = result.get("time_scale", 1.0);
+		if (!Math::is_equal_approx(scale, 1.0)) {
+			// Worth saying loudly. A frame taken at 5x is not evidence about how the game
+			// plays, and nothing in the image itself will ever reveal that it was.
+			MCPCaptureMetadata::add_note(result,
+					vformat("The game was running at %.2fx speed, so this frame is not evidence "
+							"about pacing, animation or anything a player would see at normal "
+							"speed.",
+							scale));
+		}
 		const String path = result.get("path", String());
 		if (path.is_empty() || !FileAccess::exists(path)) {
 			return result;
@@ -439,12 +464,15 @@ class RuntimeCommandTool : public MCPTool {
 	MCPCapability capability;
 	Dictionary schema;
 	double timeout;
+	Callable transform;
 
 public:
 	RuntimeCommandTool(const String &p_name, const String &p_command, const String &p_description,
-			MCPCapability p_capability, const Dictionary &p_schema, double p_timeout = 10.0) :
+			MCPCapability p_capability, const Dictionary &p_schema, double p_timeout = 10.0,
+			const Callable &p_transform = Callable()) :
 			tool_name(p_name), command(p_command), description(p_description),
-			capability(p_capability), schema(p_schema), timeout(p_timeout) {}
+			capability(p_capability), schema(p_schema), timeout(p_timeout),
+			transform(p_transform) {}
 
 	virtual String get_tool_name() const override { return tool_name; }
 	virtual String get_description() const override { return description; }
@@ -458,9 +486,27 @@ public:
 		if (!require_running_game(r_error, &bridge)) {
 			return Dictionary();
 		}
-		return MCPDeferred::make_deferred_result(bridge->send(command, p_arguments, timeout));
+		return MCPDeferred::make_deferred_result(
+				bridge->send(command, p_arguments, timeout, transform));
 	}
 };
+
+// Provenance for a frame sequence, applied when the game's reply comes back. A sequence
+// is more likely than any single frame to be quoted as evidence about pacing, which is
+// exactly when a time scale other than 1 makes it worthless.
+Dictionary stamp_sequence(const Dictionary &p_result) {
+	Dictionary result = p_result;
+	MCPCaptureMetadata::stamp(result, MCPCaptureMetadata::SOURCE_GAME_WINDOW,
+			vformat("%d consecutive frames of the running game", (int)result.get("count", 0)));
+	const double scale = result.get("time_scale", 1.0);
+	if (!Math::is_equal_approx(scale, 1.0)) {
+		MCPCaptureMetadata::add_note(result,
+				vformat("The game was running at %.2fx speed, so the timing between these frames "
+						"is not the timing a player would see.",
+						scale));
+	}
+	return result;
+}
 
 Dictionary touch_schema() {
 	Dictionary properties;
@@ -591,7 +637,8 @@ void mcp_register_input_tools() {
 			"Capture several consecutive frames of the running game, each tagged with its frame "
 			"number and time. One screenshot cannot show whether feedback began within 100ms or "
 			"whether a transition dropped a frame; a sequence can.",
-			MCP_CAP_READ_RUNTIME, sequence_schema(), 60.0))));
+			MCP_CAP_READ_RUNTIME, sequence_schema(), 60.0,
+			callable_mp_static(&stamp_sequence)))));
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_ProfileWindow", "profile_window",

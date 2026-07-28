@@ -30,6 +30,7 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "../mcp_capture_metadata.h"
 #include "../mcp_paths.h"
 #include "../mcp_tool_registry.h"
 
@@ -77,6 +78,7 @@ public:
 		properties["width"] = MCPSchema::integer_property("Image width in pixels.");
 		properties["height"] = MCPSchema::integer_property("Image height in pixels.");
 		properties["inlined"] = MCPSchema::bool_property("True when the image is also in the response.");
+		MCPCaptureMetadata::declare(properties);
 		return MCPSchema::object_schema(properties);
 	}
 
@@ -124,7 +126,9 @@ public:
 			return Dictionary();
 		}
 
-		String requested = String(p_arguments["path"]).strip_edges();
+		// get(), not subscript: reading a missing optional key off a const Dictionary
+		// inserts a null into it.
+		String requested = String(p_arguments.get("path", String())).strip_edges();
 		if (requested.is_empty()) {
 			requested = "res://ai_screenshots/" +
 					Time::get_singleton()->get_datetime_string_from_system(false, false)
@@ -159,8 +163,13 @@ public:
 		result["width"] = image->get_width();
 		result["height"] = image->get_height();
 		result["inlined"] = false;
+		MCPCaptureMetadata::stamp(result, MCPCaptureMetadata::SOURCE_EDITOR_VIEWPORT,
+				"the editor's main viewport");
+		MCPCaptureMetadata::add_note(result,
+				"This is the editor, not the running game. It shows nothing about how the game "
+				"plays, and it does not contain dialogs or popups, which are separate windows.");
 
-		if ((bool)p_arguments["inline_image"]) {
+		if ((bool)p_arguments.get("inline_image", true)) {
 			const Vector<uint8_t> png = image->save_png_to_buffer();
 			if (!png.is_empty() && png.size() <= MAX_INLINE_IMAGE_BYTES) {
 				Dictionary image_content;

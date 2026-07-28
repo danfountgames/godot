@@ -39,6 +39,7 @@
 #include "mcp_builtin_tools.h"
 
 #include "../mcp_checkpoints.h"
+#include "../mcp_capture_metadata.h"
 #include "../mcp_paths.h"
 #include "../mcp_tool_registry.h"
 
@@ -315,6 +316,7 @@ public:
 		properties["width"] = MCPSchema::integer_property("Image width.");
 		properties["height"] = MCPSchema::integer_property("Image height.");
 		properties["inlined"] = MCPSchema::bool_property("True when the image is in the response.");
+		MCPCaptureMetadata::declare(properties);
 		return MCPSchema::object_schema(properties);
 	}
 
@@ -353,7 +355,7 @@ public:
 			return Dictionary();
 		}
 
-		String path = String(p_arguments["path"]).strip_edges();
+		String path = String(p_arguments.get("path", String())).strip_edges();
 		if (path.is_empty()) {
 			path = vformat("res://ai_screenshots/editor_%d.png", OS::get_singleton()->get_ticks_msec());
 		}
@@ -379,8 +381,14 @@ public:
 		result["width"] = image->get_width();
 		result["height"] = image->get_height();
 		result["inlined"] = false;
+		MCPCaptureMetadata::stamp(result, MCPCaptureMetadata::SOURCE_EDITOR_SCREEN,
+				vformat("screen %d, with every window on it",
+						display->window_get_current_screen()));
+		MCPCaptureMetadata::add_note(result,
+				"This is the whole screen, so it includes dialogs and the running game's window "
+				"as well as the editor - and anything else the machine happens to be showing.");
 
-		if ((bool)p_arguments["inline_image"]) {
+		if ((bool)p_arguments.get("inline_image", true)) {
 			const Vector<uint8_t> bytes = FileAccess::get_file_as_bytes(resolved.absolute);
 			if (!bytes.is_empty() && bytes.size() <= MAX_INLINE_SHOT_BYTES) {
 				Array content;

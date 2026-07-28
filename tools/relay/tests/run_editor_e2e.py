@@ -129,6 +129,20 @@ def refusal_text(reply):
     return ""
 
 
+def check_capture_metadata(shot, expected_source):
+    """Every capture has to say what it is a picture of.
+
+    An image on its own is not evidence, and once one has been saved and quoted there is
+    nothing left to say whether it was the editor, the whole screen or the game.
+    """
+    check(shot.get("source") == expected_source,
+          "the capture does not say it is a %s: %r" % (expected_source, shot.get("source")))
+    check(shot.get("subject"), "the capture does not say what exactly it photographed: %r" % shot)
+    stamp = shot.get("captured_at", "")
+    check(len(stamp) >= 19 and stamp[4] == "-" and stamp[10] == "T",
+          "the capture timestamp is not a datetime: %r" % stamp)
+
+
 def refused(reply):
     """True when a tools/call was refused, either way the server can refuse.
 
@@ -696,7 +710,10 @@ def run(editor_binary, display):
             images = [c for c in reply["result"]["content"] if c["type"] == "image"]
             check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
                   "the inline image block is not a PNG")
-            print("PASS Godot_CaptureViewport produced a real %dx%d image"
+            check_capture_metadata(shot, "editor_viewport")
+            check("not the running game" in shot.get("note", ""),
+                  "the viewport capture does not warn that it is not the game: %r" % shot)
+            print("PASS Godot_CaptureViewport produced a real %dx%d image, saying what it is"
                   % (shot["width"], shot["height"]))
 
             # The whole screen, which is the only capture that contains a dialog -
@@ -713,7 +730,10 @@ def run(editor_binary, display):
             with open(on_disk, "rb") as handle:
                 check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
                       "the editor window capture is not a PNG")
-            print("PASS Godot_CaptureEditorWindow captured the whole screen (%dx%d)"
+            check_capture_metadata(window_shot, "editor_screen")
+            check(window_shot["source"] != shot["source"],
+                  "two captures of different things claim the same source")
+            print("PASS Godot_CaptureEditorWindow captured the whole screen (%dx%d), saying so"
                   % (window_shot["width"], window_shot["height"]))
 
         # --- output log -------------------------------------------------------
@@ -909,8 +929,16 @@ def run(editor_binary, display):
                 images = [c for c in reply["result"]["content"] if c["type"] == "image"]
                 check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
                       "the game capture was not returned inline")
-                print("PASS Godot_CaptureGame photographed the running game (%dx%d)"
-                      % (shot["width"], shot["height"]))
+                check_capture_metadata(shot, "game_window")
+                check(shot["frame"] > 0, "the game capture has no frame number: %r" % shot)
+                check(abs(shot["time_scale"] - 1.0) < 0.001,
+                      "the game is not running at normal speed: %r" % shot["time_scale"])
+                check("note" not in shot or "speed" not in shot["note"],
+                      "a capture at normal speed carries a speed warning: %r" % shot.get("note"))
+                check(shot["window_width"] > 100 and shot["scene"].endswith("main.tscn"),
+                      "the game capture does not describe the window and scene: %r" % shot)
+                print("PASS Godot_CaptureGame photographed the running game (%dx%d) at frame %d"
+                      % (shot["width"], shot["height"], shot["frame"]))
 
                 # --- describing a node, and aiming at it by name ----------------
                 reply = call({"jsonrpc": "2.0", "id": 100, "method": "tools/call",
@@ -1094,6 +1122,8 @@ def run(editor_binary, display):
                     with open(entry["path"], "rb") as handle:
                         check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
                               "a sequence frame is not a PNG: %r" % entry)
+                sequence = reply["result"]["structuredContent"]
+                check_capture_metadata(sequence, "game_window")
                 print("PASS Godot_CaptureFrameSequence captured %d distinct frames" % len(frames))
 
                 reply = call({"jsonrpc": "2.0", "id": 124, "method": "tools/call",
@@ -1139,6 +1169,20 @@ def run(editor_binary, display):
                       "setting the time scale failed: %s" % refusal_text(reply))
                 check(reply["result"]["structuredContent"]["scale"] == 2,
                       "the time scale did not take: %r" % reply["result"]["structuredContent"])
+                # The discriminating half of capture provenance: a frame taken while the
+                # game runs at 2x has to say so on the image's own record, because
+                # nothing in the picture ever will, and a fast-forwarded frame quoted as
+                # a playtest result is a wrong conclusion, not a missing caveat.
+                reply = call({"jsonrpc": "2.0", "id": 130, "method": "tools/call",
+                              "params": {"name": "Godot_CaptureGame",
+                                         "arguments": {"inline_image": False}}})
+                fast = reply["result"]["structuredContent"]
+                check(abs(fast["time_scale"] - 2.0) < 0.001,
+                      "the capture did not record the time scale it was taken at: %r" % fast)
+                check("2.00x speed" in fast.get("note", ""),
+                      "a capture taken at 2x speed does not say so: %r" % fast.get("note"))
+                print("PASS a capture taken at 2x speed says so, on the image's own record")
+
                 reply = call({"jsonrpc": "2.0", "id": 128, "method": "tools/call",
                               "params": {"name": "Godot_SetTimeScale",
                                          "arguments": {"scale": 0}}})

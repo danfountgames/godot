@@ -30,8 +30,9 @@ and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks 
 `.agent/INTERFACE_LEDGER.md` tracks it. Groups A–E, G, H, J and K are verified; 55 tools
 are registered — 57 over `tools/list`. Group I is now complete too: the editor's own
 interface is listable (`Godot_ListWindows`), addressable by what it says
-(`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). What is left is B4
-(capture metadata), F1–F3 (scene tests) and E2 (duplicate/stacking detection).
+(`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
+every capture now carries its own provenance. What is left is F1–F3 (scene tests) and E2
+(duplicate/stacking detection).
 
 Six real bugs have fallen out of it so far, all fixed and covered — see the
 "Bugs this tranche found" table in the interface ledger. Two were found by
