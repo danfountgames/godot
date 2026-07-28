@@ -105,6 +105,12 @@ that its signal fired.
 | K1 | `Godot_CreateCheckpoint` (named, on demand) | edit_files | VERIFIED | snapshots named files under a label, for the moment before a sequence of risky changes rather than only before one tool's write. The e2e creates one, clobbers the file, restores through it, and checks the original contents came back | none |
 | K2 | `Godot_DiffCheckpoint` | read_project | VERIFIED | compares the project against a checkpoint and separates changed, unchanged, deleted and created, without restoring anything — "what did that sequence of edits actually do". A file the checkpoint recorded as absent and that exists now is *created*, not changed; a file skipped at snapshot time is reported in neither list, because saying "changed" would be a guess. The e2e drives all three transitions on one file | contents of the difference are not shown, only which files differ |
 
+## Loose ends this tranche closed elsewhere
+
+| ID | Item | Status |
+|---|---|---|
+| Z-1 | The `notifications/cancelled` frame had never been caught end to end. The conversation's handling of a cancelled turn was unit-tested; the wire frame was not, and the gap was recorded as needing something the environment could not provide. It did not: `run_editor_ui_e2e.py` now leaves a chat turn unanswered, finds the dock's **enabled** Cancel button with `Godot_FindControl` — enabled is the discriminator, since it is only live while a turn is in flight — presses it with `Godot_SendEditorInput`, and asserts the client receives `notifications/cancelled` naming that request. A client left waiting on a request the editor has abandoned burns a model call for an answer nobody will read | VERIFIED |
+
 ## Bugs this tranche found in existing tools
 
 | ID | Bug | Status |

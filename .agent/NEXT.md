@@ -6,14 +6,14 @@ this file).
 
 Current work is the interface tranche tracked in `.agent/INTERFACE_LEDGER.md`: making
 the product answer everything the game-production template assumes of it. **Every item
-in that ledger is now VERIFIED.** One loose end remains, and it is a missing test rather
-than a missing capability.
+in that ledger is now VERIFIED**, and so is the chat cancellation frame that used to sit
+here as a loose end.
 
-1. **The chat cancellation frame.** Cancel a turn in flight from the dock and assert
-   the client is told to stop. The conversation's half is unit-tested; the
-   `notifications/cancelled` frame is not. This used to be recorded as needing something
-   external, and it does not: `Godot_FindControl` locates the dock's Cancel button and
-   `Godot_SendEditorInput` presses it. It is a check nobody has written.
+Nothing in this repository is outstanding that can be done on this machine. New work
+should start from `docs/godot-ai-clone-spec.md`, from
+`docs/godot-ai-agent-interface-spec.md`, or from a user request — not from this file.
+
+Two things would be worth doing when a machine allows it, and both are below.
 
 ## Still blocked on hardware or a remote runner
 

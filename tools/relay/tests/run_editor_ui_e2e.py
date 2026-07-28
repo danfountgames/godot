@@ -466,6 +466,63 @@ def run(editor_binary, display):
                                        "content": {"type": "text", "text": "three"}}})
         time.sleep(1)
 
+        # --- O1 cancellation: the frame, not only the conversation's half -------
+        # The dock's Cancel button has to tell the client to stop. This was recorded for
+        # a long time as needing something the environment could not provide; it did
+        # not. Godot_FindControl locates the button and Godot_SendEditorInput presses it.
+        focus(d, editor_window)
+        xdotool(d, "type", "--delay", "40", "a turn nobody will answer")
+        time.sleep(0.6)
+        xdotool(d, "key", "Return")
+
+        third = relay.read_message(timeout=30)
+        check(third is not None and third.get("method") == "sampling/createMessage",
+              "the third chat turn was not sent: %r" % third)
+
+        reply = call({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"text": "Cancel"}}})
+        check(not refused(reply), "finding the Cancel button failed: %s" % refusal_text(reply))
+        # Enabled is the discriminator: the dock's Cancel is only live while a turn is in
+        # flight, so this cannot accidentally pick some other Cancel in the editor.
+        buttons = [match for match in reply["result"]["structuredContent"]["matches"]
+                   if match["kind"] == "control" and not match["disabled"]]
+        check(len(buttons) == 1,
+              "expected exactly one enabled Cancel button while a turn is in flight: %r"
+              % reply["result"]["structuredContent"]["matches"])
+
+        relay.send_message({"jsonrpc": "2.0", "id": 21, "method": "tools/call",
+                            "params": {"name": "Godot_SendEditorInput",
+                                       "arguments": {"action": "click",
+                                                     "x": buttons[0]["center_x"],
+                                                     "y": buttons[0]["center_y"]}}})
+
+        # The tool's own reply and the cancellation can arrive in either order.
+        notice = None
+        clicked = False
+        deadline = time.time() + 25
+        while (notice is None or not clicked) and time.time() < deadline:
+            message = relay.read_message(timeout=20)
+            if message is None:
+                break
+            if message.get("method") == "notifications/cancelled":
+                notice = message
+            elif message.get("id") == 21:
+                check(not refused(message),
+                      "clicking Cancel failed: %s" % refusal_text(message))
+                clicked = True
+        check(clicked, "the click on Cancel was never acknowledged")
+        check(notice is not None,
+              "cancelling the turn told the client nothing; a client left waiting on a "
+              "request the editor has abandoned burns a model call for an answer nobody "
+              "will read")
+        check(str(notice["params"]["requestId"]) == str(third["id"]),
+              "the cancellation names the wrong request: %r, expected %r"
+              % (notice["params"], third["id"]))
+        check(notice["params"].get("reason"),
+              "the cancellation does not say why: %r" % notice["params"])
+        print("PASS cancelling a chat turn sends notifications/cancelled for that request")
+
         # --- U1: the other palette commands ------------------------------------
         run_palette_command(d, editor_window, "Show Service Status")
         reply = call({"jsonrpc": "2.0", "id": 12, "method": "tools/call",

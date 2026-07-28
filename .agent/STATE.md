@@ -33,9 +33,9 @@ interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
 every capture now carries its own provenance, and group F: the project's own test scenes
 are discoverable and runnable without a shell, and group E: stacked audio is detected
-structurally. **Every item in the interface ledger is now VERIFIED.** What is left is an
-end-to-end catch of the chat cancellation frame, which is a check nobody has written
-rather than a capability that is missing.
+structurally. **Every item in the interface ledger is now VERIFIED**, and the chat
+cancellation frame is caught end to end - the tools built for group I are what made that
+possible, by locating and pressing the dock's Cancel button.
 
 Six real bugs have fallen out of it so far, all fixed and covered — see the
 "Bugs this tranche found" table in the interface ledger. Two were found by
@@ -70,10 +70,12 @@ What remains is honest:
   so it is a check that has not been written.
 - **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
 - **C1** — every workflow command passes locally; never observed green on Actions.
-- **O1 cancellation** — `notifications/cancelled` is sent by the service and the
-  conversation's handling of a cancelled turn is unit-tested, but the frame itself is
-  not caught in an end-to-end run. No longer blocked on anything: `Godot_FindControl`
-  and `Godot_SendEditorInput` can locate and press the dock's Cancel button.
+- **O1 cancellation** — now caught end to end in `run_editor_ui_e2e.py`: a turn is left
+  unanswered, the dock's Cancel button is found by `Godot_FindControl` (the *enabled*
+  one, which is only enabled while a turn is in flight) and pressed by
+  `Godot_SendEditorInput`, and the client is asserted to receive
+  `notifications/cancelled` naming that request. This was recorded as environmental for
+  a long time and was not.
 
 ## Ledger IDs in this slice
 
@@ -93,9 +95,10 @@ All of the following on the current working tree, in one sweep:
 - `python3 tools/relay/tests/run_editor_ui_e2e.py` → all checks pass, driving the real
   editor by keyboard and pointer: the palette, the approvals dialog, a chat turn
   answered by the connected client's model, a skill allowed by clicking the rectangle
-  `Godot_FindControl` reported for its button, and the approvals dialog closed twice
-  through `Godot_SendEditorInput` — once by a click on its Close button, once by
-  Escape.
+  `Godot_FindControl` reported for its button, the approvals dialog closed twice through
+  `Godot_SendEditorInput` — once by a click on its Close button, once by Escape — and a
+  chat turn cancelled from the dock, with the client receiving
+  `notifications/cancelled` for that exact request.
 - `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a display the
   script starts itself, including a real 1152x648 screenshot, a running game's scene
   tree (`root > Main > Player, Hud, Field, Target, EnemySpawner`), a runtime edit that
