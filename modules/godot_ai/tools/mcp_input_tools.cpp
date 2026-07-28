@@ -429,6 +429,95 @@ public:
 	}
 };
 
+// A family of small tools that all forward one command to the running game. They are
+// separate tools rather than one with a mode argument because a client chooses from a
+// list of names, and "send touch" is a different intention from "send gamepad".
+class RuntimeCommandTool : public MCPTool {
+	String tool_name;
+	String command;
+	String description;
+	MCPCapability capability;
+	Dictionary schema;
+	double timeout;
+
+public:
+	RuntimeCommandTool(const String &p_name, const String &p_command, const String &p_description,
+			MCPCapability p_capability, const Dictionary &p_schema, double p_timeout = 10.0) :
+			tool_name(p_name), command(p_command), description(p_description),
+			capability(p_capability), schema(p_schema), timeout(p_timeout) {}
+
+	virtual String get_tool_name() const override { return tool_name; }
+	virtual String get_description() const override { return description; }
+	virtual MCPCapability get_capability() const override { return capability; }
+	virtual Dictionary get_input_schema() const override { return schema; }
+	virtual Dictionary get_output_schema() const override {
+		return MCPSchema::object_schema(Dictionary(), Vector<String>(), true);
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPRuntimeBridge *bridge = nullptr;
+		if (!require_running_game(r_error, &bridge)) {
+			return Dictionary();
+		}
+		return MCPDeferred::make_deferred_result(bridge->send(command, p_arguments, timeout));
+	}
+};
+
+Dictionary touch_schema() {
+	Dictionary properties;
+	Vector<String> actions;
+	actions.push_back("down");
+	actions.push_back("up");
+	actions.push_back("tap");
+	actions.push_back("drag");
+	properties["action"] = MCPSchema::enum_property("Touch phase.", actions, "tap");
+	properties["x"] = MCPSchema::integer_property("Horizontal position in game window pixels.");
+	properties["y"] = MCPSchema::integer_property("Vertical position in game window pixels.");
+	properties["index"] = MCPSchema::integer_property(
+			"Finger index, so multi-touch can be exercised.", 0);
+	properties["relative_x"] = MCPSchema::integer_property("Horizontal movement, for drag.", 0);
+	properties["relative_y"] = MCPSchema::integer_property("Vertical movement, for drag.", 0);
+	Vector<String> required;
+	required.push_back("x");
+	required.push_back("y");
+	return MCPSchema::object_schema(properties, required);
+}
+
+Dictionary gamepad_schema() {
+	Dictionary properties;
+	Vector<String> actions;
+	actions.push_back("press");
+	actions.push_back("release");
+	actions.push_back("tap");
+	actions.push_back("axis");
+	actions.push_back("connect");
+	actions.push_back("disconnect");
+	properties["action"] = MCPSchema::enum_property(
+			"Button action, an axis movement, or a device appearing or going away.",
+			actions, "tap");
+	properties["device"] = MCPSchema::integer_property("Device index.", 0);
+	properties["button"] = MCPSchema::integer_property("JoyButton index, for button actions.", 0);
+	properties["axis"] = MCPSchema::integer_property("JoyAxis index, for action=axis.", 0);
+	properties["value"] = MCPSchema::integer_property("Axis value from -1 to 1.", 0);
+	return MCPSchema::object_schema(properties);
+}
+
+Dictionary clearable_schema(const String &p_what) {
+	Dictionary properties;
+	properties["clear"] = MCPSchema::bool_property(
+			vformat("Empty the %s after returning it, so the next call starts fresh.", p_what), false);
+	return MCPSchema::object_schema(properties);
+}
+
+Dictionary resize_schema() {
+	Dictionary properties;
+	properties["width"] = MCPSchema::integer_property("New window width in pixels.");
+	properties["height"] = MCPSchema::integer_property("New window height in pixels.");
+	Vector<String> required;
+	required.push_back("width");
+	required.push_back("height");
+	return MCPSchema::object_schema(properties, required);
+}
+
 } // namespace
 
 void mcp_register_input_tools() {
@@ -442,4 +531,39 @@ void mcp_register_input_tools() {
 	registry->register_tool(Ref<MCPTool>(memnew(GetRuntimeNodeInfoTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(GetPerformanceMetricsTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(GetGameWindowInfoTool)));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_SendTouchInput", "send_touch",
+			"Deliver real touch events to the running game: tap, press, release or drag, with a "
+			"finger index so multi-touch and gesture thresholds can be exercised. A game that "
+			"only ever receives mouse events has not been tested on a touch device.",
+			MCP_CAP_SIMULATE_INPUT, touch_schema()))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_SendGamepadInput", "send_gamepad",
+			"Deliver real gamepad events: buttons, axes, and a controller connecting or going "
+			"away. The last one matters more than it sounds - a controller unplugged mid-game "
+			"must not strand the player in a menu they can no longer move through.",
+			MCP_CAP_SIMULATE_INPUT, gamepad_schema()))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_GetInputTrace", "input_trace",
+			"Return the input events this editor has delivered to the running game, with the "
+			"frame and time each was sent. This is what makes a claimed interaction checkable "
+			"after the fact rather than something to be argued about.",
+			MCP_CAP_READ_RUNTIME, clearable_schema("trace")))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_GetRuntimeErrors", "runtime_errors",
+			"Return errors and warnings the running game has reported, with file, line and "
+			"function. Godot_ReadOutputLog gives the same events as prose; this keeps the "
+			"structure, which is what a diagnosis actually needs.",
+			MCP_CAP_READ_RUNTIME, clearable_schema("error list")))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_SetGameWindowSize", "resize_window",
+			"Resize the running game's window, for walking a resolution matrix without "
+			"relaunching per size. The result reports the size that was actually applied as "
+			"well as the one requested - a window manager is free to refuse.",
+			MCP_CAP_RUN_PROJECT, resize_schema()))));
 }

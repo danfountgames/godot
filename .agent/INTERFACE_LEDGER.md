@@ -20,9 +20,9 @@ that its signal fired.
 | A1 | Runtime agent channel (editor ↔ running game) | — | VERIFIED | `mcp_runtime_agent.{h,cpp}` in the game process, `mcp_runtime_bridge.{h,cpp}` in the editor, over the remote debugger. Request/reply correlation with deferred tokens; a game that stops mid-request fails its callers immediately rather than making them wait out the timeout. Exercised by every A2 check in `run_editor_e2e.py` | none |
 | A2 | `Godot_SendPointerInput` | simulate_input | VERIFIED | `tools/mcp_input_tools.cpp`. move/press/release/click through `Input::parse_input_event()`. Proven in `run_editor_e2e.py` by a button that records both its `pressed` signal *and* whether `_gui_input` saw an `InputEventMouseButton` — a shortcut implementation passes the first and fails the second. Refuses with no game running, and off-window coordinates | touch/keys are A3–A4 |
 | A3 | `Godot_SendKeyInput` | simulate_input | VERIFIED | `tools/mcp_input_tools.cpp`, `_send_key` in the agent. type/press/release/tap through `Input::parse_input_event()`, each character carrying its unicode value because that is what a `LineEdit` reads. Proven in `run_editor_e2e.py` by clicking a field, typing, and reading the field's own `text` back out of the game — nothing in the test sets that text. Refuses unknown key names | modifiers are implemented but not asserted |
-| A4 | `Godot_SendTouchInput` | simulate_input | NOT_STARTED | — | all |
-| A5 | `Godot_SendGamepadInput` | simulate_input | NOT_STARTED | — | all |
-| A6 | `Godot_GetInputTrace` | read_runtime | NOT_STARTED | — | all |
+| A4 | `Godot_SendTouchInput` | simulate_input | VERIFIED | down/up/tap/drag with a finger index, through `Input::parse_input_event()`. Covered in `run_editor_e2e.py`, including the off-window refusal | gesture thresholds are the game's business, not the tool's |
+| A5 | `Godot_SendGamepadInput` | simulate_input | VERIFIED | buttons, axes, and `joy_connection_changed` for a controller appearing or going away — the last matters because a controller unplugged mid-game must not strand a player in a menu they can no longer move through. Unknown actions refused | device change is delivered, not yet asserted against a game that reacts to it |
+| A6 | `Godot_GetInputTrace` | read_runtime | VERIFIED | every injected event recorded in the game with its frame and millisecond, bounded to the last 256. The e2e asserts all four input kinds appear after sending them, which makes a claimed interaction checkable after the fact instead of arguable | none |
 
 ## B — Seeing the running game
 
@@ -40,7 +40,7 @@ that its signal fired.
 | C1 | `Godot_GetRuntimeProperty` | read_runtime | VERIFIED | `tools/mcp_input_tools.cpp`, `_get_property` in the agent. Returns the value JSON can carry plus Godot's own text form, which round-trips for every type. Refuses unknown nodes and unknown properties. **It immediately earned its place**: reading back what `Godot_SetRuntimeProperty` claimed to have written showed the write had never happened | none |
 | C2 | `Godot_GetRuntimeNodeInfo` | read_runtime | VERIFIED | class, script, groups, children, visibility, and a Control's on-screen rect. The e2e uses that rect to aim a real click at the node's reported centre instead of a coordinate copied from the fixture — semantic targeting without making the input fake | partially covers I2 |
 | C3 | `Godot_WaitForRuntimeCondition` | read_runtime | VERIFIED | `MCPRuntimeWatcher` checks every frame inside the game and answers once, on satisfaction or deadline. Covered both ways in `run_editor_e2e.py`: a condition that becomes true, and one that never does — where the failure names the value it actually found (`it is 2`) rather than only saying it timed out | none |
-| C4 | `Godot_GetRuntimeErrors` (structured) | read_runtime | NOT_STARTED | — | all |
+| C4 | `Godot_GetRuntimeErrors` (structured) | read_runtime | VERIFIED | an engine error handler installed in the game keeps file, line, function, message and kind — where `Godot_ReadOutputLog` has the same events only as prose. Checked against an error the test deliberately causes, not against an empty list, which would pass whether the feature worked or not. Note that `push_error` reports the engine's call site; only a genuine script fault carries a `.gd` path | none |
 | C5 | `Godot_SetTimeScale` | run_project | NOT_STARTED | — | all |
 
 ## D — Performance
@@ -79,7 +79,7 @@ that its signal fired.
 | ID | Capability | Class | Status | Evidence | Remaining |
 |---|---|---|---|---|---|
 | H1 | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` | edit_files | NOT_STARTED | — | all |
-| H2 | `Godot_SetGameWindowSize` | run_project | NOT_STARTED | — | all |
+| H2 | `Godot_SetGameWindowSize` | run_project | VERIFIED | resizes the running game so a resolution matrix does not need a relaunch per size, and reports the size that was *applied* alongside the one requested — a window manager is free to refuse, and a matrix built on requested sizes proves nothing. Absurd sizes refused | none |
 | H3 | `Godot_GetGameWindowInfo` | read_runtime | VERIFIED | window and viewport size, aspect, content scale. Asserted against `Godot_CaptureGame` in the e2e: the two must agree about how big the game is, or one of them is lying about what a screenshot means | none |
 
 ## I — Editor UI automation

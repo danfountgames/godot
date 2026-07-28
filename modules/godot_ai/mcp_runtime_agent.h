@@ -111,6 +111,15 @@ class MCPRuntimeAgent {
 	static Dictionary _node_info(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _performance(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _window_info(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _send_touch(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _send_gamepad(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _input_trace(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _runtime_errors(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _resize_window(const Dictionary &p_arguments, String &r_error);
+
+	// Every injected event is recorded, so "a click was sent" and "a click arrived" can
+	// be told apart after the fact rather than argued about.
+	static void _record(const String &p_kind, const Dictionary &p_detail);
 
 
 

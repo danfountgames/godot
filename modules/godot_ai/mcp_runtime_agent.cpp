@@ -51,6 +51,54 @@
 
 bool MCPRuntimeAgent::installed = false;
 
+// --------------------------------------------------------------- recording ---
+
+namespace {
+
+// Bounded: a trace is for the last few interactions, not a session-long log that grows
+// until the game runs out of memory.
+const int MAX_TRACE_ENTRIES = 256;
+Array g_trace;
+
+// Errors reported by the engine while the game runs. Godot_ReadOutputLog returns the
+// Output panel as prose; this keeps the structure - file, line, function, whether it
+// was fatal - which is what a diagnosis needs.
+const int MAX_ERROR_ENTRIES = 128;
+Array g_errors;
+
+void error_handler(void *p_user, const char *p_function, const char *p_file, int p_line, const char *p_error, const char *p_explanation, bool p_editor_notify, ErrorHandlerType p_type) {
+	Dictionary entry;
+	entry["function"] = String::utf8(p_function);
+	entry["file"] = String::utf8(p_file);
+	entry["line"] = p_line;
+	entry["message"] = String::utf8(p_error);
+	entry["detail"] = String::utf8(p_explanation);
+	switch (p_type) {
+		case ERR_HANDLER_WARNING:
+			entry["kind"] = "warning";
+			break;
+		case ERR_HANDLER_SCRIPT:
+			entry["kind"] = "script";
+			break;
+		case ERR_HANDLER_SHADER:
+			entry["kind"] = "shader";
+			break;
+		default:
+			entry["kind"] = "error";
+			break;
+	}
+	if (g_errors.size() >= MAX_ERROR_ENTRIES) {
+		g_errors.remove_at(0);
+	}
+	g_errors.push_back(entry);
+}
+
+ErrorHandlerList g_error_handler;
+bool g_error_handler_installed = false;
+
+} // namespace
+
+
 void MCPRuntimeAgent::install() {
 	if (installed) {
 		return;
@@ -66,6 +114,15 @@ void MCPRuntimeAgent::install() {
 	}
 	EngineDebugger::register_message_capture(
 			MCP_RUNTIME_CHANNEL, EngineDebugger::Capture(nullptr, &MCPRuntimeAgent::parse_message));
+
+	// Collect errors structurally while the game runs. The Output panel has them as
+	// prose; a diagnosis wants the file, the line and the function.
+	if (!g_error_handler_installed) {
+		g_error_handler.errfunc = error_handler;
+		g_error_handler.userdata = nullptr;
+		add_error_handler(&g_error_handler);
+		g_error_handler_installed = true;
+	}
 	installed = true;
 }
 
@@ -176,6 +233,10 @@ void MCPRuntimeAgent::uninstall() {
 		EngineDebugger::unregister_message_capture(MCP_RUNTIME_CHANNEL);
 	}
 	MCPRuntimeWatcher::destroy();
+	if (g_error_handler_installed) {
+		remove_error_handler(&g_error_handler);
+		g_error_handler_installed = false;
+	}
 	installed = false;
 }
 
@@ -266,6 +327,21 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "window_info") {
 		return _window_info(p_arguments, r_error);
+	}
+	if (p_command == "send_touch") {
+		return _send_touch(p_arguments, r_error);
+	}
+	if (p_command == "send_gamepad") {
+		return _send_gamepad(p_arguments, r_error);
+	}
+	if (p_command == "input_trace") {
+		return _input_trace(p_arguments, r_error);
+	}
+	if (p_command == "runtime_errors") {
+		return _runtime_errors(p_arguments, r_error);
+	}
+	if (p_command == "resize_window") {
+		return _resize_window(p_arguments, r_error);
 	}
 	r_error = vformat("unknown runtime command '%s'", p_command);
 	return Dictionary();
@@ -367,11 +443,14 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 		return Dictionary();
 	}
 
-	Dictionary result;
-	result["action"] = action;
-	result["x"] = position.x;
-	result["y"] = position.y;
-	result["button"] = button;
+	Dictionary detail;
+	detail["action"] = action;
+	detail["x"] = position.x;
+	detail["y"] = position.y;
+	detail["button"] = button;
+	_record("pointer", detail);
+
+	Dictionary result = detail;
 	result["events"] = events;
 	result["window_width"] = window_size.width;
 	result["window_height"] = window_size.height;
@@ -459,8 +538,17 @@ Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_e
 		}
 	}
 
-	Dictionary result;
-	result["action"] = action;
+	Dictionary detail;
+	detail["action"] = action;
+	if (p_arguments.has("text")) {
+		detail["text"] = p_arguments["text"];
+	}
+	if (p_arguments.has("key")) {
+		detail["key"] = p_arguments["key"];
+	}
+	_record("key", detail);
+
+	Dictionary result = detail;
 	result["events"] = events;
 	return result;
 }
@@ -757,6 +845,196 @@ Dictionary MCPRuntimeAgent::_window_info(const Dictionary &p_arguments, String &
 	result["viewport_height"] = visible.height;
 	result["aspect"] = size.height > 0 ? (double)size.width / (double)size.height : 0.0;
 	result["content_scale_factor"] = window->get_content_scale_factor();
+	return result;
+}
+
+void MCPRuntimeAgent::_record(const String &p_kind, const Dictionary &p_detail) {
+	Dictionary entry = p_detail;
+	entry["kind"] = p_kind;
+	entry["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	entry["msec"] = (int64_t)OS::get_singleton()->get_ticks_msec();
+	if (g_trace.size() >= MAX_TRACE_ENTRIES) {
+		g_trace.remove_at(0);
+	}
+	g_trace.push_back(entry);
+}
+
+Dictionary MCPRuntimeAgent::_input_trace(const Dictionary &p_arguments, String &r_error) {
+	const bool clear = p_arguments.has("clear") ? (bool)p_arguments["clear"] : false;
+	Dictionary result;
+	result["events"] = g_trace.duplicate();
+	result["count"] = g_trace.size();
+	if (clear) {
+		g_trace.clear();
+	}
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_runtime_errors(const Dictionary &p_arguments, String &r_error) {
+	const bool clear = p_arguments.has("clear") ? (bool)p_arguments["clear"] : false;
+	Dictionary result;
+	result["errors"] = g_errors.duplicate();
+	result["count"] = g_errors.size();
+	if (clear) {
+		g_errors.clear();
+	}
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	Input *input = Input::get_singleton();
+	if (!tree || !tree->get_root() || !input) {
+		r_error = "the running game cannot receive input";
+		return Dictionary();
+	}
+
+	const String action = p_arguments.has("action") ? String(p_arguments["action"]) : String("tap");
+	const int index = p_arguments.has("index") ? (int)p_arguments["index"] : 0;
+	const Vector2 position(
+			p_arguments.has("x") ? (float)p_arguments["x"] : 0.0f,
+			p_arguments.has("y") ? (float)p_arguments["y"] : 0.0f);
+
+	const Size2i window_size = tree->get_root()->get_size();
+	if (position.x < 0 || position.y < 0 || position.x >= window_size.width || position.y >= window_size.height) {
+		r_error = vformat("(%d, %d) is outside the game window, which is %dx%d",
+				(int)position.x, (int)position.y, window_size.width, window_size.height);
+		return Dictionary();
+	}
+
+	auto touch = [&](bool p_pressed) {
+		Ref<InputEventScreenTouch> event;
+		event.instantiate();
+		event->set_index(index);
+		event->set_position(position);
+		event->set_pressed(p_pressed);
+		input->parse_input_event(event);
+	};
+
+	int events = 0;
+	if (action == "down") {
+		touch(true);
+		events = 1;
+	} else if (action == "up") {
+		touch(false);
+		events = 1;
+	} else if (action == "tap") {
+		touch(true);
+		touch(false);
+		events = 2;
+	} else if (action == "drag") {
+		Ref<InputEventScreenDrag> event;
+		event.instantiate();
+		event->set_index(index);
+		event->set_position(position);
+		event->set_relative(Vector2(
+				p_arguments.has("relative_x") ? (float)p_arguments["relative_x"] : 0.0f,
+				p_arguments.has("relative_y") ? (float)p_arguments["relative_y"] : 0.0f));
+		input->parse_input_event(event);
+		events = 1;
+	} else {
+		r_error = vformat("unknown touch action '%s'; expected down, up, tap or drag", action);
+		return Dictionary();
+	}
+
+	Dictionary detail;
+	detail["action"] = action;
+	detail["index"] = index;
+	detail["x"] = position.x;
+	detail["y"] = position.y;
+	_record("touch", detail);
+
+	Dictionary result = detail;
+	result["events"] = events;
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_send_gamepad(const Dictionary &p_arguments, String &r_error) {
+	Input *input = Input::get_singleton();
+	if (!input) {
+		r_error = "the running game cannot receive input";
+		return Dictionary();
+	}
+
+	const String action = p_arguments.has("action") ? String(p_arguments["action"]) : String("tap");
+	const int device = p_arguments.has("device") ? (int)p_arguments["device"] : 0;
+
+	int events = 0;
+	if (action == "connect" || action == "disconnect") {
+		// Device changes are a required test in the production template: a controller
+		// unplugged mid-game must not strand the player in a menu they cannot leave.
+		input->joy_connection_changed(device, action == "connect",
+				action == "connect" ? "Simulated Controller" : String());
+		events = 1;
+	} else if (action == "axis") {
+		const int axis = p_arguments.has("axis") ? (int)p_arguments["axis"] : 0;
+		const float value = p_arguments.has("value") ? (float)p_arguments["value"] : 0.0f;
+		Ref<InputEventJoypadMotion> event;
+		event.instantiate();
+		event->set_device(device);
+		event->set_axis((JoyAxis)axis);
+		event->set_axis_value(value);
+		input->parse_input_event(event);
+		events = 1;
+	} else {
+		const int button = p_arguments.has("button") ? (int)p_arguments["button"] : 0;
+		auto press = [&](bool p_pressed) {
+			Ref<InputEventJoypadButton> event;
+			event.instantiate();
+			event->set_device(device);
+			event->set_button_index((JoyButton)button);
+			event->set_pressed(p_pressed);
+			input->parse_input_event(event);
+		};
+		if (action == "press") {
+			press(true);
+			events = 1;
+		} else if (action == "release") {
+			press(false);
+			events = 1;
+		} else if (action == "tap") {
+			press(true);
+			press(false);
+			events = 2;
+		} else {
+			r_error = vformat("unknown gamepad action '%s'; expected press, release, tap, axis, connect or disconnect", action);
+			return Dictionary();
+		}
+	}
+
+	Dictionary detail;
+	detail["action"] = action;
+	detail["device"] = device;
+	_record("gamepad", detail);
+
+	Dictionary result = detail;
+	result["events"] = events;
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_resize_window(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no window";
+		return Dictionary();
+	}
+	const int width = p_arguments.has("width") ? (int)p_arguments["width"] : 0;
+	const int height = p_arguments.has("height") ? (int)p_arguments["height"] : 0;
+	if (width < 64 || height < 64) {
+		r_error = "a window smaller than 64x64 is not a resolution anybody supports";
+		return Dictionary();
+	}
+	tree->get_root()->set_size(Size2i(width, height));
+
+	// Read back: a window manager is free to refuse, and a resolution matrix built on
+	// sizes that were requested rather than applied proves nothing.
+	const Size2i applied = tree->get_root()->get_size();
+	Dictionary result;
+	result["requested_width"] = width;
+	result["requested_height"] = height;
+	result["width"] = applied.width;
+	result["height"] = applied.height;
+	result["applied"] = (applied.width == width && applied.height == height);
 	return result;
 }
 

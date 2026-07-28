@@ -94,6 +94,15 @@ func _on_pressed() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		saw_input_event = true
+
+# Setting this makes the game report a real engine error, so the structured error
+# reader can be checked against something it must find rather than against an empty
+# list - which passes whether the feature works or not.
+var trigger_error := false:
+	set(value):
+		trigger_error = value
+		if value:
+			push_error("E2E_DELIBERATE_ERROR")
 """
 
 
@@ -895,6 +904,101 @@ def run(editor_binary, display):
                 check(window["width"] == shot["width"] and window["height"] == shot["height"],
                       "the window and the capture disagree about size: %r vs %r" % (window, shot))
                 print("PASS Godot_GetGameWindowInfo agrees with the capture")
+
+                # --- touch and gamepad ------------------------------------------
+                reply = call({"jsonrpc": "2.0", "id": 106, "method": "tools/call",
+                              "params": {"name": "Godot_SendTouchInput",
+                                         "arguments": {"x": centre[0], "y": centre[1],
+                                                       "action": "tap"}}})
+                check(reply["result"]["isError"] is False,
+                      "sending touch failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["events"] == 2,
+                      "a tap should be a touch down and up: %r"
+                      % reply["result"]["structuredContent"])
+
+                reply = call({"jsonrpc": "2.0", "id": 107, "method": "tools/call",
+                              "params": {"name": "Godot_SendTouchInput",
+                                         "arguments": {"x": 9000, "y": 9000}}})
+                check(refused(reply), "a touch outside the window was accepted")
+
+                for arguments in ({"action": "tap", "button": 0},
+                                  {"action": "axis", "axis": 0, "value": 1},
+                                  {"action": "disconnect", "device": 0}):
+                    reply = call({"jsonrpc": "2.0", "id": 108, "method": "tools/call",
+                                  "params": {"name": "Godot_SendGamepadInput",
+                                             "arguments": arguments}})
+                    check(reply["result"]["isError"] is False,
+                          "gamepad %r failed: %s" % (arguments, refusal_text(reply)))
+
+                reply = call({"jsonrpc": "2.0", "id": 109, "method": "tools/call",
+                              "params": {"name": "Godot_SendGamepadInput",
+                                         "arguments": {"action": "nonsense"}}})
+                check(refused(reply), "an unknown gamepad action was accepted")
+                print("PASS Godot_SendTouchInput and Godot_SendGamepadInput deliver events")
+
+                # --- the trace ---------------------------------------------------
+                # Everything above was sent through this editor, so the game's own
+                # record of what arrived is the check on all of it.
+                reply = call({"jsonrpc": "2.0", "id": 118, "method": "tools/call",
+                              "params": {"name": "Godot_GetInputTrace"}})
+                check(reply["result"]["isError"] is False,
+                      "reading the input trace failed: %s" % refusal_text(reply))
+                trace = reply["result"]["structuredContent"]["events"]
+                kinds = {entry["kind"] for entry in trace}
+                check({"pointer", "key", "touch", "gamepad"} <= kinds,
+                      "the trace is missing input kinds that were sent: %r" % kinds)
+                check(all("frame" in entry and "msec" in entry for entry in trace),
+                      "trace entries do not say when they happened: %r" % trace[:2])
+                print("PASS Godot_GetInputTrace recorded every kind of input sent (%d events)"
+                      % len(trace))
+
+                # --- structured errors -------------------------------------------
+                # Make the game report a real error, so this is checked against
+                # something it must find. An assertion over an empty list passes
+                # whether the feature works or not.
+                reply = call({"jsonrpc": "2.0", "id": 119, "method": "tools/call",
+                              "params": {"name": "Godot_SetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Hud/Target",
+                                                       "property": "trigger_error",
+                                                       "value": True}}})
+                check(reply["result"]["isError"] is False,
+                      "triggering an error failed: %s" % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 122, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeErrors"}})
+                check(reply["result"]["isError"] is False,
+                      "reading runtime errors failed: %s" % refusal_text(reply))
+                errors = reply["result"]["structuredContent"]["errors"]
+                deliberate = [e for e in errors if "E2E_DELIBERATE_ERROR" in e.get("message", "")]
+                check(deliberate, "the error the game reported was not captured: %r" % errors)
+                entry = deliberate[0]
+                check({"file", "line", "function", "message", "kind"} <= set(entry),
+                      "the error entry is missing structure: %r" % entry)
+                check(entry["kind"] == "error", "the error was not classified: %r" % entry)
+                check(entry["line"] > 0, "the error has no line number: %r" % entry)
+                # The file is the engine's own push_error, not the script that called
+                # it: Godot's error handler reports the C++ call site, and only a
+                # genuine script fault carries a .gd path. Asserting otherwise would be
+                # asserting a bug that is not there.
+                check(entry["file"].endswith(".cpp") or entry["file"].endswith(".gd"),
+                      "the error names no source at all: %r" % entry)
+                print("PASS Godot_GetRuntimeErrors captured a real error with file and line")
+
+                # --- resolution matrix -------------------------------------------
+                reply = call({"jsonrpc": "2.0", "id": 120, "method": "tools/call",
+                              "params": {"name": "Godot_SetGameWindowSize",
+                                         "arguments": {"width": 640, "height": 480}}})
+                check(reply["result"]["isError"] is False,
+                      "resizing the game failed: %s" % refusal_text(reply))
+                sized = reply["result"]["structuredContent"]
+                check(sized["requested_width"] == 640,
+                      "the resize did not echo the request: %r" % sized)
+
+                reply = call({"jsonrpc": "2.0", "id": 121, "method": "tools/call",
+                              "params": {"name": "Godot_SetGameWindowSize",
+                                         "arguments": {"width": 8, "height": 8}}})
+                check(refused(reply), "an absurd window size was accepted")
+                print("PASS Godot_SetGameWindowSize resized the game and reports what applied")
             elif has_display:
                 raise Failure("the running game never reported its scene tree")
             else:
