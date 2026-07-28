@@ -83,6 +83,9 @@ python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path 
   tool must never write a file it did not declare.
 - Keep relay stdout free of everything except protocol frames; diagnostics go to
   stderr.
+- The HTTP transport is loopback-and-token by default. Do not add a path that serves
+  MCP without authorisation, and never write a token into a generated client
+  configuration - reference an environment variable instead.
 - Never run a recursive delete rooted at the current working directory. Test
   fixtures delete through `mcp_test_remove_tree()`, which refuses anything outside
   the cache directory. (A fixture that ignored this once erased the whole checkout.)

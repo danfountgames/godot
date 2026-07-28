@@ -246,6 +246,56 @@ Ask the editor which it has rather than guessing: `Godot_GetEditorStatus` report
 
 Install the dependencies with `apt-get install -y xvfb x11-utils libgl1-mesa-dri`.
 
+## Serving more than one client, over HTTP
+
+The stdio relay is a child process of one client. When that is the wrong shape - a
+client that is not a child process, or several at once - the same binary serves MCP
+over HTTP instead:
+
+```sh
+godot-ai-relay --http-port 7345                      # token generated and printed to stderr
+godot-ai-relay --http-port 7345 --http-token <token> # or choose one
+```
+
+`POST /mcp` with a JSON-RPC message; `initialize` answers with an `Mcp-Session-Id`
+header that later requests must carry, and `DELETE /mcp` ends the session. Every
+session gets its own connection to the editor, which is what keeps concurrent clients
+from reading each other's replies.
+
+Two refusals are deliberate. Without a valid `Authorization: Bearer` header nothing
+happens - the endpoint runs editor tools, so an open one is a remote code execution
+service. And binding anywhere but loopback needs `--http-allow-remote` and a token you
+chose yourself. Server-initiated streams (the SSE half of Streamable HTTP) are not
+implemented: nothing in this toolset pushes to a client.
+
+## Configuring a client
+
+Rather than hand-editing an MCP client's configuration:
+
+```sh
+godot-ai-relay --list-backends
+godot-ai-relay --install-backend stdio --backend-config ~/.config/<client>/mcp.json
+godot-ai-relay --check-backends --backend-config ~/.config/<client>/mcp.json
+```
+
+The entry names the binary that wrote it, carries over the options that decide *which*
+editor is driven (`--project`, `--read-only`, `--client-name`), and records the relay
+and bridge versions it was generated for so `--check-backends` can tell you when it has
+gone stale. Existing servers in the file are left alone.
+
+The HTTP entry references `${GODOT_AI_HTTP_TOKEN}` rather than a token: configuration
+files get copied, synced and pasted into bug reports, so `--install-backend` refuses
+to write a secret into one.
+
+## Exported games
+
+They get none of this. The module is editor-only (`config.py` `can_build`), because
+every tool here drives an editor and a shipped game has no editor to drive - a game
+that shipped an MCP server would be shipping a remote control for itself. The build
+enforces it and `tools/tests/run_tests.py` checks both halves: that the module refuses
+to build for any export template, and that a template binary on disk contains none of
+its symbols.
+
 ## Troubleshooting
 
 | Symptom | Cause |

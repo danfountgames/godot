@@ -81,6 +81,20 @@ struct RelayOptions {
 	std::string call_tool;
 	std::string call_arguments; // JSON object, defaults to {}.
 
+	// HTTP transport. A port turns it on; without one the relay serves stdio, which
+	// is what an MCP client launching us as a child process expects.
+	int http_port = 0;
+	std::string http_host = "127.0.0.1";
+	std::string http_path = "/mcp";
+	std::string http_token;
+	bool http_allow_remote = false;
+
+	// Client-configuration management. See backends.h.
+	std::string install_backend;
+	std::string backend_config;
+	bool list_backends = false;
+	bool check_backends = false;
+
 	// Parsed but not otherwise meaningful: the relay always speaks MCP.
 	bool mcp = false;
 };
@@ -151,6 +165,10 @@ class Relay {
 	// only: the streaming path must never block on a single message.
 	bool request(const std::string &p_method, const std::string &p_id, const JSONValueRef &p_params, JSONValueRef &r_response, std::string &r_error);
 
+	// Waits for the response carrying `p_id_key`, draining anything else. An empty
+	// key means "do not wait" - a notification has no reply.
+	bool wait_for_response(const std::string &p_id_key, const std::string &p_what, JSONValueRef &r_response, std::string &r_error);
+
 	static std::string id_key(const JSONValueRef &p_id);
 
 public:
@@ -165,6 +183,18 @@ public:
 	// Performs one tool call and prints the result as JSON. Returns 0 on success, 1
 	// when the tool failed or was refused, 2 when the editor could not be reached.
 	int run_one_shot();
+
+	// Connects and completes the bridge handshake if that has not happened yet.
+	bool ensure_ready(std::string &r_error) { return ensure_connected(r_error); }
+
+	// Forwards one client message verbatim and returns the editor's answer.
+	//
+	// The HTTP transport is request/response per connection, so unlike the stdio path
+	// it can afford to wait: each session owns its own Relay and its own socket to the
+	// editor, which is what keeps concurrent sessions from reading each other's
+	// replies. Returns false only when the bridge failed; a JSON-RPC error from the
+	// editor is a successful exchange.
+	bool exchange(const JSONValueRef &p_message, JSONValueRef &r_response, std::string &r_error);
 };
 
 } // namespace godot_ai

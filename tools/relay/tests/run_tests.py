@@ -53,10 +53,23 @@ def assert_in(needle, haystack, what="text"):
 
 
 def connected_relay(editor, extra_args=(), **kwargs):
-    """Starts a relay pointed at a fake editor via the instance registry."""
-    relay = RelayProcess(args=list(extra_args), **kwargs)
-    relay.write_instance(port=editor.port)
-    return relay
+    """Starts a relay pointed at a fake editor via the instance registry.
+
+    The descriptor is written *before* the relay starts. The relay discovers its
+    editor eagerly at startup, so writing it afterwards is a race: on a loaded machine
+    the relay looks, finds an empty registry, and settles for connecting on the first
+    request - which a test that only watches the handshake never sends.
+    """
+    home = kwargs.pop("home", None) or tempfile.mkdtemp(prefix="godot-ai-relay-test-")
+    os.makedirs(os.path.join(home, "instances"), exist_ok=True)
+    descriptor = {
+        "pid": 4242, "port": editor.port, "project_path": "/tmp/project",
+        "project_name": "Test", "editor_version": "4.3.dev",
+        "protocol_version": "1", "started_at": 1000.0,
+    }
+    with open(os.path.join(home, "instances", "4242.json"), "w", encoding="utf-8") as handle:
+        json.dump(descriptor, handle)
+    return RelayProcess(args=list(extra_args), home=home, owns_home=True, **kwargs)
 
 
 # --------------------------------------------------------------- CLI surface ---
@@ -756,6 +769,16 @@ def test_every_stdout_line_is_valid_json():
                 assert_eq(parsed["jsonrpc"], "2.0", "jsonrpc member")
     finally:
         editor.close()
+
+
+# The HTTP transport's cases live in their own file - they need a different fixture
+# (a listening relay and a fake editor that accepts several connections) and would
+# otherwise bury the stdio tests they have nothing to do with.
+import test_backends  # noqa: E402
+import test_http  # noqa: E402
+
+test_http.register(test, assert_eq, assert_in)
+test_backends.register(test, assert_eq, assert_in)
 
 
 def main():

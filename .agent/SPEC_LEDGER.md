@@ -89,10 +89,12 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 
 | ID | Requirement | Status |
 |---|---|---|
-| O1 | In-editor hosted LLM chat UI | NOT_STARTED |
-| O2 | Packaged agent backends / AI Gateway equivalent | NOT_STARTED |
-| O3 | Export-template AI integration | NOT_STARTED |
-| O4 | Multi-user / remote Streamable HTTP MCP | NOT_STARTED |
+| ID | Requirement | Status | Evidence |
+|---|---|---|---|
+| O1 | In-editor hosted LLM chat UI | NOT_STARTED | — |
+| O2 | Packaged agent backends / AI Gateway equivalent | VERIFIED | `tools/relay/src/backends.{h,cpp}`, 7 cases in `tests/test_backends.py`. `--list-backends` / `--install-backend` / `--check-backends` write and audit an MCP client's configuration: the entry names the binary that wrote it, carries the options that decide which editor is driven, and pins the relay and bridge versions so a stale entry is reported rather than left to fail. Credential storage is *refused* — the HTTP entry references `${GODOT_AI_HTTP_TOKEN}` and `--install-backend` rejects `--http-token` outright, writing nothing |
+| O3 | Export-template AI integration | VERIFIED | The decision is editor-only, and it is enforced rather than asserted: `config.py` `can_build` refuses every non-editor build, checked across the platform matrix in `tools/tests/run_tests.py`. A real `target=template_release` build (12m56s) links with the module present and contains none of its symbols — `Godot_ManageNode` appears 7 times in the editor binary and 0 times in the template — and a test re-checks that whenever a template is on disk |
+| O4 | Multi-user / remote Streamable HTTP MCP | VERIFIED | `tools/relay/src/http_server.{h,cpp}`, 12 cases in `tests/test_http.py`. `POST /mcp` with `Mcp-Session-Id` sessions, `DELETE` to end one. Each session owns its own `Relay` and therefore its own editor connection, which is what isolates concurrent clients; four interleaved sessions keep their replies straight. Auth is a bearer token compared in constant time, loopback-only unless `--http-allow-remote`. Server-initiated SSE streams are deliberately absent: nothing here pushes to a client |
 
 ## Beyond the specification
 

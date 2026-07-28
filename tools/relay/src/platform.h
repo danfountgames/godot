@@ -77,6 +77,25 @@ long socket_recv(SocketHandle p_socket, char *p_buffer, size_t p_length);
 // INVALID_SOCKET_HANDLE when there is no socket yet. Returns false on a wait error.
 bool wait_for_input(SocketHandle p_socket, int p_timeout_ms, bool p_watch_stdin, bool &r_stdin_ready, bool &r_socket_ready);
 
+// --- Serving ---------------------------------------------------------------
+// Only the HTTP transport needs these; the stdio relay never listens for anyone.
+
+// Binds and listens. The caller passes a host so that the default can be loopback:
+// an MCP endpoint reachable from the network is a decision, not an accident.
+SocketHandle socket_listen(const std::string &p_host, int p_port, std::string &r_error);
+
+// Accepts one pending connection, or returns INVALID_SOCKET_HANDLE when there is
+// none. r_error is only set for a real failure.
+SocketHandle socket_accept(SocketHandle p_listener, std::string &r_error);
+
+// Waits until any of `p_sockets` is readable, or the timeout elapses. Returns false
+// on a wait error; an empty r_ready means the timeout expired.
+bool wait_for_sockets(const std::vector<SocketHandle> &p_sockets, int p_timeout_ms, std::vector<SocketHandle> &r_ready);
+
+// Random bytes suitable for a bearer token, hex-encoded. Falls back to a
+// time-and-pid seed only if the system source is unavailable, and says so.
+std::string random_token(size_t p_bytes, bool &r_strong);
+
 // stdin/stdout. Returns bytes moved, 0 on EOF, -1 on error.
 long read_stdin(char *p_buffer, size_t p_length);
 void write_stdout(const char *p_data, size_t p_length);
@@ -93,6 +112,17 @@ std::string real_path(const std::string &p_path);
 std::string environment(const std::string &p_name);
 std::string home_directory();
 long process_id();
+
+// Absolute path of the running binary. A generated client configuration has to name
+// this relay, not whatever "godot-ai-relay" happens to be on the user's PATH later.
+std::string executable_path();
+
+// Creates a directory and every missing parent. Returns false only on a real error;
+// an existing directory is success.
+bool make_directories(const std::string &p_path);
+
+// Writes a whole file, replacing it. Returns false with a reason on failure.
+bool write_file(const std::string &p_path, const std::string &p_contents, std::string &r_error);
 
 } // namespace platform
 } // namespace godot_ai

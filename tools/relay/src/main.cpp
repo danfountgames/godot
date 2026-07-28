@@ -28,10 +28,14 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "backends.h"
+#include "http_server.h"
 #include "relay.h"
 
 #include <cstdio>
 #include <string>
+
+static int run(godot_ai::RelayOptions &p_options, std::string &r_error);
 
 int main(int argc, char **argv) {
 	godot_ai::RelayOptions options;
@@ -49,6 +53,70 @@ int main(int argc, char **argv) {
 	if (exit_immediately) {
 		fputs(immediate_output.c_str(), stderr);
 		return 0;
+	}
+
+	// Nothing called this before, which POSIX forgave and Windows would not have:
+	// without WSAStartup every socket call there fails with WSANOTINITIALISED. The
+	// backend has always had the call; the entry point simply never made it.
+	if (!godot_ai::platform::initialize(error)) {
+		fprintf(stderr, "godot-ai-relay: %s\n", error.c_str());
+		return 2;
+	}
+
+	const int status = run(options, error);
+	godot_ai::platform::finalize();
+	return status;
+}
+
+static int run(godot_ai::RelayOptions &p_options, std::string &r_error) {
+	godot_ai::RelayOptions &options = p_options;
+	std::string &error = r_error;
+	// Configuration management runs before anything connects: these commands are
+	// about a file on disk, and must work with no editor running.
+	if (options.list_backends) {
+		fputs(godot_ai::agent_backends_listing().c_str(), stdout);
+		return 0;
+	}
+	if (options.check_backends) {
+		bool up_to_date = false;
+		std::string summary;
+		if (!godot_ai::backend_check(options.backend_config, up_to_date, summary, error)) {
+			fprintf(stderr, "godot-ai-relay: %s\n", error.c_str());
+			return 2;
+		}
+		printf("%s\n", summary.c_str());
+		return up_to_date ? 0 : 1;
+	}
+	if (!options.install_backend.empty()) {
+		godot_ai::AgentBackend backend;
+		if (!godot_ai::agent_backend_by_name(options.install_backend, backend)) {
+			fprintf(stderr, "godot-ai-relay: unknown backend '%s'\n", options.install_backend.c_str());
+			fputs(godot_ai::agent_backends_listing().c_str(), stderr);
+			return 2;
+		}
+		std::string summary;
+		if (!godot_ai::backend_install(backend, options, options.backend_config, summary, error)) {
+			fprintf(stderr, "godot-ai-relay: %s\n", error.c_str());
+			return 2;
+		}
+		printf("%s\n", summary.c_str());
+		return 0;
+	}
+
+	if (options.http_port > 0) {
+		godot_ai::HttpOptions http;
+		http.host = options.http_host;
+		http.port = options.http_port;
+		http.path = options.http_path;
+		http.token = options.http_token;
+		http.allow_remote = options.http_allow_remote;
+
+		godot_ai::HttpServer server(options, http);
+		if (!server.start(error)) {
+			fprintf(stderr, "godot-ai-relay: %s\n", error.c_str());
+			return 2;
+		}
+		return server.run();
 	}
 
 	godot_ai::Relay relay(options);

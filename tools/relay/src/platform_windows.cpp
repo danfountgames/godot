@@ -34,6 +34,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -43,6 +44,8 @@
 #include <winsock2.h>
 // windows.h must come after winsock2.h, or it pulls in the winsock 1 declarations.
 #include <ws2tcpip.h>
+
+#include <bcrypt.h>
 
 #include <direct.h>
 #include <fcntl.h>
@@ -246,6 +249,158 @@ bool wait_for_input(SocketHandle p_socket, int p_timeout_ms, bool p_watch_stdin,
 
 	if (p_watch_stdin && !r_stdin_ready) {
 		r_stdin_ready = g_stdin.has_input();
+	}
+	return true;
+}
+
+SocketHandle socket_listen(const std::string &p_host, int p_port, std::string &r_error) {
+	const SOCKET handle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (handle == INVALID_SOCKET) {
+		r_error = "socket() failed: " + last_socket_error();
+		return INVALID_SOCKET_HANDLE;
+	}
+
+	// Deliberately not SO_REUSEADDR: on Windows that permits two sockets to bind the
+	// same port, which would silently steal an endpoint rather than report a clash.
+	BOOL exclusive = TRUE;
+	setsockopt(handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&exclusive, sizeof(exclusive));
+
+	struct sockaddr_in address;
+	memset(&address, 0, sizeof(address));
+	address.sin_family = AF_INET;
+	address.sin_port = htons((unsigned short)p_port);
+	if (InetPtonA(AF_INET, p_host.c_str(), &address.sin_addr) != 1) {
+		closesocket(handle);
+		r_error = "invalid listen address: " + p_host;
+		return INVALID_SOCKET_HANDLE;
+	}
+	if (bind(handle, (struct sockaddr *)&address, sizeof(address)) == SOCKET_ERROR) {
+		r_error = "bind() failed: " + last_socket_error();
+		closesocket(handle);
+		return INVALID_SOCKET_HANDLE;
+	}
+	if (listen(handle, 16) == SOCKET_ERROR) {
+		r_error = "listen() failed: " + last_socket_error();
+		closesocket(handle);
+		return INVALID_SOCKET_HANDLE;
+	}
+	return (SocketHandle)handle;
+}
+
+SocketHandle socket_accept(SocketHandle p_listener, std::string &r_error) {
+	const SOCKET handle = accept((SOCKET)p_listener, nullptr, nullptr);
+	if (handle == INVALID_SOCKET) {
+		const int error = WSAGetLastError();
+		if (error != WSAEWOULDBLOCK && error != WSAEINTR) {
+			r_error = "accept() failed: " + last_socket_error();
+		}
+		return INVALID_SOCKET_HANDLE;
+	}
+	BOOL one = TRUE;
+	setsockopt(handle, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one));
+	return (SocketHandle)handle;
+}
+
+bool wait_for_sockets(const std::vector<SocketHandle> &p_sockets, int p_timeout_ms, std::vector<SocketHandle> &r_ready) {
+	r_ready.clear();
+	if (p_sockets.empty()) {
+		return true;
+	}
+	// WSAPoll handles sockets only - which is fine here, because unlike the stdio
+	// path this waits on nothing else.
+	std::vector<WSAPOLLFD> fds;
+	fds.reserve(p_sockets.size());
+	for (SocketHandle handle : p_sockets) {
+		WSAPOLLFD entry;
+		entry.fd = (SOCKET)handle;
+		entry.events = POLLRDNORM;
+		entry.revents = 0;
+		fds.push_back(entry);
+	}
+	const int result = WSAPoll(fds.data(), (ULONG)fds.size(), p_timeout_ms);
+	if (result == SOCKET_ERROR) {
+		return false;
+	}
+	for (size_t i = 0; i < fds.size(); i++) {
+		if (fds[i].revents != 0) {
+			r_ready.push_back(p_sockets[i]);
+		}
+	}
+	return true;
+}
+
+std::string random_token(size_t p_bytes, bool &r_strong) {
+	static const char *HEX = "0123456789abcdef";
+	std::string out;
+	out.reserve(p_bytes * 2);
+	r_strong = false;
+
+	std::vector<unsigned char> buffer(p_bytes);
+	if (BCryptGenRandom(nullptr, buffer.data(), (ULONG)p_bytes,
+				BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0) {
+		r_strong = true;
+	} else {
+		unsigned long long seed = (unsigned long long)GetCurrentProcessId() ^ (unsigned long long)GetTickCount64();
+		for (size_t i = 0; i < p_bytes; i++) {
+			seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+			buffer[i] = (unsigned char)((seed >> 33) & 0xFF);
+		}
+	}
+	for (size_t i = 0; i < p_bytes; i++) {
+		out.push_back(HEX[buffer[i] >> 4]);
+		out.push_back(HEX[buffer[i] & 0xF]);
+	}
+	return out;
+}
+
+std::string executable_path() {
+	char buffer[4096];
+	const DWORD length = GetModuleFileNameA(nullptr, buffer, (DWORD)sizeof(buffer));
+	if (length == 0 || length >= sizeof(buffer)) {
+		return std::string();
+	}
+	return std::string(buffer, length);
+}
+
+bool make_directories(const std::string &p_path) {
+	if (p_path.empty()) {
+		return false;
+	}
+	std::string built;
+	size_t position = 0;
+	while (position <= p_path.size()) {
+		size_t separator = p_path.find_first_of("/\\", position);
+		const size_t end = separator == std::string::npos ? p_path.size() : separator;
+		built = p_path.substr(0, end);
+		position = end + 1;
+		// "C:" is a drive, not a directory to create.
+		if (built.empty() || (built.size() == 2 && built[1] == ':')) {
+			if (separator == std::string::npos) {
+				break;
+			}
+			continue;
+		}
+		if (_mkdir(built.c_str()) != 0 && errno != EEXIST) {
+			return false;
+		}
+		if (separator == std::string::npos) {
+			break;
+		}
+	}
+	return true;
+}
+
+bool write_file(const std::string &p_path, const std::string &p_contents, std::string &r_error) {
+	FILE *file = fopen(p_path.c_str(), "wb");
+	if (!file) {
+		r_error = "cannot write " + p_path;
+		return false;
+	}
+	const size_t written = fwrite(p_contents.data(), 1, p_contents.size(), file);
+	fclose(file);
+	if (written != p_contents.size()) {
+		r_error = "short write to " + p_path;
+		return false;
 	}
 	return true;
 }

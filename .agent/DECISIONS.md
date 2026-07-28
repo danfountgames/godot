@@ -141,3 +141,34 @@ Durable decisions that are not obvious from the resulting code.
   `gl_compatibility`: a launched game inherits the *project's* renderer, not the
   editor's command line, and llvmpipe has no Vulkan.
 - **Spec IDs:** T11, T12, T13, T15, U1, U2, C1, X1, X2.
+
+## DEC-0008 — The optional tranche: what each one had to mean here
+
+- **Date:** 2026-07-28
+- **Context:** The specification lists four optional features in a table of one-line
+  descriptions. Three of them describe a capability; the fourth (export templates)
+  describes a *decision*. Implementing them meant first deciding what each one is.
+- **Decisions:**
+  - **O4, HTTP transport — in the relay, not the editor.** DEC-0001 already put
+    transport in the relay, and the editor already accepts several peers, so a session
+    per editor connection gives isolation for free. Streamable HTTP is implemented as
+    far as it is meaningful: one endpoint, JSON in, JSON out, session header. The SSE
+    half is left out because nothing in this toolset pushes to a client, and shipping
+    an untested streaming path would be worse than not having one.
+  - **O2, packaged backends — write configuration, never credentials.** "Bundle agent
+    launchers" could have meant shipping other people's binaries. It does not: the
+    relay writes *its own* entry into a client's MCP configuration, pinned to the
+    versions that generated it. Credentials are the interesting part, and the answer
+    is that we never store them — the HTTP entry references an environment variable,
+    and `--install-backend` refuses a token rather than writing one to a file that
+    gets copied and pasted into bug reports.
+  - **O3, export templates — the decision is "editor-only", and it is enforced.** A
+    game that shipped an MCP server would be shipping a remote control for itself.
+    `can_build` refuses non-editor builds; a real template build proves the engine
+    still links without the module, and that its symbols are absent from the binary.
+- **Consequences:** The relay grows a listening socket, so the platform seam gained
+  `socket_listen`/`socket_accept`/`wait_for_sockets` and both backends implement them.
+  Adding the HTTP entry point also surfaced a latent bug: `platform::initialize()` was
+  never called from `main()`, which POSIX forgives and Windows would not have — every
+  socket call there would have failed with WSANOTINITIALISED.
+- **Spec IDs:** O2, O3, O4, R8.

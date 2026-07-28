@@ -31,7 +31,7 @@ while [ $# -gt 0 ]; do
 		# kept compiling, which is what stops it rotting between releases.
 		CXX="x86_64-w64-mingw32-g++"
 		output="$repo_root/bin/godot-ai-relay.exe"
-		extra_libs="-lws2_32 -static"
+		extra_libs="-lws2_32 -lbcrypt -static"
 		shift
 		;;
 	*)
@@ -48,6 +48,8 @@ mkdir -p "$(dirname "$output")"
 	-o "$output" \
 	"$script_dir/src/main.cpp" \
 	"$script_dir/src/relay.cpp" \
+	"$script_dir/src/http_server.cpp" \
+	"$script_dir/src/backends.cpp" \
 	"$script_dir/src/json.cpp" \
 	"$script_dir/src/platform_posix.cpp" \
 	"$script_dir/src/platform_windows.cpp" \

@@ -46,7 +46,8 @@ What remains is honest:
   so it is a check that has not been written.
 - **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
 - **C1** — every workflow command passes locally; never observed green on Actions.
-- **O1–O4** — explicitly optional in the specification, not started.
+- **O1** — the in-editor chat UI, the one optional feature still not started.
+  O2, O3 and O4 are done and verified.
 
 ## Ledger IDs in this slice
 

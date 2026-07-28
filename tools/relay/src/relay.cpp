@@ -69,6 +69,15 @@ static const char *USAGE =
 		"  --handshake-timeout <ms>   Editor handshake timeout in milliseconds (default: 5000).\n"
 		"  --call <tool>              Run one tool and print its result as JSON, then exit.\n"
 		"  --arguments <json>         Arguments object for --call (default: {}).\n"
+		"  --http-port <port>         Serve MCP over HTTP on this port instead of stdio.\n"
+		"  --http-host <host>         Address to bind (default: 127.0.0.1).\n"
+		"  --http-path <path>         Endpoint path (default: /mcp).\n"
+		"  --http-token <token>       Bearer token clients must present (default: generated).\n"
+		"  --http-allow-remote        Permit binding somewhere other than loopback.\n"
+		"  --list-backends            List the MCP client configurations this can write.\n"
+		"  --install-backend <name>   Write this relay into a client's configuration.\n"
+		"  --check-backends           Report whether that configuration is still current.\n"
+		"  --backend-config <path>    The client configuration file to write or check.\n"
 		"  --version                  Print the relay version and exit.\n"
 		"  --help                     Print this message and exit.\n"
 		"\n"
@@ -190,6 +199,48 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			JSONValueRef parsed = json_parse(r_options.call_arguments, &parse_error);
 			if (!parsed || !parsed->is_object()) {
 				r_error = "--arguments must be a JSON object: " + parse_error;
+				return false;
+			}
+		} else if (arg == "--http-port") {
+			std::string value;
+			if (!next(value)) {
+				return false;
+			}
+			char *end = nullptr;
+			const long port = strtol(value.c_str(), &end, 10);
+			if (!end || *end != '\0' || port < 1 || port > 65535) {
+				r_error = "invalid --http-port value: " + value;
+				return false;
+			}
+			r_options.http_port = (int)port;
+		} else if (arg == "--http-host") {
+			if (!next(r_options.http_host)) {
+				return false;
+			}
+		} else if (arg == "--http-path") {
+			if (!next(r_options.http_path)) {
+				return false;
+			}
+			if (r_options.http_path.empty() || r_options.http_path[0] != '/') {
+				r_error = "--http-path must start with '/'";
+				return false;
+			}
+		} else if (arg == "--http-token") {
+			if (!next(r_options.http_token)) {
+				return false;
+			}
+		} else if (arg == "--http-allow-remote") {
+			r_options.http_allow_remote = true;
+		} else if (arg == "--list-backends") {
+			r_options.list_backends = true;
+		} else if (arg == "--install-backend") {
+			if (!next(r_options.install_backend)) {
+				return false;
+			}
+		} else if (arg == "--check-backends") {
+			r_options.check_backends = true;
+		} else if (arg == "--backend-config") {
+			if (!next(r_options.backend_config)) {
 				return false;
 			}
 		} else if (arg == "--home") {
@@ -677,8 +728,41 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 		// A notification has no reply to wait for.
 		return true;
 	}
+	return wait_for_response(id_key(JSONValue::make_string(p_id)), "'" + p_method + "'", r_response, r_error);
+}
 
-	// Bounded so a wedged editor fails the script instead of hanging it.
+bool Relay::exchange(const JSONValueRef &p_message, JSONValueRef &r_response, std::string &r_error) {
+	if (!p_message || !p_message->is_object()) {
+		r_error = "message is not a JSON-RPC object";
+		return false;
+	}
+	if (!ensure_connected(r_error)) {
+		return false;
+	}
+	if (!socket_send_line(p_message->to_string())) {
+		r_error = "failed to send the request to the editor";
+		return false;
+	}
+
+	const std::string key = id_key(p_message->get("id"));
+	if (key.empty()) {
+		// A notification: accepted, with nothing to wait for.
+		return true;
+	}
+
+	JSONValueRef method = p_message->get("method");
+	const std::string what = method && method->is_string()
+			? "'" + method->get_string() + "'"
+			: std::string("the request");
+	return wait_for_response(key, what, r_response, r_error);
+}
+
+bool Relay::wait_for_response(const std::string &p_id_key, const std::string &p_what, JSONValueRef &r_response, std::string &r_error) {
+	if (p_id_key.empty()) {
+		return true;
+	}
+
+	// Bounded so a wedged editor fails the caller instead of hanging it.
 	const int slice_ms = 100;
 	int waited_ms = 0;
 	const int timeout_ms = 30000;
@@ -689,13 +773,12 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 			socket_buffer.erase(0, newline + 1);
 			JSONValueRef parsed = json_parse(line);
 			if (parsed && parsed->is_object()) {
-				JSONValueRef id = parsed->get("id");
-				if (id && id->is_string() && id->get_string() == p_id) {
+				if (id_key(parsed->get("id")) == p_id_key) {
 					r_response = parsed;
 					return true;
 				}
 				// Notifications and unrelated frames are not what we are waiting for.
-				log(LOG_DEBUG, "one-shot: ignoring " + line);
+				log(LOG_DEBUG, "ignoring " + line);
 			}
 			newline = socket_buffer.find('\n');
 		}
@@ -713,7 +796,7 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 		if (!socket_ready) {
 			waited_ms += slice_ms;
 			if (waited_ms >= timeout_ms) {
-				r_error = "the editor did not answer '" + p_method + "' within 30s";
+				r_error = "the editor did not answer " + p_what + " within 30s";
 				return false;
 			}
 			continue;
@@ -721,7 +804,8 @@ bool Relay::request(const std::string &p_method, const std::string &p_id, const 
 		char chunk[8192];
 		const long read_bytes = platform::socket_recv(socket, chunk, sizeof(chunk));
 		if (read_bytes <= 0) {
-			r_error = "the editor closed the connection while handling '" + p_method + "'";
+			disconnect("the editor closed the connection", false);
+			r_error = "the editor closed the connection while handling " + p_what;
 			return false;
 		}
 		socket_buffer.append(chunk, (size_t)read_bytes);

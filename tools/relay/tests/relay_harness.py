@@ -14,13 +14,15 @@ RELAY_BINARY = os.path.join(REPO_ROOT, "bin", "godot-ai-relay")
 class RelayProcess:
     """Runs the relay with a private state directory and line-oriented stdio."""
 
-    def __init__(self, args=None, home=None, env=None):
+    def __init__(self, args=None, home=None, env=None, owns_home=None):
         if not os.path.exists(RELAY_BINARY):
             raise RuntimeError(
                 "relay binary not found at %s; run tools/relay/build.sh" % RELAY_BINARY
             )
         self.home = home or tempfile.mkdtemp(prefix="godot-ai-relay-test-")
-        self._owns_home = home is None
+        # A caller that had to create the directory itself (to seed it before the
+        # relay starts) can still hand over cleanup.
+        self._owns_home = (home is None) if owns_home is None else owns_home
         os.makedirs(os.path.join(self.home, "instances"), exist_ok=True)
 
         process_env = dict(os.environ)
@@ -90,6 +92,34 @@ class RelayProcess:
                 return None
             time.sleep(0.01)
         return None
+
+    def drain_stderr(self):
+        """Everything written to stderr so far, without blocking.
+
+        The HTTP mode announces a generated token there, and a test that blocked on a
+        pipe the relay is not finished with would hang instead of reading it.
+        """
+        return self._drain(self.process.stderr)
+
+    def drain_stdout(self):
+        """Everything written to stdout so far, without blocking."""
+        return self._drain(self.process.stdout)
+
+    @staticmethod
+    def _drain(stream):
+        if stream is None or stream.closed:
+            return ""
+        os.set_blocking(stream.fileno(), False)
+        chunks = []
+        while True:
+            try:
+                chunk = stream.read()
+            except (BlockingIOError, ValueError):
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", "replace")
 
     def close_stdin(self):
         if self.process.stdin and not self.process.stdin.closed:

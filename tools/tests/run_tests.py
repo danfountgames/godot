@@ -238,6 +238,57 @@ def the_command_line_probe_prints_json():
     assert_true("verdict" in report, "the probe output has no verdict: %r" % report)
 
 
+# --- the export decision (O3) ------------------------------------------------
+# The decision is that exported games get none of this: the tooling drives an editor,
+# and a shipped game has no editor to drive. These check the decision holds, because
+# "editor-only" is a claim about a build, not a comment.
+
+def load_module_config():
+    import importlib.util
+    path = os.path.join(REPO_ROOT, "modules", "godot_ai", "config.py")
+    spec = importlib.util.spec_from_file_location("godot_ai_config", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeEnv:
+    def __init__(self, editor_build):
+        self.editor_build = editor_build
+
+
+@test
+def the_module_refuses_to_build_into_anything_but_an_editor():
+    config = load_module_config()
+    # The platform matrix: the answer must not depend on which one is building.
+    for platform_name in ("linuxbsd", "windows", "macos", "android", "ios", "web"):
+        if config.can_build(FakeEnv(editor_build=False), platform_name):
+            raise AssertionError("the module would build into a %s template" % platform_name)
+        if not config.can_build(FakeEnv(editor_build=True), platform_name):
+            raise AssertionError("the module refuses to build into the %s editor" % platform_name)
+
+
+@test
+def an_export_template_contains_none_of_the_tooling():
+    binaries = []
+    binary_dir = os.path.join(REPO_ROOT, "bin")
+    if os.path.isdir(binary_dir):
+        binaries = [os.path.join(binary_dir, name) for name in os.listdir(binary_dir)
+                    if "template" in name and os.path.isfile(os.path.join(binary_dir, name))]
+    if not binaries:
+        raise Skip("no export template has been built (scons target=template_release)")
+
+    # Reading the whole binary is cheaper than shelling out to `strings`, and works
+    # the same on a machine that does not have it.
+    for path in binaries:
+        with open(path, "rb") as handle:
+            contents = handle.read()
+        for marker in (b"Godot_ManageNode", b"Godot_CaptureViewport", b"MCPService",
+                       b"godot_ai"):
+            if marker in contents:
+                raise AssertionError("%s leaked into %s" % (marker.decode(), os.path.basename(path)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-k", "--filter", help="only run tests whose name contains this")

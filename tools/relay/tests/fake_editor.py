@@ -34,6 +34,7 @@ class FakeEditor:
         project_path="/tmp/project",
         answer_handshake=True,
         raw_handshake_response=None,
+        multi_connection=False,
     ):
         self.bridge_version = bridge_version
         self.reject_reason = reject_reason
@@ -42,6 +43,8 @@ class FakeEditor:
         self.answer_handshake = answer_handshake
         self.raw_handshake_response = raw_handshake_response
 
+        self.multi_connection = multi_connection
+        self._connections = []
         self.received = []           # Every decoded message from the relay.
         self.handshake_params = None
         self.connection_count = 0
@@ -54,7 +57,7 @@ class FakeEditor:
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server.bind(("127.0.0.1", 0))
-        self._server.listen(1)
+        self._server.listen(16)
         self.port = self._server.getsockname()[1]
 
         self._stop = False
@@ -75,32 +78,45 @@ class FakeEditor:
                 return
             with self._lock:
                 self._conn = conn
+                self._connections.append(conn)
             self.connected.set()
             self.connection_count += 1
-            buffer = b""
-            try:
-                while not self._stop:
-                    chunk = conn.recv(8192)
-                    if not chunk:
-                        break
-                    buffer += chunk
-                    while b"\n" in buffer:
-                        line, buffer = buffer.split(b"\n", 1)
-                        if line.strip():
-                            self._handle(line.decode("utf-8"))
-            except (OSError, RuntimeError):
-                pass
-            finally:
-                with self._lock:
-                    if self._conn is conn:
-                        self._conn = None
-                try:
-                    conn.close()
-                except OSError:
-                    pass
-                self.disconnected.set()
+            if self.multi_connection:
+                # The HTTP transport gives every session its own editor connection, so
+                # a fake editor that serves them one at a time would deadlock the test
+                # rather than exercise the isolation it is meant to check.
+                thread = threading.Thread(target=self._read_connection, args=(conn,), daemon=True)
+                thread.start()
+            else:
+                self._read_connection(conn)
 
-    def _handle(self, line):
+    def _read_connection(self, conn):
+        buffer = b""
+        try:
+            while not self._stop:
+                chunk = conn.recv(8192)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    if line.strip():
+                        self._handle(line.decode("utf-8"), conn)
+        except (OSError, RuntimeError):
+            pass
+        finally:
+            with self._lock:
+                if self._conn is conn:
+                    self._conn = None
+                if conn in self._connections:
+                    self._connections.remove(conn)
+            try:
+                conn.close()
+            except OSError:
+                pass
+            self.disconnected.set()
+
+    def _handle(self, line, conn=None):
         message = json.loads(line)
         self.received.append(message)
         if message.get("method") == "godot/hello":
@@ -108,14 +124,14 @@ class FakeEditor:
             if not self.answer_handshake:
                 return
             if self.raw_handshake_response is not None:
-                self.send_raw(self.raw_handshake_response)
+                self.send_raw(self.raw_handshake_response, conn)
                 return
             if self.reject_reason:
                 self.send({
                     "jsonrpc": "2.0",
                     "id": message["id"],
                     "error": {"code": -32000, "message": self.reject_reason},
-                })
+                }, conn)
                 return
             self.send({
                 "jsonrpc": "2.0",
@@ -125,13 +141,13 @@ class FakeEditor:
                     "editor_version": self.editor_version,
                     "project_path": self.project_path,
                 },
-            })
+            }, conn)
             return
 
         if self._responder is not None:
             reply = self._responder(message)
             if reply is not None:
-                self.send(reply)
+                self.send(reply, conn)
             return
 
         if "id" in message and message["id"] is not None:
@@ -139,16 +155,17 @@ class FakeEditor:
                 "jsonrpc": "2.0",
                 "id": message["id"],
                 "result": {"echo": message.get("method")},
-            })
+            }, conn)
 
-    def send(self, message):
-        self.send_raw(json.dumps(message))
+    def send(self, message, conn=None):
+        self.send_raw(json.dumps(message), conn)
 
-    def send_raw(self, text):
+    def send_raw(self, text, conn=None):
         with self._lock:
-            if self._conn is None:
+            target = conn if conn is not None else self._conn
+            if target is None:
                 return
-            self._conn.sendall(text.encode("utf-8") + b"\n")
+            target.sendall(text.encode("utf-8") + b"\n")
 
     def requests_for(self, method):
         return [m for m in self.received if m.get("method") == method]
@@ -168,6 +185,12 @@ class FakeEditor:
 
     def close(self):
         self._stop = True
+        for conn in list(self._connections):
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
+            except OSError:
+                pass
         self.close_connection()
         try:
             # shutdown() before close() reliably wakes a thread blocked in accept().
