@@ -65,14 +65,30 @@ public:
 		actions.push_back("press");
 		actions.push_back("release");
 		actions.push_back("click");
+		actions.push_back("drag");
+		actions.push_back("scroll");
 		properties["action"] = MCPSchema::enum_property(
 				"A click is a press and a release at the same point; sending a press alone "
-				"leaves the control latched.",
+				"leaves the control latched. A drag is a press, motion in steps, and a release, "
+				"in one call - the motion between the ends is what a slider or a camera reads.",
 				actions, "click");
 		properties["x"] = MCPSchema::integer_property("Horizontal position in game window pixels.");
 		properties["y"] = MCPSchema::integer_property("Vertical position in game window pixels.");
 		properties["button"] = MCPSchema::integer_property(
 				"Mouse button index: 1 left, 2 right, 3 middle.", 1);
+		properties["to_x"] = MCPSchema::integer_property("Where a drag ends, horizontally.");
+		properties["to_y"] = MCPSchema::integer_property("Where a drag ends, vertically.");
+		properties["steps"] = MCPSchema::integer_property(
+				"How many motion events a drag is broken into. More is smoother and slower; a "
+				"game with a movement threshold needs enough that no single step jumps past it.",
+				8);
+		Vector<String> directions;
+		directions.push_back("up");
+		directions.push_back("down");
+		directions.push_back("left");
+		directions.push_back("right");
+		properties["direction"] = MCPSchema::enum_property("Which way to scroll.", directions, "down");
+		properties["amount"] = MCPSchema::integer_property("How many wheel notches to send.", 3);
 		Vector<String> required;
 		required.push_back("x");
 		required.push_back("y");

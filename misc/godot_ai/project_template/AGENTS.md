@@ -139,12 +139,6 @@ below, register a project command, or record the gap honestly as unverified.
   it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
-- **No drag and no scroll with the mouse, in the game or the editor.**
-  `Godot_SendPointerInput` and `Godot_SendEditorInput` do moves, clicks and keys. A
-  slider you must drag, a camera you must swipe, a list you must scroll with the wheel —
-  none of those can be driven yet. `Godot_SendTouchInput` *does* have drag, so a
-  touch-driven equivalent may be reachable. Record the gap rather than claiming the
-  interaction was tested.
 - **No touch cancellation.** A touch the OS takes away — a notification, an incoming
   call — cannot be simulated, so that recovery path stays unverified.
 - **Runtime errors carry a call site, not a call stack.** `Godot_GetRuntimeErrors`
@@ -192,6 +186,12 @@ below, register a project command, or record the gap honestly as unverified.
   without having watched the run, and `1 failed` is not something you can act on.
   `Godot_ListSceneTests` finds scenes named `test_*.tscn`. The game is stopped after a
   run either way, so a test never leaks into the next thing you do.
+- **A drag is one call, and `steps` matters.** `Godot_SendPointerInput` and
+  `Godot_SendEditorInput` take `action: "drag"` with `to_x`/`to_y` and a step count. The
+  motion between the ends is the whole content of a drag — a slider, a camera or a swipe
+  reads deltas, not endpoints — so give it enough steps that no single one jumps past
+  whatever threshold the thing you are dragging uses. `action: "scroll"` sends real
+  wheel notches with a `direction` and an `amount`.
 - **A changed asset is not an imported asset.** Writing a `.png` into the project does
   not give you a texture; the editor's importer has to run, and until it does the game
   keeps loading the old one. After touching any asset on disk, call

@@ -52,6 +52,32 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 """
 
+SURFACE_SCRIPT = """extends Control
+
+# Counts only what a real drag and a real wheel produce. A drag implemented as a press
+# at one point and a release at another - which is what "drag" most easily degrades into
+# - leaves drag_events at zero, because the motion between the ends never happened. And
+# motion that does not carry the held button is a hover, not a drag, so button_mask is
+# checked rather than assumed.
+var drag_distance := 0.0
+var drag_events := 0
+var drag_had_button := false
+var scroll_up := 0
+var scroll_down := 0
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		if event.button_mask != 0:
+			drag_had_button = true
+			drag_distance += event.relative.length()
+			drag_events += 1
+	elif event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			scroll_up += 1
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			scroll_down += 1
+"""
+
 CHIMES_SCRIPT = """extends Node
 
 # Two players, one stream. Setting play_count to 2 makes the same sound play twice at
@@ -113,11 +139,12 @@ NOT_A_TEST_SCENE = """[gd_scene format=3 uid="uid://bqxaie2et09"]
 [node name="NotATest" type="Node2D"]
 """
 
-MAIN_SCENE = """[gd_scene load_steps=4 format=3 uid="uid://bqxaie2e001"]
+MAIN_SCENE = """[gd_scene load_steps=5 format=3 uid="uid://bqxaie2e001"]
 
 [ext_resource type="Script" path="res://scripts/target.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/chimes.gd" id="2"]
 [ext_resource type="AudioStream" path="res://audio/chime.wav" id="3"]
+[ext_resource type="Script" path="res://scripts/surface.gd" id="4"]
 
 [node name="Main" type="Node2D"]
 
@@ -138,6 +165,13 @@ offset_right = 300.0
 offset_bottom = 160.0
 text = "Target"
 script = ExtResource("1")
+
+[node name="Surface" type="Control" parent="Hud"]
+offset_left = 500.0
+offset_top = 100.0
+offset_right = 900.0
+offset_bottom = 500.0
+script = ExtResource("4")
 
 [node name="Chimes" type="Node" parent="."]
 script = ExtResource("2")
@@ -380,6 +414,8 @@ def build_project(root):
         handle.write(TARGET_SCRIPT)
     with open(os.path.join(root, "scripts", "chimes.gd"), "w") as handle:
         handle.write(CHIMES_SCRIPT)
+    with open(os.path.join(root, "scripts", "surface.gd"), "w") as handle:
+        handle.write(SURFACE_SCRIPT)
     os.makedirs(os.path.join(root, "audio"), exist_ok=True)
     write_wav(os.path.join(root, "audio", "chime.wav"))
     with open(os.path.join(root, "project.godot"), "w") as handle:
@@ -960,6 +996,75 @@ def run(editor_binary, display):
                 check("outside the game window" in refusal_text(reply),
                       "the refusal does not explain itself: %r" % refusal_text(reply))
                 print("PASS Godot_SendPointerInput refuses coordinates off the window")
+
+                # --- drag and scroll ---------------------------------------------
+                # The motion *between* the ends is the whole content of a drag: a
+                # slider, a camera or a swipe reads deltas, not the two endpoints. The
+                # fixture counts only motion that carries a held button, so a drag
+                # degraded into a press at one point and a release at another scores
+                # zero here.
+                def surface(field):
+                    probe = call({"jsonrpc": "2.0", "id": 190, "method": "tools/call",
+                                  "params": {"name": "Godot_GetRuntimeProperty",
+                                             "arguments": {"path": "/root/Main/Hud/Surface",
+                                                           "property": field}}})
+                    check(not refused(probe),
+                          "reading Surface.%s failed: %s" % (field, refusal_text(probe)))
+                    return probe["result"]["structuredContent"]["value"]
+
+                check(surface("drag_events") == 0, "the surface saw a drag before one was sent")
+                reply = call({"jsonrpc": "2.0", "id": 191, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"action": "drag",
+                                                       "x": 550, "y": 150,
+                                                       "to_x": 850, "to_y": 150,
+                                                       "steps": 10}}})
+                check(not refused(reply), "dragging failed: %s" % refusal_text(reply))
+                dragged = reply["result"]["structuredContent"]
+                check(dragged["events"] == 13,
+                      "a 10-step drag should be a move, a press, 10 motions and a release: %r"
+                      % dragged)
+                check(surface("drag_events") == 10,
+                      "the surface did not see 10 motion events: %r" % surface("drag_events"))
+                check(surface("drag_had_button") is True,
+                      "the drag's motion did not carry the held button, so a game asking "
+                      "button_mask would read it as a hover")
+                distance = surface("drag_distance")
+                check(abs(distance - 300.0) < 2.0,
+                      "the drag covered %r pixels, not the 300 between its ends" % distance)
+
+                reply = call({"jsonrpc": "2.0", "id": 192, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"action": "drag",
+                                                       "x": 550, "y": 150,
+                                                       "to_x": 99999, "to_y": 150}}})
+                check(refused(reply), "a drag ending off the window was accepted")
+                check("ends outside" in refusal_text(reply),
+                      "the refusal does not say the *end* is the problem: %r" % refusal_text(reply))
+                print("PASS Godot_SendPointerInput drags with real motion between the ends")
+
+                reply = call({"jsonrpc": "2.0", "id": 193, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"action": "scroll", "x": 700, "y": 300,
+                                                       "direction": "down", "amount": 4}}})
+                check(not refused(reply), "scrolling failed: %s" % refusal_text(reply))
+                check(surface("scroll_down") == 4,
+                      "the surface saw %r wheel-down notches, not 4" % surface("scroll_down"))
+                check(surface("scroll_up") == 0, "scrolling down produced wheel-up events")
+
+                call({"jsonrpc": "2.0", "id": 194, "method": "tools/call",
+                      "params": {"name": "Godot_SendPointerInput",
+                                 "arguments": {"action": "scroll", "x": 700, "y": 300,
+                                               "direction": "up", "amount": 2}}})
+                check(surface("scroll_up") == 2,
+                      "the surface saw %r wheel-up notches, not 2" % surface("scroll_up"))
+
+                reply = call({"jsonrpc": "2.0", "id": 195, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"action": "scroll", "x": 700, "y": 300,
+                                                       "direction": "sideways"}}})
+                check(refused(reply), "an unknown scroll direction was accepted")
+                print("PASS Godot_SendPointerInput scrolls with real wheel events")
 
                 # --- reading runtime state back --------------------------------
                 # Godot_SetRuntimeProperty set the player's position earlier. Until now

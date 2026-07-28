@@ -402,6 +402,40 @@ def run(editor_binary, display):
               "Escape sent through Godot_SendEditorInput did not dismiss the dialog")
         print("PASS Godot_SendEditorInput delivered a keystroke that dismissed the dialog")
 
+        # Drag and scroll, editor side. These are asserted on delivery rather than on
+        # effect: this runs against the live editor, and a drag with a visible outcome
+        # would be a drag that moved one of its docks. The behavioural proof that a drag
+        # carries real motion between its ends is in run_editor_e2e.py, against a game
+        # control that counts deltas and refuses to be fooled by two endpoints.
+        editor_box = window_geometry(d, editor_window)
+        inside_x = editor_box["X"] + editor_box["WIDTH"] // 2
+        inside_y = editor_box["Y"] + editor_box["HEIGHT"] // 2
+        reply = call({"jsonrpc": "2.0", "id": 22, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "scroll", "x": inside_x,
+                                               "y": inside_y, "amount": 2}}})
+        check(not refused(reply), "scrolling the editor failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["events"] == 5,
+              "two notches should be a move plus two press/release pairs: %r"
+              % reply["result"]["structuredContent"])
+
+        reply = call({"jsonrpc": "2.0", "id": 23, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "drag", "x": inside_x, "y": inside_y,
+                                               "to_x": inside_x + 40, "to_y": inside_y,
+                                               "steps": 4}}})
+        check(not refused(reply), "dragging in the editor failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["events"] == 7,
+              "a 4-step drag should be a move, a press, 4 motions and a release: %r"
+              % reply["result"]["structuredContent"])
+
+        reply = call({"jsonrpc": "2.0", "id": 24, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "drag", "x": inside_x, "y": inside_y,
+                                               "to_x": 30000, "to_y": 30000}}})
+        check(refused(reply), "a drag ending outside every window was accepted")
+        print("PASS Godot_SendEditorInput drags and scrolls, and refuses a drag off the window")
+
         reply = call({"jsonrpc": "2.0", "id": 17, "method": "tools/call",
                       "params": {"name": "Godot_SendEditorInput",
                                  "arguments": {"action": "click", "x": 30000, "y": 30000}}})

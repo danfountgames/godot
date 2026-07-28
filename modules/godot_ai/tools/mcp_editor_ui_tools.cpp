@@ -506,9 +506,22 @@ public:
 	virtual Dictionary get_input_schema() const override {
 		Dictionary properties;
 		properties["action"] = MCPSchema::string_property(
-				"move, press, release, click, type, key_press, key_release or key_tap.", "click");
+				"move, press, release, click, drag, scroll, type, key_press, key_release or "
+				"key_tap.",
+				"click");
 		properties["x"] = MCPSchema::integer_property("Screen x, for the pointer actions.", 0);
 		properties["y"] = MCPSchema::integer_property("Screen y, for the pointer actions.", 0);
+		properties["to_x"] = MCPSchema::integer_property("Screen x where a drag ends.", 0);
+		properties["to_y"] = MCPSchema::integer_property("Screen y where a drag ends.", 0);
+		properties["steps"] = MCPSchema::integer_property(
+				"How many motion events a drag is broken into.", 8);
+		Vector<String> directions;
+		directions.push_back("up");
+		directions.push_back("down");
+		directions.push_back("left");
+		directions.push_back("right");
+		properties["direction"] = MCPSchema::enum_property("Which way to scroll.", directions, "down");
+		properties["amount"] = MCPSchema::integer_property("How many wheel notches to send.", 3);
 		properties["button"] = MCPSchema::integer_property(
 				"Mouse button: 1 left, 2 right, 3 middle.", 1);
 		properties["text"] = MCPSchema::string_property("Text to type, for 'type'.");
@@ -564,13 +577,13 @@ public:
 		const String window_title = String(p_arguments.get("window", String())).strip_edges();
 
 		const bool is_pointer = action == "move" || action == "press" || action == "release" ||
-				action == "click";
+				action == "click" || action == "drag" || action == "scroll";
 		const bool is_key = action == "type" || action == "key_press" ||
 				action == "key_release" || action == "key_tap";
 		if (!is_pointer && !is_key) {
 			r_error.set(MCPToolError::INVALID_ARGUMENTS,
-					vformat("unknown action '%s'; expected move, press, release, click, type, "
-							"key_press, key_release or key_tap",
+					vformat("unknown action '%s'; expected move, press, release, click, drag, "
+							"scroll, type, key_press, key_release or key_tap",
 							action));
 			return Dictionary();
 		}
@@ -594,32 +607,61 @@ public:
 				return Dictionary();
 			}
 
-			const Vector2 local = target.local;
-			auto motion = [&]() {
+			// A drag's destination is resolved the same way its start was, so it is
+			// checked against the same window rather than assumed to be in it.
+			Point2i local_end = target.local;
+			if (action == "drag") {
+				const Point2i end((int)p_arguments.get("to_x", 0), (int)p_arguments.get("to_y", 0));
+				Target destination;
+				String end_error;
+				if (!resolve_target(end, window_title, destination, end_error)) {
+					r_error.set(MCPToolError::INVALID_ARGUMENTS, end_error);
+					return Dictionary();
+				}
+				if (destination.window_id != target.window_id) {
+					r_error.set(MCPToolError::INVALID_ARGUMENTS,
+							"a drag has to start and end in the same window");
+					return Dictionary();
+				}
+				local_end = destination.local;
+			}
+
+			// Tracked locally, not read back from Input: `relative` is the whole content
+			// of a drag, and a delta against a position that has not caught up is zero.
+			Vector2 previous = input->get_mouse_position();
+			BitField<MouseButtonMask> held;
+
+			auto motion_to = [&](const Vector2 &p_to) {
 				Ref<InputEventMouseMotion> event;
 				event.instantiate();
 				event->set_window_id(target.window_id);
-				event->set_position(local);
-				event->set_global_position(local);
-				event->set_relative(local - input->get_mouse_position());
+				event->set_position(p_to);
+				event->set_global_position(p_to);
+				event->set_relative(p_to - previous);
+				event->set_button_mask(held);
 				input->parse_input_event(event);
+				previous = p_to;
 			};
-			auto press = [&](bool p_pressed) {
+			auto press_at = [&](const Vector2 &p_at, bool p_pressed) {
+				held = p_pressed ? mouse_button_to_mask((MouseButton)button)
+								 : BitField<MouseButtonMask>();
 				Ref<InputEventMouseButton> event;
 				event.instantiate();
 				event->set_window_id(target.window_id);
-				event->set_position(local);
-				event->set_global_position(local);
+				event->set_position(p_at);
+				event->set_global_position(p_at);
 				event->set_button_index((MouseButton)button);
 				event->set_pressed(p_pressed);
-				event->set_button_mask(p_pressed ? mouse_button_to_mask((MouseButton)button)
-												 : BitField<MouseButtonMask>());
+				event->set_button_mask(held);
 				event->set_shift_pressed(shift);
 				event->set_ctrl_pressed(ctrl);
 				event->set_alt_pressed(alt);
 				event->set_meta_pressed(meta);
 				input->parse_input_event(event);
 			};
+			const Vector2 local = target.local;
+			auto motion = [&]() { motion_to(local); };
+			auto press = [&](bool p_pressed) { press_at(local, p_pressed); };
 
 			if (action == "move") {
 				motion();
@@ -631,6 +673,55 @@ public:
 			} else if (action == "release") {
 				press(false);
 				events = 1;
+			} else if (action == "drag") {
+				const int steps = MAX(1, (int)p_arguments.get("steps", 8));
+				motion();
+				press(true);
+				for (int step = 1; step <= steps; step++) {
+					motion_to(local.lerp(Vector2(local_end), (float)step / (float)steps));
+					// Flushed each time, or the engine coalesces the whole drag into one
+					// motion event with the summed delta and `steps` means nothing.
+					input->flush_buffered_events();
+				}
+				press_at(local_end, false);
+				events = 3 + steps;
+			} else if (action == "scroll") {
+				const String direction = String(p_arguments.get("direction", "down"));
+				const int amount = MAX(1, (int)p_arguments.get("amount", 3));
+				MouseButton wheel = MouseButton::WHEEL_DOWN;
+				if (direction == "up") {
+					wheel = MouseButton::WHEEL_UP;
+				} else if (direction == "down") {
+					wheel = MouseButton::WHEEL_DOWN;
+				} else if (direction == "left") {
+					wheel = MouseButton::WHEEL_LEFT;
+				} else if (direction == "right") {
+					wheel = MouseButton::WHEEL_RIGHT;
+				} else {
+					r_error.set(MCPToolError::INVALID_ARGUMENTS,
+							vformat("unknown scroll direction '%s'; expected up, down, left or right",
+									direction));
+					return Dictionary();
+				}
+				motion();
+				// A notch is a press and a release of a wheel button; a press alone
+				// leaves every scroll handler waiting for the other half.
+				for (int tick = 0; tick < amount; tick++) {
+					for (int pressed = 1; pressed >= 0; pressed--) {
+						Ref<InputEventMouseButton> event;
+						event.instantiate();
+						event->set_window_id(target.window_id);
+						event->set_position(local);
+						event->set_global_position(local);
+						event->set_button_index(wheel);
+						event->set_pressed(pressed == 1);
+						event->set_factor(1.0f);
+						event->set_button_mask(pressed == 1 ? mouse_button_to_mask(wheel)
+															: BitField<MouseButtonMask>());
+						input->parse_input_event(event);
+					}
+				}
+				events = 1 + amount * 2;
 			} else {
 				// A click is a press and a release. Sending only the press leaves the
 				// control latched, and every later interaction inherits that.

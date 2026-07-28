@@ -598,11 +598,23 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 			p_arguments.has("x") ? (float)p_arguments["x"] : 0.0f,
 			p_arguments.has("y") ? (float)p_arguments["y"] : 0.0f);
 	const int button = p_arguments.has("button") ? (int)p_arguments["button"] : (int)MouseButton::LEFT;
+	const Vector2 destination(
+			p_arguments.has("to_x") ? (float)p_arguments["to_x"] : position.x,
+			p_arguments.has("to_y") ? (float)p_arguments["to_y"] : position.y);
 
 	const Size2i window_size = tree->get_root()->get_size();
-	if (position.x < 0 || position.y < 0 || position.x >= window_size.width || position.y >= window_size.height) {
+	auto off_window = [&](const Vector2 &p_point) {
+		return p_point.x < 0 || p_point.y < 0 || p_point.x >= window_size.width ||
+				p_point.y >= window_size.height;
+	};
+	if (off_window(position)) {
 		r_error = vformat("(%d, %d) is outside the game window, which is %dx%d",
 				(int)position.x, (int)position.y, window_size.width, window_size.height);
+		return Dictionary();
+	}
+	if (action == "drag" && off_window(destination)) {
+		r_error = vformat("a drag to (%d, %d) ends outside the game window, which is %dx%d",
+				(int)destination.x, (int)destination.y, window_size.width, window_size.height);
 		return Dictionary();
 	}
 
@@ -610,24 +622,55 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 	// layer delivers real hardware events. That is the whole point: a shortcut that
 	// called the control directly would pass a signal-based test and fail a test that
 	// looks for the InputEvent.
+	// The pointer's own idea of where it is, tracked locally rather than read back from
+	// Input between events. `relative` is the whole content of a drag for anything that
+	// moves a camera or a slider, and a delta computed against a position that has not
+	// caught up yet is silently zero.
+	Vector2 previous = input->get_mouse_position();
+	BitField<MouseButtonMask> held;
+
 	auto motion_to = [&](const Vector2 &p_to) {
 		Ref<InputEventMouseMotion> motion;
 		motion.instantiate();
 		motion->set_position(p_to);
 		motion->set_global_position(p_to);
-		motion->set_relative(p_to - input->get_mouse_position());
+		motion->set_relative(p_to - previous);
+		// Motion during a drag has to carry the button that is down. A game that asks
+		// `event.button_mask` to tell a drag from a hover sees nothing without it.
+		motion->set_button_mask(held);
 		input->parse_input_event(motion);
+		previous = p_to;
 	};
 
-	auto button_event = [&](bool p_pressed) {
+	auto button_at = [&](const Vector2 &p_at, bool p_pressed) {
+		held = p_pressed ? mouse_button_to_mask((MouseButton)button) : BitField<MouseButtonMask>();
 		Ref<InputEventMouseButton> event;
 		event.instantiate();
-		event->set_position(position);
-		event->set_global_position(position);
+		event->set_position(p_at);
+		event->set_global_position(p_at);
 		event->set_button_index((MouseButton)button);
 		event->set_pressed(p_pressed);
-		event->set_button_mask(p_pressed ? mouse_button_to_mask((MouseButton)button) : BitField<MouseButtonMask>());
+		event->set_button_mask(held);
 		input->parse_input_event(event);
+	};
+	auto button_event = [&](bool p_pressed) { button_at(position, p_pressed); };
+
+	auto wheel_tick = [&](MouseButton p_wheel, float p_factor) {
+		// A wheel notch is a press and a release of a wheel "button", which is how the
+		// engine models scrolling; a press with no release leaves ScrollContainer and
+		// every custom handler waiting for the other half.
+		for (int pressed = 1; pressed >= 0; pressed--) {
+			Ref<InputEventMouseButton> event;
+			event.instantiate();
+			event->set_position(position);
+			event->set_global_position(position);
+			event->set_button_index(p_wheel);
+			event->set_pressed(pressed == 1);
+			event->set_factor(p_factor);
+			event->set_button_mask(pressed == 1 ? mouse_button_to_mask(p_wheel)
+												: BitField<MouseButtonMask>());
+			input->parse_input_event(event);
+		}
 	};
 
 	int events = 0;
@@ -649,8 +692,52 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 		button_event(true);
 		button_event(false);
 		events = 3;
+	} else if (action == "drag") {
+		// A press, motion in steps, then a release. One call, because a drag split
+		// across three calls is three chances for something else to move the pointer,
+		// and because the intermediate motion is the part that carries the meaning.
+		const int steps = MAX(1, p_arguments.has("steps") ? (int)p_arguments["steps"] : 8);
+		motion_to(position);
+		button_event(true);
+		for (int step = 1; step <= steps; step++) {
+			motion_to(position.lerp(destination, (float)step / (float)steps));
+			// Flushed after each one, or `steps` means nothing. Godot coalesces motion
+			// events within a frame - real hardware polls far faster than it draws - so
+			// ten motions sent back to back arrive as one event with the summed delta,
+			// and a game with a movement threshold sees a single jump straight past it
+			// instead of the gradual drag it was asked for.
+			input->flush_buffered_events();
+		}
+		button_at(destination, false);
+		events = 3 + steps;
+	} else if (action == "scroll") {
+		const String direction = p_arguments.has("direction")
+				? String(p_arguments["direction"])
+				: String("down");
+		const int amount = MAX(1, p_arguments.has("amount") ? (int)p_arguments["amount"] : 3);
+		MouseButton wheel = MouseButton::WHEEL_DOWN;
+		if (direction == "up") {
+			wheel = MouseButton::WHEEL_UP;
+		} else if (direction == "down") {
+			wheel = MouseButton::WHEEL_DOWN;
+		} else if (direction == "left") {
+			wheel = MouseButton::WHEEL_LEFT;
+		} else if (direction == "right") {
+			wheel = MouseButton::WHEEL_RIGHT;
+		} else {
+			r_error = vformat("unknown scroll direction '%s'; expected up, down, left or right",
+					direction);
+			return Dictionary();
+		}
+		motion_to(position);
+		for (int tick = 0; tick < amount; tick++) {
+			wheel_tick(wheel, 1.0f);
+		}
+		events = 1 + amount * 2;
 	} else {
-		r_error = vformat("unknown pointer action '%s'; expected move, press, release or click", action);
+		r_error = vformat("unknown pointer action '%s'; expected move, press, release, click, "
+						  "drag or scroll",
+				action);
 		return Dictionary();
 	}
 
@@ -659,6 +746,14 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 	detail["x"] = position.x;
 	detail["y"] = position.y;
 	detail["button"] = button;
+	if (action == "drag") {
+		detail["to_x"] = destination.x;
+		detail["to_y"] = destination.y;
+	}
+	if (action == "scroll") {
+		detail["direction"] = p_arguments.get("direction", "down");
+		detail["amount"] = p_arguments.get("amount", 3);
+	}
 	_record("pointer", detail);
 
 	Dictionary result = detail;
