@@ -131,6 +131,20 @@ class RelayProcess:
         self.cleanup()
 
 
+def run_relay_one_shot(args, home, timeout=30.0):
+    """Runs the relay in --call mode with a private state directory."""
+    process_env = dict(os.environ)
+    process_env["GODOT_AI_HOME"] = home
+    return subprocess.run(
+        [RELAY_BINARY] + list(args),
+        input=b"",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        env=process_env,
+    )
+
+
 def run_relay(args, timeout=10.0, env=None):
     """Runs the relay to completion with empty stdin. Returns CompletedProcess."""
     process_env = dict(os.environ)

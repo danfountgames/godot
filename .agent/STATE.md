@@ -25,8 +25,13 @@ against a running editor.
 
 ## Current vertical slice
 
-S-08 (next): the approvals UI and command palette entries (U1, U2), then the headless
-execution hook (U3).
+S-09 (next): `Godot_CaptureViewport` (T12) and `Godot_AskUser` (T13), then the
+Winsock port that would unblock R8.
+
+S-08 (done): the approvals dialog (U2), command palette and Tools menu entries (U1),
+and the relay's one-shot `--call` mode (U3). The dialog and commands are constructed
+in every headless e2e run, so they cannot crash the editor, but the UI itself cannot
+be clicked without a display - recorded as IMPLEMENTED, not VERIFIED.
 
 S-07 (done): `Godot_ReadOutputLog` (T9) and the persistent/runtime property split
 (T15). `Godot_SetSceneProperty` is undoable and survives a save; `Godot_SetRuntimeProperty`
@@ -57,15 +62,15 @@ produced `res:/…`, which also made `Godot_SearchProject` silently return nothi
 
 ## Ledger IDs in this slice
 
-U1, U2, U3 (next). Just completed: T9, T15 → VERIFIED.
+T12, T13 (next). Just completed: U3 → VERIFIED; U1, U2 → IMPLEMENTED.
 
 ## Last verified state
 
 - Commit `7d8fa581f5`, pushed to `origin/claude/godot-ai-clone-spec-6iz0ly`.
-- `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 35/35 pass.
+- `tools/relay/build.sh` clean; `python3 tools/relay/tests/run_tests.py` → 39/39 pass.
 - Module suite: 44 cases, 318 assertions, all pass. Full engine suite from the
   repository root: 922 cases, 2,395,010 assertions, all pass (no regression).
-- `python3 tools/relay/tests/run_editor_e2e.py` → 28/28 checks pass against a live
+- `python3 tools/relay/tests/run_editor_e2e.py` → 29/29 checks pass against a live
   headless editor, including a create/rename/reparent/undo/save/delete/undo round
   trip verified against the saved scene file, and the shipped example skill read back
   over the protocol.
@@ -103,8 +108,8 @@ pushed as `7d8fa581f5`.
 
 ## Next command
 
-Start U1/U2 by finding how other plugins add editor settings UI and palette entries:
+Start T12 by finding how the editor captures a viewport image:
 
 ```sh
-grep -rn "add_tool_menu_item\|EditorCommandPalette::get_singleton" editor/*.cpp editor/plugins/*.cpp | head
+grep -rn "get_texture()->get_image\|SceneTree::get_root()" editor/editor_node.cpp | head
 ```

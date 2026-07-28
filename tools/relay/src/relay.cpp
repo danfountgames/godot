@@ -82,10 +82,14 @@ static const char *USAGE =
 		"  --client-name <name>       Identify this client to the editor's approval UI.\n"
 		"  --home <path>              Override the relay state directory (GODOT_AI_HOME).\n"
 		"  --handshake-timeout <ms>   Editor handshake timeout in milliseconds (default: 5000).\n"
+		"  --call <tool>              Run one tool and print its result as JSON, then exit.\n"
+		"  --arguments <json>         Arguments object for --call (default: {}).\n"
 		"  --version                  Print the relay version and exit.\n"
 		"  --help                     Print this message and exit.\n"
 		"\n"
-		"Diagnostics are always written to stderr; stdout carries protocol traffic only.\n";
+		"Diagnostics are always written to stderr; stdout carries protocol traffic only.\n"
+		"With --call, stdout carries the tool's result instead - that mode is for scripts,\n"
+		"not for an MCP client.\n";
 
 static bool parse_log_level(const std::string &p_value, LogLevel &r_level) {
 	if (p_value == "error") {
@@ -187,6 +191,20 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			}
 		} else if (arg == "--client-name") {
 			if (!next(r_options.client_name)) {
+				return false;
+			}
+		} else if (arg == "--call") {
+			if (!next(r_options.call_tool)) {
+				return false;
+			}
+		} else if (arg == "--arguments") {
+			if (!next(r_options.call_arguments)) {
+				return false;
+			}
+			std::string parse_error;
+			JSONValueRef parsed = json_parse(r_options.call_arguments, &parse_error);
+			if (!parsed || !parsed->is_object()) {
+				r_error = "--arguments must be a JSON object: " + parse_error;
 				return false;
 			}
 		} else if (arg == "--home") {
@@ -727,6 +745,151 @@ void Relay::handle_editor_line(const std::string &p_line) {
 
 	log(LOG_DEBUG, "<- editor: " + p_line);
 	write_stdout_line(p_line);
+}
+
+bool Relay::request(const std::string &p_method, const std::string &p_id, const JSONValueRef &p_params, JSONValueRef &r_response, std::string &r_error) {
+	JSONValueRef message = JSONValue::make_object();
+	message->set("jsonrpc", JSONValue::make_string("2.0"));
+	if (!p_id.empty()) {
+		message->set("id", JSONValue::make_string(p_id));
+	}
+	message->set("method", JSONValue::make_string(p_method));
+	if (p_params) {
+		message->set("params", p_params);
+	}
+
+	if (!socket_send_line(message->to_string())) {
+		r_error = "failed to send '" + p_method + "' to the editor";
+		return false;
+	}
+	if (p_id.empty()) {
+		// A notification has no reply to wait for.
+		return true;
+	}
+
+	// Bounded so a wedged editor fails the script instead of hanging it.
+	const int slice_ms = 100;
+	int waited_ms = 0;
+	const int timeout_ms = 30000;
+	while (true) {
+		size_t newline = socket_buffer.find('\n');
+		while (newline != std::string::npos) {
+			const std::string line = socket_buffer.substr(0, newline);
+			socket_buffer.erase(0, newline + 1);
+			JSONValueRef parsed = json_parse(line);
+			if (parsed && parsed->is_object()) {
+				JSONValueRef id = parsed->get("id");
+				if (id && id->is_string() && id->get_string() == p_id) {
+					r_response = parsed;
+					return true;
+				}
+				// Notifications and unrelated frames are not what we are waiting for.
+				log(LOG_DEBUG, "one-shot: ignoring " + line);
+			}
+			newline = socket_buffer.find('\n');
+		}
+
+		if (g_terminate) {
+			r_error = "interrupted";
+			return false;
+		}
+		struct pollfd fds;
+		fds.fd = socket_fd;
+		fds.events = POLLIN;
+		fds.revents = 0;
+		const int ready = poll(&fds, 1, slice_ms);
+		if (ready < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			r_error = std::string("poll failed: ") + strerror(errno);
+			return false;
+		}
+		if (ready == 0) {
+			waited_ms += slice_ms;
+			if (waited_ms >= timeout_ms) {
+				r_error = "the editor did not answer '" + p_method + "' within 30s";
+				return false;
+			}
+			continue;
+		}
+		char chunk[8192];
+		const ssize_t read_bytes = recv(socket_fd, chunk, sizeof(chunk), 0);
+		if (read_bytes <= 0) {
+			r_error = "the editor closed the connection while handling '" + p_method + "'";
+			return false;
+		}
+		socket_buffer.append(chunk, (size_t)read_bytes);
+	}
+}
+
+int Relay::run_one_shot() {
+	struct sigaction action;
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = handle_signal;
+	sigaction(SIGINT, &action, nullptr);
+	sigaction(SIGTERM, &action, nullptr);
+	signal(SIGPIPE, SIG_IGN);
+
+	std::string error;
+	if (!ensure_connected(error)) {
+		log(LOG_ERROR, error);
+		return 2;
+	}
+
+	JSONValueRef initialize_params = JSONValue::make_object();
+	initialize_params->set("protocolVersion", JSONValue::make_string("2025-06-18"));
+	initialize_params->set("capabilities", JSONValue::make_object());
+	JSONValueRef client_info = JSONValue::make_object();
+	client_info->set("name", JSONValue::make_string("godot-ai-relay --call"));
+	client_info->set("version", JSONValue::make_string(RELAY_VERSION));
+	initialize_params->set("clientInfo", client_info);
+
+	JSONValueRef response;
+	if (!request("initialize", "one-shot-init", initialize_params, response, error)) {
+		log(LOG_ERROR, error);
+		return 2;
+	}
+	if (response->get("error")) {
+		write_stdout_line(response->to_string());
+		return 1;
+	}
+	if (!request("notifications/initialized", std::string(), nullptr, response, error)) {
+		log(LOG_ERROR, error);
+		return 2;
+	}
+
+	JSONValueRef call_params = JSONValue::make_object();
+	call_params->set("name", JSONValue::make_string(options.call_tool));
+	JSONValueRef arguments = options.call_arguments.empty()
+			? JSONValue::make_object()
+			: json_parse(options.call_arguments);
+	call_params->set("arguments", arguments ? arguments : JSONValue::make_object());
+
+	if (!request("tools/call", "one-shot-call", call_params, response, error)) {
+		log(LOG_ERROR, error);
+		return 2;
+	}
+
+	// In this mode stdout carries the result, not protocol traffic: the caller is a
+	// script, not an MCP client.
+	JSONValueRef result = response->get("result");
+	JSONValueRef failure = response->get("error");
+	if (failure) {
+		write_stdout_line(failure->to_string());
+		return 1;
+	}
+	if (result) {
+		write_stdout_line(result->to_string());
+		JSONValueRef is_error = result->get("isError");
+		if (is_error && is_error->is_bool() && is_error->get_bool()) {
+			return 1;
+		}
+		return 0;
+	}
+
+	write_stdout_line(response->to_string());
+	return 1;
 }
 
 int Relay::run() {

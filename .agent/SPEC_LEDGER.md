@@ -75,9 +75,9 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | S3 | SEC | Skills untrusted by default; allow/deny persisted | S2,F6 | VERIFIED | `MCPSkills::is_allowed`/`set_allowed` | `tests/test_mcp_skills.h` | denied by default; instructions and resources both refused until allowed | approval UI (U2) |
 | S4 | MCP | Supporting resources loaded on demand | S2 | VERIFIED | `MCPSkills::read_resource` | `tests/test_mcp_skills.h`, `run_editor_e2e.py` | on-demand load; traversal out of the skill folder refused | none |
 | S5 | MCP | Skills exposed over the protocol and refreshed live | S3,P5 | VERIFIED | `tools/mcp_skill_tools.cpp` | `run_editor_e2e.py` | Godot_ListSkills/Godot_ReadSkill exercised over the real protocol | live re-scan on change not asserted |
-| U1 | PRI | Command palette entries | F2 | NOT_STARTED | all |
-| U2 | SEC | Settings/status UI incl. approvals | F6,S3 | NOT_STARTED | all |
-| U3 | PRI | Headless execution hook | F3 | NOT_STARTED | all |
+| U1 | PRI | Command palette entries | F2 | IMPLEMENTED | three palette commands plus a Tools menu entry; registration is exercised by every headless e2e run, but invoking them has no automated coverage |
+| U2 | SEC | Settings/status UI incl. approvals | F6,S3 | IMPLEMENTED | `MCPApprovalsDialog` lists pending clients and discovered skills with allow/revoke; the editor builds it headlessly in every e2e run, but the UI itself cannot be exercised without a display |
+| U3 | PRI | Headless execution hook | F3 | VERIFIED | `--call`/`--arguments` one-shot mode in the relay; 4 relay tests plus a live e2e call, with distinct exit codes for tool failure and unreachable editor |
 | D1 | PKG | Developer + user documentation | — | VERIFIED | none for the shipped surface — `modules/godot_ai/README.md` covers architecture, client setup, permissions, the tool catalogue, the registration API and troubleshooting; extend it as tools land |
 | D2 | PKG | `AGENTS.md` repository guidance artifact | — | VERIFIED | none — `AGENTS.md` present, imported by `CLAUDE.md` |
 | D3 | MCP | Example Godot `SKILL.md` that actually loads | S2 | VERIFIED | none — `misc/godot_ai/skills/scene-cleanup/` is copied into the e2e project and read back over the protocol, so the shipped file is the one proven to load |

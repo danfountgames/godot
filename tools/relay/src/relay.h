@@ -75,6 +75,11 @@ struct RelayOptions {
 	// must not stall the relay's event loop, so this is deliberately short.
 	int handshake_timeout_ms = 5000;
 
+	// One-shot mode: run a single tool and print its result instead of serving stdio.
+	// Empty means "serve stdio", which is the normal MCP client path.
+	std::string call_tool;
+	std::string call_arguments; // JSON object, defaults to {}.
+
 	// Parsed but not otherwise meaningful: the relay always speaks MCP.
 	bool mcp = false;
 };
@@ -141,6 +146,10 @@ class Relay {
 
 	void fail_all_pending(int p_code, const std::string &p_message);
 
+	// Sends a request and waits for the response with the same id. One-shot mode
+	// only: the streaming path must never block on a single message.
+	bool request(const std::string &p_method, const std::string &p_id, const JSONValueRef &p_params, JSONValueRef &r_response, std::string &r_error);
+
 	static std::string id_key(const JSONValueRef &p_id);
 
 public:
@@ -151,6 +160,10 @@ public:
 	// Runs until stdin reaches EOF or a termination signal arrives. Returns the
 	// process exit code.
 	int run();
+
+	// Performs one tool call and prints the result as JSON. Returns 0 on success, 1
+	// when the tool failed or was refused, 2 when the editor could not be reached.
+	int run_one_shot();
 };
 
 } // namespace godot_ai

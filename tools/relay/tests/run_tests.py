@@ -18,7 +18,12 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fake_editor import FakeEditor, free_port  # noqa: E402
-from relay_harness import RELAY_BINARY, RelayProcess, run_relay  # noqa: E402
+from relay_harness import (  # noqa: E402
+    RELAY_BINARY,
+    RelayProcess,
+    run_relay,
+    run_relay_one_shot,
+)
 
 TESTS = []
 
@@ -566,6 +571,102 @@ def test_relay_reconnects_after_the_editor_returns():
             assert_eq(editor.connection_count, 2, "editor accepted a second connection")
     finally:
         editor.close()
+
+
+# ------------------------------------------------------------- one-shot mode ---
+
+
+def _one_shot_home(editor):
+    """A state directory with a descriptor pointing at the fake editor."""
+    home = tempfile.mkdtemp(prefix="godot-ai-relay-oneshot-")
+    os.makedirs(os.path.join(home, "instances"), exist_ok=True)
+    with open(os.path.join(home, "instances", "4242.json"), "w") as handle:
+        json.dump({"pid": 4242, "port": editor.port, "project_path": "/tmp/project",
+                   "project_name": "Test", "editor_version": "4.3.dev",
+                   "protocol_version": "1", "started_at": 1000.0}, handle)
+    return home
+
+
+@test
+def test_one_shot_prints_the_tool_result():
+    """U3: --call runs one tool for a script and exits, without serving stdio."""
+    editor = FakeEditor()
+
+    def respond(message):
+        if message.get("method") == "initialize":
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"protocolVersion": "2025-06-18", "capabilities": {}}}
+        if message.get("method") == "tools/call":
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"content": [{"type": "text", "text": "ok"}],
+                               "isError": False,
+                               "structuredContent": {"scenes": ["res://main.tscn"]}}}
+        return None
+
+    editor.set_responder(respond)
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(["--call", "Godot_ListScenes"], home)
+        assert_eq(result.returncode, 0, "exit code")
+        payload = json.loads(result.stdout.decode())
+        assert_eq(payload["structuredContent"]["scenes"], ["res://main.tscn"], "result payload")
+        # The editor must have been driven through a real MCP session.
+        assert_eq([m.get("method") for m in editor.received],
+                  ["godot/hello", "initialize", "notifications/initialized", "tools/call"],
+                  "message sequence")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_one_shot_passes_arguments_and_reports_tool_failure():
+    """U3: a failing tool must give a script a non-zero exit code."""
+    editor = FakeEditor()
+    seen = {}
+
+    def respond(message):
+        if message.get("method") == "initialize":
+            return {"jsonrpc": "2.0", "id": message["id"], "result": {}}
+        if message.get("method") == "tools/call":
+            seen["arguments"] = message["params"]["arguments"]
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"content": [{"type": "text", "text": "it failed"}], "isError": True}}
+        return None
+
+    editor.set_responder(respond)
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(
+            ["--call", "Godot_ReadTextFile", "--arguments", '{"path": "res://a.txt"}'], home)
+        assert_eq(result.returncode, 1, "exit code for a failing tool")
+        assert_eq(seen["arguments"], {"path": "res://a.txt"}, "arguments forwarded")
+        assert_in("it failed", result.stdout.decode(), "the failure text is on stdout")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_one_shot_reports_an_unreachable_editor_distinctly():
+    """U3: 'no editor' must be distinguishable from 'the tool failed'."""
+    home = tempfile.mkdtemp(prefix="godot-ai-relay-oneshot-")
+    os.makedirs(os.path.join(home, "instances"), exist_ok=True)
+    try:
+        result = run_relay_one_shot(["--call", "Godot_ListScenes"], home)
+        assert_eq(result.returncode, 2, "exit code with no editor")
+        assert_eq(result.stdout, b"", "stdout stays empty when nothing ran")
+        assert_in("no running Godot editor", result.stderr.decode(), "stderr explains why")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_one_shot_rejects_malformed_arguments():
+    """U3: bad --arguments is a usage error, not a request sent to the editor."""
+    result = run_relay(["--call", "X", "--arguments", "not json"])
+    assert_eq(result.returncode, 2, "exit code")
+    assert_in("--arguments must be a JSON object", result.stderr.decode(), "stderr")
 
 
 # ---------------------------------------------------------------- lifecycle ---

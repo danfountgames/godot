@@ -134,7 +134,21 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   rejected. Added `MCPSchema::any_property()` for arguments whose shape depends on
   what they address.
 
+### S-08 approvals UI, palette entries, one-shot mode (U1, U2, U3)
+- `MCPApprovalsDialog` is the one place a user can see what is waiting on them:
+  pending clients and every discovered skill, each with the reason it is not usable
+  and an allow/revoke button. Editor Settings can already show the raw arrays, but
+  that is not a decision surface - a client waiting to connect never appears there.
+- Three command palette entries (approvals, status, restart) plus a Tools menu item.
+- The relay grew a one-shot `--call <tool> --arguments <json>` mode for scripts and
+  CI: it runs a complete MCP session and prints the result, with distinct exit codes
+  for tool failure (1) and an unreachable editor (2), so a script can tell them apart.
+  In that mode stdout carries the result rather than protocol traffic, which is
+  documented in the usage text.
+- U1/U2 are recorded as IMPLEMENTED rather than VERIFIED: the editor constructs both
+  in every headless run, so they cannot crash it, but nothing here can click a button.
+
 ### Next
-- S-08:
+- S-09:
   the approvals UI (U1, U2), screenshots (T12), ask-user (T13), and the Winsock port
   that would unblock R8.

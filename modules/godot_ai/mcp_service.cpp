@@ -30,6 +30,7 @@
 
 #include "mcp_service.h"
 
+#include "mcp_approvals_dialog.h"
 #include "mcp_audit.h"
 #include "mcp_tool_registry.h"
 
@@ -40,6 +41,7 @@
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/version.h"
+#include "editor/editor_command_palette.h"
 #include "editor/editor_log.h"
 #include "editor/editor_node.h"
 #include "editor/editor_settings.h"
@@ -81,6 +83,7 @@ String MCPService::get_instances_dir() {
 void MCPService::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
+			_register_editor_commands();
 			if (MCPToolRegistry::get_singleton()) {
 				MCPToolRegistry::get_singleton()->connect("tools_changed", callable_mp(this, &MCPService::_on_tools_changed));
 			}
@@ -324,6 +327,58 @@ void MCPService::_remove_instance_descriptor() {
 		access->remove(instance_descriptor_path);
 	}
 	instance_descriptor_path = String();
+}
+
+// -------------------------------------------------------------- editor entry ---
+
+void MCPService::_register_editor_commands() {
+	approvals_dialog = memnew(MCPApprovalsDialog(this));
+	// Owned by the editor's window so it is cleaned up with the editor.
+	EditorNode::get_singleton()->get_gui_base()->add_child(approvals_dialog);
+
+	// The Tools menu is where a user goes looking; the command palette is where they
+	// go when they already know what they want.
+	add_tool_menu_item(TTR("Godot AI: Clients and Skills..."), callable_mp(this, &MCPService::_show_approvals));
+
+	if (EditorCommandPalette::get_singleton()) {
+		EditorCommandPalette::get_singleton()->add_command(
+				TTR("Godot AI: Clients and Skills"), "godot_ai/approvals",
+				callable_mp(this, &MCPService::_show_approvals), Vector<Variant>(), Ref<Shortcut>());
+		EditorCommandPalette::get_singleton()->add_command(
+				TTR("Godot AI: Show Service Status"), "godot_ai/status",
+				callable_mp(this, &MCPService::_show_status), Vector<Variant>(), Ref<Shortcut>());
+		EditorCommandPalette::get_singleton()->add_command(
+				TTR("Godot AI: Restart Service"), "godot_ai/restart",
+				callable_mp(this, &MCPService::restart), Vector<Variant>(), Ref<Shortcut>());
+	}
+}
+
+void MCPService::_show_approvals() {
+	if (approvals_dialog) {
+		approvals_dialog->popup_centered(Size2(720, 460));
+	}
+}
+
+void MCPService::_show_status() {
+	if (!EditorNode::get_log()) {
+		return;
+	}
+	if (!started) {
+		EditorNode::get_log()->add_message(
+				TTR("Godot AI: the service is not running. Check Editor Settings > Network > Godot AI."),
+				EditorLog::MSG_TYPE_WARNING);
+		return;
+	}
+	EditorNode::get_log()->add_message(
+			vformat(TTR("Godot AI: listening on 127.0.0.1:%d, %d client(s) connected, %d awaiting approval, %d tool(s) registered."),
+					port, peers.size(), pending_clients.size(),
+					MCPToolRegistry::get_singleton() ? MCPToolRegistry::get_singleton()->get_tool_count() : 0),
+			EditorLog::MSG_TYPE_EDITOR);
+}
+
+void MCPService::restart() {
+	stop();
+	start();
 }
 
 // ----------------------------------------------------------------- approvals ---

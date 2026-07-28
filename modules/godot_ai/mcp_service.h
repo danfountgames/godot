@@ -37,6 +37,8 @@
 #include "core/io/tcp_server.h"
 #include "editor/editor_plugin.h"
 
+class MCPApprovalsDialog;
+
 // Editor-side half of the bridge: a loopback listener that godot-ai-relay connects
 // to, following the lifecycle pattern of the in-tree debug adapter server.
 //
@@ -64,6 +66,12 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	// Clients seen but not yet approved, surfaced to the user for a decision.
 	Vector<String> pending_clients;
 
+	MCPApprovalsDialog *approvals_dialog = nullptr;
+
+	void _register_editor_commands();
+	void _show_approvals();
+	void _show_status();
+
 	void _notification(int p_what);
 
 	void _accept_new_peers();
@@ -83,6 +91,7 @@ public:
 
 	void start();
 	void stop();
+	void restart();
 	bool is_running() const { return started; }
 	int get_port() const { return port; }
 	int get_client_count() const { return peers.size(); }

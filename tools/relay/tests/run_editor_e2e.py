@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from relay_harness import REPO_ROOT, RelayProcess  # noqa: E402
+from relay_harness import REPO_ROOT, RELAY_BINARY, RelayProcess  # noqa: E402
 
 DEFAULT_EDITOR = os.path.join(REPO_ROOT, "bin", "godot.linuxbsd.editor.dev.x86_64")
 
@@ -469,6 +469,20 @@ def run(editor_binary):
         check(stray_stdout == "", "relay wrote non-protocol output to stdout")
         print("PASS relay shut down cleanly with a clean stdout")
         relay = None
+
+        # --- headless one-shot execution --------------------------------------
+        # The scripted path: no MCP client, no editor UI, just a tool and a result.
+        one_shot = subprocess.run(
+            [RELAY_BINARY, "--call", "Godot_GetEditorStatus"],
+            input=b"", stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=dict(environment), timeout=60)
+        check(one_shot.returncode == 0,
+              "one-shot call failed (%d): %s" % (one_shot.returncode, one_shot.stderr.decode()))
+        status = json.loads(one_shot.stdout.decode())["structuredContent"]
+        check(status["has_editor"] is True, "one-shot did not reach a live editor")
+        check(os.path.realpath(status["project_root"]) == os.path.realpath(project),
+              "one-shot reported the wrong project")
+        print("PASS headless one-shot tool call against the live editor")
 
     finally:
         if relay is not None:

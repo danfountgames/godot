@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  main.cpp                                                              */
+/*  mcp_approvals_dialog.h                                                */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,32 +28,51 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "relay.h"
+#ifndef MCP_APPROVALS_DIALOG_H
+#define MCP_APPROVALS_DIALOG_H
 
-#include <cstdio>
-#include <string>
+#include "scene/gui/dialogs.h"
+#include "scene/gui/label.h"
+#include "scene/gui/tree.h"
 
-int main(int argc, char **argv) {
-	godot_ai::RelayOptions options;
-	std::string error;
-	bool exit_immediately = false;
-	std::string immediate_output;
+class MCPService;
 
-	if (!godot_ai::relay_parse_options(argc, argv, options, error, exit_immediately, immediate_output)) {
-		// Usage diagnostics never touch stdout: a client may already be reading it as
-		// a protocol stream.
-		fprintf(stderr, "godot-ai-relay: %s\n", error.c_str());
-		fprintf(stderr, "Run 'godot-ai-relay --help' for usage.\n");
-		return 2;
-	}
-	if (exit_immediately) {
-		fputs(immediate_output.c_str(), stderr);
-		return 0;
-	}
+// The one place a user can see and change what the AI service is allowed to do.
+//
+// Approvals are stored in editor settings, which the Editor Settings window can
+// already display as raw arrays. That is not a decision surface: it shows names with
+// no context, and a client that is waiting to connect does not appear there at all.
+// This dialog lists what is actually pending, with the reason it is pending.
+class MCPApprovalsDialog : public AcceptDialog {
+	GDCLASS(MCPApprovalsDialog, AcceptDialog);
 
-	godot_ai::Relay relay(options);
-	if (!options.call_tool.empty()) {
-		return relay.run_one_shot();
-	}
-	return relay.run();
-}
+	enum Column {
+		COLUMN_NAME,
+		COLUMN_KIND,
+		COLUMN_STATUS,
+		COLUMN_ACTION,
+		COLUMN_MAX,
+	};
+
+	enum ButtonId {
+		BUTTON_TOGGLE,
+	};
+
+	MCPService *service = nullptr;
+	Tree *tree = nullptr;
+	Label *summary = nullptr;
+
+	void _button_pressed(TreeItem *p_item, int p_column, int p_id, MouseButton p_button);
+
+protected:
+	void _notification(int p_what);
+
+public:
+	explicit MCPApprovalsDialog(MCPService *p_service);
+
+	// Rebuilds from the current service and skill state. Called whenever the dialog
+	// is shown, because both can change while it is closed.
+	void refresh();
+};
+
+#endif // MCP_APPROVALS_DIALOG_H
