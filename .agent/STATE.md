@@ -45,6 +45,9 @@ T5 (new). Just completed: F2, F3, T1, T2, T4, T6, T7, T8, T14 → VERIFIED.
   204 assertions, all pass.
 - `python3 tools/relay/tests/run_editor_e2e.py` → 12/12 checks pass against a live
   headless editor.
+- Documentation (`modules/godot_ai/README.md`), `AGENTS.md` and
+  `.github/workflows/godot_ai.yml` are in place. The workflow has not yet been
+  observed running on GitHub Actions.
 
 ## Working-tree expectations
 

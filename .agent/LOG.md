@@ -53,6 +53,17 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
   refusal paths. Transcript kept at `.agent/evidence/e2e-transcript.jsonl`.
 - Commit `7d8fa581f5`, pushed.
 
+### S-05 documentation, AGENTS.md, CI (D1, D2, C1)
+- `modules/godot_ai/README.md`: architecture and why the process split exists, client
+  setup, the permission table with the three rules that hold regardless of settings,
+  the tool catalogue, a working GDScript registration example, build/test commands
+  and a troubleshooting table keyed by the exact error strings the code emits.
+- `AGENTS.md` carries the tool-neutral rules; `CLAUDE.md` imports it with @AGENTS.md
+  and keeps only the Claude Code continuity workflow.
+- `.github/workflows/godot_ai.yml` runs the relay suite first (fast, no engine
+  build), then the editor build, module tests and the end-to-end script.
+
 ### Next
-- S-04: `Godot_ManageNode` through `EditorUndoRedoManager` (T5), then CI wiring (C1),
-  then skills (S1–S3) and checkpoints (F8).
+- S-04: `Godot_ManageNode` through `EditorUndoRedoManager` (T5) — the largest
+  remaining must-have. Then skills (S1–S3), checkpoints (F8), runtime inspection and
+  screenshots (T9, T12, T15), and the ask-user tool (T13).

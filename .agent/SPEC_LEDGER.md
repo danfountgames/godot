@@ -78,11 +78,11 @@ Spec-section shorthand: **MCP** = "Proposed MCP-compatible design for Godot",
 | U1 | PRI | Command palette entries | F2 | NOT_STARTED | all |
 | U2 | SEC | Settings/status UI incl. approvals | F6,S3 | NOT_STARTED | all |
 | U3 | PRI | Headless execution hook | F3 | NOT_STARTED | all |
-| D1 | PKG | Developer + user documentation | — | NOT_STARTED | all |
-| D2 | PKG | `AGENTS.md` repository guidance artifact | — | NOT_STARTED | all |
+| D1 | PKG | Developer + user documentation | — | VERIFIED | none for the shipped surface — `modules/godot_ai/README.md` covers architecture, client setup, permissions, the tool catalogue, the registration API and troubleshooting; extend it as tools land |
+| D2 | PKG | `AGENTS.md` repository guidance artifact | — | VERIFIED | none — `AGENTS.md` present, imported by `CLAUDE.md` |
 | D3 | MCP | Example Godot `SKILL.md` that actually loads | S2 | NOT_STARTED | all |
 | D4 | — | `CLAUDE.md` continuity protocol (required deliverable) | — | VERIFIED | none — section present and kept current |
-| C1 | CI | CI wiring for relay tests, module tests, clean build | R2,F4 | IN_PROGRESS | `run_editor_e2e.py` exists and passes; no CI workflow yet |
+| C1 | CI | CI wiring for relay tests, module tests, clean build | R2,F4 | IMPLEMENTED | `.github/workflows/godot_ai.yml` added and locally equivalent commands all pass; not yet observed green on GitHub Actions |
 | C2 | PKG | Packaging: install layout, licences, clean checkout | R1,D1 | NOT_STARTED | all |
 
 ## Optional (explicitly marked optional by the specification)
