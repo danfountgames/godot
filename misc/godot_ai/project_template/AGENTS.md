@@ -139,13 +139,9 @@ below, register a project command, or record the gap honestly as unverified.
   it cannot see: a single player whose `max_polyphony` is above 1 overlapping itself.
 - **No arbitrary shell execution, ever.** This is a deliberate safety boundary. It is
   also why a test is a scene rather than a command — see below.
-- **No export, and no way to run an exported build.** There is no `Godot_Export…` tool:
-  do not go looking for one. The whole *Build and release validation* section below is
-  therefore outside the interface — producing a build, launching it, and playing its
-  route need the host harness or a person. Record that verification as unavailable
-  rather than implying it passed. Everything *before* release — the player route, the
-  screenshots, the tests, the performance targets, the save/load recovery — is fully
-  reachable through the tools.
+- **No export *tool*.** There is no `Godot_Export…`: do not go looking for one. But
+  exporting itself is **not** out of reach — see *Build and release validation* below.
+  It is done from the shell rather than through this interface.
 - **Two audio questions, two tools.** `Godot_GetAudioState` answers for the instant you
   ask. `Godot_DetectAudioStacking` watches every frame for a window — send the input
   burst *while it is sampling*. The bug you are hunting is a sound triggered twice by
@@ -1082,11 +1078,24 @@ letting a peak reading stand in for it.
 11. capture release-build screenshots
 12. record the exact build command and output location
 
-None of this is reachable through the Godot Agent Interface: it has no export tool, and
-running an exported binary would be shell execution, which nothing here does. Exporting
-also needs export templates matching the engine build, which are not present by default.
-Use the host harness if you have one; otherwise say so plainly and leave release
-verification unverified rather than implying it passed.
+This is done from the shell, not through the interface — there is no export tool, and
+running an exported binary would be shell execution, which nothing here does. That does
+**not** make it unavailable.
+
+**Vanilla export templates work with this fork.** The AI tooling is an editor-only
+module (`can_build` returns `env.editor_build`), so it is absent from export templates
+by construction — the official templates for this engine's version are functionally
+identical to ones built from this tree, and there is no need to build any. Install them
+under the folder named by `VERSION_FULL_CONFIG`, which is `4.3.dev` here — **not** the
+longer string `--version` prints:
+
+```sh
+~/.local/share/godot/export_templates/4.3.dev/web_release.zip
+```
+
+A web export can then be served locally and driven in a real browser, which satisfies
+"run the release build, not only the editor" properly. Only report release verification
+as unavailable once you have actually tried this.
 
 Note that the AI tooling module is editor-only and is absent from export templates by
 construction — a shipped game contains none of it.
