@@ -1195,6 +1195,112 @@ Do not declare completion merely because implementation activity has stopped.
 
 ---
 
+# Running under `/goal` and `/loop`
+
+This file works for a single supervised run. Two Claude Code features let it run
+unattended, and each needs something from you that a supervised run does not.
+
+## The one constraint that changes everything
+
+`/goal` evaluates your completion condition after **every turn**, using a small fast
+model that sees **only the conversation**. It does not run commands. It does not read
+files. It cannot open `.agent/GOALS.md`.
+
+So the Definition of Done in this file is invisible to it. Anything you want a goal to
+judge has to be *in the transcript*, put there by you.
+
+That is what the status block below is for. It is not a progress report for a human — it
+is the evaluator's only instrument.
+
+## The turn-end status block
+
+Print this at the end of **every** turn, whether or not you are running under `/goal`.
+Keep it exactly this shape; the value is in being machine-readable and stable.
+
+```
+GODOT-AGENT-STATUS
+commit: <short sha of HEAD>            tree: clean|dirty
+slice: <what this turn finished, one line>
+goals: <n> VERIFIED / <n> total       issues_open: <critical+major count>
+tests: <n> pass / <n> fail            real_input: <route name> pass|fail|not-run
+editor: up|restarted|down             game: stopped|playing
+next: <the single next concrete action>
+blocked: <none, or the external condition>
+DONE-CHECK: <NOT-DONE, or DONE with the seven Definition-of-Done lines each marked PASS>
+```
+
+Rules that make it trustworthy:
+
+- Every number comes from a command you ran **this turn**. Never carry one forward.
+- `DONE-CHECK: DONE` is a claim about the Definition of Done in this file. Emit it only
+  when you have just re-verified each clause, and print the clauses. Emitting it early
+  ends the run with the game unfinished, and the evaluator cannot catch you.
+- If a check could not be run, say `not-run`. Never say `pass` for something you skipped.
+- `blocked` is for a genuinely external condition, never for difficulty.
+
+## Writing the `/goal` condition
+
+Write it as something *your own output* can demonstrate, and bound it. A condition that
+works:
+
+```
+/goal the transcript's most recent GODOT-AGENT-STATUS block shows DONE-CHECK: DONE with
+all seven Definition-of-Done clauses marked PASS, tree: clean, issues_open: 0, and a
+commit sha; and the turn that printed it also showed the real-input route passing. If a
+turn reports the same `next` value three times running, stop and report the obstacle
+instead. Stop after 60 turns regardless.
+```
+
+Why each part is there:
+
+- **It names the artifact** (`GODOT-AGENT-STATUS`, `DONE-CHECK: DONE`) rather than a
+  vague state like "the game is finished". A vague condition is judged on vibes.
+- **It requires the evidence in the same turn**, so a stale pass cannot be quoted.
+- **The repeated-`next` clause** is the anti-thrash guard. Without it a goal can spend
+  twenty turns failing at one thing.
+- **The turn cap** bounds cost. The evaluator judges it from the conversation, so report
+  your turn count in the block if you use one.
+
+Do not put the whole Definition of Done in the condition. It has a 4,000-character limit,
+and duplicating it means two versions to keep in step.
+
+## Choosing between them
+
+| | Use when |
+|---|---|
+| `/goal` | There is a verifiable end state and you want it pursued turn after turn. This is the right default for building the game. |
+| `/loop` (self-paced) | Work that should continue but has no single end state — a review sweep, tending a PR, watching CI. |
+| `/loop <interval>` | Something genuinely time-driven. Rare here; the game does not get more finished on a timer. |
+| Both | `/goal` for the end state, plus a `/loop` for something external you must keep watching. |
+
+## What `/loop` needs from you
+
+`.claude/loop.md` in this project is the per-iteration prompt. It deliberately does
+**not** re-run the "Begin now" bootstrap: an iteration reconciles and continues, and
+re-reading the whole specification every time burns the context you need for the work.
+
+Loop mechanics worth knowing before you plan around them:
+
+- **Session-scoped.** A fresh conversation clears the loop. `--resume` restores it if it
+  has not expired.
+- **Seven-day expiry.** Recurring loops fire a last time and delete themselves.
+- **No catch-up.** A fire missed while you were busy happens once, not once per miss.
+- **Self-paced loops can end themselves** when the work is done, and one that neither
+  reschedules nor stops gets a single fallback wakeup about twenty minutes later.
+
+So: **never treat "the loop will come back" as a reason to leave something half-done.**
+End every iteration resumable — committed, game stopped, scene saved, `NEXT.md` naming
+the next action. The loop coming back is not guaranteed; the repository surviving is.
+
+## Permissions
+
+Neither feature grants permissions. Under the default mode Claude still asks before tool
+calls your settings do not already allow, which stalls an unattended run at the first
+prompt. Pair either with auto mode, and make sure the relay and editor commands in
+`ENVIRONMENT.md` are permitted before starting a long run.
+
+---
+
 # Final independent review
 
 When the game appears complete, do not immediately report completion. Run a final
@@ -1225,6 +1331,12 @@ Do not include unverified claims.
 ---
 
 # Begin now
+
+**First run only.** Under `/loop`, `.claude/loop.md` replaces this with a reconcile-and-
+continue sequence; under `/goal`, run this once and then work from `.agent/NEXT.md`. An
+agent that re-reads the whole specification every iteration spends its context
+rediscovering what it already wrote down.
+
 
 1. Read the complete game specification and references.
 2. Read all applicable repository instructions.

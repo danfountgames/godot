@@ -104,3 +104,11 @@ The structure, voice and standards of the original are otherwise intact — in
 particular the separation that matters most: the agent may build the game efficiently
 through semantic editor tools, but it may not use those same shortcuts as proof that
 the player experience works.
+
+## Running it unattended
+
+- `AGENTS.md` → *Running under `/goal` and `/loop`* — the turn-end status block, and why
+  a `/goal` evaluator cannot see your `.agent/` files.
+- `.agent/GOAL_CONDITIONS.md` — ready-to-paste `/goal` conditions, with the anti-patterns.
+- `.claude/loop.md` — the per-iteration prompt for a bare `/loop`. Reconciles and
+  continues; it deliberately does not re-run the bootstrap.
