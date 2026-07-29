@@ -102,14 +102,14 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (61)
+## Tools exposed over MCP (62)
 
 | Area | Tools |
 |---|---|
 | Status | `Godot_GetEditorStatus` (includes `display_server` and `can_render`) |
 | Project files | `Godot_ListScenes`, `Godot_ListAssets`, `Godot_ReadTextFile`, `Godot_WriteTextFile`, `Godot_SearchProject`, `Godot_CheckScript` |
 | Project settings | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` |
-| Scenes | `Godot_OpenScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
+| Scenes | `Godot_CreateScene`, `Godot_OpenScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
 | Undo | `Godot_UndoLastAction`, `Godot_RedoLastAction` |
 | Play mode | `Godot_PlayCurrentScene`, `Godot_PlayMainScene`, `Godot_StopPlaying` |
 | **Real input** | `Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput`, `Godot_SendGamepadInput`, `Godot_GetInputTrace` |
@@ -178,6 +178,9 @@ below, register a project command, or record the gap honestly as unverified.
   as *text* will be silently overwritten by the editor's stale in-memory copy. After
   editing a scene file directly, reopen it (`Godot_OpenScene`) before playing, or make
   the change through the scene tools instead.
+- **`Godot_CreateScene` makes a scene; `Godot_ManageNode` builds it.** Never write a
+  `.tscn` as text, not even a stub — the format is the engine's business, and a
+  hand-written one carries no uid and goes stale.
 - **When something is silently wrong, check the scripts first.** A script that does
   not parse produces silence everywhere: the scene fails to instantiate, the output log
   holds nothing, runtime errors are empty, and the scene tree looks fine.

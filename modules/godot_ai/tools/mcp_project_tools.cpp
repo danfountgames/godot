@@ -89,6 +89,9 @@ static void collect_files(const String &p_absolute_dir, const String &p_res_dir,
 
 namespace {
 
+// Defined below, with the other script helpers.
+static void register_global_class(const String &p_res_path);
+
 // Shared plumbing for the tools that take a `folder` and walk it.
 static Dictionary list_folder(const Dictionary &p_arguments, const Vector<String> &p_extensions, const String &p_result_key, MCPToolError &r_error) {
 	MCPPaths::Resolved resolved;
@@ -305,14 +308,20 @@ public:
 			if (created) {
 				// `update_file` locates the file's *directory* first and returns silently
 				// when it cannot - which is exactly what happens to the first file written
-				// into a folder the editor has never scanned. The file then exists, is
-				// listed by Godot_ListAssets, and yet its `class_name` is never registered,
-				// so every script that refers to it fails to parse for a reason nothing
-				// reports. A scan on creation is cheap and removes the whole class of
-				// "written but not really there" confusion.
+				// into a folder the editor has never scanned.
 				EditorFileSystem::get_singleton()->scan_changes();
 			}
 		}
+
+		// Register the script's global class *here*, synchronously.
+		//
+		// `scan_changes()` above is asynchronous, so a caller that writes a script and
+		// immediately uses its `class_name` still fails with "Identifier not declared" -
+		// which is what happened, twice, to agents who had no way to tell the difference
+		// between "the write failed" and "the editor has not caught up". Writing the same
+		// bytes a second time appeared to fix it, which is not a discoverable workaround.
+		// Doing it directly is what the editor's own scan would eventually do.
+		register_global_class(resolved.res_path);
 
 		Dictionary result;
 		result["path"] = resolved.res_path;
@@ -429,6 +438,25 @@ public:
 		return result;
 	}
 };
+
+// Makes a script's `class_name` usable immediately, rather than whenever the editor's
+// next filesystem scan happens to finish.
+static void register_global_class(const String &p_res_path) {
+	const String extension = p_res_path.get_extension().to_lower();
+	for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+		ScriptLanguage *language = ScriptServer::get_language(i);
+		if (!language || language->get_extension().to_lower() != extension) {
+			continue;
+		}
+		String base;
+		String icon;
+		const String global = language->get_global_class_name(p_res_path, &base, &icon);
+		if (!global.is_empty()) {
+			ScriptServer::add_global_class(global, base, language->get_name(), p_res_path);
+		}
+		return;
+	}
+}
 
 // A script's parse errors, which nothing else in this interface could show.
 //

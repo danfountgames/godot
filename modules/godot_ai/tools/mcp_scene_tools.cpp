@@ -32,12 +32,18 @@
 
 #include "../mcp_tool_registry.h"
 
+#include "../mcp_paths.h"
+
+#include "core/io/dir_access.h"
+#include "core/io/resource_saver.h"
 #include "core/object/class_db.h"
 #include "core/variant/array.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "editor/editor_file_system.h"
 #include "scene/main/node.h"
+#include "scene/resources/packed_scene.h"
 
 namespace {
 
@@ -450,12 +456,158 @@ public:
 	}
 };
 
+
+// Creating a scene file.
+//
+// Godot_ManageNode edits the scene the editor already has open; it cannot bring one into
+// existence. That left a real contradiction in the instructions an agent is given: it is
+// told never to hand-write a `.tscn` when a structured API exists, and then has no
+// structured way to make the first one - so it writes a two-line stub as text, which is
+// precisely the thing that goes stale when the format changes.
+class CreateSceneTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_CreateScene"; }
+	virtual String get_description() const override {
+		return "Create a new scene file with a root node of the class you name, and open it. "
+			   "This is how a scene comes into existence; Godot_ManageNode then builds it up. "
+			   "Never hand-write a .tscn as text - the format is the engine's business, and a "
+			   "stub written by hand is a stub that rots.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_EDIT_SCENE; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Where to create it, as a res:// path ending in .tscn.");
+		properties["root_type"] = MCPSchema::string_property(
+				"Class of the root node, such as Node2D, Control or Node3D.", "Node2D");
+		properties["root_name"] = MCPSchema::string_property(
+				"Name of the root node. Defaults to the file name.");
+		properties["open"] = MCPSchema::bool_property(
+				"Open the scene in the editor afterwards, so Godot_ManageNode can build it.", true);
+		properties["overwrite"] = MCPSchema::bool_property(
+				"Replace the file if it already exists.", false);
+		Vector<String> required;
+		required.push_back("path");
+		return MCPSchema::object_schema(properties, required);
+	}
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Scene that was created.");
+		properties["root_name"] = MCPSchema::string_property("Name of the root node.");
+		properties["root_type"] = MCPSchema::string_property("Class of the root node.");
+		properties["opened"] = MCPSchema::bool_property("True when it is now the edited scene.");
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const override {
+		Vector<String> paths;
+		// has() first: subscripting a const Dictionary inserts a null for a missing key.
+		if (p_arguments.has("path")) {
+			const String path = String(p_arguments["path"]).strip_edges();
+			if (!path.is_empty()) {
+				paths.push_back(path);
+			}
+		}
+		return paths;
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (!EditorNode::get_singleton() || !EditorInterface::get_singleton()) {
+			r_error.set(MCPToolError::UNSUPPORTED, "'Godot_CreateScene' needs a running Godot editor");
+			return Dictionary();
+		}
+
+		MCPPaths::Resolved resolved;
+		String path_error;
+		if (!MCPPaths::resolve(p_arguments["path"], resolved, path_error)) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, path_error);
+			return Dictionary();
+		}
+		if (resolved.res_path.get_extension().to_lower() != "tscn") {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("'%s' must end in .tscn", resolved.res_path));
+			return Dictionary();
+		}
+		if (resolved.exists && !(bool)p_arguments.get("overwrite", false)) {
+			r_error.set(MCPToolError::INVALID_STATE,
+					vformat("'%s' already exists; pass overwrite to replace it", resolved.res_path));
+			return Dictionary();
+		}
+
+		const String root_type = String(p_arguments.get("root_type", "Node2D")).strip_edges();
+		if (!ClassDB::class_exists(root_type)) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("there is no class called '%s'", root_type));
+			return Dictionary();
+		}
+		if (!ClassDB::is_parent_class(root_type, "Node")) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("'%s' is not a Node, so it cannot be a scene root", root_type));
+			return Dictionary();
+		}
+		if (!ClassDB::can_instantiate(root_type)) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("'%s' is abstract and cannot be instantiated", root_type));
+			return Dictionary();
+		}
+
+		Node *root = Object::cast_to<Node>(ClassDB::instantiate(root_type));
+		if (!root) {
+			r_error.set(MCPToolError::FAILED, vformat("could not create a '%s'", root_type));
+			return Dictionary();
+		}
+		String root_name = String(p_arguments.get("root_name", String())).strip_edges();
+		if (root_name.is_empty()) {
+			root_name = resolved.res_path.get_file().get_basename();
+		}
+		root->set_name(root_name);
+
+		Ref<PackedScene> scene;
+		scene.instantiate();
+		const Error packed = scene->pack(root);
+		// The root is only a template for the packed resource; the scene owns nothing of
+		// it once packed, so it has to be freed either way.
+		memdelete(root);
+		if (packed != OK) {
+			r_error.set(MCPToolError::FAILED, vformat("could not pack a '%s' into a scene", root_type));
+			return Dictionary();
+		}
+
+		Ref<DirAccess> directory = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+		if (directory.is_valid()) {
+			directory->make_dir_recursive(resolved.absolute.get_base_dir());
+		}
+		if (ResourceSaver::save(scene, resolved.res_path) != OK) {
+			r_error.set(MCPToolError::FAILED, vformat("could not write '%s'", resolved.res_path));
+			return Dictionary();
+		}
+		if (EditorFileSystem::get_singleton()) {
+			EditorFileSystem::get_singleton()->update_file(resolved.res_path);
+		}
+
+		bool opened = false;
+		if ((bool)p_arguments.get("open", true)) {
+			EditorInterface::get_singleton()->open_scene_from_path(resolved.res_path);
+			Node *edited = EditorInterface::get_singleton()->get_edited_scene_root();
+			opened = edited != nullptr;
+		}
+
+		Dictionary result;
+		result["path"] = resolved.res_path;
+		result["root_name"] = root_name;
+		result["root_type"] = root_type;
+		result["opened"] = opened;
+		return result;
+	}
+};
+
 } // namespace
 
 void mcp_register_scene_tools() {
 	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
 	ERR_FAIL_NULL(registry);
 
+	registry->register_tool(Ref<MCPTool>(memnew(CreateSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(ManageNodeTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(UndoRedoTool(true))));
 	registry->register_tool(Ref<MCPTool>(memnew(UndoRedoTool(false))));

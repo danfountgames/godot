@@ -2076,6 +2076,82 @@ def run(editor_binary, display):
               "a script that parses was reported broken: %r" % good)
         print("PASS Godot_CheckScript finds the line a script fails to parse on")
 
+        # --- a class_name is usable immediately -------------------------------
+        # The editor's filesystem scan is asynchronous, so a script written and then used
+        # in the same breath failed with "Identifier not declared" - and writing the same
+        # bytes a second time appeared to fix it, which is not a discoverable workaround.
+        # No sleep here on purpose: the point is that no wait is needed.
+        reply = call({"jsonrpc": "2.0", "id": 240, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": "res://fresh/registered.gd",
+                                               "text": "class_name FreshlyRegistered\nextends Node\n",
+                                               "create_directories": True}}})
+        check(not refused(reply), "writing into a new folder failed: %s" % refusal_text(reply))
+        reply = call({"jsonrpc": "2.0", "id": 241, "method": "tools/call",
+                      "params": {"name": "Godot_CheckScript",
+                                 "arguments": {"path": "res://fresh/registered.gd"}}})
+        registered = reply["result"]["structuredContent"]
+        check(registered["class_name"] == "FreshlyRegistered",
+              "the class name was not read: %r" % registered)
+        check(registered["class_registered"] is True,
+              "a class written into a brand-new folder is not registered yet, so anything "
+              "referring to it fails with 'Identifier not declared'")
+
+        reply = call({"jsonrpc": "2.0", "id": 242, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": "res://fresh/user.gd",
+                                               "text": "extends Node\n\nfunc _ready() -> void:\n\tprint(FreshlyRegistered)\n",
+                                               "create_directories": True}}})
+        reply = call({"jsonrpc": "2.0", "id": 243, "method": "tools/call",
+                      "params": {"name": "Godot_CheckScript",
+                                 "arguments": {"path": "res://fresh/user.gd"}}})
+        consumer = reply["result"]["structuredContent"]
+        check(consumer["valid"] is True and consumer["errors"] == [],
+              "a script referring to a class written moments earlier does not parse: %r"
+              % consumer["errors"])
+        print("PASS a class_name is usable in the very next call, with no wait")
+
+        # --- creating a scene --------------------------------------------------
+        # Godot_ManageNode edits the open scene; it cannot bring one into existence. That
+        # left the instructions contradicting themselves: never hand-write a .tscn, and
+        # no structured way to make the first one.
+        reply = call({"jsonrpc": "2.0", "id": 244, "method": "tools/call",
+                      "params": {"name": "Godot_CreateScene",
+                                 "arguments": {"path": "res://levels/arena.tscn",
+                                               "root_type": "Node2D", "root_name": "Arena"}}})
+        check(not refused(reply), "creating a scene failed: %s" % refusal_text(reply))
+        made = reply["result"]["structuredContent"]
+        check(made["opened"] is True, "the new scene was not opened: %r" % made)
+
+        # It has to be a real scene the structured tools can build on.
+        reply = call({"jsonrpc": "2.0", "id": 245, "method": "tools/call",
+                      "params": {"name": "Godot_ManageNode",
+                                 "arguments": {"action": "create", "parent": ".",
+                                               "type": "Label", "name": "Title"}}})
+        check(not refused(reply), "building on the new scene failed: %s" % refusal_text(reply))
+        call({"jsonrpc": "2.0", "id": 246, "method": "tools/call",
+              "params": {"name": "Godot_SaveScene"}})
+        with open(os.path.join(project, "levels", "arena.tscn")) as handle:
+            written_scene = handle.read()
+        check("[gd_scene" in written_scene and 'type="Label"' in written_scene,
+              "the saved scene is not a real .tscn: %r" % written_scene[:120])
+        check("uid://" in written_scene,
+              "the scene has no uid, which a hand-written stub would also lack")
+
+        for identifier, arguments, why in (
+                (247, {"path": "res://levels/arena.tscn", "root_type": "Node2D"},
+                 "an existing scene was overwritten without being asked"),
+                (248, {"path": "res://levels/no.tscn", "root_type": "NotAClass"},
+                 "a class that does not exist was accepted"),
+                (249, {"path": "res://levels/no.tscn", "root_type": "Resource"},
+                 "a non-Node was accepted as a scene root"),
+                (250, {"path": "res://levels/no.txt", "root_type": "Node2D"},
+                 "a path that is not a .tscn was accepted")):
+            reply = call({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                          "params": {"name": "Godot_CreateScene", "arguments": arguments}})
+            check(refused(reply), why)
+        print("PASS Godot_CreateScene makes a scene the structured tools can build on")
+
         # --- user data --------------------------------------------------------
         # Saves live outside the project, which is why the project tools cannot see
         # them and why these exist. The round trip below is the one the game-production

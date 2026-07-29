@@ -482,8 +482,13 @@ def test_ambiguous_instances_require_an_explicit_selector():
     second = FakeEditor(project_path="/tmp/beta")
     try:
         with RelayProcess() as relay:
-            relay.write_instance(port=first.port, pid=101, project_path="/tmp/alpha", started_at=1.0)
-            relay.write_instance(port=second.port, pid=102, project_path="/tmp/beta", started_at=2.0)
+            # Both pids alive: a descriptor whose process has gone is pruned, so two
+            # made-up pids would be two editors that no longer exist and there would be
+            # nothing ambiguous about them.
+            relay.write_instance(port=first.port, pid=os.getpid(),
+                                 project_path="/tmp/alpha", started_at=1.0)
+            relay.write_instance(port=second.port, pid=os.getppid(),
+                                 project_path="/tmp/beta", started_at=2.0)
             relay.send_message({"jsonrpc": "2.0", "id": 1, "method": "ping"})
             message = relay.read_message()
             assert_eq(message["error"]["code"], -32001, "error code")
@@ -498,14 +503,18 @@ def test_instance_selection_by_project_and_pid():
     """R3: --project and --instance each pick the intended editor."""
     first = FakeEditor(project_path="/tmp/alpha")
     second = FakeEditor(project_path="/tmp/beta")
+    # Two pids that are genuinely alive and genuinely different: a descriptor whose
+    # process has gone is pruned during discovery, on purpose, so a fixture that
+    # advertises a made-up pid is advertising an editor that no longer exists.
+    alive, also_alive = os.getpid(), os.getppid()
     try:
         for args, expected in (
             (["--project", "/tmp/beta"], second),
-            (["--instance", "101"], first),
+            (["--instance", str(alive)], first),
         ):
             with RelayProcess(args=args) as relay:
-                relay.write_instance(port=first.port, pid=101, project_path="/tmp/alpha", started_at=1.0)
-                relay.write_instance(port=second.port, pid=102, project_path="/tmp/beta", started_at=2.0)
+                relay.write_instance(port=first.port, pid=alive, project_path="/tmp/alpha", started_at=1.0)
+                relay.write_instance(port=second.port, pid=also_alive, project_path="/tmp/beta", started_at=2.0)
                 relay.send_message({"jsonrpc": "2.0", "id": 1, "method": "ping"})
                 assert_eq(relay.read_message()["id"], 1, "id for %s" % args)
                 wait_for(
@@ -523,7 +532,7 @@ def test_unknown_project_selector_reports_the_project():
     editor = FakeEditor(project_path="/tmp/alpha")
     try:
         with RelayProcess(args=["--project", "/tmp/nothing-here"]) as relay:
-            relay.write_instance(port=editor.port, pid=101, project_path="/tmp/alpha")
+            relay.write_instance(port=editor.port, pid=os.getpid(), project_path="/tmp/alpha")
             relay.send_message({"jsonrpc": "2.0", "id": 1, "method": "ping"})
             message = relay.read_message()
             assert_in("/tmp/nothing-here", message["error"]["message"], "message")
