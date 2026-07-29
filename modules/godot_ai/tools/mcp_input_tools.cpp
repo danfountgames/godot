@@ -736,7 +736,12 @@ void mcp_register_input_tools() {
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetTimeScale", "time_scale",
 			"Speed up or slow down the running game, for walking a long route without waiting "
-			"through it. Not for a playtest and not for a timing measurement: physics steps, "
+			"through it. **It changes the simulation, not merely the pace.** Godot multiplies "
+			"the physics delta by the time scale, so a physics scene run at 5x is a *coarser* "
+			"scene, not a faster one: bodies travel further per step, land differently, and "
+			"produce different outcomes. Never measure anything physical at a raised scale, and "
+			"never gather balance numbers with it. Not for a playtest and not for a timing "
+			"measurement either: physics steps, "
 			"animation and input timing all change, and a bug that only appears at normal speed "
 			"is exactly the kind this hides.",
 			MCP_CAP_RUN_PROJECT, time_scale_schema()))));

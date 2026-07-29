@@ -337,6 +337,15 @@ std::vector<InstanceDescriptor> relay_discover_instances(const RelayOptions &p_o
 		descriptor.project_name = value->get_string_or("project_name", "");
 		descriptor.editor_version = value->get_string_or("editor_version", "");
 		descriptor.protocol_version = value->get_string_or("protocol_version", "");
+		// An editor that has exited leaves its descriptor behind. Left in place it
+		// poisons discovery for everything else: the relay reports "several editor
+		// instances are running" and lists processes that died hours ago, and --project
+		// cannot disambiguate two stale entries naming the same folder. Checking the pid
+		// costs nothing and removes the whole failure.
+		if (!platform::process_is_alive(descriptor.pid)) {
+			platform::remove_file(path);
+			continue;
+		}
 		instances.push_back(descriptor);
 	}
 

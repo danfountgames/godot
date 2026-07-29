@@ -40,11 +40,14 @@ class RelayProcess:
 
     # -- instance registry -------------------------------------------------
 
-    def write_instance(self, port, pid=4242, project_path="/tmp/project",
+    # A descriptor belongs to a live process; the relay prunes ones whose pid has gone,
+    # because a stale descriptor otherwise poisons discovery for every real editor. So
+    # the fake editors here advertise this test process's pid, which is alive.
+    def write_instance(self, port, pid=None, project_path="/tmp/project",
                        project_name="Test", started_at=1000.0,
                        protocol_version="1", editor_version="4.3.dev"):
         descriptor = {
-            "pid": pid,
+            "pid": os.getpid() if pid is None else pid,
             "port": port,
             "project_path": project_path,
             "project_name": project_name,
@@ -52,7 +55,7 @@ class RelayProcess:
             "protocol_version": protocol_version,
             "started_at": started_at,
         }
-        path = os.path.join(self.home, "instances", "%d.json" % pid)
+        path = os.path.join(self.home, "instances", "%d.json" % descriptor["pid"])
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(descriptor, handle)
         return path
@@ -161,13 +164,13 @@ class RelayProcess:
         self.cleanup()
 
 
-def run_relay_one_shot(args, home, timeout=30.0):
-    """Runs the relay in --call mode with a private state directory."""
+def run_relay_one_shot(args, home, timeout=30.0, stdin=""):
+    """Runs the relay in --call/--batch/--list-tools mode with a private state dir."""
     process_env = dict(os.environ)
     process_env["GODOT_AI_HOME"] = home
     return subprocess.run(
         [RELAY_BINARY] + list(args),
-        input=b"",
+        input=stdin.encode("utf-8") if isinstance(stdin, str) else stdin,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,

@@ -63,7 +63,7 @@ def connected_relay(editor, extra_args=(), **kwargs):
     home = kwargs.pop("home", None) or tempfile.mkdtemp(prefix="godot-ai-relay-test-")
     os.makedirs(os.path.join(home, "instances"), exist_ok=True)
     descriptor = {
-        "pid": 4242, "port": editor.port, "project_path": "/tmp/project",
+        "pid": os.getpid(), "port": editor.port, "project_path": "/tmp/project",
         "project_name": "Test", "editor_version": "4.3.dev",
         "protocol_version": "1", "started_at": 1000.0,
     }
@@ -594,10 +594,101 @@ def _one_shot_home(editor):
     home = tempfile.mkdtemp(prefix="godot-ai-relay-oneshot-")
     os.makedirs(os.path.join(home, "instances"), exist_ok=True)
     with open(os.path.join(home, "instances", "4242.json"), "w") as handle:
-        json.dump({"pid": 4242, "port": editor.port, "project_path": "/tmp/project",
+        # A live pid: a descriptor for a dead process is pruned, deliberately.
+        json.dump({"pid": os.getpid(), "port": editor.port, "project_path": "/tmp/project",
                    "project_name": "Test", "editor_version": "4.3.dev",
                    "protocol_version": "1", "started_at": 1000.0}, handle)
     return home
+
+
+def _responding_editor(result_payload=None):
+    """A fake editor that completes a handshake and answers every tools/call."""
+    editor = FakeEditor()
+
+    def respond(message):
+        if message.get("method") == "initialize":
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"protocolVersion": "2025-06-18", "capabilities": {}}}
+        if message.get("method") == "tools/list":
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"tools": [{"name": "Godot_GetEditorStatus"}]}}
+        if message.get("method") == "tools/call":
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"content": [{"type": "text", "text": "ok"}],
+                               "isError": False,
+                               "structuredContent": result_payload or {"has_editor": True}}}
+        return None
+
+    editor.set_responder(respond)
+    return editor
+
+
+@test
+def test_a_dead_editors_descriptor_does_not_cause_ambiguity():
+    """A descriptor left behind by an exited editor is pruned before selection.
+
+    Left in place it poisons discovery for every real editor: the relay reports
+    "several editor instances are running" and lists processes that died hours ago,
+    and --project cannot disambiguate two stale entries naming the same folder. This
+    was the first thing an agent hit on a machine that had run earlier sessions.
+    """
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    stale = os.path.join(home, "instances", "999999.json")
+    try:
+        with open(stale, "w") as handle:
+            json.dump({"pid": 999999, "port": editor.port + 1,
+                       "project_path": "/tmp/other", "project_name": "Gone",
+                       "editor_version": "4.3.dev", "protocol_version": "1",
+                       "started_at": 2000.0}, handle)
+        result = run_relay_one_shot(["--call", "Godot_GetEditorStatus"], home)
+        assert_eq(result.returncode, 0,
+                  "a dead editor's descriptor blocked discovery: %s" % result.stderr.decode())
+        assert_eq(os.path.exists(stale), False, "the stale descriptor was removed")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_batch_runs_many_calls_over_one_connection():
+    """--batch exists because --call launches a process per call.
+
+    A play session is thousands of calls; at half a second each that is the single
+    largest avoidable cost in an agent's run.
+    """
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    try:
+        payload = json.dumps([{"name": "Godot_GetEditorStatus"},
+                              {"name": "Godot_GetEditorStatus", "arguments": {}}])
+        result = run_relay_one_shot(["--batch"], home, stdin=payload)
+        assert_eq(result.returncode, 0, "batch failed: %s" % result.stderr.decode())
+        answers = json.loads(result.stdout.decode())
+        assert_eq(len(answers), 2, "one result per call")
+        for answer in answers:
+            assert_eq(answer["name"], "Godot_GetEditorStatus", "result carries its tool name")
+            assert_eq("result" in answer, True, "a batch entry has a result")
+        # One connection for both calls is the entire point.
+        assert_eq(editor.connection_count, 1, "batch opened more than one connection")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_list_tools_names_the_available_tools():
+    """Enumerating tools previously meant driving --mcp by hand."""
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(["--list-tools"], home)
+        assert_eq(result.returncode, 0, "--list-tools failed: %s" % result.stderr.decode())
+        listed = json.loads(result.stdout.decode())
+        assert_eq(len(listed["tools"]) > 0, True, "tools were listed")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
 
 
 @test

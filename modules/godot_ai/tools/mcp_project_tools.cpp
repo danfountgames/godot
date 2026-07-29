@@ -30,6 +30,8 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "core/object/script_language.h"
+
 #include "../mcp_paths.h"
 #include "../mcp_tool_registry.h"
 
@@ -428,6 +430,129 @@ public:
 	}
 };
 
+// A script's parse errors, which nothing else in this interface could show.
+//
+// A single stray bracket in a test scene produced: a run that timed out with "the game
+// did not answer", an output log holding only the engine banner, zero runtime errors,
+// and an edited-scene tree that looked perfectly healthy - four tools all pointing away
+// from the cause. The engine itself says it in one line; there was simply no way to ask.
+class CheckScriptTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_CheckScript"; }
+	virtual String get_description() const override {
+		return "Parse a script and report its errors and warnings, with line and column. Reach "
+			   "for this the moment a scene fails to instantiate, a class name is 'not "
+			   "declared', or a test times out with no output: a script that does not compile "
+			   "produces silence everywhere else - no runtime error, nothing in the output log, "
+			   "and a scene tree that looks fine. Also reports whether the script's `class_name` "
+			   "is registered, which is the other half of that same silence.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_PROJECT; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Script to check, as a res:// path.");
+		Vector<String> required;
+		required.push_back("path");
+		return MCPSchema::object_schema(properties, required);
+	}
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Script that was checked.");
+		properties["valid"] = MCPSchema::bool_property("True when the script parses.");
+		properties["errors"] = MCPSchema::array_property("Parse errors, with line and column.",
+				MCPSchema::object_schema(Dictionary(), Vector<String>(), true));
+		properties["warnings"] = MCPSchema::array_property("Warnings the language reports.",
+				MCPSchema::object_schema(Dictionary(), Vector<String>(), true));
+		properties["class_name"] = MCPSchema::string_property(
+				"The script's declared global class name, if it has one.");
+		properties["class_registered"] = MCPSchema::bool_property(
+				"True when that name is registered and other scripts can refer to it.");
+		properties["functions"] = MCPSchema::array_property(
+				"Functions the script declares, as the language reports them.",
+				MCPSchema::string_property("A function signature."));
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPPaths::Resolved resolved;
+		String path_error;
+		if (!MCPPaths::resolve_existing(p_arguments["path"], resolved, path_error)) {
+			r_error.set(MCPToolError::NOT_FOUND, path_error);
+			return Dictionary();
+		}
+
+		ScriptLanguage *language = nullptr;
+		const String extension = resolved.res_path.get_extension().to_lower();
+		for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+			ScriptLanguage *candidate = ScriptServer::get_language(i);
+			if (candidate && candidate->get_extension().to_lower() == extension) {
+				language = candidate;
+				break;
+			}
+		}
+		if (!language) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("'%s' is not a script this engine has a language for", resolved.res_path));
+			return Dictionary();
+		}
+
+		Error read_error = OK;
+		const String source = FileAccess::get_file_as_string(resolved.absolute, &read_error);
+		if (read_error != OK) {
+			r_error.set(MCPToolError::FAILED, vformat("could not read '%s'", resolved.res_path));
+			return Dictionary();
+		}
+
+		// `r_functions` is not optional in practice: GDScript writes into it without a
+		// null check as soon as the script parses, so passing nullptr crashes the editor
+		// on every *valid* script - which is how this was found. A script that fails to
+		// parse returns before that point, so only the healthy case takes the engine down.
+		List<String> functions;
+		List<ScriptLanguage::ScriptError> errors;
+		List<ScriptLanguage::Warning> warnings;
+		const bool valid = language->validate(source, resolved.res_path, &functions, &errors, &warnings);
+
+		Array reported_errors;
+		for (const ScriptLanguage::ScriptError &error : errors) {
+			Dictionary entry;
+			entry["line"] = error.line;
+			entry["column"] = error.column;
+			entry["message"] = error.message;
+			entry["path"] = error.path.is_empty() ? resolved.res_path : error.path;
+			reported_errors.push_back(entry);
+		}
+		Array reported_warnings;
+		for (const ScriptLanguage::Warning &warning : warnings) {
+			Dictionary entry;
+			entry["line"] = warning.start_line;
+			entry["message"] = warning.message;
+			entry["code"] = warning.string_code;
+			reported_warnings.push_back(entry);
+		}
+
+		// The other half of the same silence: a script that parses but whose class name
+		// was never registered makes every *other* script fail with "not declared".
+		const String global_name = language->get_global_class_name(resolved.res_path);
+
+		Array reported_functions;
+		for (const String &function : functions) {
+			reported_functions.push_back(function);
+		}
+
+		Dictionary result;
+		result["path"] = resolved.res_path;
+		result["valid"] = valid;
+		result["functions"] = reported_functions;
+		result["errors"] = reported_errors;
+		result["warnings"] = reported_warnings;
+		result["class_name"] = global_name;
+		result["class_registered"] = !global_name.is_empty() &&
+				ScriptServer::is_global_class(global_name);
+		return result;
+	}
+};
+
 } // namespace
 
 void mcp_register_project_tools() {
@@ -439,4 +564,5 @@ void mcp_register_project_tools() {
 	registry->register_tool(Ref<MCPTool>(memnew(ReadTextFileTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(WriteTextFileTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SearchProjectTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(CheckScriptTool)));
 }

@@ -1472,16 +1472,47 @@ Dictionary MCPRuntimeAgent::_node_info(const Dictionary &p_arguments, String &r_
 	CanvasItem *canvas_item = Object::cast_to<CanvasItem>(node);
 	result["visible"] = canvas_item ? canvas_item->is_visible() : true;
 	Control *control = Object::cast_to<Control>(node);
-	if (control) {
-		const Rect2 rect = control->get_global_rect();
+	if (control && control->is_inside_tree()) {
+		// Two coordinate spaces, and the difference is invisible until it matters.
+		//
+		// `get_global_rect()` is in the *viewport's* space. Godot_SendPointerInput takes
+		// *window* pixels. At the design resolution a stretched viewport maps one to one,
+		// so the two agree and everything works; at any other window size they diverge,
+		// and a click aimed with the viewport rect is reported as delivered, appears in
+		// the input trace, and lands on empty space. That is a false "verified at 1080p",
+		// which is worse than a refusal.
+		//
+		// So `rect` is what the pointer tools want, and the viewport figures are kept
+		// beside it under a name that says what they are.
+		const Rect2 viewport_rect = control->get_global_rect();
+		// The root viewport's final transform is exactly the viewport-to-window mapping:
+		// it carries the content-scale factor and the letterbox offset together. Not
+		// `get_screen_position()` minus the window origin - a game's root window embeds
+		// its subwindows, which makes that transform deliberately identity, so the
+		// subtraction produces coordinates that are wrong by a whole window position.
+		const Transform2D to_window = tree->get_root()->get_final_transform();
+		const Point2 window_position = to_window.xform(viewport_rect.position);
+		const Size2 window_size = to_window.get_scale() * viewport_rect.size;
+
 		Dictionary geometry;
-		geometry["x"] = rect.position.x;
-		geometry["y"] = rect.position.y;
-		geometry["width"] = rect.size.width;
-		geometry["height"] = rect.size.height;
-		geometry["center_x"] = rect.position.x + rect.size.width / 2.0;
-		geometry["center_y"] = rect.position.y + rect.size.height / 2.0;
+		geometry["x"] = window_position.x;
+		geometry["y"] = window_position.y;
+		geometry["width"] = window_size.width;
+		geometry["height"] = window_size.height;
+		geometry["center_x"] = window_position.x + window_size.width / 2.0;
+		geometry["center_y"] = window_position.y + window_size.height / 2.0;
+		geometry["space"] = "window_pixels";
+		geometry["note"] = "these are window pixels, ready for Godot_SendPointerInput; "
+						   "`viewport_rect` holds the same control in viewport coordinates";
 		result["rect"] = geometry;
+
+		Dictionary in_viewport;
+		in_viewport["x"] = viewport_rect.position.x;
+		in_viewport["y"] = viewport_rect.position.y;
+		in_viewport["width"] = viewport_rect.size.width;
+		in_viewport["height"] = viewport_rect.size.height;
+		in_viewport["space"] = "viewport";
+		result["viewport_rect"] = in_viewport;
 	}
 	return result;
 }

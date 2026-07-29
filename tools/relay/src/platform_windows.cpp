@@ -527,6 +527,21 @@ long process_id() {
 	return (long)GetCurrentProcessId();
 }
 
+bool process_is_alive(long p_pid) {
+	if (p_pid <= 0) {
+		return true;
+	}
+	HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)p_pid);
+	if (!handle) {
+		// Access denied means it exists and is someone else's.
+		return GetLastError() == ERROR_ACCESS_DENIED;
+	}
+	DWORD code = 0;
+	const bool alive = GetExitCodeProcess(handle, &code) && code == STILL_ACTIVE;
+	CloseHandle(handle);
+	return alive;
+}
+
 } // namespace platform
 } // namespace godot_ai
 

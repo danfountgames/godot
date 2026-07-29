@@ -58,6 +58,31 @@ static Variant::Type declared_type(Object *p_object, const String &p_property, S
 	if (!p_object) {
 		return Variant::NIL;
 	}
+	// A theme override does not exist as a property until something sets it, so it is
+	// absent from get_property_list() *and* reads back as a default. Coercing against
+	// either gives the wrong answer: an array meant for a Color goes in as an array, the
+	// engine refuses it, and the read-back returns the default black the property already
+	// had - a successful-looking write of the wrong value. Writing it twice worked, which
+	// is how the shape of the bug shows. The prefix is the declaration.
+	if (p_property.begins_with("theme_override_colors/")) {
+		return Variant::COLOR;
+	}
+	if (p_property.begins_with("theme_override_constants/") ||
+			p_property.begins_with("theme_override_font_sizes/")) {
+		return Variant::INT;
+	}
+	if (p_property.begins_with("theme_override_fonts/")) {
+		r_hint = "Font";
+		return Variant::OBJECT;
+	}
+	if (p_property.begins_with("theme_override_icons/")) {
+		r_hint = "Texture2D";
+		return Variant::OBJECT;
+	}
+	if (p_property.begins_with("theme_override_styles/")) {
+		r_hint = "StyleBox";
+		return Variant::OBJECT;
+	}
 	List<PropertyInfo> properties;
 	p_object->get_property_list(&properties);
 	for (const PropertyInfo &info : properties) {
@@ -261,9 +286,18 @@ public:
 				r_error.set(MCPToolError::INVALID_ARGUMENTS, coercion_error);
 				return Dictionary();
 			}
-		} else if (!coerce_value(current, incoming, value, coercion_error)) {
-			r_error.set(MCPToolError::INVALID_ARGUMENTS, coercion_error);
-			return Dictionary();
+		} else {
+			// Against the declared type where there is one. The current value is only a
+			// fallback, and a misleading one for anything that is absent until written.
+			Variant target = current;
+			if (declared != Variant::NIL && declared != current.get_type()) {
+				Callable::CallError call_error;
+				Variant::construct(declared, target, nullptr, 0, call_error);
+			}
+			if (!coerce_value(target, incoming, value, coercion_error)) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS, coercion_error);
+				return Dictionary();
+			}
 		}
 
 		EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
@@ -281,11 +315,14 @@ public:
 					vformat("'%s' vanished after being written", property));
 			return Dictionary();
 		}
-		if (declared == Variant::OBJECT && value.get_type() == Variant::OBJECT &&
-				after.get_type() != Variant::OBJECT) {
+		// Compare against what was *intended*, not merely that something is there. The
+		// earlier version read back the value it had just failed to change and reported
+		// success, which is the one thing a read-back exists to prevent.
+		if (after != value) {
 			r_error.set(MCPToolError::FAILED,
-					vformat("'%s' did not accept the resource; it still holds a %s", property,
-							Variant::get_type_name(after.get_type())));
+					vformat("'%s' did not take the value it was given; it holds %s instead. "
+							"The property may not accept that type.",
+							property, String(after)));
 			return Dictionary();
 		}
 

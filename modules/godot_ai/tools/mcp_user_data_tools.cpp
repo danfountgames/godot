@@ -169,6 +169,8 @@ public:
 		Dictionary properties;
 		properties["path"] = MCPSchema::string_property("File that was read.");
 		properties["content"] = MCPSchema::string_property("File contents.");
+		properties["text"] = MCPSchema::string_property(
+				"The same contents under the name Godot_ReadTextFile uses, so the two read tools can be used interchangeably.");
 		properties["size"] = MCPSchema::integer_property("Size in bytes.");
 		return MCPSchema::object_schema(properties);
 	}

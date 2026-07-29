@@ -418,6 +418,19 @@ long process_id() {
 	return (long)getpid();
 }
 
+bool process_is_alive(long p_pid) {
+	if (p_pid <= 0) {
+		// No pid recorded: assume alive rather than prune something real.
+		return true;
+	}
+	// Signal 0 performs the existence and permission checks without delivering
+	// anything. EPERM means it exists and belongs to someone else, which still counts.
+	if (::kill((pid_t)p_pid, 0) == 0) {
+		return true;
+	}
+	return errno == EPERM;
+}
+
 } // namespace platform
 } // namespace godot_ai
 

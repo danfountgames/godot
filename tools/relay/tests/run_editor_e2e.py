@@ -551,6 +551,10 @@ def build_project(root):
     with open(os.path.join(root, "notes.txt"), "w") as handle:
         handle.write("hello from a project text file\n")
     write_png(os.path.join(root, "sprite.png"))
+    # A script that does not parse. Nothing else in the interface can see this: the
+    # scene silently fails to instantiate and every other tool points elsewhere.
+    with open(os.path.join(root, "scripts", "broken.gd"), "w") as handle:
+        handle.write("extends Node\n\nfunc broken(:\n\tpass\n")
 
     os.makedirs(os.path.join(root, "tests"), exist_ok=True)
     with open(os.path.join(root, "tests", "scene_test.gd"), "w") as handle:
@@ -1129,6 +1133,15 @@ def run(editor_binary, display):
                 # fixture counts only motion that carries a held button, so a drag
                 # degraded into a press at one point and a release at another scores
                 # zero here.
+                def surface_press_count():
+                    probe = call({"jsonrpc": "2.0", "id": 234, "method": "tools/call",
+                                  "params": {"name": "Godot_GetRuntimeProperty",
+                                             "arguments": {"path": "/root/Main/Hud/Target",
+                                                           "property": "press_count"}}})
+                    check(not refused(probe),
+                          "reading press_count failed: %s" % refusal_text(probe))
+                    return probe["result"]["structuredContent"]["value"]
+
                 def surface(field):
                     probe = call({"jsonrpc": "2.0", "id": 190, "method": "tools/call",
                                   "params": {"name": "Godot_GetRuntimeProperty",
@@ -1510,6 +1523,45 @@ def run(editor_binary, display):
                                          "arguments": {"width": 8, "height": 8}}})
                 check(refused(reply), "an absurd window size was accepted")
                 print("PASS Godot_SetGameWindowSize resized the game and reports what applied")
+
+                # The coordinate spaces have to compose. Godot_GetRuntimeNodeInfo used to
+                # answer in *viewport* coordinates while Godot_SendPointerInput takes
+                # *window* pixels. At the design size those agree, so everything worked
+                # and nothing revealed the difference; at any other window size the click
+                # was reported delivered, appeared in the input trace, and landed on empty
+                # space. A false "verified at 1080p" is worse than a refusal, so this
+                # resizes the window first and then aims purely by what the tool reports.
+                reply = call({"jsonrpc": "2.0", "id": 230, "method": "tools/call",
+                              "params": {"name": "Godot_SetGameWindowSize",
+                                         "arguments": {"width": 960, "height": 540}}})
+                check(not refused(reply), "resizing failed: %s" % refusal_text(reply))
+                time.sleep(1.0)
+
+                before_press = surface_press_count()
+                reply = call({"jsonrpc": "2.0", "id": 231, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeNodeInfo",
+                                         "arguments": {"path": "/root/Main/Hud/Target"}}})
+                info = reply["result"]["structuredContent"]
+                check(info["rect"]["space"] == "window_pixels",
+                      "the rect does not say which space it is in: %r" % info["rect"])
+                check("viewport_rect" in info,
+                      "the viewport figures were dropped rather than renamed: %r" % info)
+                aimed = call({"jsonrpc": "2.0", "id": 232, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"action": "click",
+                                                       "x": int(info["rect"]["center_x"]),
+                                                       "y": int(info["rect"]["center_y"])}}})
+                check(not refused(aimed), "the aimed click was refused: %s" % refusal_text(aimed))
+                time.sleep(0.6)
+                check(surface_press_count() == before_press + 1,
+                      "a click aimed at the rectangle Godot_GetRuntimeNodeInfo reported did "
+                      "not reach the button at 960x540, so the two tools do not compose")
+                print("PASS node rects are window pixels, so aiming works at any window size")
+
+                call({"jsonrpc": "2.0", "id": 233, "method": "tools/call",
+                      "params": {"name": "Godot_SetGameWindowSize",
+                                 "arguments": {"width": 1152, "height": 648}}})
+                time.sleep(1.0)
 
                 # --- frame sequences, profiling, audio, time scale ---------------
                 reply = call({"jsonrpc": "2.0", "id": 123, "method": "tools/call",
@@ -1982,6 +2034,47 @@ def run(editor_binary, display):
                                                "value": "res://nothing-here.gd"}}})
         check(refused(reply), "a res:// path to nothing was accepted")
         print("PASS a resource property takes a res:// path, and refuses anything else")
+
+        # --- a theme override, on the first write ------------------------------
+        # A theme override does not exist as a property until something sets it, so it
+        # is absent from the property list *and* reads back as a default. Coercing
+        # against either wrote an array into a Color, the engine refused it, and the
+        # read-back returned the black that was already there - a successful-looking
+        # write of entirely the wrong value, and a whole UI of black text on a dark
+        # panel. Writing it twice used to be the workaround, so this asserts the first.
+        reply = call({"jsonrpc": "2.0", "id": 225, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": "Hud/Target",
+                                               "property": "theme_override_colors/font_color",
+                                               "value": [1.0, 0.8, 0.2, 1.0]}}})
+        check(not refused(reply), "setting a theme override failed: %s" % refusal_text(reply))
+        colour = reply["result"]["structuredContent"]["value_written"]
+        check("0.8" in colour and "Color(" in colour,
+              "the first write of a theme override stored %r instead of the colour given"
+              % colour)
+        print("PASS a theme override takes its colour on the first write, not the second")
+
+        # --- parse errors are visible ------------------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 226, "method": "tools/call",
+                      "params": {"name": "Godot_CheckScript",
+                                 "arguments": {"path": "res://scripts/broken.gd"}}})
+        check(not refused(reply), "checking a script failed: %s" % refusal_text(reply))
+        checked = reply["result"]["structuredContent"]
+        check(checked["valid"] is False, "a script that does not parse was called valid")
+        check(checked["errors"] and checked["errors"][0]["line"] == 3,
+              "the parse error does not name the line: %r" % checked["errors"])
+        check(checked["errors"][0]["message"],
+              "the parse error has no message: %r" % checked["errors"][0])
+
+        reply = call({"jsonrpc": "2.0", "id": 227, "method": "tools/call",
+                      "params": {"name": "Godot_CheckScript",
+                                 "arguments": {"path": "res://scripts/target.gd"}}})
+        check(not refused(reply),
+              "checking a valid script failed: %s" % refusal_text(reply))
+        good = reply["result"]["structuredContent"]
+        check(good["valid"] is True and good["errors"] == [],
+              "a script that parses was reported broken: %r" % good)
+        print("PASS Godot_CheckScript finds the line a script fails to parse on")
 
         # --- user data --------------------------------------------------------
         # Saves live outside the project, which is why the project tools cannot see

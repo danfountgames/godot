@@ -102,12 +102,12 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (60)
+## Tools exposed over MCP (61)
 
 | Area | Tools |
 |---|---|
 | Status | `Godot_GetEditorStatus` (includes `display_server` and `can_render`) |
-| Project files | `Godot_ListScenes`, `Godot_ListAssets`, `Godot_ReadTextFile`, `Godot_WriteTextFile`, `Godot_SearchProject` |
+| Project files | `Godot_ListScenes`, `Godot_ListAssets`, `Godot_ReadTextFile`, `Godot_WriteTextFile`, `Godot_SearchProject`, `Godot_CheckScript` |
 | Project settings | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` |
 | Scenes | `Godot_OpenScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
 | Undo | `Godot_UndoLastAction`, `Godot_RedoLastAction` |
@@ -178,6 +178,15 @@ below, register a project command, or record the gap honestly as unverified.
   as *text* will be silently overwritten by the editor's stale in-memory copy. After
   editing a scene file directly, reopen it (`Godot_OpenScene`) before playing, or make
   the change through the scene tools instead.
+- **When something is silently wrong, check the scripts first.** A script that does
+  not parse produces silence everywhere: the scene fails to instantiate, the output log
+  holds nothing, runtime errors are empty, and the scene tree looks fine.
+  `Godot_CheckScript` is the only thing that will tell you, and it also says whether a
+  `class_name` is registered — the other half of that same silence.
+- **`Godot_SetTimeScale` changes the simulation, not just the pace.** Physics deltas are
+  multiplied by it, so a physics scene at 5x is a *coarser* scene: bodies move further
+  per step and land somewhere else. Never measure anything physical, and never gather
+  balance numbers, at a raised time scale.
 - **Read the refusal.** These tools refuse with a sentence that says what was wanted.
   A helper that swallows the reply and reports only "it failed" turns a five-second fix
   into an hour — that has already happened once, on a key name.

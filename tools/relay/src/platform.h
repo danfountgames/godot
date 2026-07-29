@@ -113,6 +113,12 @@ std::string environment(const std::string &p_name);
 std::string home_directory();
 long process_id();
 
+// Whether a process is still running. A descriptor left behind by an editor that has
+// exited otherwise poisons discovery for every other instance: the relay reports
+// "several editor instances are running" and lists processes that died hours ago, and
+// --project cannot disambiguate two stale entries naming the same folder.
+bool process_is_alive(long p_pid);
+
 // Absolute path of the running binary. A generated client configuration has to name
 // this relay, not whatever "godot-ai-relay" happens to be on the user's PATH later.
 std::string executable_path();
