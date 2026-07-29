@@ -46,6 +46,7 @@
 #include "scene/gui/control.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
+#include "core/io/json.h"
 #include "core/io/resource.h"
 #include "core/templates/hash_map.h"
 #include "core/os/time.h"
@@ -293,8 +294,6 @@ void MCPRuntimeWatcher::on_frame() {
 			}
 			const String stream = entry.get("stream", String());
 			if (stream.is_empty()) {
-				// No resource path means no identity to compare, so counting it would
-				// invent duplicates out of unrelated sounds.
 				continue;
 			}
 			if (!sounding.has(stream)) {
@@ -343,6 +342,10 @@ void MCPRuntimeWatcher::on_frame() {
 		result["frames_sampled"] = window.sampled;
 		result["stacked"] = stacked;
 		result["max_simultaneous"] = window.max_simultaneous;
+		// Whether anything played at all, which is a different question from whether
+		// anything doubled - and the one you need first when a zero here sends you
+		// hunting for an audio system that was working the whole time.
+		result["heard_any_playback"] = window.max_simultaneous > 0;
 		result["note"] = stacked.is_empty()
 				? String("nothing stacked during these frames. That is not the same as nothing "
 						 "ever stacking: send the input burst you are worried about *while* this "
@@ -897,6 +900,42 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 	return result;
 }
 
+// Key names, with the ones people actually type.
+//
+// The engine calls it `Enter`, not `Return`, and `Escape`, not `Esc`. Both refusals are
+// perfectly clear, and both cost an hour when the refusal is the thing being discarded -
+// so the common spellings are simply accepted.
+static Key resolve_key_name(const String &p_name) {
+	const String name = p_name.strip_edges();
+	const Key direct = find_keycode(name);
+	if (direct != Key::NONE) {
+		return direct;
+	}
+	const String lowered = name.to_lower();
+	if (lowered == "return" || lowered == "\n") {
+		return Key::ENTER;
+	}
+	if (lowered == "esc") {
+		return Key::ESCAPE;
+	}
+	if (lowered == "del") {
+		return Key::KEY_DELETE;
+	}
+	if (lowered == "ins") {
+		return Key::INSERT;
+	}
+	if (lowered == "pgup" || lowered == "pageup") {
+		return Key::PAGEUP;
+	}
+	if (lowered == "pgdn" || lowered == "pagedown") {
+		return Key::PAGEDOWN;
+	}
+	if (lowered == "spacebar") {
+		return Key::SPACE;
+	}
+	return Key::NONE;
+}
+
 Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_error) {
 	Input *input = Input::get_singleton();
 	if (!input || !SceneTree::get_singleton()) {
@@ -957,9 +996,11 @@ Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_e
 			r_error = "press and release need a key name, such as Enter or Escape";
 			return Dictionary();
 		}
-		const Key keycode = find_keycode(key_name);
+		const Key keycode = resolve_key_name(key_name);
 		if (keycode == Key::NONE) {
-			r_error = vformat("'%s' is not a key name this engine recognises", key_name);
+			r_error = vformat("'%s' is not a key name this engine recognises; try Enter, "
+							  "Escape, Space, Tab, Backspace, Delete or a letter",
+					key_name);
 			return Dictionary();
 		}
 		if (action == "press") {
@@ -1089,7 +1130,21 @@ void collect_audio_players(Node *p_node, Array &r_players) {
 		entry["node_path"] = String(p_node->get_path());
 		entry["class"] = p_node->get_class();
 		const Ref<Resource> stream = p_node->get(SNAME("stream"));
-		entry["stream"] = stream.is_valid() ? stream->get_path() : String();
+		// A stream built in script has no resource path. Skipping those - which is what
+		// this did - makes every procedurally generated sound invisible: a game whose
+		// audio is entirely generated reports zero players sounding while four are
+		// audible. The object's own identity is a perfectly good key for "is this the
+		// same sound twice", so unsaved streams get one, clearly marked.
+		String identity;
+		if (stream.is_valid()) {
+			identity = stream->get_path();
+			if (identity.is_empty()) {
+				identity = vformat("generated:%s#%d", stream->get_class(),
+						(int64_t)stream->get_instance_id());
+			}
+		}
+		entry["stream"] = identity;
+		entry["stream_saved"] = stream.is_valid() && !stream->get_path().is_empty();
 		entry["playing"] = (bool)p_node->get(SNAME("playing"));
 		entry["volume_db"] = (double)p_node->get(SNAME("volume_db"));
 		entry["bus"] = String(p_node->get(SNAME("bus")));
@@ -1143,8 +1198,6 @@ Dictionary MCPRuntimeAgent::_audio_state(const Dictionary &p_arguments, String &
 		}
 		const String stream = entry.get("stream", String());
 		if (stream.is_empty()) {
-			// An unsaved or generated stream has no identity to compare against, so
-			// counting it would invent duplicates out of unrelated sounds.
 			continue;
 		}
 		if (!sounding.has(stream)) {
@@ -1165,9 +1218,17 @@ Dictionary MCPRuntimeAgent::_audio_state(const Dictionary &p_arguments, String &
 		stacked.push_back(entry);
 	}
 
+	int sounding_count = 0;
+	for (int i = 0; i < players.size(); i++) {
+		if ((bool)Dictionary(players[i]).get("playing", false)) {
+			sounding_count++;
+		}
+	}
+
 	Dictionary result;
 	result["buses"] = buses;
 	result["players"] = players;
+	result["playing_count"] = sounding_count;
 	result["stacked"] = stacked;
 	result["output_latency_ms"] = server->get_output_latency() * 1000.0;
 
@@ -1200,6 +1261,13 @@ Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String 
 		return Dictionary();
 	}
 
+	if (!tree->get_current_scene()) {
+		// Asked before the main scene is instantiated. Answering with get_node() here
+		// makes the *game* log an absolute-path error attributed to whichever autoload
+		// happens to be constructing, which reads exactly like a bug in the game.
+		r_error = "the game is still starting up and has no scene yet; wait and ask again";
+		return Dictionary();
+	}
 	Node *node = tree->get_root()->get_node_or_null(NodePath(path));
 	if (!node) {
 		r_error = vformat("no node at '%s' in the running game", path);
@@ -1217,8 +1285,12 @@ Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String 
 	result["path"] = path;
 	result["property"] = property;
 	result["type"] = Variant::get_type_name(value.get_type());
-	// Scalars survive JSON untouched; everything else would either be mangled or
-	// refused, so it goes back in Godot's own text form, which round-trips.
+	// Scalars survive JSON untouched. Dictionaries and arrays are JSON's native shapes
+	// and must come back as *structures*, not as text: a caller who writes
+	// `for key in result["value"]` on a stringified Dictionary silently iterates its
+	// characters, gets no error from anywhere, and spends two runs wondering why nothing
+	// was bought. Round-tripping through JSON guarantees whatever comes out is carryable,
+	// and anything JSON genuinely cannot express still falls back to Godot's text form.
 	switch (value.get_type()) {
 		case Variant::BOOL:
 		case Variant::INT:
@@ -1227,6 +1299,18 @@ Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String 
 		case Variant::STRING_NAME:
 			result["value"] = value;
 			break;
+		case Variant::DICTIONARY:
+		case Variant::ARRAY:
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_STRING_ARRAY: {
+			const Variant round_tripped = JSON::parse_string(JSON::stringify(value));
+			result["value"] = round_tripped.get_type() == Variant::NIL ? Variant(String(value))
+																	  : round_tripped;
+		} break;
 		default:
 			result["value"] = String(value);
 			break;

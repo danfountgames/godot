@@ -791,10 +791,23 @@ public:
 							"the key actions need a key name, such as Enter or Escape");
 					return Dictionary();
 				}
-				const Key keycode = find_keycode(key_name);
+				Key keycode = find_keycode(key_name);
+				if (keycode == Key::NONE) {
+					// The engine calls it Enter, not Return; Escape, not Esc. Accept both.
+					const String lowered = key_name.to_lower();
+					if (lowered == "return") {
+						keycode = Key::ENTER;
+					} else if (lowered == "esc") {
+						keycode = Key::ESCAPE;
+					} else if (lowered == "del") {
+						keycode = Key::KEY_DELETE;
+					}
+				}
 				if (keycode == Key::NONE) {
 					r_error.set(MCPToolError::INVALID_ARGUMENTS,
-							vformat("'%s' is not a key name this engine recognises", key_name));
+							vformat("'%s' is not a key name this engine recognises; try Enter, "
+									"Escape, Space, Tab, Backspace, Delete or a letter",
+									key_name));
 					return Dictionary();
 				}
 				if (action == "key_press") {

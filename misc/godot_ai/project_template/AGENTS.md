@@ -168,6 +168,19 @@ below, register a project command, or record the gap honestly as unverified.
 - **To know whether a dialog is open, ask, do not photograph.** `Godot_ListWindows`
   names every open window, works with no display at all, and cannot be misread the way
   a screenshot can. Reach for a capture when you need to judge how something *looks*.
+- **Drive the tools over one connection, not one process per call.** If you are
+  scripting the relay rather than speaking MCP, `--call` launches a process, connects
+  and handshakes *every time*. That is fine for a health check and ruinous for a play
+  session, which is thousands of calls. Use `--batch` (a JSON array of calls on stdin,
+  one connection) or keep a single `--mcp` process alive and speak JSON-RPC to it. This
+  is the single largest avoidable cost in a run.
+- **`Godot_PlayMainScene` saves the editor's dirty scenes first.** A `.tscn` you wrote
+  as *text* will be silently overwritten by the editor's stale in-memory copy. After
+  editing a scene file directly, reopen it (`Godot_OpenScene`) before playing, or make
+  the change through the scene tools instead.
+- **Read the refusal.** These tools refuse with a sentence that says what was wanted.
+  A helper that swallows the reply and reports only "it failed" turns a five-second fix
+  into an hour — that has already happened once, on a key name.
 - **The two write tools disagree about their argument name.** `Godot_WriteTextFile`
   takes `text`; `Godot_WriteUserFile` takes `content`. Nothing about that is guessable —
   read the schema rather than assuming the one you used last time.

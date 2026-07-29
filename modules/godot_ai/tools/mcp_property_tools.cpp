@@ -34,7 +34,10 @@
 #include "../mcp_runtime_bridge.h"
 #include "../mcp_tool_registry.h"
 
+#include "core/io/resource_loader.h"
+#include "core/object/script_language.h"
 #include "core/os/os.h"
+#include "core/variant/variant_parser.h"
 #include "core/variant/array.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/editor_debugger_tree.h"
@@ -45,6 +48,69 @@
 #include "scene/main/node.h"
 
 namespace {
+
+// A property's *declared* type, which is not always the type of what it currently
+// holds. `script` on a node with no script reads back as nil, and coercing against nil
+// accepts anything - which is how a res:// path once went in as a bare String, leaving a
+// scene whose script was a piece of text. The engine loaded it, ran it, and reported
+// nothing, because a String is a perfectly valid Variant to have stored.
+static Variant::Type declared_type(Object *p_object, const String &p_property, String &r_hint) {
+	if (!p_object) {
+		return Variant::NIL;
+	}
+	List<PropertyInfo> properties;
+	p_object->get_property_list(&properties);
+	for (const PropertyInfo &info : properties) {
+		if (info.name == p_property) {
+			r_hint = info.hint_string;
+			return info.type;
+		}
+	}
+	return Variant::NIL;
+}
+
+// A res:// path standing in for a resource. Anything that takes an Object - a script, a
+// texture, a material - is far more naturally addressed by path than by anything JSON
+// can express, so a string is accepted and *loaded*, or refused with the reason.
+static bool coerce_resource(const Variant &p_incoming, const String &p_hint, Variant &r_out, String &r_error) {
+	if (p_incoming.get_type() == Variant::NIL) {
+		r_out = Variant();
+		return true;
+	}
+	if (p_incoming.get_type() != Variant::STRING) {
+		r_error = "this property holds a resource; give it a res:// path, or null to clear it";
+		return false;
+	}
+	const String path = String(p_incoming).strip_edges();
+	if (path.is_empty()) {
+		r_out = Variant();
+		return true;
+	}
+	if (!path.begins_with("res://")) {
+		r_error = vformat("'%s' is not a res:// path, and this property holds a resource rather "
+						  "than text",
+				path);
+		return false;
+	}
+	if (!ResourceLoader::exists(path)) {
+		r_error = vformat("no resource at '%s'", path);
+		return false;
+	}
+	const Ref<Resource> resource = ResourceLoader::load(path);
+	if (resource.is_null()) {
+		r_error = vformat("'%s' could not be loaded; it may be broken or reference something "
+						  "missing",
+				path);
+		return false;
+	}
+	if (!p_hint.is_empty() && !resource->is_class(p_hint)) {
+		r_error = vformat("'%s' is a %s, but this property holds a %s", path,
+				resource->get_class(), p_hint);
+		return false;
+	}
+	r_out = resource;
+	return true;
+}
 
 // JSON has no Vector2/Vector3/Color, so a value arriving from a client has to be
 // coerced into whatever the property already holds. Coercing against the *current*
@@ -183,9 +249,19 @@ public:
 			return Dictionary();
 		}
 
+		const Variant incoming = p_arguments.has("value") ? p_arguments["value"] : Variant();
 		Variant value;
 		String coercion_error;
-		if (!coerce_value(current, p_arguments.has("value") ? p_arguments["value"] : Variant(), value, coercion_error)) {
+		// The declared type, not the current one: a null `script` accepts anything if you
+		// only look at what it holds now.
+		String hint;
+		const Variant::Type declared = declared_type(node, property, hint);
+		if (declared == Variant::OBJECT) {
+			if (!coerce_resource(incoming, hint, value, coercion_error)) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS, coercion_error);
+				return Dictionary();
+			}
+		} else if (!coerce_value(current, incoming, value, coercion_error)) {
 			r_error.set(MCPToolError::INVALID_ARGUMENTS, coercion_error);
 			return Dictionary();
 		}
@@ -196,10 +272,30 @@ public:
 		undo_redo->add_undo_property(node, property, current);
 		undo_redo->commit_action();
 
+		// Read back before answering. A write that did not take is the failure mode this
+		// whole tool family exists to make impossible to report as success.
+		bool after_valid = false;
+		const Variant after = node->get(property, &after_valid);
+		if (!after_valid) {
+			r_error.set(MCPToolError::FAILED,
+					vformat("'%s' vanished after being written", property));
+			return Dictionary();
+		}
+		if (declared == Variant::OBJECT && value.get_type() == Variant::OBJECT &&
+				after.get_type() != Variant::OBJECT) {
+			r_error.set(MCPToolError::FAILED,
+					vformat("'%s' did not accept the resource; it still holds a %s", property,
+							Variant::get_type_name(after.get_type())));
+			return Dictionary();
+		}
+
 		Dictionary result;
 		result["path"] = String(root->get_path_to(node));
 		result["property"] = property;
 		result["persistent"] = true;
+		String written;
+		VariantWriter::write_to_string(after, written);
+		result["value_written"] = written;
 		return result;
 	}
 };

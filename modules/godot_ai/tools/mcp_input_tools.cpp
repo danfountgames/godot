@@ -486,6 +486,10 @@ class RuntimeCommandTool : public MCPTool {
 	Dictionary schema;
 	double timeout;
 	Callable transform;
+	// Some questions have a true answer when no game is running, and refusing them makes
+	// a whole pattern inexpressible - see `answer_without_game` at the call site.
+	Dictionary answer_without_game;
+	bool answers_without_game = false;
 
 public:
 	RuntimeCommandTool(const String &p_name, const String &p_command, const String &p_description,
@@ -494,6 +498,11 @@ public:
 			tool_name(p_name), command(p_command), description(p_description),
 			capability(p_capability), schema(p_schema), timeout(p_timeout),
 			transform(p_transform) {}
+
+	void set_answer_without_game(const Dictionary &p_answer) {
+		answer_without_game = p_answer;
+		answers_without_game = true;
+	}
 
 	virtual String get_tool_name() const override { return tool_name; }
 	virtual String get_description() const override { return description; }
@@ -505,6 +514,10 @@ public:
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
 		MCPRuntimeBridge *bridge = nullptr;
 		if (!require_running_game(r_error, &bridge)) {
+			if (answers_without_game) {
+				r_error = MCPToolError();
+				return answer_without_game;
+			}
 			return Dictionary();
 		}
 		return MCPDeferred::make_deferred_result(
@@ -654,14 +667,28 @@ void mcp_register_input_tools() {
 			"after the fact rather than something to be argued about.",
 			MCP_CAP_READ_RUNTIME, clearable_schema("trace")))));
 
-	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+	{
+		RuntimeCommandTool *errors = memnew(RuntimeCommandTool(
 			"Godot_GetRuntimeErrors", "runtime_errors",
 			"Return errors and warnings the running game has reported, with file, line, "
 			"function, and the script call stack as it stood when the error was raised. "
 			"Godot_ReadOutputLog gives the same events as prose; this keeps the structure, "
 			"which is what a diagnosis actually needs - the call site says where it broke, and "
 			"the stack says which caller got it there.",
-			MCP_CAP_READ_RUNTIME, clearable_schema("error list")))));
+			MCP_CAP_READ_RUNTIME, clearable_schema("error list")));
+		// "Restart the game, then assert it logged nothing" needs this to answer rather
+		// than refuse. The errors live in the game process, so once it is gone there are
+		// genuinely none - and a fresh game starts with an empty buffer, which is exactly
+		// what this says.
+		Dictionary empty;
+		empty["errors"] = Array();
+		empty["count"] = 0;
+		empty["note"] = "no game is running, so there are no runtime errors; a game started "
+						"from here begins with an empty buffer";
+		errors->set_answer_without_game(empty);
+		registry->register_tool(Ref<MCPTool>(errors));
+	}
+
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_CaptureFrameSequence", "capture_sequence",

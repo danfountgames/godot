@@ -30,6 +30,8 @@
 
 #include "relay.h"
 
+#include <iostream>
+
 #include "platform.h"
 
 #include <algorithm>
@@ -68,6 +70,12 @@ static const char *USAGE =
 		"  --home <path>              Override the relay state directory (GODOT_AI_HOME).\n"
 		"  --handshake-timeout <ms>   Editor handshake timeout in milliseconds (default: 5000).\n"
 		"  --call <tool>              Run one tool and print its result as JSON, then exit.\n"
+		"  --list-tools               Print every available tool as JSON, then exit.\n"
+		"  --batch                    Read a JSON array of tool calls on stdin and run\n"
+		"                             them all over ONE connection. --call pays a process\n"
+		"                             launch, a connect and a handshake every time - about\n"
+		"                             half a second - which is fine for three calls and\n"
+		"                             ruinous for a thousand. Use this, or --mcp.\n"
 		"  --arguments <json>         Arguments object for --call (default: {}).\n"
 		"  --http-port <port>         Serve MCP over HTTP on this port instead of stdio.\n"
 		"  --http-host <host>         Address to bind (default: 127.0.0.1).\n"
@@ -187,6 +195,10 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			if (!next(r_options.client_name)) {
 				return false;
 			}
+		} else if (arg == "--list-tools") {
+			r_options.list_tools = true;
+		} else if (arg == "--batch") {
+			r_options.batch = true;
 		} else if (arg == "--call") {
 			if (!next(r_options.call_tool)) {
 				return false;
@@ -841,6 +853,72 @@ int Relay::run_one_shot() {
 	if (!request("notifications/initialized", std::string(), nullptr, response, error)) {
 		log(LOG_ERROR, error);
 		return 2;
+	}
+
+	if (options.list_tools) {
+		JSONValueRef listed;
+		if (!request("tools/list", "one-shot-list", JSONValue::make_object(), listed, error)) {
+			log(LOG_ERROR, error);
+			return 2;
+		}
+		JSONValueRef list_result = listed->get("result");
+		write_stdout_line(list_result ? list_result->to_string() : listed->to_string());
+		return list_result ? 0 : 1;
+	}
+
+	if (options.batch) {
+		// One connection, one handshake, every call. See Options::batch.
+		std::string input;
+		std::string line;
+		while (std::getline(std::cin, line)) {
+			input += line;
+			input += "\n";
+		}
+		std::string parse_error;
+		JSONValueRef requests = json_parse(input, &parse_error);
+		if (!requests || !requests->is_array()) {
+			log(LOG_ERROR, "--batch expects a JSON array of {\"name\":…, \"arguments\":…} on stdin");
+			return 2;
+		}
+		JSONValueRef results = JSONValue::make_array();
+		int failures = 0;
+		const std::vector<JSONValueRef> &entries = requests->get_array();
+		for (size_t i = 0; i < entries.size(); i++) {
+			JSONValueRef entry = entries[i];
+			JSONValueRef name = entry ? entry->get("name") : nullptr;
+			if (!name || !name->is_string()) {
+				log(LOG_ERROR, "every batch entry needs a string \"name\"");
+				return 2;
+			}
+			JSONValueRef params = JSONValue::make_object();
+			params->set("name", JSONValue::make_string(name->get_string()));
+			JSONValueRef entry_arguments = entry->get("arguments");
+			params->set("arguments",
+					entry_arguments && entry_arguments->is_object() ? entry_arguments
+																   : JSONValue::make_object());
+			JSONValueRef reply;
+			if (!request("tools/call", "batch-" + std::to_string(i), params, reply, error)) {
+				log(LOG_ERROR, error);
+				return 2;
+			}
+			JSONValueRef entry_result = reply->get("result");
+			JSONValueRef entry_error = reply->get("error");
+			JSONValueRef wrapped = JSONValue::make_object();
+			wrapped->set("name", JSONValue::make_string(name->get_string()));
+			if (entry_error) {
+				wrapped->set("error", entry_error);
+				failures++;
+			} else if (entry_result) {
+				wrapped->set("result", entry_result);
+				JSONValueRef is_error = entry_result->get("isError");
+				if (is_error && is_error->is_bool() && is_error->get_bool()) {
+					failures++;
+				}
+			}
+			results->push_back(wrapped);
+		}
+		write_stdout_line(results->to_string());
+		return failures > 0 ? 1 : 0;
 	}
 
 	JSONValueRef call_params = JSONValue::make_object();

@@ -181,6 +181,27 @@ var flash := 0:
 		if value > 0:
 			_flash()
 
+# A stream built in script has no resource path. Skipping such streams made every
+# procedurally generated sound invisible - a game whose audio is entirely generated
+# reported nothing playing while it was audible.
+func _ready() -> void:
+	var generated := AudioStreamWAV.new()
+	var frames := PackedByteArray()
+	for i in range(8000):
+		frames.append(128 + int(60.0 * sin(float(i) * 0.05)))
+	generated.data = frames
+	generated.format = AudioStreamWAV.FORMAT_8_BITS
+	generated.mix_rate = 8000
+	$Made.stream = generated
+
+var play_generated := 0:
+	set(value):
+		play_generated = value
+		if value > 0:
+			$Made.play()
+		else:
+			$Made.stop()
+
 func _flash() -> void:
 	$One.play()
 	$Two.play()
@@ -282,6 +303,8 @@ stream = ExtResource("3")
 
 [node name="Two" type="AudioStreamPlayer" parent="Chimes"]
 stream = ExtResource("3")
+
+[node name="Made" type="AudioStreamPlayer" parent="Chimes"]
 """
 
 # The button records two different things on purpose. `pressed` fires however the
@@ -1548,6 +1571,54 @@ def run(editor_binary, display):
                       "a sound is playing before anything asked for one: %r" % players)
                 check(audio["stacked"] == [],
                       "nothing is playing, yet something is reported as stacked: %r" % audio)
+                # A Dictionary has to come back as a *structure*. Returned as text, a
+                # caller iterating it silently walks its characters and nothing anywhere
+                # reports an error.
+                reply = call({"jsonrpc": "2.0", "id": 210, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Saves",
+                                                       "property": "slot"}}})
+                slot = reply["result"]["structuredContent"]
+                check(slot["type"] == "Dictionary", "the type is not reported: %r" % slot)
+                check(isinstance(slot["value"], dict),
+                      "a Dictionary came back as %s, which iterates as characters: %r"
+                      % (type(slot["value"]).__name__, slot["value"]))
+                check(slot["value"]["level"] == 1, "the dictionary lost its contents: %r" % slot)
+
+                reply = call({"jsonrpc": "2.0", "id": 211, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Hud/Surface",
+                                                       "property": "test_array_probe"}}})
+                # (no such property - the refusal path stays a refusal)
+                check(refused(reply), "an unknown property was accepted")
+                print("PASS Godot_GetRuntimeProperty returns a Dictionary as a real object")
+
+                # A stream generated in script has no resource path. It must still be
+                # visible, or a game whose audio is entirely generated looks silent.
+                call({"jsonrpc": "2.0", "id": 212, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Chimes",
+                                               "property": "play_generated", "value": 1}}})
+                reply = call({"jsonrpc": "2.0", "id": 213, "method": "tools/call",
+                              "params": {"name": "Godot_GetAudioState"}})
+                generated = reply["result"]["structuredContent"]
+                made = [entry for entry in generated["players"]
+                        if entry["node_path"].endswith("/Made")]
+                check(made, "the generated-stream player was not listed")
+                check(made[0]["playing"] is True, "the generated stream is not playing: %r" % made[0])
+                check(made[0]["stream"].startswith("generated:"),
+                      "an unsaved stream has no identity, so it would be skipped: %r" % made[0])
+                check(made[0]["stream_saved"] is False,
+                      "a generated stream is reported as saved: %r" % made[0])
+                check(generated["playing_count"] >= 1,
+                      "playing_count does not see the generated sound: %r"
+                      % generated["playing_count"])
+                call({"jsonrpc": "2.0", "id": 214, "method": "tools/call",
+                      "params": {"name": "Godot_SetRuntimeProperty",
+                                 "arguments": {"path": "/root/Main/Chimes",
+                                               "property": "play_generated", "value": 0}}})
+                print("PASS a stream generated in script is visible to the audio tools")
+
                 print("PASS Godot_GetAudioState reported %d buses and %d silent players"
                       % (len(audio["buses"]), len(players)))
 
@@ -1835,6 +1906,20 @@ def run(editor_binary, display):
             # rather than pretending the path was exercised.
             print("SKIP play lifecycle: %s" % refusal_text(reply)[:80])
 
+        # --- errors are answerable with no game running -------------------------
+        # "Restart the game, then assert it logged nothing" needs this. Refusing made the
+        # whole pattern inexpressible: you had to read the *previous* instance's buffer.
+        reply = call({"jsonrpc": "2.0", "id": 224, "method": "tools/call",
+                      "params": {"name": "Godot_GetRuntimeErrors"}})
+        check(not refused(reply),
+              "reading errors with no game running was refused: %s" % refusal_text(reply))
+        quiet = reply["result"]["structuredContent"]
+        check(quiet["count"] == 0 and quiet["errors"] == [],
+              "no game is running, yet errors were reported: %r" % quiet)
+        check("no game is running" in quiet["note"],
+              "the empty answer does not say why it is empty: %r" % quiet.get("note"))
+        print("PASS Godot_GetRuntimeErrors answers rather than refusing with no game")
+
         # --- listing the project's test scenes ---------------------------------
         reply = call({"jsonrpc": "2.0", "id": 174, "method": "tools/call",
                       "params": {"name": "Godot_ListSceneTests"}})
@@ -1865,6 +1950,38 @@ def run(editor_binary, display):
                                  "arguments": {"directory": "res://notes.txt"}}})
         check(refused(reply), "a file was accepted as a directory to search")
         print("PASS Godot_ListSceneTests finds test scenes by convention")
+
+        # --- a resource property set by path ----------------------------------
+        # A res:// string written into an Object-typed property used to be stored as a
+        # bare String: the scene then ran with no script, no error, and nothing in the
+        # output log. A black screen and a clean console is the worst failure this
+        # interface can produce, because there is nothing to search for.
+        call({"jsonrpc": "2.0", "id": 220, "method": "tools/call",
+              "params": {"name": "Godot_OpenScene",
+                         "arguments": {"path": "res://scenes/main.tscn"}}})
+        reply = call({"jsonrpc": "2.0", "id": 221, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": "Hud/Target", "property": "script",
+                                               "value": "res://scripts/target.gd"}}})
+        check(not refused(reply), "setting a script by path failed: %s" % refusal_text(reply))
+        written = reply["result"]["structuredContent"]["value_written"]
+        check("Resource(" in written and "target.gd" in written,
+              "the script was stored as %r rather than as a loaded resource" % written)
+
+        reply = call({"jsonrpc": "2.0", "id": 222, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": "Hud/Target", "property": "script",
+                                               "value": "just a string"}}})
+        check(refused(reply), "a bare string was accepted into a resource property")
+        check("res://" in refusal_text(reply),
+              "the refusal does not say what was wanted: %r" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 223, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": "Hud/Target", "property": "script",
+                                               "value": "res://nothing-here.gd"}}})
+        check(refused(reply), "a res:// path to nothing was accepted")
+        print("PASS a resource property takes a res:// path, and refuses anything else")
 
         # --- user data --------------------------------------------------------
         # Saves live outside the project, which is why the project tools cannot see

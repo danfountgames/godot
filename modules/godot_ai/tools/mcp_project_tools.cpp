@@ -300,6 +300,16 @@ public:
 		// Null in headless runs and unit tests, where there is nothing to refresh.
 		if (EditorFileSystem::get_singleton()) {
 			EditorFileSystem::get_singleton()->update_file(resolved.res_path);
+			if (created) {
+				// `update_file` locates the file's *directory* first and returns silently
+				// when it cannot - which is exactly what happens to the first file written
+				// into a folder the editor has never scanned. The file then exists, is
+				// listed by Godot_ListAssets, and yet its `class_name` is never registered,
+				// so every script that refers to it fails to parse for a reason nothing
+				// reports. A scan on creation is cheap and removes the whole class of
+				// "written but not really there" confusion.
+				EditorFileSystem::get_singleton()->scan_changes();
+			}
 		}
 
 		Dictionary result;

@@ -80,6 +80,12 @@ struct RelayOptions {
 	// Empty means "serve stdio", which is the normal MCP client path.
 	std::string call_tool;
 	std::string call_arguments; // JSON object, defaults to {}.
+	bool list_tools = false;
+	// Reads a JSON array of {"name":…, "arguments":…} from stdin and runs all of them
+	// over one connection. --call pays a process launch, a connect and a handshake per
+	// tool - about half a second - which is invisible for three calls and ruinous for a
+	// thousand. This is the scripted path that does not have that shape.
+	bool batch = false;
 
 	// HTTP transport. A port turns it on; without one the relay serves stdio, which
 	// is what an MCP client launching us as a child process expects.
