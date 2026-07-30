@@ -935,6 +935,59 @@ nothing — a true finding about a thing that never ran, and unrepeatable.
 
 ---
 
+# Six ways a control lies about itself
+
+Every one of these was found by a stranger playing a game its author believed was finished, and
+every one was invisible to the scene tree, the property list and the error log. They are cheap to
+check and expensive to miss.
+
+**Disabled must not mean intangible.** If a control's hit test reads `enabled and inside(point)`,
+a disabled control refuses the touch entirely — it falls through, nothing learns which control was
+pressed, and nothing can acknowledge it *even in principle*. Whether a control can be touched is
+**geometry**; whether it will act is **state**. Keep the two apart, acknowledge every press, and
+let the action decline.
+
+**Absent must not be drawn as a quieter version of present.** A greyed button says "this does
+something, later". If nothing is behind it, that is a lie — but the fix is not a blank shape
+either: a pale circle with no glyph is *more* mysterious than a greyed one, because there is
+nothing to grey out and nothing to guess from. A control with nothing behind it should not be
+drawn at all.
+
+**A confirmation that depends on the outcome being visible is not a confirmation.** A reset on an
+already-empty board changes nothing on screen, so the control looks broken to anyone who does not
+already know what it does. The *control* must say it fired, whatever the board does. Two
+independent testers called a working reset broken; so did its author, whose first reproduction was
+inconclusive for exactly this reason.
+
+**Success must not look like doing nothing.** A 260 ms flourish is gone a second later, and a
+finished board then looks identical to an untouched one. Give a completed state something that
+*persists*, and clear it when the state ends.
+
+**Any state you add must be cleared where state is rebuilt.** The moment a flourish becomes a
+lasting glow, it will follow the player into the next screen unless something clears it — and a
+success signal that appears on an untouched board means nothing at all.
+
+**One verb is not enough.** If dragging is the only way to move anything, a tap does nothing, and
+a tap is what a small child tries first. Provide the single-tap alternative, and route it through
+the same code the drag uses so the two can never disagree.
+
+---
+
+# Look for the picture before inventing one
+
+Icons invented at the keyboard read as whatever they resemble in other software. A rounded box
+with three dots is a *menu*, whatever you meant by it. A plus is *add*, and in a game about
+mathematics it is also *addition*. An arrow is *next*.
+
+A good specification has usually already chosen the images — a card silhouette, a hand, a lock, an
+opening demonstration — and using its pictures ties a control to something the player has already
+seen elsewhere in the product. **Search the specification for the noun before drawing anything.**
+On this fork's first real project, three separate icons were redrawn from clauses that had named
+the picture all along, and one whole feature turned out to be four specified lines nobody had
+implemented.
+
+---
+
 # Spec coverage is not a matter of memory
 
 The goal ledger is derived from the specification by the same agent that then builds from
