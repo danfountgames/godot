@@ -345,3 +345,40 @@ behaviour for a batch of genuinely independent calls. Two relay tests cover both
 
 **Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer `601e239`,
 Linux/X11 under `tools/virtual_display.py`.
+
+---
+
+# FR-004 — `Godot_SetRuntimeProperty` cannot set a null Resource property from a path
+
+**Severity:** NORMAL. **Layer:** AI tooling (`modules/godot_ai/mcp_runtime_agent.cpp`).
+**Status:** OPEN — reported, not yet fixed.
+
+Setting an `AudioStream`-typed property that is currently `null`, from a `res://` path:
+
+```
+Godot_SetRuntimeProperty path=".../Voice" property="stream" value="res://assets/audio/peg_click.wav"
+→ '/root/.../Voice.stream' is a Nil: cannot use a String as a Nil
+```
+
+The refusal is accurate about what it did and wrong about what it should have done. `coerce()`
+converts the incoming JSON to *the type of the value already there*, and the value already there is
+`null`, so the target type is `Nil`. But the property is declared `var stream: AudioStream`, and
+`Object::get_property_list()` reports it as `TYPE_OBJECT` with `hint_string: "AudioStream"`.
+
+**Every optional resource reference starts null**, which makes this the common case rather than an
+edge one: a stream that has not been chosen, a texture not yet assigned, a `PackedScene` slot. The
+consuming project hit it trying to attach a recording so a replay affordance could be driven, and
+used a scene test instead — the right layer, but the tool should not have been the reason.
+
+**Suggested fix.** Take the target type from the property list rather than from the current value,
+falling back to the current value's type only when the property is not declared. When the target is
+`TYPE_OBJECT` with a Resource hint and the incoming value is a String, `ResourceLoader::load()` it
+and refuse with the hint name if the loaded resource is not of that class — so
+`"res://x.png"` into an `AudioStream` slot still refuses, and says which class it wanted.
+
+Worth noting alongside: there is deliberately **no** method-call tool, so a scene test is the only
+way to reach an object's behaviour. That is a reasonable boundary and the consuming project's rules
+already point at it — but it does mean property setting carries more weight than it looks, because
+it is the only lever from outside.
+
+**Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer `6c46c87`.
