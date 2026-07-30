@@ -102,7 +102,7 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (63)
+## Tools exposed over MCP (65)
 
 | Area | Tools |
 |---|---|
@@ -123,7 +123,7 @@ confidence.
 | User | `Godot_AskUser` |
 | Skills | `Godot_ListSkills`, `Godot_ReadSkill` |
 | Checkpoints | `Godot_ListCheckpoints`, `Godot_CreateCheckpoint`, `Godot_RestoreCheckpoint`, `Godot_DiffCheckpoint` |
-| Asset pipeline | `Godot_GetImportStatus`, `Godot_ReimportAsset`, `Godot_WaitForImportQueue` |
+| Asset pipeline | `Godot_GetImportStatus`, `Godot_ReimportAsset`, `Godot_WaitForImportQueue`, `Godot_ScanFilesystem`, `Godot_DeleteProjectFile` |
 | Editor UI | `Godot_ListWindows`, `Godot_FindControl`, `Godot_SendEditorInput` |
 | Tests | `Godot_ListSceneTests`, `Godot_RunSceneTest` |
 
@@ -174,6 +174,10 @@ below, register a project command, or record the gap honestly as unverified.
   as *text* will be silently overwritten by the editor's stale in-memory copy. After
   editing a scene file directly, reopen it (`Godot_OpenScene`) before playing, or make
   the change through the scene tools instead.
+- **Deleting a project file is `Godot_DeleteProjectFile`, and it needs `confirm`.** It is
+  checkpointed, so unlike `user://` data it is recoverable. It refuses a scene that is still
+  open — because that scene would be written straight back — which is the other half of the
+  next point.
 - **A scene you *delete* comes back, for the same reason, and reopening cannot help.**
   The tab still holds a copy, the next play writes it out, and the file you removed is
   on disk again — tracked, listed by `Godot_ListScenes`, with no error anywhere. It
@@ -226,12 +230,39 @@ below, register a project command, or record the gap honestly as unverified.
   `action: "cancel"` — the touch the OS takes away when a notification or a call
   arrives. The engine's `is_released()` is false for it. Test it: a game that collapses
   the two fires whatever button the player was dragging away from.
-- **A drag is one call, and `steps` matters.** `Godot_SendPointerInput` and
-  `Godot_SendEditorInput` take `action: "drag"` with `to_x`/`to_y` and a step count. The
-  motion between the ends is the whole content of a drag — a slider, a camera or a swipe
-  reads deltas, not endpoints — so give it enough steps that no single one jumps past
-  whatever threshold the thing you are dragging uses. `action: "scroll"` sends real
-  wheel notches with a `direction` and an `amount`.
+- **A drag is one call, and `steps` matters.** `Godot_SendPointerInput`,
+  `Godot_SendTouchInput` and `Godot_SendEditorInput` all take `action: "drag"` with
+  `to_x`/`to_y` and a step count. The motion between the ends is the whole content of a drag
+  — a slider, a camera or a swipe reads deltas, not endpoints — so give it enough steps that
+  no single one jumps past whatever threshold the thing you are dragging uses.
+  `action: "scroll"` sends real wheel notches with a `direction` and an `amount`.
+- **Every gesture is paced across frames, and that is the point.** A gesture made of more
+  than one event is delivered one event per frame, because *the frames between the events are
+  part of the gesture*. A press and a release sharing a frame is invisible to anything polling
+  `Input.is_action_just_pressed()` in `_process`. A drag whose whole sweep lands in one frame
+  never lets per-frame logic run — hysteresis, movement thresholds, camera smoothing — so a
+  snap target never claims the piece, it returns home, and the route looks broken when it was
+  only unpaced. The reply carries `paced`, `frames_spanned` and the first and last frame, so
+  what you sent is checkable. `frames_per_step` slows a gesture down for something that samples
+  every few frames. Single-event actions (`down`, `up`, `move`) stay immediate.
+- **No error count tells you whether a run was your fault.** `Godot_GetRuntimeErrors` gives you
+  `raised_in` (`engine` or `script`) and `project_frames` per entry, and counts for both — but
+  *not* a "project errors" number, because that number is not derivable. An autoload with any
+  member variable logs one unavoidable engine error every run that carries project frames, and
+  `push_error()` from your own script is raised inside the engine. Whichever single signal you
+  pick misattributes one of those two. Read the stack, and gate on a *specific* error you have
+  identified rather than on a count.
+- **Count the game processes before believing a runtime measurement.**
+  `Godot_PlayMainScene` and `Godot_PlayCurrentScene` report `game_pids` and
+  `game_process_count`. More than one game means a runtime read and an input injection may not
+  reach the same process, and under software rendering they starve each other: the symptoms are
+  1 fps, a frame counter that appears frozen, and input accepted and never delivered — none of
+  which is the game.
+- **A new `class_name` is invisible until the filesystem is rescanned.**
+  `Godot_CheckScript` says `class_registered: false`, and every script naming the new type
+  fails with "Could not find type X in the current scope". `Godot_ReimportAsset` does *not*
+  fix it — global class registration comes from the filesystem scan, not the importer. Call
+  `Godot_ScanFilesystem`, then wait for `Godot_GetImportStatus.scanning` to go false.
 - **A changed asset is not an imported asset.** Writing a `.png` into the project does
   not give you a texture; the editor's importer has to run, and until it does the game
   keeps loading the old one. After touching any asset on disk, call

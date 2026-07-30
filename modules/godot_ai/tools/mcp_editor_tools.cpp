@@ -38,6 +38,7 @@
 
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
+#include "editor/gui/editor_run_bar.h"
 #include "scene/main/node.h"
 
 namespace {
@@ -56,6 +57,35 @@ static bool require_editor(MCPToolError &r_error, const String &p_tool) {
 	r_error.set(MCPToolError::UNSUPPORTED,
 			vformat("'%s' needs a running Godot editor; this process has no editor interface", p_tool));
 	return false;
+}
+
+// The game processes the editor believes it owns.
+//
+// A consuming project lost an hour to three game instances running at once: under software
+// rendering they starve each other, and a runtime read and an input injection do not
+// necessarily reach the same one. Every symptom - 1 fps, a frame counter that stopped, touch
+// input accepted and never delivered - pointed at the game. None of it was the game.
+//
+// Counting them was a shell trick, and `pgrep -f` matches its own command line, so the trick
+// has its own trap. This makes it a tool answer.
+static void add_game_processes(Dictionary &r_result) {
+	EditorRunBar *bar = EditorRunBar::get_singleton();
+	if (!bar) {
+		return;
+	}
+	Array pids;
+	for (const OS::ProcessID &pid : bar->get_editor_run().pids) {
+		pids.push_back((int64_t)pid);
+	}
+	r_result["game_pids"] = pids;
+	r_result["game_process_count"] = pids.size();
+	if (pids.size() > 1) {
+		// Not an error - the editor can legitimately run several - but it *is* the thing to
+		// know before believing any runtime measurement.
+		r_result["game_process_note"] = "more than one game is running: a runtime read and an "
+									   "input injection may not reach the same process, and "
+									   "under software rendering they starve each other";
+	}
 }
 
 static void serialize_node(Node *p_node, Node *p_scene_root, int p_depth, int p_max_depth, Array &r_nodes) {
@@ -352,6 +382,11 @@ public:
 	virtual Dictionary get_output_schema() const override {
 		Dictionary properties;
 		properties["playing"] = MCPSchema::bool_property("True when the game is running.");
+		properties["game_pids"] = MCPSchema::array_property(
+				"Process ids of the running game(s).", MCPSchema::integer_property("A pid."));
+		properties["game_process_count"] = MCPSchema::integer_property(
+				"How many game processes the editor is running. More than one means a runtime "
+				"read and an input injection may not reach the same process.");
 		return MCPSchema::object_schema(properties);
 	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
@@ -370,6 +405,7 @@ public:
 
 		Dictionary result;
 		result["playing"] = EditorInterface::get_singleton()->is_playing_scene();
+		add_game_processes(result);
 		return result;
 	}
 };

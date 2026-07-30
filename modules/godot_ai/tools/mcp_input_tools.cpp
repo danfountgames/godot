@@ -89,6 +89,10 @@ public:
 		directions.push_back("right");
 		properties["direction"] = MCPSchema::enum_property("Which way to scroll.", directions, "down");
 		properties["amount"] = MCPSchema::integer_property("How many wheel notches to send.", 3);
+		properties["frames_per_step"] = MCPSchema::integer_property(
+				"Frames to leave between the events of a multi-event gesture. 1 is one event per "
+				"frame, which is what real hardware looks like; raise it to slow a gesture down "
+				"for something that samples every few frames.", 1);
 		Vector<String> required;
 		required.push_back("x");
 		required.push_back("y");
@@ -174,6 +178,10 @@ public:
 		properties["ctrl"] = MCPSchema::bool_property("Hold control.", false);
 		properties["alt"] = MCPSchema::bool_property("Hold alt.", false);
 		properties["meta"] = MCPSchema::bool_property("Hold meta/command.", false);
+		properties["frames_per_step"] = MCPSchema::integer_property(
+				"Frames to leave between the events of a multi-event gesture. Typing a string is a "
+				"gesture too: a game that reads one character per frame, or debounces input, sees a "
+				"whole word arriving in one frame very differently from someone typing it.", 1);
 		return MCPSchema::object_schema(properties);
 	}
 
@@ -560,8 +568,22 @@ Dictionary touch_schema() {
 	properties["y"] = MCPSchema::integer_property("Vertical position in game window pixels.");
 	properties["index"] = MCPSchema::integer_property(
 			"Finger index, so multi-touch can be exercised.", 0);
-	properties["relative_x"] = MCPSchema::integer_property("Horizontal movement, for drag.", 0);
-	properties["relative_y"] = MCPSchema::integer_property("Vertical movement, for drag.", 0);
+	properties["to_x"] = MCPSchema::integer_property(
+			"Where a swept drag ends, horizontally. Given this (or to_y), action='drag' is a "
+			"whole gesture: a touch down, motion in steps, and a release at the destination.");
+	properties["to_y"] = MCPSchema::integer_property("Where a swept drag ends, vertically.");
+	properties["steps"] = MCPSchema::integer_property(
+			"How many motion events a swept drag is broken into. The motion between the ends "
+			"is the whole content of a drag, so give it enough steps that no single one jumps "
+			"past whatever threshold the thing being dragged uses.", 8);
+	properties["relative_x"] = MCPSchema::integer_property(
+			"Horizontal movement for a single drag event, when assembling a gesture by hand "
+			"rather than using to_x/to_y.", 0);
+	properties["relative_y"] = MCPSchema::integer_property("Vertical movement, likewise.", 0);
+	properties["frames_per_step"] = MCPSchema::integer_property(
+			"Frames to leave between the events of a multi-event gesture. 1 is one event per "
+			"frame, which is what real hardware looks like; raise it to slow a gesture down "
+			"for something that samples every few frames.", 1);
 	Vector<String> required;
 	required.push_back("x");
 	required.push_back("y");
@@ -584,6 +606,10 @@ Dictionary gamepad_schema() {
 	properties["button"] = MCPSchema::integer_property("JoyButton index, for button actions.", 0);
 	properties["axis"] = MCPSchema::integer_property("JoyAxis index, for action=axis.", 0);
 	properties["value"] = MCPSchema::number_property("Axis value from -1 to 1.", 0);
+	properties["frames_per_step"] = MCPSchema::integer_property(
+			"Frames to leave between the events of a multi-event gesture. 1 is one event per "
+			"frame, which is what real hardware looks like; raise it to slow a gesture down "
+			"for something that samples every few frames.", 1);
 	return MCPSchema::object_schema(properties);
 }
 
@@ -674,7 +700,13 @@ void mcp_register_input_tools() {
 			"function, and the script call stack as it stood when the error was raised. "
 			"Godot_ReadOutputLog gives the same events as prose; this keeps the structure, "
 			"which is what a diagnosis actually needs - the call site says where it broke, and "
-			"the stack says which caller got it there.",
+			"the stack says which caller got it there. Each entry carries `raised_in` "
+			"(`engine` or `script`) and `project_frames`, which describe where it came from. "
+			"Neither says whether the project could have avoided it: an autoload with any "
+			"member variable logs one unavoidable engine error per run that *does* carry "
+			"project frames, and push_error() from a script is raised inside the engine. That "
+			"distinction is not available from the data, so this tool does not pretend to it - "
+			"read the stack.",
 			MCP_CAP_READ_RUNTIME, clearable_schema("error list")));
 		// "Restart the game, then assert it logged nothing" needs this to answer rather
 		// than refuse. The errors live in the game process, so once it is gone there are

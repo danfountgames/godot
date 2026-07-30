@@ -121,7 +121,41 @@ void error_handler(void *p_user, const char *p_function, const char *p_file, int
 			entry["kind"] = "error";
 			break;
 	}
-	entry["stack"] = capture_script_stack();
+	const Array stack = capture_script_stack();
+	entry["stack"] = stack;
+	// Two descriptive facts about where the error came from, and deliberately *not* a verdict
+	// on whose fault it is.
+	//
+	// FR-001 recommended classifying errors so a project could assert "zero project errors"
+	// while ignoring engine noise it cannot fix - an autoload with any member variable logs one
+	// benign get_node() complaint every run, because main.cpp attaches the script before it
+	// parents the node. Implementing that recommendation and then testing it showed it cannot
+	// be done from the data available:
+	//
+	//   - that unavoidable engine error carries the project's own autoload on its stack, so
+	//     "was project script involved" calls it a project error;
+	//   - a deliberate push_error() from project script is raised in variant_utility.cpp, so
+	//     "where was it raised" calls that one an engine error.
+	//
+	// Both signals get the motivating case backwards, and the remaining option - matching the
+	// error's signature - is precisely the silent suppression FR-001 warned against. So these
+	// two fields say what is observable and let the caller combine them, and the tool's own
+	// description says the distinction between avoidable and unavoidable is not available.
+	bool project_frames = false;
+	for (int i = 0; i < stack.size(); i++) {
+		const Dictionary frame = stack[i];
+		if (String(frame.get("source", String())).begins_with("res://")) {
+			project_frames = true;
+			break;
+		}
+	}
+	// Where it was raised: an engine source path, or a script. A GDScript runtime or parse
+	// error reports the .gd file; anything raised by engine C++ reports its own translation
+	// unit, including push_error(), which is raised inside the engine on the caller's behalf.
+	const String raised_file = entry["file"];
+	entry["raised_in"] = raised_file.begins_with("res://") ? "script" : "engine";
+	entry["project_frames"] = project_frames;
+	entry["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
 	if (g_errors.size() >= MAX_ERROR_ENTRIES) {
 		g_errors.remove_at(0);
 	}
@@ -132,6 +166,23 @@ ErrorHandlerList g_error_handler;
 bool g_error_handler_installed = false;
 
 } // namespace
+
+// While this is non-null every injected event is collected for frame-paced delivery
+// instead of going straight into the input queue. The builders below do not need to know
+// which mode they are in, which is the point: the pacing decision belongs to one place.
+static Vector<Ref<InputEvent>> *g_collect = nullptr;
+
+static void inject(const Ref<InputEvent> &p_event) {
+	if (g_collect) {
+		g_collect->push_back(p_event);
+		return;
+	}
+	Input *input = Input::get_singleton();
+	if (input) {
+		input->parse_input_event(p_event);
+	}
+}
+
 
 
 void MCPRuntimeAgent::install() {
@@ -224,6 +275,17 @@ void MCPRuntimeWatcher::add_audio_window(const String &p_request_id, int p_frame
 	audio_windows.push_back(window);
 }
 
+void MCPRuntimeWatcher::add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,
+		const Dictionary &p_result, int p_frames_per_step) {
+	Gesture gesture;
+	gesture.request_id = p_request_id;
+	gesture.events = p_events;
+	gesture.frames_per_step = MAX(1, p_frames_per_step);
+	gesture.first_frame = (int)Engine::get_singleton()->get_process_frames();
+	gesture.result = p_result;
+	gestures.push_back(gesture);
+}
+
 void MCPRuntimeWatcher::add_scene_test(const String &p_request_id, double p_timeout_seconds) {
 	SceneTest test;
 	test.request_id = p_request_id;
@@ -279,6 +341,34 @@ bool MCPRuntimeWatcher::read_scene_test(bool &r_finished, Array &r_cases) {
 void collect_audio_players(Node *p_node, Array &r_players);
 
 void MCPRuntimeWatcher::on_frame() {
+	// Gestures first: an event delivered this frame should be seen by the same frame's
+	// _process, and by anything else in this loop that is watching for its effect.
+	Input *input = Input::get_singleton();
+	for (int i = gestures.size() - 1; i >= 0; i--) {
+		Gesture &gesture = gestures.write[i];
+		if (gesture.countdown > 0) {
+			gesture.countdown--;
+			continue;
+		}
+		if (input && gesture.next < gesture.events.size()) {
+			input->parse_input_event(gesture.events[gesture.next]);
+		}
+		gesture.next++;
+		if (gesture.next < gesture.events.size()) {
+			gesture.countdown = gesture.frames_per_step - 1;
+			continue;
+		}
+		Dictionary result = gesture.result;
+		const int now = (int)Engine::get_singleton()->get_process_frames();
+		result["paced"] = true;
+		result["first_frame"] = gesture.first_frame;
+		result["last_frame"] = now;
+		result["frames_spanned"] = now - gesture.first_frame + 1;
+		const String request_id = gesture.request_id;
+		gestures.remove_at(i);
+		MCPRuntimeAgent::reply(request_id, result);
+	}
+
 	for (int i = audio_windows.size() - 1; i >= 0; i--) {
 		AudioWindow &window = audio_windows.write[i];
 
@@ -632,6 +722,60 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 		return OK;
 	}
 
+	// Every gesture that is more than one event is delivered one event per frame, because
+	// the frames between the events are part of the gesture. See MCPRuntimeWatcher::Gesture
+	// for why; the short version is that a press and a release sharing a frame is invisible
+	// to anything polling Input in _process, and a drag whose whole sweep lands in one frame
+	// never lets per-frame logic - hysteresis, thresholds, smoothing - run at all.
+	//
+	// Single-event actions (`down`, `up`, `move`, one `axis`) stay synchronous: there is no
+	// gesture to pace, and making them wait a frame would only make every call slower.
+	if (command == "send_pointer" || command == "send_touch" || command == "send_key" ||
+			command == "send_gamepad") {
+		Vector<Ref<InputEvent>> collected;
+		g_collect = &collected;
+		String build_error;
+		Dictionary result = _handle(command, arguments, build_error);
+		g_collect = nullptr;
+
+		if (!build_error.is_empty()) {
+			_fail(request_id, build_error);
+			return OK;
+		}
+		if (collected.size() <= 1) {
+			for (int i = 0; i < collected.size(); i++) {
+				Input *input = Input::get_singleton();
+				if (input) {
+					input->parse_input_event(collected[i]);
+				}
+			}
+			result["paced"] = false;
+			_reply(request_id, result);
+			return OK;
+		}
+
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		if (!watcher) {
+			// Honest degradation: deliver it unpaced rather than refuse, and say so, so a
+			// caller can tell a same-frame burst from a real gesture.
+			for (int i = 0; i < collected.size(); i++) {
+				Input *input = Input::get_singleton();
+				if (input) {
+					input->parse_input_event(collected[i]);
+				}
+			}
+			result["paced"] = false;
+			result["note"] = "delivered in one frame: this game cannot schedule frame work, so "
+							 "per-frame logic between the events did not run";
+			_reply(request_id, result);
+			return OK;
+		}
+		const int per_step = arguments.has("frames_per_step") ? (int)arguments["frames_per_step"] : 1;
+		watcher->add_gesture(request_id, collected, result, per_step);
+		return OK;
+	}
+
 	String error;
 	const Dictionary result = _handle(command, arguments, error);
 	if (error.is_empty()) {
@@ -775,7 +919,7 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 		// Motion during a drag has to carry the button that is down. A game that asks
 		// `event.button_mask` to tell a drag from a hover sees nothing without it.
 		motion->set_button_mask(held);
-		input->parse_input_event(motion);
+		inject(motion);
 		previous = p_to;
 	};
 
@@ -788,7 +932,7 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 		event->set_button_index((MouseButton)button);
 		event->set_pressed(p_pressed);
 		event->set_button_mask(held);
-		input->parse_input_event(event);
+		inject(event);
 	};
 	auto button_event = [&](bool p_pressed) { button_at(position, p_pressed); };
 
@@ -806,7 +950,7 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 			event->set_factor(p_factor);
 			event->set_button_mask(pressed == 1 ? mouse_button_to_mask(p_wheel)
 												: BitField<MouseButtonMask>());
-			input->parse_input_event(event);
+			inject(event);
 		}
 	};
 
@@ -960,7 +1104,7 @@ Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_e
 		event->set_ctrl_pressed(ctrl);
 		event->set_alt_pressed(alt);
 		event->set_meta_pressed(meta);
-		input->parse_input_event(event);
+		inject(event);
 	};
 
 	int events = 0;
@@ -1584,6 +1728,26 @@ Dictionary MCPRuntimeAgent::_runtime_errors(const Dictionary &p_arguments, Strin
 	Dictionary result;
 	result["errors"] = g_errors.duplicate();
 	result["count"] = g_errors.size();
+	// Counts for both observable facts. Neither is "errors that are your fault" - see the
+	// comment in error_handler() for why that number is not available.
+	int with_project_frames = 0;
+	int raised_in_script = 0;
+	for (int i = 0; i < g_errors.size(); i++) {
+		const Dictionary entry = g_errors[i];
+		if ((bool)entry.get("project_frames", false)) {
+			with_project_frames++;
+		}
+		if (String(entry.get("raised_in", String())) == "script") {
+			raised_in_script++;
+		}
+	}
+	result["with_project_frames_count"] = with_project_frames;
+	result["raised_in_script_count"] = raised_in_script;
+	result["note"] = "`project_frames` and `raised_in` describe where an error came from; "
+					 "neither tells you whether the project could have avoided it. An autoload "
+					 "with any member variable logs one unavoidable engine error per run that "
+					 "carries project frames, so a run is not clean merely because "
+					 "with_project_frames_count is 0, nor dirty merely because it is not.";
 	if (clear) {
 		g_errors.clear();
 	}
@@ -1623,10 +1787,13 @@ Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r
 		event->set_position(position);
 		event->set_pressed(p_pressed);
 		event->set_canceled(p_canceled);
-		input->parse_input_event(event);
+		inject(event);
 	};
 
 	int events = 0;
+	int result_to_x = -1;
+	int result_to_y = -1;
+	int result_steps = 0;
 	if (action == "down") {
 		touch(true, false);
 		events = 1;
@@ -1644,15 +1811,63 @@ Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r
 		touch(false, false);
 		events = 2;
 	} else if (action == "drag") {
-		Ref<InputEventScreenDrag> event;
-		event.instantiate();
-		event->set_index(index);
-		event->set_position(position);
-		event->set_relative(Vector2(
-				p_arguments.has("relative_x") ? (float)p_arguments["relative_x"] : 0.0f,
-				p_arguments.has("relative_y") ? (float)p_arguments["relative_y"] : 0.0f));
-		input->parse_input_event(event);
-		events = 1;
+		// Two shapes, because both are real. With `to_x`/`to_y` this is a whole swept
+		// gesture - down, motion in steps, up - the way `Godot_SendPointerInput` has always
+		// done it; without them it is a single drag event carrying `relative_x`/`relative_y`,
+		// for a caller assembling a gesture by hand.
+		//
+		// The swept form exists because assembling one from single calls is what a consuming
+		// project had to do, and the result was a shell script that this tool should have
+		// made unnecessary.
+		if (p_arguments.has("to_x") || p_arguments.has("to_y")) {
+			const Vector2 destination(
+					p_arguments.has("to_x") ? (float)p_arguments["to_x"] : position.x,
+					p_arguments.has("to_y") ? (float)p_arguments["to_y"] : position.y);
+			if (destination.x < 0 || destination.y < 0 ||
+					destination.x >= window_size.width || destination.y >= window_size.height) {
+				r_error = vformat("a drag to (%d, %d) ends outside the game window, which is %dx%d",
+						(int)destination.x, (int)destination.y, window_size.width, window_size.height);
+				return Dictionary();
+			}
+			const int steps = MAX(1, p_arguments.has("steps") ? (int)p_arguments["steps"] : 8);
+			touch(true, false);
+			Vector2 previous = position;
+			for (int step = 1; step <= steps; step++) {
+				const Vector2 at = position.lerp(destination, (float)step / (float)steps);
+				Ref<InputEventScreenDrag> motion;
+				motion.instantiate();
+				motion->set_index(index);
+				motion->set_position(at);
+				// `relative` is the whole content of a drag for anything reading deltas, and
+				// it has to be measured against the previous *step*, not the start.
+				motion->set_relative(at - previous);
+				inject(motion);
+				previous = at;
+			}
+			// Released at the destination, not at the start: a release reported at the
+			// origin is how a drag gets mistaken for a tap.
+			Ref<InputEventScreenTouch> release;
+			release.instantiate();
+			release->set_index(index);
+			release->set_position(destination);
+			release->set_pressed(false);
+			release->set_canceled(false);
+			inject(release);
+			events = steps + 2;
+			result_to_x = destination.x;
+			result_to_y = destination.y;
+			result_steps = steps;
+		} else {
+			Ref<InputEventScreenDrag> event;
+			event.instantiate();
+			event->set_index(index);
+			event->set_position(position);
+			event->set_relative(Vector2(
+					p_arguments.has("relative_x") ? (float)p_arguments["relative_x"] : 0.0f,
+					p_arguments.has("relative_y") ? (float)p_arguments["relative_y"] : 0.0f));
+			inject(event);
+			events = 1;
+		}
 	} else {
 		r_error = vformat("unknown touch action '%s'; expected down, up, cancel, tap or drag",
 				action);
@@ -1664,6 +1879,11 @@ Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r
 	detail["index"] = index;
 	detail["x"] = position.x;
 	detail["y"] = position.y;
+	if (result_steps > 0) {
+		detail["to_x"] = result_to_x;
+		detail["to_y"] = result_to_y;
+		detail["steps"] = result_steps;
+	}
 	_record("touch", detail);
 
 	Dictionary result = detail;
@@ -1696,7 +1916,7 @@ Dictionary MCPRuntimeAgent::_send_gamepad(const Dictionary &p_arguments, String 
 		event->set_device(device);
 		event->set_axis((JoyAxis)axis);
 		event->set_axis_value(value);
-		input->parse_input_event(event);
+		inject(event);
 		events = 1;
 	} else {
 		const int button = p_arguments.has("button") ? (int)p_arguments["button"] : 0;
@@ -1706,7 +1926,7 @@ Dictionary MCPRuntimeAgent::_send_gamepad(const Dictionary &p_arguments, String 
 			event->set_device(device);
 			event->set_button_index((JoyButton)button);
 			event->set_pressed(p_pressed);
-			input->parse_input_event(event);
+			inject(event);
 		};
 		if (action == "press") {
 			press(true);

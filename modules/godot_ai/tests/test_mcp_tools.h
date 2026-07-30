@@ -391,6 +391,90 @@ TEST_CASE("[godot_ai] Godot_CloseScene is declared as a scene mutation") {
 	}
 }
 
+TEST_CASE("[godot_ai] Godot_DeleteProjectFile insists on confirmation and a checkpoint") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	if (!registry->has_tool("Godot_DeleteProjectFile")) {
+		return;
+	}
+
+	const Dictionary meta = registry->get_tool_descriptor("Godot_DeleteProjectFile")["_meta"];
+	CHECK(String(meta["capability"]) == "edit_files");
+	CHECK((bool)meta["mutating"]);
+
+	SUBCASE("it declares the file it will delete, so the checkpoint layer can save it") {
+		// Unlike user:// data, a deleted project file *is* recoverable - but only because the
+		// tool names it before writing. A tool that deleted an undeclared path would be
+		// unrecoverable, and MCPTool forbids exactly that.
+		Dictionary arguments;
+		arguments["path"] = "res://scenes/main.tscn";
+		const Vector<String> declared =
+				registry->get_tool("Godot_DeleteProjectFile")->get_checkpoint_paths(arguments);
+		CHECK(declared.size() == 1);
+		CHECK(declared[0] == "res://scenes/main.tscn");
+	}
+
+	SUBCASE("a path outside the project is refused") {
+		Dictionary arguments;
+		arguments["path"] = "res://../../etc/passwd";
+		arguments["confirm"] = true;
+		MCPToolError error;
+		call("Godot_DeleteProjectFile", arguments, error);
+		CHECK(error.kind != MCPToolError::NONE);
+	}
+}
+
+TEST_CASE("[godot_ai] Godot_ScanFilesystem is a file-writing operation, not a read") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	if (!registry->has_tool("Godot_ScanFilesystem")) {
+		return;
+	}
+	// A rescan rewrites the editor's global class cache under .godot/. read_project would be
+	// the comfortable answer and the wrong one, so it is pinned here.
+	const Dictionary meta = registry->get_tool_descriptor("Godot_ScanFilesystem")["_meta"];
+	CHECK(String(meta["capability"]) == "edit_files");
+
+	SUBCASE("without an editor it reports unsupported rather than crashing") {
+		MCPToolError error;
+		call("Godot_ScanFilesystem", Dictionary(), error);
+		CHECK(error.kind == MCPToolError::UNSUPPORTED);
+	}
+}
+
+TEST_CASE("[godot_ai] every input tool accepts frames_per_step") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	// Pacing is not a pointer-only idea: a typed string, a gamepad axis sweep and a touch drag
+	// are all gestures whose frames matter. If one tool were left out, that gesture would
+	// silently be the one delivered in a single frame.
+	const char *tools[] = { "Godot_SendPointerInput", "Godot_SendTouchInput",
+							"Godot_SendKeyInput", "Godot_SendGamepadInput" };
+	for (int i = 0; i < 4; i++) {
+		if (!registry->has_tool(tools[i])) {
+			continue;
+		}
+		const Dictionary schema = registry->get_tool_descriptor(tools[i])["inputSchema"];
+		const Dictionary properties = schema["properties"];
+		CHECK_MESSAGE(properties.has("frames_per_step"),
+				vformat("%s does not accept frames_per_step", tools[i]));
+	}
+}
+
+TEST_CASE("[godot_ai] Godot_SendTouchInput offers a swept drag, like the pointer does") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	if (!registry->has_tool("Godot_SendTouchInput")) {
+		return;
+	}
+	// The gap this closes: a consuming project needed a paced touch drag, found only
+	// relative_x/relative_y, and wrote a shell script to assemble one call at a time. The tool
+	// should have made that unnecessary, so the schema is pinned.
+	const Dictionary schema = registry->get_tool_descriptor("Godot_SendTouchInput")["inputSchema"];
+	const Dictionary properties = schema["properties"];
+	CHECK(properties.has("to_x"));
+	CHECK(properties.has("to_y"));
+	CHECK(properties.has("steps"));
+	// And the by-hand form stays, for a caller assembling a gesture itself.
+	CHECK(properties.has("relative_x"));
+}
+
 } // namespace TestMCPTools
 
 #endif // TEST_MCP_TOOLS_H

@@ -188,3 +188,160 @@ substitute and for a deleted file it is not available.
 **Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer
 `33d50d1`, editor `4.3.dev.custom_build.96ff060d1`, Linux/X11 under
 `tools/virtual_display.py`.
+
+---
+
+# FR-003 — gestures were not gestures: six things the first real project needed
+
+**Severity:** MAJOR for the pacing defect; the rest MINOR-to-NORMAL gaps.
+**Layers:** AI tooling (`modules/godot_ai/`), the relay, and two small editor accessors.
+**Status:** all six FIXED in this branch.
+
+Everything here was found by building a game with the interface, and every one of them had
+already been *worked around* in the game before it was reported — which is the failure mode
+the fork's own instructions warn about. The workarounds are now deleted.
+
+## 1. A multi-event gesture delivered inside one frame is a different gesture
+
+The worst of the six, and the one that had a shell script written for it.
+
+`Godot_SendPointerInput action:"drag"` pushed a press, N motion events and a release through
+`Input::parse_input_event()` in a single call — so all of them landed in **one frame**. Same
+for `click` and for touch `tap`. The comment above the code said "one call, because a drag
+split across three calls is three chances for something else to move the pointer", which is
+a good reason to keep it one *call* and no reason at all to keep it one *frame*.
+
+Why it matters, concretely:
+
+- A game polling `Input.is_action_just_pressed()` in `_process` **never sees** a press and a
+  release that share a frame.
+- Per-frame logic between motion events never runs. In the consuming project the snap target
+  resolves its claim once per frame with hysteresis (its §10.3); with the whole sweep in one
+  frame it never got a chance to claim, `end_press` found no target, and the peg returned
+  home. The route looked broken. It was only unpaced.
+- Any movement or gesture threshold measured per frame is untrippable.
+- Camera smoothing, drag inertia and anything integrating over frames sees a teleport.
+
+The project's answer was `scripts/touch-drag.sh`: one relay connection per motion step, so
+the frames advanced in between. That is ~20 process launches and handshakes for one drag —
+precisely the cost `--batch` exists to avoid — to obtain behaviour the tool should have
+provided.
+
+**Fix.** One shared mechanism: `MCPRuntimeWatcher::Gesture`. Any `send_pointer`, `send_touch`,
+`send_key` or `send_gamepad` call that produces more than one event is queued and delivered
+**one event per frame**, and the tool answers when the last one has gone. The builders did not
+change; they emit through an `inject()` seam that either collects or delivers, so the pacing
+decision lives in exactly one place. Single-event actions (`down`, `up`, `move`) stay
+synchronous — there is no gesture to pace and making them wait a frame would only be slower.
+
+The reply carries `paced`, `first_frame`, `last_frame` and `frames_spanned`, so what was sent
+is checkable rather than assumed. `frames_per_step` slows a gesture down for something that
+samples every few frames. When the game cannot schedule frame work the events are delivered
+unpaced *and the result says so* — a note, not a silent downgrade.
+
+Verified: one `Godot_SendTouchInput` call with `to_x`/`to_y`/`steps: 10` reports 12 events over
+13 frames and lands the piece on its target, where the same drag unpaced left it at its origin.
+
+## 2. `Godot_SendTouchInput` had no swept drag at all
+
+The pointer had `to_x`/`to_y`/`steps` since the beginning; touch had only `relative_x` /
+`relative_y`, one event per call. So the *touch* route — the one a tablet game actually needs
+— was the one that had to be assembled by hand.
+
+**Fix.** Touch now takes the same `to_x`/`to_y`/`steps`, releasing at the destination rather
+than the origin (a release reported at the start is how a drag gets mistaken for a tap), with
+`relative` measured against the previous *step* rather than the start. The by-hand form is
+kept for a caller assembling a gesture itself.
+
+Two smaller asymmetries found alongside and worth closing later: touch requires integer
+coordinates where the pointer accepts floats, and `Godot_GetInputTrace` has no `limit` (only
+`clear`), so a long trace is all-or-nothing.
+
+## 3. A new `class_name` was invisible until the editor restarted
+
+`Godot_CheckScript` reported `class_registered: false`, and every script naming the new type
+failed with *"Could not find type X in the current scope"*. `Godot_ReimportAsset` does not help
+— global class registration comes from the filesystem scan, not the importer — and no tool
+triggered a scan. The only remedy was restarting the editor, mid-cycle, which the project did.
+
+**Fix.** `Godot_ScanFilesystem`, with `sources_only` for the cheap path. Capability
+`edit_files`, not `read_project`: it rewrites the global class cache under `.godot/`.
+It says plainly that a scan is asynchronous and points at `Godot_GetImportStatus.scanning`
+rather than pretending to be done.
+
+This one matters more than it looks. Untyped `_node.call("some_method")` is how a whole class
+of silent bug survives — calling a *property* as a method abandons the enclosing function with
+no error where anyone is looking — and the remedy is a `class_name` so the parser catches it.
+Making `class_name` expensive to add pushes projects toward the untyped form.
+
+## 4. There was no way to delete a project file
+
+`user://` had `Godot_DeleteUserFile`; the project had nothing. So removing a dead scene meant
+reaching outside the interface entirely, which is the one thing the interface is built not to
+require.
+
+**Fix.** `Godot_DeleteProjectFile`, `confirm`-gated, **checkpointed** (so unlike user data it
+is recoverable), removing the `.uid`/`.import` sidecars with the file, and refusing a scene
+that is still open in the editor — because that scene would be written straight back, which is
+FR-002 all over again. It is the natural counterpart to `Godot_CloseScene`.
+
+## 5. Nothing reported how many games were running
+
+Three game processes coexisted in the consuming project. Under software rendering they starve
+each other, and a runtime read and an input injection do not necessarily reach the same one.
+The symptoms — 1 fps, a `process_frames` counter apparently frozen, touch input accepted and
+never delivered — all pointed at the game. None of it was the game. An hour went to it.
+
+Counting them was a shell trick, and `pgrep -f` matches its own command line, so the trick had
+its own trap (it killed the session's shell twice).
+
+**Fix.** `Godot_PlayMainScene` and `Godot_PlayCurrentScene` report `game_pids` and
+`game_process_count`, with a note when it is above one. Needed one read-only accessor on
+`EditorRunBar`, since `is_playing()` cannot tell one game from three.
+
+## 6. `Godot_GetRuntimeErrors`: FR-001's own recommendation cannot be implemented as written
+
+FR-001 asked for errors to be classified `engine_internal` vs `project`, so a project could
+assert "zero project errors" while ignoring engine noise it cannot fix. **I implemented that,
+tested it, and it got the motivating case backwards.** Reporting the correction here rather than
+shipping the classifier.
+
+Two candidate signals, and each fails on one of the two errors that matter:
+
+| | FR-001's unavoidable autoload error | a deliberate `push_error()` from project script |
+|---|---|---|
+| raise site (`file`) | `./scene/main/node.cpp` → engine | `./core/variant/variant_utility.cpp` → **engine** |
+| project frames on the stack | `res://…/design_tokens.gd` → **project** | `res://tests/errprobe.gd` → project |
+
+So "was project script involved" labels the unavoidable engine error a *project* error — exactly
+the number FR-001 wanted clean — and "where was it raised" labels a project's own `push_error` an
+*engine* error. Verified live: both errors in one run, both misattributed by whichever single
+signal you pick. The only remaining option is matching the error's signature, which is the silent
+suppression FR-001 explicitly warned against.
+
+**What shipped instead.** Two descriptive fields and no verdict: `raised_in` (`engine` or
+`script`) and `project_frames` (bool), plus `with_project_frames_count`,
+`raised_in_script_count`, and the `frame` each error was raised on. The tool's own description
+and the result's `note` both say plainly that neither field tells you whether the project could
+have avoided the error, and point the caller at the stack.
+
+**Recommendation for FR-001.** Its option 2 ("classify rather than filter") should be retired in
+favour of its option 1 (document the known-benign error) or option 3 (fix the engine ordering).
+The distinction the classifier needed does not exist in the error data, and a field that claims
+it is worse than no field: a project would assert on it and be wrong in both directions.
+
+## And one thing in the relay: a batch is a sequence, not a bag
+
+An argument error on one entry did **not** stop the rest. So a mistyped
+`Godot_WaitForRuntimeCondition` gate — `timeout_ms` for `timeout_seconds`, say — was refused,
+the gate never ran, and every later call proceeded as though the game had reached a state it
+had not. That happened twice in one session and both times the capture afterwards succeeded by
+luck. The exit code was already non-zero, but nothing named the entry, and a caller reading
+selected fields out of the results array never saw an `error` key it was not looking for.
+
+**Fix.** The failing entry's index, name and message go to stderr, and the batch **stops** by
+default, saying how many later calls were abandoned. `--continue-on-error` keeps the old
+behaviour for a batch of genuinely independent calls. Two relay tests cover both paths.
+
+**Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer `601e239`,
+Linux/X11 under `tools/virtual_display.py`.

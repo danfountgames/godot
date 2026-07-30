@@ -610,8 +610,12 @@ def _one_shot_home(editor):
     return home
 
 
-def _responding_editor(result_payload=None):
-    """A fake editor that completes a handshake and answers every tools/call."""
+def _responding_editor(result_payload=None, refuse_tool=None):
+    """A fake editor that completes a handshake and answers every tools/call.
+
+    `refuse_tool` names one tool it answers with a JSON-RPC error instead, which is what a
+    real editor does for an unknown tool or a bad argument.
+    """
     editor = FakeEditor()
 
     def respond(message):
@@ -622,6 +626,12 @@ def _responding_editor(result_payload=None):
             return {"jsonrpc": "2.0", "id": message["id"],
                     "result": {"tools": [{"name": "Godot_GetEditorStatus"}]}}
         if message.get("method") == "tools/call":
+            called = (message.get("params") or {}).get("name")
+            if refuse_tool is not None and called == refuse_tool:
+                return {"jsonrpc": "2.0", "id": message["id"],
+                        "error": {"code": -32602,
+                                  "message": "unknown argument 'timeout_ms' (known arguments: "
+                                             "path, property, equals, timeout_seconds)"}}
             return {"jsonrpc": "2.0", "id": message["id"],
                     "result": {"content": [{"type": "text", "text": "ok"}],
                                "isError": False,
@@ -680,6 +690,55 @@ def test_batch_runs_many_calls_over_one_connection():
             assert_eq("result" in answer, True, "a batch entry has a result")
         # One connection for both calls is the entire point.
         assert_eq(editor.connection_count, 1, "batch opened more than one connection")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_batch_stops_on_a_failed_entry_and_names_it():
+    """A batch is a sequence, not a bag.
+
+    The failure this guards against is silent and expensive: a mistyped argument on a
+    Godot_WaitForRuntimeCondition gate is refused, the gate never runs, and every later
+    call in the array proceeds as though the game had reached a state it has not. That
+    happened twice in one session of the consuming project, and both times the capture
+    afterwards succeeded by luck. So: stop, and say which entry failed and how many
+    calls were abandoned.
+    """
+    editor = _responding_editor(refuse_tool="Godot_WaitForRuntimeCondition")
+    home = _one_shot_home(editor)
+    try:
+        payload = json.dumps([{"name": "Godot_GetEditorStatus"},
+                              {"name": "Godot_WaitForRuntimeCondition"},
+                              {"name": "Godot_GetEditorStatus"}])
+        result = run_relay_one_shot(["--batch"], home, stdin=payload)
+        assert_eq(result.returncode, 1, "a failed entry must fail the batch")
+        answers = json.loads(result.stdout.decode())
+        assert_eq(len(answers), 2, "results up to and including the failure are still returned")
+        stderr = result.stderr.decode()
+        assert_eq("batch entry 1" in stderr, True,
+                  "the failing entry's index is named on stderr: %s" % stderr)
+        assert_eq("not attempted" in stderr, True,
+                  "the abandoned calls are counted on stderr: %s" % stderr)
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_batch_continue_on_error_runs_the_rest():
+    """The old behaviour, kept for a batch of genuinely independent calls."""
+    editor = _responding_editor(refuse_tool="Godot_WaitForRuntimeCondition")
+    home = _one_shot_home(editor)
+    try:
+        payload = json.dumps([{"name": "Godot_WaitForRuntimeCondition"},
+                              {"name": "Godot_GetEditorStatus"}])
+        result = run_relay_one_shot(["--batch", "--continue-on-error"], home, stdin=payload)
+        assert_eq(result.returncode, 1, "the batch still reports failure")
+        answers = json.loads(result.stdout.decode())
+        assert_eq(len(answers), 2, "every entry was attempted")
+        assert_eq("result" in answers[1], True, "the call after the failure ran")
     finally:
         editor.close()
         shutil.rmtree(home, ignore_errors=True)

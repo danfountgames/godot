@@ -57,6 +57,7 @@
 #include "core/string/ustring.h"
 #include "core/variant/array.h"
 #include "core/variant/dictionary.h"
+#include "core/input/input_event.h"
 #include "core/variant/variant.h"
 
 // The debugger message namespace shared by both ends of the channel. Editor-side
@@ -121,11 +122,33 @@ class MCPRuntimeWatcher : public Object {
 		HashMap<String, Array> peak_players;
 	};
 
+	// A gesture is more than one event, and **the frames between them are part of it.**
+	//
+	// Delivering press+release, or a drag's whole sweep, inside one frame is not a faster
+	// version of the gesture - it is a different one, and often one no hardware can
+	// produce. A game polling `Input.is_action_just_pressed()` in `_process` never sees a
+	// press and release that share a frame. A snap target with per-frame hysteresis never
+	// gets a chance to claim a piece being dragged past it, so the piece returns home and
+	// the route looks broken. A gesture threshold measured per frame never trips.
+	//
+	// So every multi-event gesture is queued here and delivered one event per frame, and
+	// the tool call answers when the last one has gone.
+	struct Gesture {
+		String request_id;
+		Vector<Ref<InputEvent>> events;
+		int next = 0;
+		int frames_per_step = 1;
+		int countdown = 0;
+		int first_frame = 0;
+		Dictionary result;
+	};
+
 	Vector<Watch> watches;
 	Vector<Sequence> sequences;
 	Vector<Profile> profiles;
 	Vector<SceneTest> scene_tests;
 	Vector<AudioWindow> audio_windows;
+	Vector<Gesture> gestures;
 
 	static MCPRuntimeWatcher *singleton;
 
@@ -144,6 +167,10 @@ public:
 	void add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms);
 	void add_scene_test(const String &p_request_id, double p_timeout_seconds);
 	void add_audio_window(const String &p_request_id, int p_frames);
+	// Queues a gesture for frame-paced delivery. `p_result` is echoed back when the last
+	// event has been delivered, with the frames it spanned added.
+	void add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,
+			const Dictionary &p_result, int p_frames_per_step);
 	void on_frame();
 };
 

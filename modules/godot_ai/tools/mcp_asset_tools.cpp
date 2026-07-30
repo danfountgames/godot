@@ -130,6 +130,158 @@ public:
 	}
 };
 
+// A `class_name` added to an existing script is invisible to every other script until the
+// editor rescans: `Godot_CheckScript` reports `class_registered: false`, and anything
+// referring to the new type fails with "Could not find type X in the current scope".
+//
+// `Godot_ReimportAsset` does not help - global class registration comes from the filesystem
+// scan, not from the importer - so the only remedy was restarting the editor, which a
+// consuming project had to do mid-cycle. This is that remedy as a tool.
+class ScanFilesystemTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_ScanFilesystem"; }
+	virtual String get_description() const override {
+		return "Rescan the project filesystem, which is what registers a newly added class_name "
+			   "and notices files changed outside the editor. Needed after adding a class_name to "
+			   "an existing script; Godot_ReimportAsset does not do it.";
+	}
+	// It rewrites the editor's global class cache under .godot/, so it writes project-local
+	// files. read_project would be the comfortable answer and the wrong one.
+	virtual MCPCapability get_capability() const override { return MCP_CAP_EDIT_FILES; }
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["sources_only"] = MCPSchema::bool_property(
+				"Scan only for changed sources rather than walking the whole project. Faster, and "
+				"enough for a class_name that was added to a file already known to the editor.",
+				false);
+		return MCPSchema::object_schema(properties);
+	}
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["scanning"] = MCPSchema::bool_property("True while the scan is still running.");
+		properties["note"] = MCPSchema::string_property("What to do next.");
+		return MCPSchema::object_schema(properties);
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (!require_editor_for(r_error, get_tool_name())) {
+			return Dictionary();
+		}
+		EditorFileSystem *filesystem = EditorFileSystem::get_singleton();
+		if (!filesystem) {
+			r_error.set(MCPToolError::UNSUPPORTED, "the editor has no filesystem scanner");
+			return Dictionary();
+		}
+		const bool sources_only = p_arguments.has("sources_only") && (bool)p_arguments["sources_only"];
+		if (sources_only) {
+			filesystem->scan_changes();
+		} else {
+			filesystem->scan();
+		}
+		Dictionary result;
+		result["scanning"] = filesystem->is_scanning();
+		// A scan is asynchronous, so saying "done" here would be a guess. Point at the tool
+		// that can actually answer.
+		result["note"] = "a scan is asynchronous: wait on Godot_GetImportStatus.scanning going "
+						 "false before relying on a newly registered class_name";
+		return result;
+	}
+};
+
+// Deleting a project file had no tool at all - only `user://` had one - so removing a dead
+// scene meant reaching outside the interface entirely. That is the counterpart to
+// Godot_CloseScene: closing the tab stops the editor rewriting the file, and this is how the
+// file goes away.
+//
+// Unlike Godot_DeleteUserFile this *is* checkpointed, so it is recoverable.
+class DeleteProjectFileTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_DeleteProjectFile"; }
+	virtual String get_description() const override {
+		return "Delete a file inside the project. Close a scene first with Godot_CloseScene, or "
+			   "the editor's open tab will write it straight back on the next play.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_EDIT_FILES; }
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("File to delete, as a res:// path.");
+		properties["confirm"] = MCPSchema::bool_property(
+				"Must be true. Deleting is asked for explicitly rather than by omission.", false);
+		Vector<String> required;
+		required.push_back("path");
+		return MCPSchema::object_schema(properties, required);
+	}
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["deleted"] = MCPSchema::bool_property("True when the file was removed.");
+		properties["path"] = MCPSchema::string_property("File that was removed.");
+		return MCPSchema::object_schema(properties);
+	}
+	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const override {
+		Vector<String> paths;
+		MCPPaths::Resolved resolved;
+		String error;
+		if (p_arguments.has("path") && MCPPaths::resolve(p_arguments["path"], resolved, error)) {
+			paths.push_back(resolved.res_path);
+		}
+		return paths;
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		MCPPaths::Resolved resolved;
+		String error;
+		if (!MCPPaths::resolve_existing(p_arguments["path"], resolved, error)) {
+			r_error.set(MCPToolError::NOT_FOUND, error);
+			return Dictionary();
+		}
+		if (resolved.is_directory) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("'%s' is a folder; this tool deletes one file", resolved.res_path));
+			return Dictionary();
+		}
+		if (!p_arguments.has("confirm") || !(bool)p_arguments["confirm"]) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS,
+					vformat("deleting '%s' needs confirm=true", resolved.res_path));
+			return Dictionary();
+		}
+		// An open tab outranks the file on disk and is written back on the next save-all,
+		// which is what Play does. Refusing here is cheaper than the confusion of a file
+		// that will not stay deleted.
+		if (EditorNode::get_singleton() && EditorNode::get_singleton()->is_scene_open(resolved.res_path)) {
+			r_error.set(MCPToolError::INVALID_STATE,
+					vformat("'%s' is open in the editor and would be written back on the next "
+							"play; close it with Godot_CloseScene first", resolved.res_path));
+			return Dictionary();
+		}
+
+		Ref<DirAccess> dir = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+		if (dir.is_null()) {
+			r_error.set(MCPToolError::FAILED, "the project filesystem is unavailable");
+			return Dictionary();
+		}
+		const Error removed = dir->remove(resolved.res_path);
+		if (removed != OK) {
+			r_error.set(MCPToolError::FAILED,
+					vformat("removing '%s' failed with error %d", resolved.res_path, (int)removed));
+			return Dictionary();
+		}
+		// The .uid / .import sidecars are the engine's bookkeeping for the file that just
+		// went, and leaving them behind is how a fresh clone gets a dangling reference.
+		for (const String &suffix : { String(".uid"), String(".import") }) {
+			const String sidecar = resolved.res_path + suffix;
+			if (FileAccess::exists(sidecar)) {
+				dir->remove(sidecar);
+			}
+		}
+		if (EditorFileSystem::get_singleton()) {
+			EditorFileSystem::get_singleton()->scan_changes();
+		}
+
+		Dictionary result;
+		result["deleted"] = true;
+		result["path"] = resolved.res_path;
+		return result;
+	}
+};
+
 class ReimportAssetTool : public MCPTool {
 public:
 	virtual String get_tool_name() const override { return "Godot_ReimportAsset"; }
@@ -445,6 +597,8 @@ void mcp_register_asset_tools() {
 	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
 	ERR_FAIL_NULL(registry);
 	registry->register_tool(Ref<MCPTool>(memnew(GetImportStatusTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(ScanFilesystemTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(DeleteProjectFileTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(ReimportAssetTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(WaitForImportQueueTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(DiffCheckpointTool)));

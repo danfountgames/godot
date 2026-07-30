@@ -86,6 +86,10 @@ struct RelayOptions {
 	// tool - about half a second - which is invisible for three calls and ruinous for a
 	// thousand. This is the scripted path that does not have that shape.
 	bool batch = false;
+	// A batch is a sequence, not a bag: by default a failed entry stops the rest, because
+	// the usual failed entry is a gate and everything after it would run on an assumption
+	// that never held. --continue-on-error opts into the old behaviour.
+	bool batch_continue_on_error = false;
 
 	// HTTP transport. A port turns it on; without one the relay serves stdio, which
 	// is what an MCP client launching us as a child process expects.

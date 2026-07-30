@@ -99,6 +99,10 @@ public:
 
 	void stop_playing();
 	bool is_playing() const;
+	// Read-only access to the run state, so a caller can see *which* processes are running
+	// rather than only whether any is. is_playing() cannot distinguish one game from three,
+	// and three is a state every runtime measurement has to be interpreted against.
+	const EditorRun &get_editor_run() const { return editor_run; }
 	String get_playing_scene() const;
 
 	Error start_native_device(int p_device_id);

@@ -72,6 +72,10 @@ static const char *USAGE =
 		"  --call <tool>              Run one tool and print its result as JSON, then exit.\n"
 		"  --list-tools               Print every available tool as JSON, then exit.\n"
 		"  --batch                    Read a JSON array of tool calls on stdin and run\n"
+		"  --continue-on-error        With --batch, keep going after a failed entry.\n"
+		"                             The default stops, because a batch is a sequence and\n"
+		"                             a call after a failed gate proceeds on an assumption\n"
+		"                             that never held.\n"
 		"                             them all over ONE connection. --call pays a process\n"
 		"                             launch, a connect and a handshake every time - about\n"
 		"                             half a second - which is fine for three calls and\n"
@@ -199,6 +203,8 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			r_options.list_tools = true;
 		} else if (arg == "--batch") {
 			r_options.batch = true;
+		} else if (arg == "--continue-on-error") {
+			r_options.batch_continue_on_error = true;
 		} else if (arg == "--call") {
 			if (!next(r_options.call_tool)) {
 				return false;
@@ -914,17 +920,48 @@ int Relay::run_one_shot() {
 			JSONValueRef entry_error = reply->get("error");
 			JSONValueRef wrapped = JSONValue::make_object();
 			wrapped->set("name", JSONValue::make_string(name->get_string()));
+			bool entry_failed = false;
+			std::string entry_message;
 			if (entry_error) {
 				wrapped->set("error", entry_error);
-				failures++;
+				entry_failed = true;
+				JSONValueRef message = entry_error->get("message");
+				if (message && message->is_string()) {
+					entry_message = message->get_string();
+				}
 			} else if (entry_result) {
 				wrapped->set("result", entry_result);
 				JSONValueRef is_error = entry_result->get("isError");
 				if (is_error && is_error->is_bool() && is_error->get_bool()) {
-					failures++;
+					entry_failed = true;
+					JSONValueRef content = entry_result->get("content");
+					if (content && content->is_array() && !content->get_array().empty()) {
+						JSONValueRef first = content->get_array()[0];
+						JSONValueRef text = first ? first->get("text") : nullptr;
+						if (text && text->is_string()) {
+							entry_message = text->get_string();
+						}
+					}
 				}
 			}
 			results->push_back(wrapped);
+
+			if (entry_failed) {
+				failures++;
+				// Named on stderr, not only in the JSON. A caller reading selected fields out
+				// of the results array will not notice an `error` key it did not look for, and
+				// a batch is a *sequence*: an entry that did not run is usually a gate, and
+				// every later call then proceeds on an assumption that never held.
+				log(LOG_ERROR, "batch entry " + std::to_string(i) + " (" + name->get_string() +
+										") failed: " + entry_message);
+				if (!options.batch_continue_on_error) {
+					log(LOG_ERROR, "stopping: " + std::to_string(entries.size() - i - 1) +
+											" later call(s) not attempted. Pass "
+											"--continue-on-error to run them anyway.");
+					write_stdout_line(results->to_string());
+					return 1;
+				}
+			}
 		}
 		write_stdout_line(results->to_string());
 		return failures > 0 ? 1 : 0;
