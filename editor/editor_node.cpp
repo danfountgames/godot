@@ -3841,6 +3841,33 @@ bool EditorNode::is_scene_open(const String &p_path) {
 	return false;
 }
 
+bool EditorNode::close_scene_by_path(const String &p_path, bool p_discard_unsaved, String &r_error) {
+	int index = -1;
+	for (int i = 0; i < editor_data.get_edited_scene_count(); i++) {
+		if (editor_data.get_scene_path(i) == p_path) {
+			index = i;
+			break;
+		}
+	}
+	if (index == -1) {
+		r_error = vformat("'%s' is not open in the editor", p_path);
+		return false;
+	}
+
+	// An open tab holds an in-memory copy that outranks the file on disk: it is written
+	// back on the next save-all, which is what "Play" does. So a caller that deleted or
+	// rewrote the file behind the editor's back has to close the tab as well, and needs
+	// to know whether doing so throws away edits.
+	if (!p_discard_unsaved && EditorUndoRedoManager::get_singleton()->is_history_unsaved(editor_data.get_scene_history_id(index))) {
+		r_error = vformat("'%s' has unsaved changes; save it first, or pass discard_unsaved to lose them", p_path);
+		return false;
+	}
+
+	_remove_scene(index);
+	scene_tabs->update_scene_tabs();
+	return true;
+}
+
 bool EditorNode::is_multi_window_enabled() const {
 	return !SceneTree::get_singleton()->get_root()->is_embedding_subwindows() && !EDITOR_GET("interface/editor/single_window_mode") && EDITOR_GET("interface/multi_window/enable");
 }

@@ -344,6 +344,53 @@ TEST_CASE("[godot_ai] Editor tools refuse to run without an editor") {
 	}
 }
 
+TEST_CASE("[godot_ai] Godot_CloseScene is declared as a scene mutation") {
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	if (!registry->has_tool("Godot_CloseScene")) {
+		return;
+	}
+
+	// Closing a tab drops the editor's in-memory copy, and with discard_unsaved it
+	// destroys edits. Declaring it read_project would let a read-only session throw
+	// away a user's work, so this is pinned rather than left to reviewer memory.
+	const Dictionary meta = registry->get_tool_descriptor("Godot_CloseScene")["_meta"];
+	CHECK(String(meta["capability"]) == "edit_scene");
+	CHECK((bool)meta["mutating"]);
+
+	SUBCASE("path is optional, so a bare call is schema-valid and fails on state") {
+		// It must reach the editor check rather than being rejected for a missing
+		// argument: closing "the current scene" is the common case.
+		MCPToolError error;
+		call("Godot_CloseScene", Dictionary(), error);
+		CHECK(error.kind == MCPToolError::UNSUPPORTED);
+	}
+
+	SUBCASE("without an editor it reports unsupported rather than crashing") {
+		Dictionary arguments;
+		arguments["path"] = "res://scenes/main.tscn";
+		MCPToolError error;
+		call("Godot_CloseScene", arguments, error);
+		CHECK(error.kind == MCPToolError::UNSUPPORTED);
+	}
+
+	SUBCASE("a path outside the project is refused") {
+		Dictionary arguments;
+		arguments["path"] = "res://../../etc/passwd";
+		MCPToolError error;
+		call("Godot_CloseScene", arguments, error);
+		// The editor check runs first in this binary, so either refusal is correct -
+		// what must not happen is the path being accepted.
+		CHECK((error.kind == MCPToolError::UNSUPPORTED || error.kind == MCPToolError::INVALID_ARGUMENTS));
+	}
+
+	SUBCASE("it declares no checkpoint paths") {
+		// Closing a tab writes no file. Declaring one here would snapshot a scene the
+		// tool never touches, and MCPTool forbids writing an undeclared path - not
+		// declaring one it does not write is the other half of that contract.
+		CHECK(registry->get_tool("Godot_CloseScene")->get_checkpoint_paths(Dictionary()).is_empty());
+	}
+}
+
 } // namespace TestMCPTools
 
 #endif // TEST_MCP_TOOLS_H

@@ -102,14 +102,14 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (62)
+## Tools exposed over MCP (63)
 
 | Area | Tools |
 |---|---|
 | Status | `Godot_GetEditorStatus` (includes `display_server` and `can_render`) |
 | Project files | `Godot_ListScenes`, `Godot_ListAssets`, `Godot_ReadTextFile`, `Godot_WriteTextFile`, `Godot_SearchProject`, `Godot_CheckScript` |
 | Project settings | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` |
-| Scenes | `Godot_CreateScene`, `Godot_OpenScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
+| Scenes | `Godot_CreateScene`, `Godot_OpenScene`, `Godot_CloseScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
 | Undo | `Godot_UndoLastAction`, `Godot_RedoLastAction` |
 | Play mode | `Godot_PlayCurrentScene`, `Godot_PlayMainScene`, `Godot_StopPlaying` |
 | **Real input** | `Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput`, `Godot_SendGamepadInput`, `Godot_GetInputTrace` |
@@ -174,6 +174,13 @@ below, register a project command, or record the gap honestly as unverified.
   as *text* will be silently overwritten by the editor's stale in-memory copy. After
   editing a scene file directly, reopen it (`Godot_OpenScene`) before playing, or make
   the change through the scene tools instead.
+- **A scene you *delete* comes back, for the same reason, and reopening cannot help.**
+  The tab still holds a copy, the next play writes it out, and the file you removed is
+  on disk again — tracked, listed by `Godot_ListScenes`, with no error anywhere. It
+  looks like the filesystem tool lied to you. `Godot_CloseScene` is what makes the
+  editor let go: call it after removing or replacing any scene file. It refuses if the
+  scene has unsaved changes unless you pass `discard_unsaved`, and it returns the
+  scenes still open so you can assert the tab is gone rather than assume it.
 - **`Godot_CreateScene` makes a scene; `Godot_ManageNode` builds it.** Never write a
   `.tscn` as text, not even a stub — the format is the engine's business, and a
   hand-written one carries no uid and goes stale.

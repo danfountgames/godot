@@ -140,6 +140,87 @@ public:
 	}
 };
 
+// An open scene tab holds an in-memory copy that outranks the file on disk, and "Play"
+// saves every dirty scene before launching. So an agent that deletes or rewrites a scene
+// file behind the editor's back sees it silently reappear on the next play - with no
+// error anywhere, which reads as a broken filesystem tool rather than a stale tab.
+//
+// Godot_OpenScene could open tabs and nothing could close one, so the fix belongs here.
+class CloseSceneTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_CloseScene"; }
+	virtual String get_description() const override {
+		return "Close an open scene tab in the editor, so its in-memory copy can no longer be written back over the file on disk.";
+	}
+	// Not read_project: closing a tab drops the editor's copy of the scene, and with
+	// discard_unsaved it destroys edits. That is a scene mutation by any honest reading.
+	virtual MCPCapability get_capability() const override { return MCP_CAP_EDIT_SCENE; }
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Scene to close, as a res:// path. Omit to close the currently edited scene.");
+		properties["discard_unsaved"] = MCPSchema::bool_property("Close even when the scene has unsaved changes, losing them. Refused by default.", false);
+		return MCPSchema::object_schema(properties);
+	}
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["closed"] = MCPSchema::bool_property("True when the tab was closed.");
+		properties["path"] = MCPSchema::string_property("Scene that was closed.");
+		properties["open_scenes"] = MCPSchema::array_property("Scenes still open in the editor, as res:// paths.", MCPSchema::string_property("A res:// path."));
+		return MCPSchema::object_schema(properties);
+	}
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (!require_editor(r_error, get_tool_name())) {
+			return Dictionary();
+		}
+
+		String path;
+		if (p_arguments.has("path")) {
+			// resolve() rather than resolve_existing(): the whole point of this tool is
+			// closing a tab whose file the caller has already deleted.
+			MCPPaths::Resolved resolved;
+			String error;
+			if (!MCPPaths::resolve(p_arguments["path"], resolved, error)) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS, error);
+				return Dictionary();
+			}
+			path = resolved.res_path;
+		} else {
+			Node *root = EditorInterface::get_singleton()->get_edited_scene_root();
+			if (!root) {
+				r_error.set(MCPToolError::INVALID_STATE, "there is no scene open in the editor to close");
+				return Dictionary();
+			}
+			path = root->get_scene_file_path();
+			if (path.is_empty()) {
+				r_error.set(MCPToolError::INVALID_STATE,
+						"the edited scene has never been saved, so it has no path to identify it by");
+				return Dictionary();
+			}
+		}
+
+		const bool discard = p_arguments.has("discard_unsaved") && (bool)p_arguments["discard_unsaved"];
+		String error;
+		if (!EditorNode::get_singleton()->close_scene_by_path(path, discard, error)) {
+			// A scene that is not open and a scene with unsaved edits are different
+			// refusals, and a caller can act on the difference.
+			r_error.set(error.contains("unsaved") ? MCPToolError::INVALID_STATE : MCPToolError::NOT_FOUND, error);
+			return Dictionary();
+		}
+
+		Array open_scenes;
+		EditorData &data = EditorNode::get_singleton()->get_editor_data();
+		for (int i = 0; i < data.get_edited_scene_count(); i++) {
+			open_scenes.push_back(data.get_scene_path(i));
+		}
+
+		Dictionary result;
+		result["closed"] = true;
+		result["path"] = path;
+		result["open_scenes"] = open_scenes;
+		return result;
+	}
+};
+
 class SaveSceneTool : public MCPTool {
 public:
 	virtual String get_tool_name() const override { return "Godot_SaveScene"; }
@@ -387,6 +468,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_scene_test_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(CloseSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SaveSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(GetEditedSceneTreeTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(PlaySceneTool(false))));

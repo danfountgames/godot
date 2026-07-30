@@ -814,6 +814,13 @@ public:
 			List<AdditiveNodeEntry> &p_addition_list);
 
 	bool is_scene_open(const String &p_path);
+	// Close an open scene tab without asking the user anything.
+	//
+	// The interactive path (_scene_tab_closed) pops a confirmation dialog when the scene
+	// has unsaved changes, which a non-interactive caller cannot answer. This refuses
+	// instead, unless p_discard_unsaved says the loss is intended. Returns false and
+	// fills r_error on refusal; the message names what was wanted.
+	bool close_scene_by_path(const String &p_path, bool p_discard_unsaved, String &r_error);
 	bool is_multi_window_enabled() const;
 
 	void setup_color_picker(ColorPicker *p_picker);

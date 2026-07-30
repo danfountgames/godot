@@ -114,3 +114,77 @@ the scene is built.
 **Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer
 `96ff060`, editor `4.3.dev.custom_build.96ff060d1`, Linux/X11 under
 `tools/virtual_display.py`.
+
+---
+
+# FR-002 — a deleted scene file comes back, and nothing could close a tab
+
+**Severity:** MAJOR — silent data resurrection with no error anywhere.
+**Layer:** AI tooling (`modules/godot_ai/`), plus one editor API gap.
+**Status:** FIXED in this branch — `Godot_CloseScene` and
+`EditorNode::close_scene_by_path()`.
+
+## What happened in the consuming project
+
+The project had a dead placeholder scene, `res://scenes/main.tscn`, left over from
+bootstrap and no longer the main scene. An accessibility audit needed the game to contain
+no text nodes at all, and that file held the last one, so it was deleted with the agent's
+own filesystem tools and committed.
+
+It came back. Twice. On disk, tracked, with its Label intact — and `Godot_ListScenes` went
+on listing it.
+
+## Why
+
+The scene was still an **open tab** in the editor. `Godot_PlayMainScene` saves every dirty
+scene before launching, which is documented and correct, so the editor wrote its stale
+in-memory copy back over a path that no longer existed and recreated the file.
+
+Nothing in this produces an error. The tool call succeeded, the game launched, the runtime
+error count stayed at zero, and the only symptom was a file the agent had deleted being
+present. That reads as a broken filesystem tool, or as a hallucinated deletion — both of
+which cost more to investigate than the actual cause.
+
+## The interface gap underneath it
+
+`Godot_OpenScene` could open a tab and **no tool could close one**. Of the 62 tools, none
+touches the editor's set of open scenes except by adding to it. So an agent that has
+written or removed a scene file behind the editor's back has no way to make the editor let
+go of its copy, and the template's existing warning —
+
+> `Godot_PlayMainScene` saves the editor's dirty scenes first. A `.tscn` you wrote as
+> *text* will be silently overwritten by the editor's stale in-memory copy. After editing
+> a scene file directly, reopen it (`Godot_OpenScene`) before playing.
+
+— only covers the *write* direction, where reopening works. For a **deleted** file there
+is nothing to reopen, and the advice has no answer.
+
+## Fix in this branch
+
+`Godot_CloseScene` — `path` optional (defaults to the edited scene), `discard_unsaved`
+defaulting false, capability `edit_scene`, returning the remaining open scenes so a caller
+can assert the tab is gone rather than assume it.
+
+It resolves through `MCPPaths::resolve`, **not** `resolve_existing`: the whole point is
+closing a tab whose file has already been deleted, so requiring existence would refuse the
+only case that matters.
+
+`edit_scene` rather than `read_project` is deliberate. Closing a tab drops the editor's
+copy of a scene, and with `discard_unsaved` it destroys edits; a read-only session must not
+be able to do that. A test pins the capability so a later reviewer does not "simplify" it.
+
+The editor had no dialog-free close. `_scene_tab_closed()` pops a confirmation the moment
+the scene is dirty, which a non-interactive caller cannot answer, and `_remove_scene()` is
+private. So `EditorNode::close_scene_by_path(path, discard_unsaved, r_error)` was added
+beside `is_scene_open()`: it refuses on unsaved changes with a message naming the way out,
+rather than asking a question nobody is there to hear.
+
+## Recommendation beyond the fix
+
+Extend the template's sharp-edge note to the delete direction, and say what to do:
+after removing or replacing a scene file, `Godot_CloseScene` it. Reopening is not a
+substitute and for a deleted file it is not available.
+
+**Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer
+`33d50d1`, editor `4.3.dev.custom_build.96ff060d1`, Linux/X11 under
+`tools/virtual_display.py`.
