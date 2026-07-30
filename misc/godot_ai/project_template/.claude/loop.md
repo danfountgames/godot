@@ -17,6 +17,12 @@ first run only. Start here instead:
 **One slice per iteration.** Prefer finishing one thing to starting three. An iteration
 that ends with a committed, verified slice is worth more than one that ends mid-edit.
 
+**Before any black-box or visual pass, check mechanism first.** Delete user data, drive
+the route yourself, and read `Godot_ReadOutputLog contains:"TRACE"` to confirm every
+affordance the pass depends on is actually firing. A tester spent discovering that a
+feature was switched off is a tester wasted, and the finding they report — "it taught me
+nothing" — will be true and useless. See `AGENTS.md`, *Mechanism before meaning*.
+
 **End every iteration in a resumable state**, because the next iteration may begin after
 a crash, a compaction, or a week:
 

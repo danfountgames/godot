@@ -13,6 +13,12 @@ config/description="Replace this with your game. See docs/GAME_SPEC.md."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3")
 
+[autoload]
+
+; Announce what the game does, so "did that fire?" is a log read rather than a playtest.
+; See core/trace.gd, and AGENTS.md under "Mechanism before meaning".
+Trace="*res://core/trace.gd"
+
 [display]
 
 window/size/viewport_width=1280
@@ -27,3 +33,9 @@ window/size/viewport_height=720
 ; know the target machine has a GPU.
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[game]
+
+; Trace events default to on in a debug build and off in an export. Set explicitly if you
+; want them either way.
+debug/trace_events=true

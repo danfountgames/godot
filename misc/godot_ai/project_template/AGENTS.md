@@ -66,17 +66,25 @@ can be treated as a reversible default.
 
 The game itself is the source of truth. The strongest evidence is, in order:
 
-1. observed behaviour in an actual running game build
-2. actual player-style input producing the expected result
-3. screenshots, runtime state, logs, and performance data
-4. end-to-end tests crossing the real editor or runtime boundary
-5. automated integration tests
-6. unit tests
-7. static inspection of source, scenes, and resources
-8. assumptions or written intentions
+1. observed behaviour in a running build, **driven by someone who did not build it**
+2. observed behaviour in a running build, driven by you
+3. actual player-style input producing the expected result
+4. screenshots, runtime state, logs, and performance data
+5. end-to-end tests crossing the real editor or runtime boundary
+6. automated integration tests
+7. unit tests
+8. static inspection of source, scenes, and resources
+9. assumptions or written intentions
 
 Do not claim something works based only on a lower level of evidence when a higher
 level is available.
+
+**Rung 1 is separate from rung 2 for a reason, and it is the one that gets skipped.**
+Who drove the evidence matters as much as which layer it came from. A route performed
+by the person who wrote the code proves the route *exists*; it says nothing about
+whether it can be *found*, because the hand on the controls already knew the answer.
+Comprehension, onboarding, discoverability and first-use are only ever answered at
+rung 1. No quantity of rung 2 evidence substitutes.
 
 - A button is not verified because its signal is connected. It is verified when an
   actual pointer click reaches it in the running game and produces the expected
@@ -421,7 +429,12 @@ Use stable IDs and this shape:
 Statuses: `UNSCOPED`, `READY`, `IN_PROGRESS`, `OBSERVED`, `VERIFIED`, `BLOCKED`.
 
 `OBSERVED` means it has worked at least once but has not passed the full test and
-regression requirements. `VERIFIED` means the behaviour works in the real game, its
+regression requirements. **Note what that does not say.** When the person making it work
+is its author, "worked at least once" is nearly a tautology — of course it worked; they
+know where to press. A project can accumulate a wall of `OBSERVED` that has never been
+outside the building. Treat a goal as unproven until someone who did not build it has
+reached the same outcome, and say so in the evidence column rather than letting the
+status imply it. `VERIFIED` means the behaviour works in the real game, its
 normal player route has been exercised, relevant failure and edge cases pass,
 automated tests pass, screenshots or runtime evidence have been inspected, no known
 critical or major issue remains, and evidence is indexed.
@@ -651,7 +664,15 @@ state. Where practical, do not give it the Builder's rationale before its first 
 It reports issues by severity against exact regions or states, and does not edit
 project files during its independent assessment.
 
-**Black-box Playtester** — receives only the runnable game, the intended player goal,
+**Black-box Playtester** — the most valuable agent here, and the one most often scheduled
+last. Run it **early and repeatedly**, not only at the end: a pass costs under an hour and
+routinely returns more than the previous ten self-run evidence rounds, because it is the
+only one that can see what you cannot. A black-box pass should *open* a milestone's
+verification rather than close it, and repeat after any change to a player-facing
+affordance. Building an entire interface and then learning that none of it reads is the
+expensive order.
+
+It receives only the runnable game, the intended player goal,
 ordinary control instructions the game itself supplies, and the input/screenshot
 harness. For at least one final playtest, withhold source details, scene structure,
 hidden commands, intended coordinates, and internal state. Record where it hesitated,
@@ -870,6 +891,61 @@ A player-flow test should normally:
 A route is fully verified after at least two consecutive clean runs when it involves
 asynchronous timing, animation, physics, scene changes, or resource loading. Use
 deterministic seeds where useful, but do not make the interaction path artificial.
+
+---
+
+# Mechanism before meaning — check the log first
+
+Three questions, three methods, and using the expensive one to answer a cheap question is
+the most costly mistake in this whole document:
+
+| question | method | cost |
+|---|---|---|
+| did it fire, when, with what? | a **log read** | seconds, repeatable, exact |
+| does it look right? | a **capture** | a minute, needs judgement |
+| does a person understand it? | a **black-box pass** | many minutes, unrepeatable, irreplaceable |
+
+`Godot_ReadOutputLog` takes a `contains` filter, so a game that *announces what it does*
+can answer "did that happen, and if not why not" in one call. Instrument anything a test
+might gate on:
+
+```gdscript
+Trace.note(&"demo", {"played": false, "because": "board_already_complete"})
+```
+
+The `because=` field matters more than the topic. *"demo skipped"* is a fact; *"demo
+skipped because=already_complete"* is a diagnosis, and the difference is the gap between
+reading a log and running a playtest.
+
+## Before handing a build to any tester
+
+1. **Delete user data.** A "first-time player" test on a device carrying a previous
+   session's save is not the test you think you are running. Whatever the report says, it
+   is about a returning player.
+2. **Drive the route yourself and read the trace.** Every affordance the pass is meant to
+   exercise must be confirmed *firing*, not merely present in the scene tree. A control
+   that exists, is visible, is correctly positioned and does nothing looks identical to a
+   working one from every angle except this one.
+3. **Record in `PLAYTEST_LOG.md`** which build, which save state, and which affordances
+   were confirmed firing beforehand.
+
+Skipping this wastes the one evidence class you cannot produce yourself. A tester spent
+discovering that a feature was switched off will report, correctly, that it taught them
+nothing — a true finding about a thing that never ran, and unrepeatable.
+
+---
+
+# Spec coverage is not a matter of memory
+
+The goal ledger is derived from the specification by the same agent that then builds from
+it, so it inherits that agent's blind spots — and **a goal that was never written cannot
+fail**. Nothing in a green test suite, a full evidence index or a complete test matrix
+will point at a clause nobody read.
+
+Keep a mapping from every numbered specification clause to a goal ID, an explicit
+deferral, or a recorded decision not to build it. Unmapped clauses are a completion
+failure, not something to be remembered. A `grep` for section numbers with no goal against
+them costs a minute and finds the features that were never started.
 
 ---
 
