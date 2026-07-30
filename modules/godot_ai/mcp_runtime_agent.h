@@ -72,6 +72,11 @@
 class MCPRuntimeWatcher : public Object {
 	GDCLASS(MCPRuntimeWatcher, Object);
 
+	// How often a still-running gesture tells the editor it is still running. Small
+	// enough that even a 1 fps game beats the shortest runtime deadline, large enough
+	// that a normal gesture at 60 fps usually finishes without sending one at all.
+	static constexpr int HEARTBEAT_FRAMES = 4;
+
 	struct Watch {
 		String request_id;
 		String path;
@@ -140,6 +145,10 @@ class MCPRuntimeWatcher : public Object {
 		int frames_per_step = 1;
 		int countdown = 0;
 		int first_frame = 0;
+		// Frames since the editor was last told this gesture is still going. A gesture
+		// is deliberately measured in frames, so on a slow game it can outlast a
+		// seconds-based deadline while working exactly as designed.
+		int since_heartbeat = 0;
 		Dictionary result;
 	};
 

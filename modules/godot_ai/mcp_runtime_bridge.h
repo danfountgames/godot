@@ -54,6 +54,9 @@ class MCPRuntimeBridge : public EditorDebuggerPlugin {
 		String request_id;
 		MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
 		double deadline = 0.0;
+		// The window the deadline was built from, kept so a progress heartbeat can
+		// rebuild it rather than guess.
+		double timeout_seconds = 0.0;
 		// Applied to the game's reply before the client sees it, for the cases where
 		// the useful answer needs something only the editor can do - reading back the
 		// screenshot the game just wrote, for instance.

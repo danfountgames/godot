@@ -68,6 +68,17 @@ bool MCPRuntimeBridge::capture(const String &p_message, const Array &p_data, int
 		if (pending[i].request_id != request_id) {
 			continue;
 		}
+		// A heartbeat, not an answer. The game sends one while work it is doing in
+		// *frames* is still progressing - a paced gesture delivers one event per frame,
+		// so a slow game makes a correct gesture look like a dead one. Push the deadline
+		// out and keep waiting; the entry stays pending because nothing has been
+		// answered yet.
+		if ((bool)payload.get("_progress", false)) {
+			const double window = pending[i].timeout_seconds;
+			pending.write[i].deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + window;
+			MCPDeferred::extend(pending[i].token, window);
+			return true;
+		}
 		const MCPDeferred::Token token = pending[i].token;
 		const Callable transform = pending[i].transform;
 		const Callable on_reply = pending[i].on_reply;
@@ -109,8 +120,12 @@ MCPDeferred::Token MCPRuntimeBridge::send(const String &p_command, const Diction
 
 	Pending entry;
 	entry.request_id = vformat("r%d", next_request++);
-	entry.token = MCPDeferred::begin(p_timeout_seconds);
+	entry.token = MCPDeferred::begin(p_timeout_seconds,
+			vformat("the running game did not answer within %.0fs; it may still be carrying the "
+					"request out, so read the game's state before sending anything again",
+					p_timeout_seconds));
 	entry.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
+	entry.timeout_seconds = p_timeout_seconds;
 	entry.transform = p_transform;
 	pending.push_back(entry);
 
@@ -130,6 +145,7 @@ bool MCPRuntimeBridge::request(const String &p_command, const Dictionary &p_argu
 	Pending entry;
 	entry.request_id = vformat("r%d", next_request++);
 	entry.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
+	entry.timeout_seconds = p_timeout_seconds;
 	entry.on_reply = p_on_reply;
 	pending.push_back(entry);
 
@@ -177,7 +193,8 @@ void MCPRuntimeBridge::poll() {
 			entry.on_reply.call(false, payload);
 		} else {
 			MCPDeferred::fail(entry.token, MCPToolError::INVALID_STATE,
-					"the running game did not answer in time");
+					"the running game did not answer in time; it may still be carrying the "
+					"request out, so read the game's state before sending anything again");
 		}
 	}
 }

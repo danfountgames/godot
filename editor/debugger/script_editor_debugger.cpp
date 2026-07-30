@@ -1135,6 +1135,45 @@ void ScriptEditorDebugger::_export_csv() {
 	file_dialog->popup_file_dialog();
 }
 
+Dictionary ScriptEditorDebugger::get_break_report() const {
+	Dictionary report;
+	report["breaked"] = is_breaked();
+	if (!is_breaked()) {
+		return report;
+	}
+
+	const ThreadDebugged *thread = threads_debugged.getptr(debugging_thread_id);
+	report["reason"] = thread ? thread->error : String();
+	report["thread"] = thread ? thread->name : String();
+	report["can_debug"] = is_debuggable();
+
+	// The frames live in the dock's Tree, one metadata Dictionary per item, which is
+	// where `_stack_dump_frame_selected` reads them from too.
+	Array frames;
+	TreeItem *root = stack_dump ? stack_dump->get_root() : nullptr;
+	for (TreeItem *item = root ? root->get_first_child() : nullptr; item; item = item->get_next()) {
+		const Variant meta = item->get_metadata(0);
+		if (meta.get_type() == Variant::DICTIONARY) {
+			frames.push_back(meta);
+		}
+	}
+	report["frames"] = frames;
+
+	Dictionary locals;
+	if (inspector && inspector->get_stack_variables()) {
+		EditorDebuggerRemoteObject *vars = inspector->get_stack_variables();
+		for (const PropertyInfo &info : vars->prop_list) {
+			const Variant *value = vars->prop_values.getptr(info.name);
+			// Stringified deliberately: this crosses a JSON boundary, and a local whose
+			// value is a freed object must still be reportable - that is exactly the
+			// case worth reading.
+			locals[String(info.name)] = value ? String(*value) : String();
+		}
+	}
+	report["locals"] = locals;
+	return report;
+}
+
 String ScriptEditorDebugger::get_var_value(const String &p_var) const {
 	if (!is_breaked()) {
 		return String();

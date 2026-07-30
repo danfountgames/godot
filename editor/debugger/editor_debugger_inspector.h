@@ -89,6 +89,7 @@ public:
 	void clear_cache();
 
 	// Stack Dump variables
+	EditorDebuggerRemoteObject *get_stack_variables() const { return variables; }
 	String get_stack_variable(const String &p_var);
 	void add_stack_variable(const Array &p_arr);
 	void clear_stack_variables();

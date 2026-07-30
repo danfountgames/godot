@@ -38,6 +38,8 @@
 #include "core/crypto/crypto_core.h"
 #include "core/object/callable_method_pointer.h"
 #include "core/io/file_access.h"
+#include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 
@@ -550,6 +552,39 @@ Dictionary stamp_sequence(const Dictionary &p_result) {
 	return result;
 }
 
+// The game's error buffer is not the only record of the game's errors, and it is the one
+// that can be wrong. The editor keeps its own tally from the moment each error arrives, and
+// the two disagreed badly enough in the field to cost days: a game stopped at a debugger
+// break answered `count: 0` while the editor's Debugger tab held nine errors and the stack
+// that named the bug. A tool that can report zero errors while the editor is showing nine
+// is not reporting the absence of errors, and must not be read as though it were.
+Dictionary cross_check_errors(const Dictionary &p_result) {
+	Dictionary result = p_result;
+	EditorDebuggerNode *debugger = EditorDebuggerNode::get_singleton();
+	ScriptEditorDebugger *session = debugger ? debugger->get_default_debugger() : nullptr;
+	if (!session) {
+		return result;
+	}
+	const int editor_errors = session->get_error_count();
+	const int editor_warnings = session->get_warning_count();
+	result["editor_error_count"] = editor_errors;
+	result["editor_warning_count"] = editor_warnings;
+
+	const int reported = (int)result.get("count", 0);
+	if (session->is_breaked()) {
+		result["game_paused_at_breakpoint"] = true;
+		result["note"] = "The game is stopped at a debugger break, so this list is frozen at the "
+						 "moment it stopped and cannot grow. Godot_GetDebuggerBreak has the error, "
+						 "the call stack and the locals; Godot_ResumeFromBreak lets it carry on.";
+	} else if (editor_errors > reported) {
+		result["note"] = vformat("The editor has recorded %d error(s) the game did not report here. "
+								 "Read Godot_GetDebuggerBreak and the output log before concluding "
+								 "this run was clean.",
+				editor_errors - reported);
+	}
+	return result;
+}
+
 Dictionary touch_schema() {
 	Dictionary properties;
 	Vector<String> actions;
@@ -707,7 +742,8 @@ void mcp_register_input_tools() {
 			"project frames, and push_error() from a script is raised inside the engine. That "
 			"distinction is not available from the data, so this tool does not pretend to it - "
 			"read the stack.",
-			MCP_CAP_READ_RUNTIME, clearable_schema("error list")));
+			MCP_CAP_READ_RUNTIME, clearable_schema("error list"), 10.0,
+			callable_mp_static(&cross_check_errors)));
 		// "Restart the game, then assert it logged nothing" needs this to answer rather
 		// than refuse. The errors live in the game process, so once it is gone there are
 		// genuinely none - and a fresh game starts with an empty buffer, which is exactly

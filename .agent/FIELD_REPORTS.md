@@ -382,3 +382,108 @@ already point at it — but it does mean property setting carries more weight th
 it is the only lever from outside.
 
 **Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer `6c46c87`.
+
+---
+
+# FR-005 — a frame-paced gesture times out while it is being delivered
+
+**Severity:** MAJOR. **Layer:** AI tooling (`modules/godot_ai/mcp_runtime_bridge.cpp`,
+`mcp_deferred.cpp`, `mcp_runtime_agent.cpp`). **Status:** FIXED in this commit.
+
+`Godot_SendTouchInput action:"drag"` timed out on every attempt in the consuming project:
+
+```
+→ timed out waiting for the user to answer
+```
+
+Two things were wrong, and the second is what made the first expensive.
+
+**The defect.** A multi-event gesture is delivered **one event per frame** — deliberately, because
+the frames between the events are the content of the gesture. Its cost is therefore counted in
+*frames*. The deadline that bounds it is `MCPRuntimeBridge::send`'s fixed **10 seconds**, counted
+in *wall clock*. Those two units only agree while the game renders quickly. Under software
+rendering, or with two game processes starving each other — both ordinary in a container, and both
+already documented elsewhere in this file — the game runs at ~1 fps, and a ten-event drag honestly
+needs ten seconds. It was timed out **for being slow, while working perfectly.**
+
+The reply was lost; the gesture was not. A board read straight after a "failed" drag showed **all
+six pegs placed**. The client is thereby told nothing happened when everything did, which is worse
+than no answer at all: the obvious next move is to retry, and the retry drags a second time.
+
+**The misdirection.** The message named a *modal*. `MCPDeferred` picked its timeout sentence from
+whether a poller was attached, and a runtime-bridge token has none, so a stalled debugger bus
+reported as "timed out waiting for the user to answer". Hours went into the permissions dialog and
+the approval mode for a problem nowhere near either. A diagnosis was available and the wrong one
+was printed.
+
+**Fix.** A deadline should measure **stalled**, not **slow**.
+
+- `MCPRuntimeWatcher::on_frame` sends a `_progress` heartbeat every 4 frames while a gesture still
+  has events left. Small enough that a 1 fps game beats the shortest runtime deadline; large enough
+  that an ordinary gesture at 60 fps finishes without sending one.
+- `MCPRuntimeBridge` treats a `_progress` payload as a heartbeat rather than an answer: it rebuilds
+  the deadline from the window the call was created with and leaves the entry pending. A genuinely
+  stuck call still fails on time.
+- `MCPDeferred::extend` pushes a pending token's deadline out. It refuses to reopen a token that is
+  already answered — a late heartbeat must not un-fail a call the client has been told about — and
+  refuses to give a deadline to a token that deliberately has none.
+- `MCPDeferred::begin` takes the timeout sentence. `MCPRuntimeBridge` passes one that names the
+  game **and says the request may still be being carried out, so the caller should read the game's
+  state before sending anything again.** That last clause is the whole lesson: a timeout bounds the
+  reply, never the work.
+
+Tests: two new cases in `modules/godot_ai/tests/test_mcp_deferred.h` cover the extension, the
+refusal to reopen an answered token, the refusal to deadline an unbounded one, and the custom
+message.
+
+**Still true after the fix, and worth documenting rather than engineering away:** any deferred
+call can lose its reply for reasons the editor cannot see. The consuming project's rule is now
+*never retry a timed-out runtime call until you have read the state it would have changed*, with
+`Godot_GetInputTrace` as the direct answer for input. That belongs in the project template, and is
+backported there with this commit.
+
+**Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer `c2d43f2`,
+Linux/X11 under `tools/virtual_display.py`, software rendering.
+
+---
+
+# FR-006 — nothing in the interface can see a game stopped at a debugger break
+
+**Severity:** MAJOR. **Layer:** AI tooling (`modules/godot_ai/tools/mcp_editor_tools.cpp`).
+**Status:** FIXED in this commit.
+
+A game stopped at a debugger break is alive, responsive and useless. The process keeps its window,
+keeps answering every runtime tool, and never advances another frame. Input is accepted and never
+delivered; a paced gesture never completes; a capture returns the same frame forever.
+
+**Every read said the game was healthy.** In the consuming project:
+
+| asked | answered | true |
+|---|---|---|
+| `Godot_GetEditorStatus` | `playing: true` | stopped |
+| `Godot_GetRuntimeErrors` | `count: 0` | nine errors, shown in the editor's own Debugger tab |
+| `Godot_ReadOutputLog` | five ordinary lines | the same |
+| `Godot_GetRuntimeSceneTree` | the full tree | correct, and frozen |
+| `Godot_GetPerformanceMetrics` | `fps: 45` | byte-identical on every sample, `frame` never moving |
+
+The frozen `frame` was the only signal, and it takes two samples and a suspicion to read. The
+process looked idle at 1 % CPU, sleeping in `nanosleep` — which is `RemoteDebugger::debug()`'s wait
+loop, not a busy script, so even the native stack pointed the wrong way without symbols.
+
+The diagnosis was in the editor's Debugger dock the whole time: the message, the file, the line,
+the call stack and the locals. Raising the editor window and taking one screenshot ended a
+multi-day investigation that had been repeatedly misdiagnosed as a tooling defect — twice by
+stashing the project's own work to rule it out.
+
+**Fix.** `Godot_GetEditorStatus` now reports `game_paused_at_breakpoint`, from
+`EditorDebuggerNode::get_default_debugger()->is_breaked()`. One boolean, in the tool an agent
+already calls first, on the one state the interface could not otherwise express.
+
+**Worth doing next, and not done here:** `Godot_GetRuntimeErrors` returning nothing while the
+editor holds nine is a second bug with the same root — the tool reads the game's error stream, and
+a break stops that stream. Errors the editor already has should be readable from the editor. A
+`Godot_GetDebuggerStack` exposing the break message, stack frames and locals would remove the
+screenshot step entirely; the data is all in `ScriptEditorDebugger`.
+
+**Reported by:** the Wonderboard project (`danfountgames/MathToy`), engine pointer `c2d43f2`,
+Linux/X11 under `tools/virtual_display.py`.

@@ -110,11 +110,12 @@ finite. An earlier draft of this document assumed capabilities the fork does not
 provide; planning around tools that do not exist wastes a session and produces false
 confidence.
 
-## Tools exposed over MCP (65)
+## Tools exposed over MCP (67)
 
 | Area | Tools |
 |---|---|
-| Status | `Godot_GetEditorStatus` (includes `display_server` and `can_render`) |
+| Status | `Godot_GetEditorStatus` (includes `display_server`, `can_render` and `game_paused_at_breakpoint`) |
+| Debugger | `Godot_GetDebuggerBreak`, `Godot_ResumeFromBreak` — why a game stopped, and how to let it go on |
 | Project files | `Godot_ListScenes`, `Godot_ListAssets`, `Godot_ReadTextFile`, `Godot_WriteTextFile`, `Godot_SearchProject`, `Godot_CheckScript` |
 | Project settings | `Godot_GetProjectSetting`, `Godot_SetProjectSetting` |
 | Scenes | `Godot_CreateScene`, `Godot_OpenScene`, `Godot_CloseScene`, `Godot_SaveScene`, `Godot_GetEditedSceneTree`, `Godot_ManageNode`, `Godot_SetSceneProperty` |
@@ -253,6 +254,33 @@ below, register a project command, or record the gap honestly as unverified.
   only unpaced. The reply carries `paced`, `frames_spanned` and the first and last frame, so
   what you sent is checkable. `frames_per_step` slows a gesture down for something that samples
   every few frames. Single-event actions (`down`, `up`, `move`) stay immediate.
+- **A game stopped at a debugger break looks exactly like a healthy one — ask
+  `Godot_GetDebuggerBreak`.** A broken game keeps its process, its window and its answers; only its
+  frames stop. Input is accepted and never delivered, paced gestures never complete, and captures
+  return the same frame forever, while `Godot_GetEditorStatus` says `playing: true` and the scene
+  tree comes back in full. **Every tool that asks the game is useless here, because the game is what
+  has stopped.** So ask the editor: `Godot_GetEditorStatus.game_paused_at_breakpoint` says whether,
+  `Godot_GetDebuggerBreak` says why — the error, the call stack with file, function and line, and
+  the locals of the frame it stopped in — and `Godot_ResumeFromBreak` lets it carry on rather than
+  killing it and losing the state. Reach for these the moment a game stops responding to input;
+  the first project to use this fork lost days to a frozen game that every other read called
+  healthy.
+- **A timed-out runtime call is not an undelivered one — read the state before retrying.**
+  Runtime tools are *deferred*: the editor hands the request to the game, holds your request id,
+  and answers when the game replies or a deadline passes. The deadline bounds **the reply**. It
+  does not cancel the work, and the game never learns that anyone stopped listening. So a
+  timeout says exactly one thing — *no answer arrived in time* — and is not evidence that
+  nothing happened. The first real project to lean on this had `Godot_SendTouchInput
+  action:"drag"` time out repeatedly and found **every piece placed** on the board afterwards:
+  the gesture had landed in full and only the reply was lost. That is the shape to expect,
+  because a gesture is paced in **frames** by design while the deadline is in **seconds**, so a
+  ten-event drag on a game rendering in software at 1 fps honestly needs ten seconds and is
+  working perfectly. Retrying it drags twice. Read `Godot_GetInputTrace` — which reports what
+  was *delivered* — plus the runtime property or scene tree the call would have changed, and
+  only then decide whether to resend. Editors ship a progress heartbeat that keeps a
+  still-progressing call's deadline alive, so a modern build should time out only when work is
+  genuinely **stalled** rather than merely slow; on any build, the reading order above is the
+  safe one.
 - **No error count tells you whether a run was your fault.** `Godot_GetRuntimeErrors` gives you
   `raised_in` (`engine` or `script`) and `project_frames` per entry, and counts for both — but
   *not* a "project errors" number, because that number is not derivable. An autoload with any
@@ -320,6 +348,26 @@ Do not continue assuming a tool works because its schema is listed. Perform a ha
 health check. If an expected capability is unavailable: confirm the failure, check
 whether another exposed tool provides it, check whether a narrow project command can,
 implement and test that command, document the fallback, and continue.
+
+## When the editor stops answering
+
+A wedged or dead editor makes every tool call fail in a way that looks exactly like a
+broken game, so `Godot_GetEditorStatus` comes before diagnosing anything else. If that
+does not answer, restart rather than reasoning about the game:
+
+```sh
+pkill -f 'godot[.]linuxbsd[.]editor' || true      # `|| true` matters: pkill exits 1 when
+pkill -f 'virtual_[d]isplay' || true              # it matched nothing, and `set -e` in a
+rm -f ~/.godot-ai/instances/*.json                # launcher script aborts there instead
+```
+
+The `rm` is not tidying. A stale instance file makes a wait loop match a **dead** editor
+and report that the restart succeeded. After relaunching, confirm `Godot_GetEditorStatus`,
+then `game_process_count: 1` and the window size, before driving any input — a matrix
+built while a second phantom game process is running proves nothing.
+
+Record the incident and its recovery in `.agent/TOOLING.md`, and if the wedge is
+reproducible it is a fork defect: report it rather than building a retry loop around it.
 
 ## First run: making autonomy possible
 

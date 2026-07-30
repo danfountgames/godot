@@ -103,6 +103,54 @@ TEST_CASE("[godot_ai] Overdue calls fail instead of hanging the client") {
 	MCPDeferred::reset();
 }
 
+TEST_CASE("[godot_ai] A timeout can say what was actually being waited for") {
+	MCPDeferred::reset();
+
+	// The default names a modal, which is what deferral was built for. It is the wrong
+	// sentence for a runtime stall, and a caller who reads it goes and inspects the
+	// permissions dialog for a problem that is nowhere near it.
+	const MCPDeferred::Token token = MCPDeferred::begin(0.001, "the running game did not answer");
+	OS::get_singleton()->delay_usec(5000);
+	MCPDeferred::update();
+
+	MCPDeferred::Completion completion;
+	REQUIRE(MCPDeferred::take(token, completion));
+	CHECK(completion.error.message == "the running game did not answer");
+	CHECK_FALSE(completion.error.message.contains("the user"));
+	MCPDeferred::reset();
+}
+
+TEST_CASE("[godot_ai] Work that is still progressing keeps its token alive") {
+	MCPDeferred::reset();
+
+	// A deadline should measure *stalled*, not *slow*. A frame-paced gesture is counted
+	// in frames by design, so a game rendering in software can honestly need far longer
+	// than any seconds-based deadline while delivering every event correctly.
+	const MCPDeferred::Token token = MCPDeferred::begin(0.001);
+	MCPDeferred::extend(token, 30.0);
+	OS::get_singleton()->delay_usec(5000);
+	MCPDeferred::update();
+	CHECK(MCPDeferred::is_pending(token));
+
+	// A heartbeat must not reopen a decided answer, or a late one would un-fail a call
+	// the client has already been told about.
+	MCPDeferred::fail(token, MCPToolError::FAILED, "already answered");
+	MCPDeferred::extend(token, 30.0);
+	CHECK_FALSE(MCPDeferred::is_pending(token));
+
+	MCPDeferred::Completion completion;
+	REQUIRE(MCPDeferred::take(token, completion));
+	CHECK(completion.error.message == "already answered");
+
+	// A token with no deadline is already unbounded; extending must not give it one.
+	const MCPDeferred::Token forever = MCPDeferred::begin(0.0);
+	MCPDeferred::extend(forever, 0.001);
+	OS::get_singleton()->delay_usec(5000);
+	MCPDeferred::update();
+	CHECK(MCPDeferred::is_pending(forever));
+	MCPDeferred::reset();
+}
+
 TEST_CASE("[godot_ai] Abandoned calls leave nothing behind") {
 	MCPDeferred::reset();
 

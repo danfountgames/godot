@@ -36,6 +36,8 @@
 #include "core/variant/array.h"
 #include "servers/display_server.h"
 
+#include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 #include "editor/gui/editor_run_bar.h"
@@ -450,6 +452,12 @@ public:
 		properties["has_editor"] = MCPSchema::bool_property("True when an editor interface is available.");
 		properties["edited_scene"] = MCPSchema::string_property("Path of the edited scene, empty when none.");
 		properties["playing"] = MCPSchema::bool_property("True when the game is running.");
+		properties["game_paused_at_breakpoint"] = MCPSchema::bool_property(
+				"True when the running game is stopped at a debugger break. Its process is alive "
+				"and still answers every runtime tool, but its frames have stopped: input is "
+				"accepted and never delivered, paced gestures never complete, and captures return "
+				"the same frame forever. Nothing else in this interface reveals this - the game "
+				"looks healthy from every read - so check it before diagnosing a hang.");
 		properties["project_root"] = MCPSchema::string_property("Absolute project directory.");
 		properties["display_server"] = MCPSchema::string_property(
 				"Name of the display server driving this editor, \"headless\" when it has none.");
@@ -473,11 +481,125 @@ public:
 		if (!EditorInterface::get_singleton()) {
 			result["edited_scene"] = String();
 			result["playing"] = false;
+			result["game_paused_at_breakpoint"] = false;
 			return result;
 		}
 		Node *root = EditorInterface::get_singleton()->get_edited_scene_root();
 		result["edited_scene"] = root ? root->get_scene_file_path() : String();
 		result["playing"] = EditorInterface::get_singleton()->is_playing_scene();
+		// A game stopped at a break is the one state this interface could not see, and the
+		// consuming project lost days to it: the process stays alive, every runtime tool
+		// keeps answering from cached state, and the frame counter quietly stops. Reads of
+		// errors, output, scene tree and performance all said the game was fine. Only the
+		// editor's own Debugger dock knew, and no tool asked it.
+		EditorDebuggerNode *debugger = EditorDebuggerNode::get_singleton();
+		result["game_paused_at_breakpoint"] = debugger && debugger->get_default_debugger()
+				? debugger->get_default_debugger()->is_breaked()
+				: false;
+		return result;
+	}
+};
+
+// Why this reads the editor and not the game: the game is what has stopped. Every runtime
+// tool routes a request through the debugger bus and waits for the game's own main loop to
+// answer, and a broken game's main loop is exactly what is not running. The editor already
+// holds the whole diagnosis - it received it at the moment of the break - so asking the
+// editor is both the only thing that can work and the cheapest thing that could.
+class GetDebuggerBreakTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_GetDebuggerBreak"; }
+	virtual String get_description() const override {
+		return "Report why the running game is stopped at a debugger break: the error, the "
+			   "script call stack with file, function and line for every frame, and the locals "
+			   "of the frame it stopped in. A broken game is alive and useless - it keeps its "
+			   "window and keeps answering every other runtime tool from frozen state, while "
+			   "input is accepted and never delivered and the frame counter never moves again. "
+			   "Nothing else can tell you, because everything else asks the game, and the game "
+			   "is what has stopped. Ask this the moment a game stops responding to input.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
+	virtual Dictionary get_input_schema() const override { return MCPSchema::object_schema(Dictionary()); }
+
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["breaked"] = MCPSchema::bool_property(
+				"True when the game is stopped at a break. False means it is running normally, "
+				"or is not running at all - check Godot_GetEditorStatus.playing to tell those apart.");
+		properties["reason"] = MCPSchema::string_property(
+				"The error or breakpoint that stopped it, as the Debugger dock shows it.");
+		properties["thread"] = MCPSchema::string_property("Which thread stopped.");
+		properties["can_debug"] = MCPSchema::bool_property(
+				"True when the stopped thread can be stepped or continued.");
+		properties["frames"] = MCPSchema::array_property(
+				"The script call stack, innermost first: frame, file, function, line.",
+				MCPSchema::object_schema(Dictionary()));
+		properties["locals"] = MCPSchema::object_schema(Dictionary());
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		EditorDebuggerNode *debugger = EditorDebuggerNode::get_singleton();
+		ScriptEditorDebugger *session = debugger ? debugger->get_default_debugger() : nullptr;
+		if (!session) {
+			r_error.set(MCPToolError::UNSUPPORTED, "this process has no editor debugger");
+			return Dictionary();
+		}
+		Dictionary result = session->get_break_report();
+		if (!(bool)result.get("breaked", false)) {
+			result["note"] = "the game is not stopped at a break";
+		}
+		return result;
+	}
+};
+
+// Releasing the break is the other half. Without it the only way out of a break is to kill
+// the game, which throws away the state that caused it - and a break is often the most
+// informative state a session will ever have.
+class ResumeFromBreakTool : public MCPTool {
+public:
+	virtual String get_tool_name() const override { return "Godot_ResumeFromBreak"; }
+	virtual String get_description() const override {
+		return "Let a game stopped at a debugger break carry on running. Use it after reading "
+			   "Godot_GetDebuggerBreak: the alternative is stopping the game, which destroys the "
+			   "state that caused the break. Set skip_breakpoints to run past further breaks of "
+			   "the same kind, for a route that would otherwise stop on every frame.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_RUN_PROJECT; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["skip_breakpoints"] = MCPSchema::bool_property(
+				"Also stop breaking on subsequent breakpoints, so a route can be driven to its "
+				"end past a fault that repeats.", false);
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["resumed"] = MCPSchema::bool_property("True when a break was released.");
+		properties["was_breaked"] = MCPSchema::bool_property("True when it had been stopped.");
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		EditorDebuggerNode *debugger = EditorDebuggerNode::get_singleton();
+		ScriptEditorDebugger *session = debugger ? debugger->get_default_debugger() : nullptr;
+		if (!session) {
+			r_error.set(MCPToolError::UNSUPPORTED, "this process has no editor debugger");
+			return Dictionary();
+		}
+		Dictionary result;
+		result["was_breaked"] = session->is_breaked();
+		if (!session->is_breaked()) {
+			result["resumed"] = false;
+			result["note"] = "the game was not stopped at a break";
+			return result;
+		}
+		if ((bool)p_arguments.get("skip_breakpoints", false)) {
+			session->debug_skip_breakpoints();
+		}
+		session->debug_continue();
+		result["resumed"] = true;
 		return result;
 	}
 };
@@ -511,4 +633,6 @@ void mcp_register_builtin_tools() {
 	registry->register_tool(Ref<MCPTool>(memnew(PlaySceneTool(true))));
 	registry->register_tool(Ref<MCPTool>(memnew(StopPlayingTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(GetEditorStatusTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(GetDebuggerBreakTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(ResumeFromBreakTool)));
 }

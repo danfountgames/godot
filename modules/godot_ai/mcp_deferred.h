@@ -61,13 +61,30 @@ public:
 
 	// Claims a token. p_timeout_seconds bounds how long the client will wait; 0 means
 	// the caller takes responsibility for completing it.
-	static Token begin(double p_timeout_seconds);
+	//
+	// p_timeout_message is what the client is told when the deadline passes. The
+	// default names a modal, because waiting on the user is what deferral was built
+	// for - but it is wrong for everything else that defers, and a caller told "timed
+	// out waiting for the user to answer" about a *runtime* stall goes and reads the
+	// permissions dialog. Say what was actually being waited for.
+	static Token begin(double p_timeout_seconds, const String &p_timeout_message = String());
 
 	// Claims a token whose answer arrives by the world changing rather than by anyone
 	// calling back - the debugger fills the remote scene tree with no signal to listen
 	// for, so the only way to know is to look. The poller is called on each service
 	// poll and returns a Dictionary to complete, or nil to keep waiting.
 	static Token begin_polled(double p_timeout_seconds, const Callable &p_poller);
+
+	// Pushes a still-pending token's deadline out to p_seconds from now.
+	//
+	// A deadline should measure *stalled*, not *slow*. Some work the editor defers is
+	// counted in frames rather than seconds - a frame-paced gesture delivers one event
+	// per frame by design - so under software rendering, or with two game processes
+	// starving each other, an eight-step drag can honestly need twenty seconds and
+	// still be working perfectly. Timing it out told the caller nothing was delivered
+	// while the whole gesture went on landing, which is the worst of both answers.
+	// Whoever is doing the work says so periodically, and that keeps the token alive.
+	static void extend(Token p_token, double p_seconds);
 
 	// Completes a token. Ignored when the token is unknown, which happens when a
 	// client disconnected or the deadline already passed.

@@ -38,6 +38,7 @@ struct Entry {
 	bool answered = false;
 	double deadline = 0.0; // 0 means no deadline.
 	Callable poller; // Optional; see MCPDeferred::begin_polled.
+	String timeout_message; // Empty means the default is chosen at timeout.
 	MCPDeferred::Completion completion;
 };
 
@@ -50,10 +51,11 @@ double now_seconds() {
 
 } // namespace
 
-MCPDeferred::Token MCPDeferred::begin(double p_timeout_seconds) {
+MCPDeferred::Token MCPDeferred::begin(double p_timeout_seconds, const String &p_timeout_message) {
 	const Token token = s_next_token++;
 	Entry entry;
 	entry.deadline = p_timeout_seconds > 0.0 ? now_seconds() + p_timeout_seconds : 0.0;
+	entry.timeout_message = p_timeout_message;
 	s_entries[token] = entry;
 	return token;
 }
@@ -65,6 +67,16 @@ MCPDeferred::Token MCPDeferred::begin_polled(double p_timeout_seconds, const Cal
 		entry->poller = p_poller;
 	}
 	return token;
+}
+
+void MCPDeferred::extend(Token p_token, double p_seconds) {
+	Entry *entry = s_entries.getptr(p_token);
+	// A token with no deadline is already unbounded, and one already answered has had
+	// its answer decided; neither should be reopened by a late heartbeat.
+	if (!entry || entry->answered || entry->deadline <= 0.0 || p_seconds <= 0.0) {
+		return;
+	}
+	entry->deadline = now_seconds() + p_seconds;
 }
 
 void MCPDeferred::complete(Token p_token, const Dictionary &p_result) {
@@ -134,9 +146,11 @@ void MCPDeferred::update() {
 		pair.value.answered = true;
 		pair.value.completion.result = Dictionary();
 		pair.value.completion.error.set(MCPToolError::FAILED,
-				pair.value.poller.is_valid()
-						? "timed out waiting for the editor to produce a result"
-						: "timed out waiting for the user to answer");
+				!pair.value.timeout_message.is_empty()
+						? pair.value.timeout_message
+						: (pair.value.poller.is_valid()
+										? "timed out waiting for the editor to produce a result"
+										: "timed out waiting for the user to answer"));
 	}
 }
 

@@ -346,6 +346,21 @@ void MCPRuntimeWatcher::on_frame() {
 	Input *input = Input::get_singleton();
 	for (int i = gestures.size() - 1; i >= 0; i--) {
 		Gesture &gesture = gestures.write[i];
+		// Say so before doing anything else this frame. The editor's deadline is in
+		// seconds and this work is in frames: a ten-event gesture on a game rendering
+		// in software at 1 fps needs ten seconds and is not stuck. Without this the
+		// caller was told the input timed out while every event went on landing, which
+		// is the one failure report worse than none - it invites a retry that delivers
+		// the whole gesture a second time.
+		gesture.since_heartbeat++;
+		if (gesture.since_heartbeat >= HEARTBEAT_FRAMES) {
+			gesture.since_heartbeat = 0;
+			Dictionary beat;
+			beat["_progress"] = true;
+			beat["delivered"] = gesture.next;
+			beat["events"] = gesture.events.size();
+			MCPRuntimeAgent::reply(gesture.request_id, beat);
+		}
 		if (gesture.countdown > 0) {
 			gesture.countdown--;
 			continue;

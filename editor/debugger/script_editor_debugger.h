@@ -263,6 +263,12 @@ public:
 	void debug_break();
 	void debug_continue();
 	bool is_breaked() const { return threads_debugged.size() > 0; }
+
+	// Everything the Debugger dock is showing about a break, as data: the reason, the
+	// thread, the stack frames, and the selected frame's locals. The dock has always had
+	// it; there was no way to read it except by looking at the screen, so a headless or
+	// automated session could see a stopped game and not why. Empty when not breaked.
+	Dictionary get_break_report() const;
 	bool is_debuggable() const { return threads_debugged.size() > 0 && threads_debugged[debugging_thread_id].can_debug; }
 	bool is_session_active() { return peer.is_valid() && peer->is_peer_connected(); }
 	int get_remote_pid() const { return remote_pid; }
