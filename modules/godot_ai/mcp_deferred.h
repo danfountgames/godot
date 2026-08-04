@@ -73,7 +73,10 @@ public:
 	// calling back - the debugger fills the remote scene tree with no signal to listen
 	// for, so the only way to know is to look. The poller is called on each service
 	// poll and returns a Dictionary to complete, or nil to keep waiting.
-	static Token begin_polled(double p_timeout_seconds, const Callable &p_poller);
+	// p_cancel is called when the client disconnects or the deadline passes. Visual
+	// tools use it to put temporary editor state back even when no result can be
+	// delivered.
+	static Token begin_polled(double p_timeout_seconds, const Callable &p_poller, const Callable &p_cancel = Callable());
 
 	// Pushes a still-pending token's deadline out to p_seconds from now.
 	//

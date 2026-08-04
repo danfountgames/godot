@@ -113,6 +113,19 @@ names look sensitive (`api_key`, `token`, `password`, …) redacted at source.
 | `Godot_UndoLastAction` | edit_scene | Undo the most recent editor action |
 | `Godot_RedoLastAction` | edit_scene | Redo the most recently undone action |
 | `Godot_RestoreCheckpoint` | edit_files | Put a checkpoint's files back |
+| `Godot_CaptureViewport` | edit_files | Save the rendered editor viewport as a PNG |
+| `Godot_CaptureInspectorProperty` | edit_files | Inspect a Resource or scene node, expand a raw property chain, highlight its final property, and save a centered Inspector-only crop |
+| `Godot_CaptureSceneTreeNode` | edit_files | Open a scene, reveal and highlight an exact NodePath, and save a centered Scene-dock-only crop |
+
+The two semantic documentation captures take `context_above` and `context_below` in
+editor UI points. They return the target row's pixel position and height inside the
+PNG, so a documentation pipeline can verify the framing without image recognition.
+`Godot_CaptureInspectorProperty` accepts either `resource`, or `scene` plus
+`node_path`; its `property_chain` uses exact raw Godot property names. Every
+intermediate entry must be a non-null Resource and is expanded as a sub-inspector.
+Both tools restore the prior scene/object, selection, folds, scroll position and dock
+tab after the rendered frame is captured, including when the request times out or the
+client disconnects.
 
 Changes made while the game is running are **not persistent**. Tools that affect the
 running game are named and documented separately from tools that change the project,
@@ -219,8 +232,8 @@ refuses any path outside that directory.
 
 ## Working without a screen
 
-Some of this toolset is only meaningful on screen: `Godot_CaptureViewport` photographs
-the editor, `Godot_AskUser` puts a dialog in front of someone, and a launched game has
+Some of this toolset is only meaningful on screen: the three `Godot_Capture*` editor
+tools photograph rendered UI, `Godot_AskUser` puts a dialog in front of someone, and a launched game has
 to stay alive long enough to report its scene tree. A container has none of that, and
 an editor started there runs headless — the visual tools then refuse, correctly but
 uselessly.

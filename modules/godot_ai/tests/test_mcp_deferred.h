@@ -39,6 +39,12 @@
 
 namespace TestMCPDeferred {
 
+static bool deferred_cancelled = false;
+
+static void mark_deferred_cancelled() {
+	deferred_cancelled = true;
+}
+
 TEST_CASE("[godot_ai] Deferred calls are answered exactly once") {
 	MCPDeferred::reset();
 
@@ -163,6 +169,26 @@ TEST_CASE("[godot_ai] Abandoned calls leave nothing behind") {
 	MCPDeferred::Completion completion;
 	CHECK_FALSE(MCPDeferred::take(token, completion));
 	CHECK(MCPDeferred::get_pending_count() == 0);
+	MCPDeferred::reset();
+}
+
+TEST_CASE("[godot_ai] Abandoned and timed-out polled calls clean up temporary state") {
+	MCPDeferred::reset();
+	deferred_cancelled = false;
+	const MCPDeferred::Token abandoned = MCPDeferred::begin_polled(
+			0.0, Callable(), callable_mp_static(mark_deferred_cancelled));
+	MCPDeferred::abandon(abandoned);
+	CHECK(deferred_cancelled);
+
+	deferred_cancelled = false;
+	const MCPDeferred::Token timed_out = MCPDeferred::begin_polled(
+			0.001, Callable(), callable_mp_static(mark_deferred_cancelled));
+	OS::get_singleton()->delay_usec(5000);
+	MCPDeferred::update();
+	CHECK(deferred_cancelled);
+	MCPDeferred::Completion completion;
+	REQUIRE(MCPDeferred::take(timed_out, completion));
+	CHECK(completion.error.has_error());
 	MCPDeferred::reset();
 }
 

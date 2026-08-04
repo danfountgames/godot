@@ -84,8 +84,55 @@ static void ensure_project_tools_registered() {
 	}
 }
 
+static void ensure_capture_tools_registered() {
+	if (!MCPToolRegistry::get_singleton()->has_tool("Godot_CaptureInspectorProperty")) {
+		mcp_register_capture_tools();
+	}
+}
+
 static Dictionary call(const String &p_tool, const Dictionary &p_arguments, MCPToolError &r_error) {
 	return MCPToolRegistry::get_singleton()->call_tool(p_tool, p_arguments, r_error);
+}
+
+TEST_CASE("[godot_ai] semantic documentation capture tools declare and enforce their targets") {
+	ensure_capture_tools_registered();
+	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
+	REQUIRE(registry->has_tool("Godot_CaptureInspectorProperty"));
+	REQUIRE(registry->has_tool("Godot_CaptureSceneTreeNode"));
+
+	const Dictionary inspector_descriptor = registry->get_tool_descriptor("Godot_CaptureInspectorProperty");
+	const Dictionary inspector_schema = inspector_descriptor["inputSchema"];
+	const Dictionary inspector_properties = inspector_schema["properties"];
+	CHECK(inspector_properties.has("resource"));
+	CHECK(inspector_properties.has("scene"));
+	CHECK(inspector_properties.has("node_path"));
+	CHECK(inspector_properties.has("context_above"));
+	CHECK(inspector_properties.has("context_below"));
+
+	MCPToolError error;
+	Dictionary arguments;
+	arguments["resource"] = "res://fixture.tres";
+	arguments["property_chain"] = Array();
+	call("Godot_CaptureInspectorProperty", arguments, error);
+	CHECK(error.kind == MCPToolError::INVALID_ARGUMENTS);
+	CHECK(error.message.contains("at least"));
+
+	error.clear();
+	Array chain;
+	chain.push_back("text");
+	arguments["property_chain"] = chain;
+	arguments["scene"] = "res://scene.tscn";
+	call("Godot_CaptureInspectorProperty", arguments, error);
+	CHECK(error.kind == MCPToolError::INVALID_ARGUMENTS);
+	CHECK(error.message.contains("exactly one"));
+
+	const Ref<MCPTool> scene_tree_tool = registry->get_tool("Godot_CaptureSceneTreeNode");
+	REQUIRE(scene_tree_tool.is_valid());
+	Dictionary checkpoint_arguments;
+	checkpoint_arguments["path"] = "res://docs/tree.png";
+	const Vector<String> checkpoint_paths = scene_tree_tool->get_checkpoint_paths(checkpoint_arguments);
+	REQUIRE(checkpoint_paths.size() == 1);
+	CHECK(checkpoint_paths[0] == "res://docs/tree.png");
 }
 
 TEST_CASE("[godot_ai] Godot_ListScenes returns usable res:// paths") {

@@ -257,6 +257,28 @@ NOT_A_TEST_SCENE = """[gd_scene format=3 uid="uid://bqxaie2et09"]
 [node name="NotATest" type="Node2D"]
 """
 
+INSPECTOR_RESOURCE = """[gd_resource type="GradientTexture2D" load_steps=2 format=3]
+
+[sub_resource type="Gradient" id="Gradient_docs"]
+offsets = PackedFloat32Array(0, 0.35, 1)
+colors = PackedColorArray(0.1, 0.2, 0.8, 1, 0.9, 0.4, 0.1, 1, 0.95, 0.9, 0.2, 1)
+
+[resource]
+gradient = SubResource("Gradient_docs")
+width = 512
+height = 128
+"""
+
+DOCUMENTATION_SCENE = """[gd_scene format=3]
+
+[node name="DocumentationScene" type="Node"]
+
+[node name="Section" type="Node" parent="."]
+
+[node name="Target" type="Button" parent="Section"]
+text = "Documented button"
+"""
+
 MAIN_SCENE = """[gd_scene load_steps=6 format=3 uid="uid://bqxaie2e001"]
 
 [ext_resource type="Script" path="res://scripts/target.gd" id="1"]
@@ -341,6 +363,25 @@ var trigger_error := false:
 
 class Failure(Exception):
     pass
+
+
+class NativeMacOSDisplay:
+    """The macOS window server is already the display; it does not use DISPLAY/Xvfb."""
+
+    usable = True
+    display = "native macOS"
+
+    def environment(self):
+        return dict(os.environ)
+
+    def godot_arguments(self):
+        return []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
 
 
 def check(condition, message):
@@ -550,6 +591,11 @@ def build_project(root):
         handle.write(MAIN_SCENE)
     with open(os.path.join(root, "notes.txt"), "w") as handle:
         handle.write("hello from a project text file\n")
+    os.makedirs(os.path.join(root, "docs"), exist_ok=True)
+    with open(os.path.join(root, "docs", "inspector_fixture.tres"), "w") as handle:
+        handle.write(INSPECTOR_RESOURCE)
+    with open(os.path.join(root, "docs", "capture_scene.tscn"), "w") as handle:
+        handle.write(DOCUMENTATION_SCENE)
     write_png(os.path.join(root, "sprite.png"))
     # A script that does not parse. Nothing else in the interface can see this: the
     # scene silently fails to instantiate and every other tool points elsewhere.
@@ -652,7 +698,8 @@ def run(editor_binary, display):
                          "Godot_ListCheckpoints", "Godot_RestoreCheckpoint",
                          "Godot_ReadOutputLog", "Godot_SetSceneProperty",
                          "Godot_SetRuntimeProperty", "Godot_GetRuntimeSceneTree",
-                         "Godot_CaptureViewport", "Godot_AskUser"):
+                         "Godot_CaptureViewport", "Godot_CaptureInspectorProperty",
+                         "Godot_CaptureSceneTreeNode", "Godot_AskUser"):
             check(expected in names, "tools/list is missing %s" % expected)
         print("PASS tools/list (%d tools)" % len(names))
 
@@ -964,6 +1011,41 @@ def run(editor_binary, display):
             print("SKIP clicking the dialog: xdotool is not installed")
 
         # --- screenshots ------------------------------------------------------
+        inspector_resource_args = {
+            "resource": "res://docs/inspector_fixture.tres",
+            "property_chain": ["gradient", "offsets"],
+            "path": "res://docs/inspector-gradient-offsets.png",
+            "context_above": 90,
+            "context_below": 110,
+        }
+        inspector_node_args = {
+            "scene": "res://docs/capture_scene.tscn",
+            "node_path": "Section/Target",
+            "property_chain": ["text"],
+            "path": "res://docs/inspector-target-text.png",
+            "context_above": 80,
+            "context_below": 100,
+        }
+        scene_tree_args = {
+            "scene": "res://docs/capture_scene.tscn",
+            "node_path": "Section/Target",
+            "path": "res://docs/scene-tree-target.png",
+            "context_above": 90,
+            "context_below": 110,
+        }
+
+        semantic_captures = [
+            (82, "Godot_CaptureInspectorProperty", inspector_resource_args),
+            (83, "Godot_CaptureInspectorProperty", inspector_node_args),
+            (84, "Godot_CaptureSceneTreeNode", scene_tree_args),
+        ]
+        semantic_replies = []
+        for identifier, tool_name, arguments in semantic_captures:
+            semantic_replies.append((tool_name, arguments, call({
+                "jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                "params": {"name": tool_name, "arguments": arguments},
+            })))
+
         # This editor is headless, so the honest answer is a refusal that names the
         # reason - not a blank image presented as if it were the editor.
         reply = call({"jsonrpc": "2.0", "id": 80, "method": "tools/call",
@@ -973,6 +1055,11 @@ def run(editor_binary, display):
             check("headless" in refusal_text(reply),
                   "the capture refusal does not name the reason: %r" % refusal_text(reply))
             print("PASS Godot_CaptureViewport refuses cleanly when headless")
+            for tool_name, arguments, semantic_reply in semantic_replies:
+                check(refused(semantic_reply), "%s produced a screenshot while headless" % tool_name)
+                check("headless" in refusal_text(semantic_reply),
+                      "%s refusal does not name headless rendering" % tool_name)
+            print("PASS semantic Inspector and Scene tree captures refuse cleanly when headless")
         else:
             check(reply["result"]["isError"] is False,
                   "capture failed: %s" % refusal_text(reply))
@@ -994,6 +1081,52 @@ def run(editor_binary, display):
                   "the viewport capture does not warn that it is not the game: %r" % shot)
             print("PASS Godot_CaptureViewport produced a real %dx%d image, saying what it is"
                   % (shot["width"], shot["height"]))
+
+            for tool_name, arguments, semantic_reply in semantic_replies:
+                check(semantic_reply["result"]["isError"] is False,
+                      "%s failed for %r: %s" % (tool_name, arguments, refusal_text(semantic_reply)))
+                crop = semantic_reply["result"]["structuredContent"]
+                check(120 < crop["width"] < shot["width"],
+                      "%s did not crop to a plausible dock width: %r" % (tool_name, crop))
+                check(60 < crop["height"] < shot["height"],
+                      "%s did not crop vertically around its target: %r" % (tool_name, crop))
+                check(0 <= crop["target_y"] < crop["height"],
+                      "%s target is outside its crop: %r" % (tool_name, crop))
+                check(crop["target_y"] + crop["target_height"] <= crop["height"] + 2,
+                      "%s target extends outside its crop: %r" % (tool_name, crop))
+                on_disk = os.path.join(project, crop["path"].replace("res://", ""))
+                with open(on_disk, "rb") as handle:
+                    check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                          "%s output is not a PNG" % tool_name)
+                images = [c for c in semantic_reply["result"]["content"]
+                          if c["type"] == "image"]
+                check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
+                      "%s did not return its crop inline" % tool_name)
+                check_capture_metadata(crop, "editor_viewport")
+            resource_crop = semantic_replies[0][2]["result"]["structuredContent"]
+            check(resource_crop["property_chain"] == ["gradient", "offsets"],
+                  "nested resource property chain was not preserved: %r" % resource_crop)
+            check(resource_crop["target_property"] == "offsets",
+                  "wrong nested Inspector target: %r" % resource_crop)
+            node_crop = semantic_replies[1][2]["result"]["structuredContent"]
+            check(node_crop["scene"] == "res://docs/capture_scene.tscn"
+                  and node_crop["node_path"] == "Section/Target"
+                  and node_crop["target_property"] == "text",
+                  "scene node Inspector target was not reported exactly: %r" % node_crop)
+            tree_crop = semantic_replies[2][2]["result"]["structuredContent"]
+            check(tree_crop["node_path"] == "Section/Target" and tree_crop["node_name"] == "Target",
+                  "Scene tree capture selected the wrong node: %r" % tree_crop)
+            check(tree_crop["ancestor_depth"] >= 1 and tree_crop["expanded_ancestors"] >= 0,
+                  "Scene tree capture did not traverse the target's ancestors: %r" % tree_crop)
+            print("PASS semantic Inspector captures covered nested Resource and scene-node properties")
+            print("PASS semantic Scene tree capture expanded, selected, highlighted and cropped its node")
+
+            restored = call({"jsonrpc": "2.0", "id": 85, "method": "tools/call",
+                             "params": {"name": "Godot_GetEditedSceneTree"}})
+            restored_nodes = restored["result"]["structuredContent"]["nodes"]
+            check(restored_nodes and restored_nodes[0]["name"] == "Main",
+                  "semantic captures did not restore the original scene tab: %r" % restored_nodes)
+            print("PASS semantic captures restored the original scene tab")
 
             # The whole screen, which is the only capture that contains a dialog -
             # every dialog is a separate OS window and so invisible to the viewport.
@@ -2613,8 +2746,12 @@ def main():
 
     # Start a display rather than assume one: on a container this is the difference
     # between verifying the visual tools and merely verifying that they refuse.
-    display = (virtual_display.VirtualDisplay("", 0, 0, 0) if args.headless
-               else virtual_display.ensure(width=1280, height=800))
+    if args.headless:
+        display = virtual_display.VirtualDisplay("", 0, 0, 0)
+    elif sys.platform == "darwin":
+        display = NativeMacOSDisplay()
+    else:
+        display = virtual_display.ensure(width=1280, height=800)
     try:
         with display:
             run(args.editor, display)

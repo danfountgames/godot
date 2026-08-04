@@ -38,6 +38,7 @@ struct Entry {
 	bool answered = false;
 	double deadline = 0.0; // 0 means no deadline.
 	Callable poller; // Optional; see MCPDeferred::begin_polled.
+	Callable cancel; // Optional cleanup when the wait is abandoned or times out.
 	String timeout_message; // Empty means the default is chosen at timeout.
 	MCPDeferred::Completion completion;
 };
@@ -60,11 +61,12 @@ MCPDeferred::Token MCPDeferred::begin(double p_timeout_seconds, const String &p_
 	return token;
 }
 
-MCPDeferred::Token MCPDeferred::begin_polled(double p_timeout_seconds, const Callable &p_poller) {
+MCPDeferred::Token MCPDeferred::begin_polled(double p_timeout_seconds, const Callable &p_poller, const Callable &p_cancel) {
 	const Token token = begin(p_timeout_seconds);
 	Entry *entry = s_entries.getptr(token);
 	if (entry) {
 		entry->poller = p_poller;
+		entry->cancel = p_cancel;
 	}
 	return token;
 }
@@ -151,11 +153,25 @@ void MCPDeferred::update() {
 						: (pair.value.poller.is_valid()
 										? "timed out waiting for the editor to produce a result"
 										: "timed out waiting for the user to answer"));
+		if (pair.value.cancel.is_valid()) {
+			Variant ignored;
+			Callable::CallError call_error;
+			pair.value.cancel.callp(nullptr, 0, ignored, call_error);
+		}
 	}
 }
 
 void MCPDeferred::abandon(Token p_token) {
+	Callable cancel;
+	if (const Entry *entry = s_entries.getptr(p_token)) {
+		cancel = entry->cancel;
+	}
 	s_entries.erase(p_token);
+	if (cancel.is_valid()) {
+		Variant ignored;
+		Callable::CallError call_error;
+		cancel.callp(nullptr, 0, ignored, call_error);
+	}
 }
 
 Dictionary MCPDeferred::make_deferred_result(Token p_token) {

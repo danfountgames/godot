@@ -179,6 +179,8 @@ A practical base tool set for a first release would look like this:
 | `Godot_PlayCurrentScene` | Run current scene | `EditorInterface.play_current_scene()` |
 | `Godot_StopPlaying` | Stop run | `EditorInterface.stop_playing_scene()` |
 | `Godot_CaptureViewport` | Capture screenshot | editor viewport / embedded game |
+| `Godot_CaptureInspectorProperty` | Capture documentation for one Inspector variable | Resource path, or scene + NodePath; raw property chain; recursive sub-inspector expansion |
+| `Godot_CaptureSceneTreeNode` | Capture documentation for one Scene tree node | scene + NodePath; ancestor expansion and selected-row highlight |
 | `Godot_AskUser` | Human clarification UI | custom editor dialog |
 | `Godot_SearchProject` | Grep/search | text and resource scan |
 
