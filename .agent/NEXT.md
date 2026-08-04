@@ -18,13 +18,13 @@ One wart is recorded rather than fixed, because changing it would break clients:
 `Godot_WriteTextFile` takes `text` and `Godot_WriteUserFile` takes `content`. The
 template's AGENTS.md now warns about it.
 
-Two things need a machine this is not, and both are below.
+Two things still need an external environment, and both are below.
 
 ## Still blocked on hardware or a remote runner
 
 - Confirm `.github/workflows/godot_ai.yml` goes green on GitHub Actions. — C1. Every
   command in it passes locally.
-- On a Windows host, run the cross-compiled relay against a Godot editor, and the same
-  on macOS. — R8. Both backends compile in CI, and `platform::initialize()` is now
-  actually called, which it was not before the HTTP work went in, so the Windows path
-  has never run *correctly*.
+- On a Windows host, run the cross-compiled relay against a Godot editor. — R8. The
+  POSIX backend now passes all 64 relay tests on native macOS as well as Linux, and a
+  native arm64 `GodotAI.app` build passes its bundled GodotAI test suite. The Windows
+  backend still has never run *correctly*; it only cross-compiles in CI.

@@ -71,7 +71,8 @@ answered by a genuine pointer click on a choice button (Escape returns
 
 What remains is honest:
 
-- **R8** — the Windows backend compiles in CI but has never been *run*; macOS neither.
+- **R8** — the Windows backend compiles in CI but has never been *run*. The POSIX
+  backend now passes its full relay suite on both Linux and macOS.
 - **C1** — every workflow command passes locally; never observed green on Actions.
 - **O1 cancellation** — now caught end to end in `run_editor_ui_e2e.py`: a turn is left
   unanswered, the dock's Cancel button is found by `Godot_FindControl` (the *enabled*
@@ -110,6 +111,11 @@ All of the following on the current working tree, in one sweep:
   60 tools are advertised over `tools/list`.
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
   visual tools refusing as they should.
+- Native macOS arm64 editor build with Vulkan/Metal and OpenGL enabled →
+  `bin/GodotAI.app`, a valid ad-hoc-signed bundle whose display name, executable and
+  icon are all `GodotAI`; the bundled executable reports
+  `4.3.dev.custom_build.5e0a468c3`, and its GodotAI suite passes 69 cases / 433
+  assertions. The macOS relay suite passes 64/64.
 - Documentation (`modules/godot_ai/README.md`), `AGENTS.md`, `CLAUDE.md` and
   `.github/workflows/godot_ai.yml` are current. The workflow now installs
   `xvfb x11-utils libgl1-mesa-dri xdotool` and runs both end-to-end modes; it has still
@@ -135,8 +141,9 @@ None.
   after every verified slice; never run a recursive delete rooted at the CWD.
 - Run the engine test binary from outside the repository (`cd /tmp`) as defence in
   depth.
-- Windows and macOS relay behaviour cannot be *run* here. The Windows backend is
-  cross-compiled in CI so it cannot rot, but nothing has executed it.
+- Windows relay behaviour cannot be *run* here. The Windows backend is cross-compiled
+  in CI so it cannot rot, but nothing has executed it. The macOS POSIX backend now has
+  64/64 passing relay tests on a native arm64 host.
 - **Do not record a gap as environmental without trying.** Screenshots, dialogs and
   runtime inspection were all recorded that way and none of them had to be; the
   display was one `apt-get install xvfb` away, and treating it as unreachable hid a
@@ -144,11 +151,13 @@ None.
 
 ## Last completed command
 
-The full sweep above, then commit and push.
+The bundled macOS executable's targeted GodotAI suite: 69 cases / 433 assertions,
+all passing.
 
 ## Next command
 
-Confirm the ledger still matches reality before doing anything else:
+For a future protocol or tool-behaviour change, confirm the ledger still matches
+reality before doing anything else:
 
 ```sh
 python3 tools/relay/tests/run_tests.py && python3 tools/tests/run_tests.py \

@@ -5,11 +5,13 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>Godot</string>
+	<string>GodotAI</string>
 	<key>CFBundleName</key>
-	<string>Godot</string>
+	<string>GodotAI</string>
+	<key>CFBundleDisplayName</key>
+	<string>GodotAI</string>
 	<key>CFBundleIconFile</key>
-	<string>Godot.icns</string>
+	<string>GodotAI.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>org.godotengine.godot</string>
 	<key>CFBundleInfoDictionaryVersion</key>

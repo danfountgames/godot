@@ -266,3 +266,21 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 ### Next
 - See NEXT.md. The remaining gaps are tests not yet written (U1, U2), another
   operating system (R8), or GitHub Actions itself (C1).
+
+## 2026-08-04 — S-18 macOS GodotAI branding and native build
+
+- The generated editor bundle is now `bin/GodotAI.app`; its displayed bundle name,
+  executable, and icon resource are consistently named `GodotAI`.
+- Added a reproducible Swift/AppKit icon generator and ICNS assembly script. It keeps
+  the existing macOS Godot artwork pixel-faithful and adds a violet AI badge with a
+  cyan rim; all 16–1024 px representations retain alpha and the badge remains legible.
+- Installed MoltenVK 1.4.2 and built the native arm64 editor with Vulkan/Metal,
+  OpenGL, tests, SCU, and bundle generation enabled. Current Homebrew packages only
+  an arm64 xcframework slice, so the build used a temporary compatibility layout for
+  Godot 4.3's older universal-slice detector.
+- Current Apple Clang exposed three stale vendored-source defects. Applied the same
+  narrow fixes present in current official Godot source: two invalid Embree diagnostic
+  stream operators and libpng's obsolete classic-Mac `fp.h` branch.
+- Evidence: macOS relay suite 64/64; bundle plist, arm64 Mach-O, icon checksum and
+  ad-hoc signature verified; bundled GodotAI suite 69 cases / 433 assertions; bundle
+  smoke launch reports `4.3.dev.custom_build.5e0a468c3`.
