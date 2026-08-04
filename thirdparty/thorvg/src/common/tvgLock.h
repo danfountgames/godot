@@ -23,12 +23,12 @@
 #ifndef _TVG_LOCK_H_
 #define _TVG_LOCK_H_
 
-#ifdef THORVG_THREAD_SUPPORT
-
 #include <mutex>
+#include "tvgTaskScheduler.h"
 
-namespace tvg {
-
+namespace tvg
+{
+#ifdef THORVG_THREAD_SUPPORT
     struct Key
     {
         std::mutex mtx;
@@ -40,31 +40,28 @@ namespace tvg {
 
         ScopedLock(Key& k)
         {
-            k.mtx.lock();
-            key = &k;
+            if (TaskScheduler::threads() > 0) {
+                k.mtx.lock();
+                key = &k;
+            }
         }
 
         ~ScopedLock()
         {
-            key->mtx.unlock();
+            if (TaskScheduler::threads() > 0) {
+                key->mtx.unlock();
+            }
         }
     };
-
-}
-
 #else //THORVG_THREAD_SUPPORT
-
-namespace tvg {
-
     struct Key {};
 
     struct ScopedLock
     {
         ScopedLock(Key& key) {}
     };
-
+#endif //THORVG_THREAD_SUPPORT
 }
 
-#endif //THORVG_THREAD_SUPPORT
-
 #endif //_TVG_LOCK_H_
+

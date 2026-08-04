@@ -40,7 +40,7 @@
 #include "core/os/time.h"
 
 #ifdef TOOLS_ENABLED
-#include "editor/editor_file_system.h"
+#include "editor/file_system/editor_file_system.h"
 #endif
 
 static String s_root_override;

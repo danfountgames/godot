@@ -34,13 +34,13 @@
 #include "../mcp_tool_registry.h"
 
 #include "core/variant/array.h"
-#include "servers/display_server.h"
+#include "servers/display/display_server.h"
 
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
-#include "editor/gui/editor_run_bar.h"
+#include "editor/run/editor_run_bar.h"
 #include "scene/main/node.h"
 
 namespace {
@@ -76,7 +76,7 @@ static void add_game_processes(Dictionary &r_result) {
 		return;
 	}
 	Array pids;
-	for (const OS::ProcessID &pid : bar->get_editor_run().pids) {
+	for (const ProcessID &pid : bar->get_editor_run().pids) {
 		pids.push_back((int64_t)pid);
 	}
 	r_result["game_pids"] = pids;

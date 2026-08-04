@@ -194,6 +194,51 @@ namespace Godot
         }
 
         /// <summary>
+        /// The OKHSL hue of this color, on the range 0 to 1.
+        /// </summary>
+        public float OkHslH
+        {
+            readonly get
+            {
+                return NativeFuncs.godotsharp_color_get_ok_hsl_h(this);
+            }
+            set
+            {
+                this = FromOkHsl(value, OkHslS, OkHslL, A);
+            }
+        }
+
+        /// <summary>
+        /// The OKHSL saturation of this color, on the range 0 to 1.
+        /// </summary>
+        public float OkHslS
+        {
+            readonly get
+            {
+                return NativeFuncs.godotsharp_color_get_ok_hsl_s(this);
+            }
+            set
+            {
+                this = FromOkHsl(OkHslH, value, OkHslL, A);
+            }
+        }
+
+        /// <summary>
+        /// The OKHSL lightness of this color, on the range 0 to 1.
+        /// </summary>
+        public float OkHslL
+        {
+            readonly get
+            {
+                return NativeFuncs.godotsharp_color_get_ok_hsl_l(this);
+            }
+            set
+            {
+                this = FromOkHsl(OkHslH, OkHslS, value, A);
+            }
+        }
+
+        /// <summary>
         /// Returns the light intensity of the color, as a value between 0.0 and 1.0 (inclusive).
         /// This is useful when determining light or dark color. Colors with a luminance smaller
         /// than 0.5 can be generally considered dark.
@@ -1050,6 +1095,15 @@ namespace Godot
         }
 
         /// <summary>
+        /// Returns the same value as if the <c>+</c> was not there.
+        /// Unary <c>+</c> does nothing, but sometimes it can make your
+        /// code more readable.
+        /// </summary>
+        /// <param name="color">The color to do nothing to.</param>
+        /// <returns>The original color.</returns>
+        public static Color operator +(Color color) => color;
+
+        /// <summary>
         /// Inverts the given color. This is equivalent to
         /// <c>Colors.White - c</c> or
         /// <c>new Color(1 - c.R, 1 - c.G, 1 - c.B, 1 - c.A)</c>.
@@ -1329,10 +1383,7 @@ namespace Godot
         /// Converts this <see cref="Color"/> to a string.
         /// </summary>
         /// <returns>A string representation of this color.</returns>
-        public override readonly string ToString()
-        {
-            return $"({R}, {G}, {B}, {A})";
-        }
+        public override readonly string ToString() => ToString(null);
 
         /// <summary>
         /// Converts this <see cref="Color"/> to a string with the given <paramref name="format"/>.
@@ -1340,9 +1391,7 @@ namespace Godot
         /// <returns>A string representation of this color.</returns>
         public readonly string ToString(string? format)
         {
-#pragma warning disable CA1305 // Disable warning: "Specify IFormatProvider"
-            return $"({R.ToString(format)}, {G.ToString(format)}, {B.ToString(format)}, {A.ToString(format)})";
-#pragma warning restore CA1305
+            return $"({R.ToString(format, CultureInfo.InvariantCulture)}, {G.ToString(format, CultureInfo.InvariantCulture)}, {B.ToString(format, CultureInfo.InvariantCulture)}, {A.ToString(format, CultureInfo.InvariantCulture)})";
         }
     }
 }

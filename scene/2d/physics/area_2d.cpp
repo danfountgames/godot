@@ -30,12 +30,15 @@
 
 #include "area_2d.h"
 
-#include "scene/scene_string_names.h"
-#include "servers/audio_server.h"
+#include "core/config/engine.h"
+#include "core/object/callable_mp.h"
+#include "core/object/class_db.h"
+#include "servers/audio/audio_server.h"
+#include "servers/physics_2d/physics_server_2d.h"
 
 void Area2D::set_gravity_space_override_mode(SpaceOverride p_mode) {
 	gravity_space_override = p_mode;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_GRAVITY_OVERRIDE_MODE, p_mode);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_GRAVITY_OVERRIDE_MODE, p_mode);
 }
 
 Area2D::SpaceOverride Area2D::get_gravity_space_override_mode() const {
@@ -44,7 +47,7 @@ Area2D::SpaceOverride Area2D::get_gravity_space_override_mode() const {
 
 void Area2D::set_gravity_is_point(bool p_enabled) {
 	gravity_is_point = p_enabled;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_GRAVITY_IS_POINT, p_enabled);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_GRAVITY_IS_POINT, p_enabled);
 }
 
 bool Area2D::is_gravity_a_point() const {
@@ -53,7 +56,7 @@ bool Area2D::is_gravity_a_point() const {
 
 void Area2D::set_gravity_point_unit_distance(real_t p_scale) {
 	gravity_point_unit_distance = p_scale;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_GRAVITY_POINT_UNIT_DISTANCE, p_scale);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_GRAVITY_POINT_UNIT_DISTANCE, p_scale);
 }
 
 real_t Area2D::get_gravity_point_unit_distance() const {
@@ -62,7 +65,7 @@ real_t Area2D::get_gravity_point_unit_distance() const {
 
 void Area2D::set_gravity_point_center(const Vector2 &p_center) {
 	gravity_vec = p_center;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_GRAVITY_VECTOR, p_center);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_GRAVITY_VECTOR, p_center);
 }
 
 const Vector2 &Area2D::get_gravity_point_center() const {
@@ -71,7 +74,7 @@ const Vector2 &Area2D::get_gravity_point_center() const {
 
 void Area2D::set_gravity_direction(const Vector2 &p_direction) {
 	gravity_vec = p_direction;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_GRAVITY_VECTOR, p_direction);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_GRAVITY_VECTOR, p_direction);
 }
 
 const Vector2 &Area2D::get_gravity_direction() const {
@@ -80,7 +83,7 @@ const Vector2 &Area2D::get_gravity_direction() const {
 
 void Area2D::set_gravity(real_t p_gravity) {
 	gravity = p_gravity;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_GRAVITY, p_gravity);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_GRAVITY, p_gravity);
 }
 
 real_t Area2D::get_gravity() const {
@@ -89,7 +92,7 @@ real_t Area2D::get_gravity() const {
 
 void Area2D::set_linear_damp_space_override_mode(SpaceOverride p_mode) {
 	linear_damp_space_override = p_mode;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_LINEAR_DAMP_OVERRIDE_MODE, p_mode);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_LINEAR_DAMP_OVERRIDE_MODE, p_mode);
 }
 
 Area2D::SpaceOverride Area2D::get_linear_damp_space_override_mode() const {
@@ -98,7 +101,7 @@ Area2D::SpaceOverride Area2D::get_linear_damp_space_override_mode() const {
 
 void Area2D::set_angular_damp_space_override_mode(SpaceOverride p_mode) {
 	angular_damp_space_override = p_mode;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_ANGULAR_DAMP_OVERRIDE_MODE, p_mode);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_ANGULAR_DAMP_OVERRIDE_MODE, p_mode);
 }
 
 Area2D::SpaceOverride Area2D::get_angular_damp_space_override_mode() const {
@@ -107,7 +110,7 @@ Area2D::SpaceOverride Area2D::get_angular_damp_space_override_mode() const {
 
 void Area2D::set_linear_damp(real_t p_linear_damp) {
 	linear_damp = p_linear_damp;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_LINEAR_DAMP, p_linear_damp);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_LINEAR_DAMP, p_linear_damp);
 }
 
 real_t Area2D::get_linear_damp() const {
@@ -116,7 +119,7 @@ real_t Area2D::get_linear_damp() const {
 
 void Area2D::set_angular_damp(real_t p_angular_damp) {
 	angular_damp = p_angular_damp;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_ANGULAR_DAMP, p_angular_damp);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_ANGULAR_DAMP, p_angular_damp);
 }
 
 real_t Area2D::get_angular_damp() const {
@@ -125,7 +128,7 @@ real_t Area2D::get_angular_damp() const {
 
 void Area2D::set_priority(int p_priority) {
 	priority = p_priority;
-	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PhysicsServer2D::AREA_PARAM_PRIORITY, p_priority);
+	PhysicsServer2D::get_singleton()->area_set_param(get_rid(), PS2DE::AREA_PARAM_PRIORITY, p_priority);
 }
 
 int Area2D::get_priority() const {
@@ -142,9 +145,9 @@ void Area2D::_body_enter_tree(ObjectID p_id) {
 	ERR_FAIL_COND(E->value.in_tree);
 
 	E->value.in_tree = true;
-	emit_signal(SceneStringNames::get_singleton()->body_entered, node);
+	emit_signal(SceneStringName(body_entered), node);
 	for (int i = 0; i < E->value.shapes.size(); i++) {
-		emit_signal(SceneStringNames::get_singleton()->body_shape_entered, E->value.rid, node, E->value.shapes[i].body_shape, E->value.shapes[i].area_shape);
+		emit_signal(SceneStringName(body_shape_entered), E->value.rid, node, E->value.shapes[i].body_shape, E->value.shapes[i].area_shape);
 	}
 }
 
@@ -156,14 +159,14 @@ void Area2D::_body_exit_tree(ObjectID p_id) {
 	ERR_FAIL_COND(!E);
 	ERR_FAIL_COND(!E->value.in_tree);
 	E->value.in_tree = false;
-	emit_signal(SceneStringNames::get_singleton()->body_exited, node);
+	emit_signal(SceneStringName(body_exited), node);
 	for (int i = 0; i < E->value.shapes.size(); i++) {
-		emit_signal(SceneStringNames::get_singleton()->body_shape_exited, E->value.rid, node, E->value.shapes[i].body_shape, E->value.shapes[i].area_shape);
+		emit_signal(SceneStringName(body_shape_exited), E->value.rid, node, E->value.shapes[i].body_shape, E->value.shapes[i].area_shape);
 	}
 }
 
 void Area2D::_body_inout(int p_status, const RID &p_body, ObjectID p_instance, int p_body_shape, int p_area_shape) {
-	bool body_in = p_status == PhysicsServer2D::AREA_BODY_ADDED;
+	bool body_in = p_status == PS2DE::AREA_BODY_ADDED;
 	ObjectID objid = p_instance;
 
 	// Exit early if instance is invalid.
@@ -172,9 +175,9 @@ void Area2D::_body_inout(int p_status, const RID &p_body, ObjectID p_instance, i
 		lock_callback();
 		locked = true;
 		if (body_in) {
-			emit_signal(SceneStringNames::get_singleton()->body_shape_entered, p_body, (Node *)nullptr, p_body_shape, p_area_shape);
+			emit_signal(SceneStringName(body_shape_entered), p_body, (Node *)nullptr, p_body_shape, p_area_shape);
 		} else {
-			emit_signal(SceneStringNames::get_singleton()->body_shape_exited, p_body, (Node *)nullptr, p_body_shape, p_area_shape);
+			emit_signal(SceneStringName(body_shape_exited), p_body, (Node *)nullptr, p_body_shape, p_area_shape);
 		}
 		locked = false;
 		unlock_callback();
@@ -200,10 +203,10 @@ void Area2D::_body_inout(int p_status, const RID &p_body, ObjectID p_instance, i
 			E->value.rc = 0;
 			E->value.in_tree = node && node->is_inside_tree();
 			if (node) {
-				node->connect(SceneStringNames::get_singleton()->tree_entered, callable_mp(this, &Area2D::_body_enter_tree).bind(objid));
-				node->connect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Area2D::_body_exit_tree).bind(objid));
+				node->connect(SceneStringName(tree_entered), callable_mp(this, &Area2D::_body_enter_tree).bind(objid));
+				node->connect(SceneStringName(tree_exiting), callable_mp(this, &Area2D::_body_exit_tree).bind(objid));
 				if (E->value.in_tree) {
-					emit_signal(SceneStringNames::get_singleton()->body_entered, node);
+					emit_signal(SceneStringName(body_entered), node);
 				}
 			}
 		}
@@ -213,7 +216,7 @@ void Area2D::_body_inout(int p_status, const RID &p_body, ObjectID p_instance, i
 		}
 
 		if (!node || E->value.in_tree) {
-			emit_signal(SceneStringNames::get_singleton()->body_shape_entered, p_body, node, p_body_shape, p_area_shape);
+			emit_signal(SceneStringName(body_shape_entered), p_body, node, p_body_shape, p_area_shape);
 		}
 
 	} else {
@@ -227,15 +230,15 @@ void Area2D::_body_inout(int p_status, const RID &p_body, ObjectID p_instance, i
 		if (E->value.rc == 0) {
 			body_map.remove(E);
 			if (node) {
-				node->disconnect(SceneStringNames::get_singleton()->tree_entered, callable_mp(this, &Area2D::_body_enter_tree));
-				node->disconnect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Area2D::_body_exit_tree));
+				node->disconnect(SceneStringName(tree_entered), callable_mp(this, &Area2D::_body_enter_tree));
+				node->disconnect(SceneStringName(tree_exiting), callable_mp(this, &Area2D::_body_exit_tree));
 				if (in_tree) {
-					emit_signal(SceneStringNames::get_singleton()->body_exited, obj);
+					emit_signal(SceneStringName(body_exited), obj);
 				}
 			}
 		}
 		if (!node || in_tree) {
-			emit_signal(SceneStringNames::get_singleton()->body_shape_exited, p_body, obj, p_body_shape, p_area_shape);
+			emit_signal(SceneStringName(body_shape_exited), p_body, obj, p_body_shape, p_area_shape);
 		}
 	}
 
@@ -253,9 +256,9 @@ void Area2D::_area_enter_tree(ObjectID p_id) {
 	ERR_FAIL_COND(E->value.in_tree);
 
 	E->value.in_tree = true;
-	emit_signal(SceneStringNames::get_singleton()->area_entered, node);
+	emit_signal(SceneStringName(area_entered), node);
 	for (int i = 0; i < E->value.shapes.size(); i++) {
-		emit_signal(SceneStringNames::get_singleton()->area_shape_entered, E->value.rid, node, E->value.shapes[i].area_shape, E->value.shapes[i].self_shape);
+		emit_signal(SceneStringName(area_shape_entered), E->value.rid, node, E->value.shapes[i].area_shape, E->value.shapes[i].self_shape);
 	}
 }
 
@@ -267,14 +270,14 @@ void Area2D::_area_exit_tree(ObjectID p_id) {
 	ERR_FAIL_COND(!E);
 	ERR_FAIL_COND(!E->value.in_tree);
 	E->value.in_tree = false;
-	emit_signal(SceneStringNames::get_singleton()->area_exited, node);
+	emit_signal(SceneStringName(area_exited), node);
 	for (int i = 0; i < E->value.shapes.size(); i++) {
-		emit_signal(SceneStringNames::get_singleton()->area_shape_exited, E->value.rid, node, E->value.shapes[i].area_shape, E->value.shapes[i].self_shape);
+		emit_signal(SceneStringName(area_shape_exited), E->value.rid, node, E->value.shapes[i].area_shape, E->value.shapes[i].self_shape);
 	}
 }
 
 void Area2D::_area_inout(int p_status, const RID &p_area, ObjectID p_instance, int p_area_shape, int p_self_shape) {
-	bool area_in = p_status == PhysicsServer2D::AREA_BODY_ADDED;
+	bool area_in = p_status == PS2DE::AREA_BODY_ADDED;
 	ObjectID objid = p_instance;
 
 	// Exit early if instance is invalid.
@@ -283,9 +286,9 @@ void Area2D::_area_inout(int p_status, const RID &p_area, ObjectID p_instance, i
 		lock_callback();
 		locked = true;
 		if (area_in) {
-			emit_signal(SceneStringNames::get_singleton()->area_shape_entered, p_area, (Node *)nullptr, p_area_shape, p_self_shape);
+			emit_signal(SceneStringName(area_shape_entered), p_area, (Node *)nullptr, p_area_shape, p_self_shape);
 		} else {
-			emit_signal(SceneStringNames::get_singleton()->area_shape_exited, p_area, (Node *)nullptr, p_area_shape, p_self_shape);
+			emit_signal(SceneStringName(area_shape_exited), p_area, (Node *)nullptr, p_area_shape, p_self_shape);
 		}
 		locked = false;
 		unlock_callback();
@@ -311,10 +314,10 @@ void Area2D::_area_inout(int p_status, const RID &p_area, ObjectID p_instance, i
 			E->value.rc = 0;
 			E->value.in_tree = node && node->is_inside_tree();
 			if (node) {
-				node->connect(SceneStringNames::get_singleton()->tree_entered, callable_mp(this, &Area2D::_area_enter_tree).bind(objid));
-				node->connect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Area2D::_area_exit_tree).bind(objid));
+				node->connect(SceneStringName(tree_entered), callable_mp(this, &Area2D::_area_enter_tree).bind(objid));
+				node->connect(SceneStringName(tree_exiting), callable_mp(this, &Area2D::_area_exit_tree).bind(objid));
 				if (E->value.in_tree) {
-					emit_signal(SceneStringNames::get_singleton()->area_entered, node);
+					emit_signal(SceneStringName(area_entered), node);
 				}
 			}
 		}
@@ -324,7 +327,7 @@ void Area2D::_area_inout(int p_status, const RID &p_area, ObjectID p_instance, i
 		}
 
 		if (!node || E->value.in_tree) {
-			emit_signal(SceneStringNames::get_singleton()->area_shape_entered, p_area, node, p_area_shape, p_self_shape);
+			emit_signal(SceneStringName(area_shape_entered), p_area, node, p_area_shape, p_self_shape);
 		}
 
 	} else {
@@ -338,15 +341,15 @@ void Area2D::_area_inout(int p_status, const RID &p_area, ObjectID p_instance, i
 		if (E->value.rc == 0) {
 			area_map.remove(E);
 			if (node) {
-				node->disconnect(SceneStringNames::get_singleton()->tree_entered, callable_mp(this, &Area2D::_area_enter_tree));
-				node->disconnect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Area2D::_area_exit_tree));
+				node->disconnect(SceneStringName(tree_entered), callable_mp(this, &Area2D::_area_enter_tree));
+				node->disconnect(SceneStringName(tree_exiting), callable_mp(this, &Area2D::_area_exit_tree));
 				if (in_tree) {
-					emit_signal(SceneStringNames::get_singleton()->area_exited, obj);
+					emit_signal(SceneStringName(area_exited), obj);
 				}
 			}
 		}
 		if (!node || in_tree) {
-			emit_signal(SceneStringNames::get_singleton()->area_shape_exited, p_area, obj, p_area_shape, p_self_shape);
+			emit_signal(SceneStringName(area_shape_exited), p_area, obj, p_area_shape, p_self_shape);
 		}
 	}
 
@@ -358,7 +361,7 @@ void Area2D::_clear_monitoring() {
 	ERR_FAIL_COND_MSG(locked, "This function can't be used during the in/out signal.");
 
 	{
-		HashMap<ObjectID, BodyState> bmcopy = body_map;
+		HashMap<ObjectID, BodyState> bmcopy(body_map);
 		body_map.clear();
 		//disconnect all monitored stuff
 
@@ -370,23 +373,23 @@ void Area2D::_clear_monitoring() {
 				continue;
 			}
 
-			node->disconnect(SceneStringNames::get_singleton()->tree_entered, callable_mp(this, &Area2D::_body_enter_tree));
-			node->disconnect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Area2D::_body_exit_tree));
+			node->disconnect(SceneStringName(tree_entered), callable_mp(this, &Area2D::_body_enter_tree));
+			node->disconnect(SceneStringName(tree_exiting), callable_mp(this, &Area2D::_body_exit_tree));
 
 			if (!E.value.in_tree) {
 				continue;
 			}
 
 			for (int i = 0; i < E.value.shapes.size(); i++) {
-				emit_signal(SceneStringNames::get_singleton()->body_shape_exited, E.value.rid, node, E.value.shapes[i].body_shape, E.value.shapes[i].area_shape);
+				emit_signal(SceneStringName(body_shape_exited), E.value.rid, node, E.value.shapes[i].body_shape, E.value.shapes[i].area_shape);
 			}
 
-			emit_signal(SceneStringNames::get_singleton()->body_exited, obj);
+			emit_signal(SceneStringName(body_exited), obj);
 		}
 	}
 
 	{
-		HashMap<ObjectID, AreaState> bmcopy = area_map;
+		HashMap<ObjectID, AreaState> bmcopy(area_map);
 		area_map.clear();
 		//disconnect all monitored stuff
 
@@ -398,18 +401,18 @@ void Area2D::_clear_monitoring() {
 				continue;
 			}
 
-			node->disconnect(SceneStringNames::get_singleton()->tree_entered, callable_mp(this, &Area2D::_area_enter_tree));
-			node->disconnect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Area2D::_area_exit_tree));
+			node->disconnect(SceneStringName(tree_entered), callable_mp(this, &Area2D::_area_enter_tree));
+			node->disconnect(SceneStringName(tree_exiting), callable_mp(this, &Area2D::_area_exit_tree));
 
 			if (!E.value.in_tree) {
 				continue;
 			}
 
 			for (int i = 0; i < E.value.shapes.size(); i++) {
-				emit_signal(SceneStringNames::get_singleton()->area_shape_exited, E.value.rid, node, E.value.shapes[i].area_shape, E.value.shapes[i].self_shape);
+				emit_signal(SceneStringName(area_shape_exited), E.value.rid, node, E.value.shapes[i].area_shape, E.value.shapes[i].self_shape);
 			}
 
-			emit_signal(SceneStringNames::get_singleton()->area_exited, obj);
+			emit_signal(SceneStringName(area_exited), obj);
 		}
 	}
 }
@@ -502,8 +505,8 @@ bool Area2D::has_overlapping_areas() const {
 	return !area_map.is_empty();
 }
 
-bool Area2D::overlaps_area(Node *p_area) const {
-	ERR_FAIL_NULL_V(p_area, false);
+bool Area2D::overlaps_area(RequiredParam<Node> rp_area) const {
+	EXTRACT_PARAM_OR_FAIL_V(p_area, rp_area, false);
 	HashMap<ObjectID, AreaState>::ConstIterator E = area_map.find(p_area->get_instance_id());
 	if (!E) {
 		return false;
@@ -511,8 +514,8 @@ bool Area2D::overlaps_area(Node *p_area) const {
 	return E->value.in_tree;
 }
 
-bool Area2D::overlaps_body(Node *p_body) const {
-	ERR_FAIL_NULL_V(p_body, false);
+bool Area2D::overlaps_body(RequiredParam<Node> rp_body) const {
+	EXTRACT_PARAM_OR_FAIL_V(p_body, rp_body, false);
 	HashMap<ObjectID, BodyState>::ConstIterator E = body_map.find(p_body->get_instance_id());
 	if (!E) {
 		return false;
@@ -538,10 +541,13 @@ StringName Area2D::get_audio_bus_name() const {
 			return audio_bus;
 		}
 	}
-	return SceneStringNames::get_singleton()->Master;
+	return SceneStringName(Master);
 }
 
 void Area2D::_validate_property(PropertyInfo &p_property) const {
+	if (!Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
 	if (p_property.name == "audio_bus_name") {
 		String options;
 		for (int i = 0; i < AudioServer::get_singleton()->get_bus_count(); i++) {
@@ -633,15 +639,15 @@ void Area2D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_audio_bus_override", "enable"), &Area2D::set_audio_bus_override);
 	ClassDB::bind_method(D_METHOD("is_overriding_audio_bus"), &Area2D::is_overriding_audio_bus);
 
-	ADD_SIGNAL(MethodInfo("body_shape_entered", PropertyInfo(Variant::RID, "body_rid"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, "Node2D"), PropertyInfo(Variant::INT, "body_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
-	ADD_SIGNAL(MethodInfo("body_shape_exited", PropertyInfo(Variant::RID, "body_rid"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, "Node2D"), PropertyInfo(Variant::INT, "body_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
-	ADD_SIGNAL(MethodInfo("body_entered", PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, "Node2D")));
-	ADD_SIGNAL(MethodInfo("body_exited", PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, "Node2D")));
+	ADD_SIGNAL(MethodInfo("body_shape_entered", PropertyInfo(Variant::RID, "body_rid"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, Node2D::get_class_static()), PropertyInfo(Variant::INT, "body_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
+	ADD_SIGNAL(MethodInfo("body_shape_exited", PropertyInfo(Variant::RID, "body_rid"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, Node2D::get_class_static()), PropertyInfo(Variant::INT, "body_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
+	ADD_SIGNAL(MethodInfo("body_entered", PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, Node2D::get_class_static())));
+	ADD_SIGNAL(MethodInfo("body_exited", PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_RESOURCE_TYPE, Node2D::get_class_static())));
 
-	ADD_SIGNAL(MethodInfo("area_shape_entered", PropertyInfo(Variant::RID, "area_rid"), PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, "Area2D"), PropertyInfo(Variant::INT, "area_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
-	ADD_SIGNAL(MethodInfo("area_shape_exited", PropertyInfo(Variant::RID, "area_rid"), PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, "Area2D"), PropertyInfo(Variant::INT, "area_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
-	ADD_SIGNAL(MethodInfo("area_entered", PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, "Area2D")));
-	ADD_SIGNAL(MethodInfo("area_exited", PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, "Area2D")));
+	ADD_SIGNAL(MethodInfo("area_shape_entered", PropertyInfo(Variant::RID, "area_rid"), PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, Area2D::get_class_static()), PropertyInfo(Variant::INT, "area_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
+	ADD_SIGNAL(MethodInfo("area_shape_exited", PropertyInfo(Variant::RID, "area_rid"), PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, Area2D::get_class_static()), PropertyInfo(Variant::INT, "area_shape_index"), PropertyInfo(Variant::INT, "local_shape_index")));
+	ADD_SIGNAL(MethodInfo("area_entered", PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, Area2D::get_class_static())));
+	ADD_SIGNAL(MethodInfo("area_exited", PropertyInfo(Variant::OBJECT, "area", PROPERTY_HINT_RESOURCE_TYPE, Area2D::get_class_static())));
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "monitoring"), "set_monitoring", "is_monitoring");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "monitorable"), "set_monitorable", "is_monitorable");
@@ -676,6 +682,8 @@ void Area2D::_bind_methods() {
 
 Area2D::Area2D() :
 		CollisionObject2D(PhysicsServer2D::get_singleton()->area_create(), true) {
+	_define_ancestry(AncestralClass::AREA_2D);
+
 	set_gravity(980);
 	set_gravity_direction(Vector2(0, 1));
 	set_monitoring(true);

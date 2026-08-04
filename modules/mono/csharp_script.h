@@ -28,20 +28,19 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef CSHARP_SCRIPT_H
-#define CSHARP_SCRIPT_H
+#pragma once
 
 #include "mono_gc_handle.h"
 #include "mono_gd/gd_mono.h"
 
 #include "core/doc_data.h"
-#include "core/io/resource_loader.h"
-#include "core/io/resource_saver.h"
 #include "core/object/script_language.h"
+#include "core/templates/rb_map.h"
 #include "core/templates/self_list.h"
 
 #ifdef TOOLS_ENABLED
-#include "editor/editor_plugin.h"
+#include "core/object/editor_language.h"
+#include "editor/plugins/editor_plugin.h"
 #endif
 
 class CSharpScript;
@@ -67,6 +66,11 @@ public:
 		 * Name of the C# class.
 		 */
 		String class_name;
+
+		/**
+		 * Name of the native class this script derives from.
+		 */
+		StringName native_base_name;
 
 		/**
 		 * Path to the icon that will be used for this class by the editor.
@@ -215,6 +219,8 @@ private:
 	// Do not use unless you know what you are doing
 	static void update_script_class_info(Ref<CSharpScript> p_script);
 
+	void _get_script_signal_list(List<MethodInfo> *r_signals, bool p_include_base) const;
+
 protected:
 	static void _bind_methods();
 
@@ -229,13 +235,13 @@ public:
 	StringName get_instance_base_type() const override;
 	ScriptInstance *instance_create(Object *p_this) override;
 	PlaceHolderScriptInstance *placeholder_instance_create(Object *p_this) override;
-	bool instance_has(const Object *p_this) const override;
 
 	bool has_source_code() const override;
 	String get_source_code() const override;
 	void set_source_code(const String &p_code) override;
 
 #ifdef TOOLS_ENABLED
+	virtual StringName get_doc_class_name() const override { return StringName(); } // TODO
 	virtual Vector<DocData::ClassDoc> get_documentation() const override {
 		// TODO
 		Vector<DocData::ClassDoc> docs;
@@ -251,8 +257,6 @@ public:
 	bool has_script_signal(const StringName &p_signal) const override;
 	void get_script_signal_list(List<MethodInfo> *r_signals) const override;
 
-	Vector<EventSignalInfo> get_script_event_signals() const;
-
 	bool get_property_default_value(const StringName &p_property, Variant &r_value) const override;
 	void get_script_property_list(List<PropertyInfo> *r_list) const override;
 	void update_exports() override;
@@ -262,7 +266,7 @@ public:
 	bool is_tool() const override {
 		return type_info.is_tool;
 	}
-	bool is_valid() const override {
+	bool is_script_valid() const override {
 		return valid;
 	}
 	bool is_abstract() const override {
@@ -278,6 +282,7 @@ public:
 
 	void get_script_method_list(List<MethodInfo> *p_list) const override;
 	bool has_method(const StringName &p_method) const override;
+	virtual int get_script_method_argument_count(const StringName &p_method, bool *r_is_valid = nullptr) const override;
 	MethodInfo get_method_info(const StringName &p_method) const override;
 	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) override;
 
@@ -346,6 +351,7 @@ public:
 
 	void get_method_list(List<MethodInfo> *p_list) const override;
 	bool has_method(const StringName &p_method) const override;
+	virtual int get_method_argument_count(const StringName &p_method, bool *r_is_valid = nullptr) const override;
 	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) override;
 
 	void mono_object_disposed(GCHandleIntPtr p_gchandle_to_free);
@@ -427,6 +433,7 @@ class CSharpLanguage : public ScriptLanguage {
 
 #ifdef TOOLS_ENABLED
 	EditorPlugin *godotsharp_editor = nullptr;
+	EditorLanguage editor_language;
 
 	static void _editor_init_callback();
 #endif
@@ -440,7 +447,7 @@ class CSharpLanguage : public ScriptLanguage {
 public:
 	static void *get_instance_binding(Object *p_object);
 	static void *get_existing_instance_binding(Object *p_object);
-	static void set_instance_binding(Object *p_object, void *p_binding);
+	static void *get_instance_binding_with_setup(Object *p_object);
 	static bool has_instance_binding(Object *p_object);
 
 	const Mutex &get_language_bind_mutex() {
@@ -474,7 +481,7 @@ public:
 
 #ifdef GD_MONO_HOT_RELOAD
 	bool is_assembly_reloading_needed();
-	void reload_assemblies(bool p_soft_reload);
+	void reload_assemblies();
 #endif
 
 	_FORCE_INLINE_ ManagedCallableMiddleman *get_managed_callable_middleman() const {
@@ -492,11 +499,15 @@ public:
 	void finalize();
 
 	/* EDITOR FUNCTIONS */
-	void get_reserved_words(List<String> *p_words) const override;
+#ifdef TOOLS_ENABLED
+	virtual EditorLanguage *get_editor_language() override { return &editor_language; }
+#endif
+
+	Vector<String> get_reserved_words() const override;
 	bool is_control_flow_keyword(const String &p_keyword) const override;
-	void get_comment_delimiters(List<String> *p_delimiters) const override;
-	void get_doc_comment_delimiters(List<String> *p_delimiters) const override;
-	void get_string_delimiters(List<String> *p_delimiters) const override;
+	Vector<String> get_comment_delimiters() const override;
+	Vector<String> get_doc_comment_delimiters() const override;
+	Vector<String> get_string_delimiters() const override;
 	bool is_using_templates() override;
 	virtual Ref<Script> make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const override;
 	virtual Vector<ScriptTemplate> get_built_in_templates(const StringName &p_object) override;
@@ -505,14 +516,7 @@ public:
 		return true;
 	}
 	String validate_path(const String &p_path) const override;
-	Script *create_script() const override;
-#ifndef DISABLE_DEPRECATED
-	virtual bool has_named_classes() const override { return false; }
-#endif
 	bool supports_builtin_mode() const override;
-	/* TODO? */ int find_function(const String &p_function, const String &p_code) const override {
-		return -1;
-	}
 	String make_function(const String &p_class, const String &p_name, const PackedStringArray &p_args) const override;
 	virtual bool can_make_function() const override { return false; }
 	virtual String _get_indentation() const;
@@ -522,7 +526,7 @@ public:
 
 	/* SCRIPT GLOBAL CLASS FUNCTIONS */
 	virtual bool handles_global_class_type(const String &p_type) const override;
-	virtual String get_global_class_name(const String &p_path, String *r_base_type = nullptr, String *r_icon_path = nullptr) const override;
+	virtual String get_global_class_name(const String &p_path, String *r_base_type = nullptr, String *r_icon_path = nullptr, bool *r_is_abstract = nullptr, bool *r_is_tool = nullptr) const override;
 
 	/* DEBUGGER FUNCTIONS */
 	String debug_get_error() const override;
@@ -556,8 +560,8 @@ public:
 	/* TODO? */ void get_public_annotations(List<MethodInfo> *p_annotations) const override {}
 
 	void reload_all_scripts() override;
-	void reload_scripts(const Array &p_scripts, bool p_soft_reload) override;
-	void reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) override;
+	void reload_scripts(const Array &p_scripts) override;
+	void reload_tool_script(const Ref<Script> &p_script) override;
 
 	/* LOADER FUNCTIONS */
 	void get_recognized_extensions(List<String> *p_extensions) const override;
@@ -580,20 +584,3 @@ public:
 	CSharpLanguage();
 	~CSharpLanguage();
 };
-
-class ResourceFormatLoaderCSharpScript : public ResourceFormatLoader {
-public:
-	Ref<Resource> load(const String &p_path, const String &p_original_path = "", Error *r_error = nullptr, bool p_use_sub_threads = false, float *r_progress = nullptr, CacheMode p_cache_mode = CACHE_MODE_REUSE) override;
-	void get_recognized_extensions(List<String> *p_extensions) const override;
-	bool handles_type(const String &p_type) const override;
-	String get_resource_type(const String &p_path) const override;
-};
-
-class ResourceFormatSaverCSharpScript : public ResourceFormatSaver {
-public:
-	Error save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags = 0) override;
-	void get_recognized_extensions(const Ref<Resource> &p_resource, List<String> *p_extensions) const override;
-	bool recognize(const Ref<Resource> &p_resource) const override;
-};
-
-#endif // CSHARP_SCRIPT_H

@@ -39,7 +39,7 @@
 #include "core/os/os.h"
 
 #ifdef TOOLS_ENABLED
-#include "editor/editor_paths.h"
+#include "editor/file_system/editor_paths.h"
 #endif
 
 namespace {

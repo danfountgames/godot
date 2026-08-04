@@ -34,6 +34,7 @@
 #include "modules/godot_ai/mcp_protocol.h"
 #include "modules/godot_ai/mcp_tool_registry.h"
 
+#include "core/object/callable_mp.h"
 #include "tests/test_macros.h"
 
 namespace TestMCPProtocol {

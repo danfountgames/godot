@@ -42,13 +42,14 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/object/callable_mp.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/version.h"
-#include "editor/editor_command_palette.h"
+#include "editor/settings/editor_command_palette.h"
 #include "editor/editor_log.h"
 #include "editor/editor_node.h"
-#include "editor/editor_settings.h"
+#include "editor/settings/editor_settings.h"
 
 // Ports are probed upward from the configured one so several editors can run at
 // once; the relay learns the real port from the instance descriptor.
@@ -560,16 +561,16 @@ void MCPService::_register_editor_commands() {
 	if (EditorCommandPalette::get_singleton()) {
 		EditorCommandPalette::get_singleton()->add_command(
 				TTR("Godot AI: Clients and Skills"), "godot_ai/approvals",
-				callable_mp(this, &MCPService::_show_approvals), Vector<Variant>(), Ref<Shortcut>());
+				callable_mp(this, &MCPService::_show_approvals), Ref<Shortcut>());
 		EditorCommandPalette::get_singleton()->add_command(
 				TTR("Godot AI: Show Service Status"), "godot_ai/status",
-				callable_mp(this, &MCPService::_show_status), Vector<Variant>(), Ref<Shortcut>());
+				callable_mp(this, &MCPService::_show_status), Ref<Shortcut>());
 		EditorCommandPalette::get_singleton()->add_command(
 				TTR("Godot AI: Restart Service"), "godot_ai/restart",
-				callable_mp(this, &MCPService::restart), Vector<Variant>(), Ref<Shortcut>());
+				callable_mp(this, &MCPService::restart), Ref<Shortcut>());
 		EditorCommandPalette::get_singleton()->add_command(
 				TTR("Godot AI: Chat"), "godot_ai/chat",
-				callable_mp(this, &MCPService::_show_chat), Vector<Variant>(), Ref<Shortcut>());
+				callable_mp(this, &MCPService::_show_chat), Ref<Shortcut>());
 	}
 }
 

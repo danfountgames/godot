@@ -45,13 +45,6 @@ Vector3 Vector3::rotated(const Vector3 &p_axis, real_t p_angle) const {
 	return r;
 }
 
-Vector3 Vector3::clamp(const Vector3 &p_min, const Vector3 &p_max) const {
-	return Vector3(
-			CLAMP(x, p_min.x, p_max.x),
-			CLAMP(y, p_min.y, p_max.y),
-			CLAMP(z, p_min.z, p_max.z));
-}
-
 void Vector3::snap(const Vector3 &p_step) {
 	x = Math::snapped(x, p_step.x);
 	y = Math::snapped(y, p_step.y);
@@ -61,6 +54,18 @@ void Vector3::snap(const Vector3 &p_step) {
 Vector3 Vector3::snapped(const Vector3 &p_step) const {
 	Vector3 v = *this;
 	v.snap(p_step);
+	return v;
+}
+
+void Vector3::snapf(real_t p_step) {
+	x = Math::snapped(x, p_step);
+	y = Math::snapped(y, p_step);
+	z = Math::snapped(z, p_step);
+}
+
+Vector3 Vector3::snappedf(real_t p_step) const {
+	Vector3 v = *this;
+	v.snapf(p_step);
 	return v;
 }
 
@@ -101,14 +106,14 @@ Vector2 Vector3::octahedron_encode() const {
 Vector3 Vector3::octahedron_decode(const Vector2 &p_oct) {
 	Vector2 f(p_oct.x * 2.0f - 1.0f, p_oct.y * 2.0f - 1.0f);
 	Vector3 n(f.x, f.y, 1.0f - Math::abs(f.x) - Math::abs(f.y));
-	float t = CLAMP(-n.z, 0.0f, 1.0f);
+	const real_t t = CLAMP(-n.z, 0.0f, 1.0f);
 	n.x += n.x >= 0 ? -t : t;
 	n.y += n.y >= 0 ? -t : t;
 	return n.normalized();
 }
 
 Vector2 Vector3::octahedron_tangent_encode(float p_sign) const {
-	const float bias = 1.0f / 32767.0f;
+	const real_t bias = 1.0f / (real_t)32767.0f;
 	Vector2 res = octahedron_encode();
 	res.y = MAX(res.y, bias);
 	res.y = res.y * 0.5f + 0.5f;
@@ -137,6 +142,10 @@ bool Vector3::is_equal_approx(const Vector3 &p_v) const {
 	return Math::is_equal_approx(x, p_v.x) && Math::is_equal_approx(y, p_v.y) && Math::is_equal_approx(z, p_v.z);
 }
 
+bool Vector3::is_same(const Vector3 &p_v) const {
+	return Math::is_same(x, p_v.x) && Math::is_same(y, p_v.y) && Math::is_same(z, p_v.z);
+}
+
 bool Vector3::is_zero_approx() const {
 	return Math::is_zero_approx(x) && Math::is_zero_approx(y) && Math::is_zero_approx(z);
 }
@@ -146,7 +155,7 @@ bool Vector3::is_finite() const {
 }
 
 Vector3::operator String() const {
-	return "(" + String::num_real(x, false) + ", " + String::num_real(y, false) + ", " + String::num_real(z, false) + ")";
+	return "(" + String::num_real(x, true) + ", " + String::num_real(y, true) + ", " + String::num_real(z, true) + ")";
 }
 
 Vector3::operator Vector3i() const {

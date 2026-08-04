@@ -39,9 +39,10 @@
 #include "core/io/dir_access.h"
 #include "core/templates/local_vector.h"
 #include "core/io/image.h"
+#include "core/object/callable_mp.h"
 #include "core/os/keyboard.h"
 #include "main/performance.h"
-#include "servers/audio_server.h"
+#include "servers/audio/audio_server.h"
 #include "core/object/script_language.h"
 #include "scene/gui/control.h"
 #include "core/os/os.h"
@@ -939,7 +940,10 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 	};
 
 	auto button_at = [&](const Vector2 &p_at, bool p_pressed) {
-		held = p_pressed ? mouse_button_to_mask((MouseButton)button) : BitField<MouseButtonMask>();
+		held.clear();
+		if (p_pressed) {
+			held.set_flag(mouse_button_to_mask((MouseButton)button));
+		}
 		Ref<InputEventMouseButton> event;
 		event.instantiate();
 		event->set_position(p_at);
@@ -963,8 +967,11 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 			event->set_button_index(p_wheel);
 			event->set_pressed(pressed == 1);
 			event->set_factor(p_factor);
-			event->set_button_mask(pressed == 1 ? mouse_button_to_mask(p_wheel)
-												: BitField<MouseButtonMask>());
+			BitField<MouseButtonMask> wheel_mask;
+			if (pressed == 1) {
+				wheel_mask.set_flag(mouse_button_to_mask(p_wheel));
+			}
+			event->set_button_mask(wheel_mask);
 			inject(event);
 		}
 	};
@@ -993,7 +1000,12 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 		// across three calls is three chances for something else to move the pointer,
 		// and because the intermediate motion is the part that carries the meaning.
 		const int steps = MAX(1, p_arguments.has("steps") ? (int)p_arguments["steps"] : 8);
+		// Moving to the gesture's start is setup, not drag distance. Godot 4.8 may
+		// deliver this queued motion after the following press and apply the current
+		// held state, so make the setup move explicitly zero-distance as well.
+		previous = position;
 		motion_to(position);
+		input->flush_buffered_events();
 		button_event(true);
 		for (int step = 1; step <= steps; step++) {
 			motion_to(position.lerp(destination, (float)step / (float)steps));

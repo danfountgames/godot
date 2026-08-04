@@ -28,14 +28,12 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef MAIN_H
-#define MAIN_H
+#pragma once
 
-#include "core/error/error_list.h"
 #include "core/os/thread.h"
 #include "core/typedefs.h"
 
-template <class T>
+template <typename T>
 class Vector;
 
 class Main {
@@ -43,6 +41,7 @@ class Main {
 		CLI_OPTION_AVAILABILITY_EDITOR,
 		CLI_OPTION_AVAILABILITY_TEMPLATE_DEBUG,
 		CLI_OPTION_AVAILABILITY_TEMPLATE_RELEASE,
+		CLI_OPTION_AVAILABILITY_TEMPLATE_UNSAFE,
 		CLI_OPTION_AVAILABILITY_HIDDEN,
 	};
 
@@ -58,7 +57,6 @@ class Main {
 	static uint32_t frame;
 	static bool force_redraw_requested;
 	static int iterating;
-	static bool agile_input_event_flushing;
 
 public:
 	static bool is_cmdline_tool();
@@ -72,13 +70,12 @@ public:
 
 	static int test_entrypoint(int argc, char *argv[], bool &tests_need_run);
 	static Error setup(const char *execpath, int argc, char *argv[], bool p_second_phase = true);
-	static Error setup2(); // The thread calling setup2() will effectively become the main thread.
-	static String get_rendering_driver_name();
-#ifdef TESTS_ENABLED
+	static Error setup2(bool p_show_boot_logo = true); // The thread calling setup2() will effectively become the main thread.
+	static String get_locale_override();
+	static void setup_boot_logo();
 	static Error test_setup();
 	static void test_cleanup();
-#endif
-	static bool start();
+	static int start();
 
 	static bool iteration();
 	static void force_redraw();
@@ -89,18 +86,18 @@ public:
 };
 
 // Test main override is for the testing behavior.
-#define TEST_MAIN_OVERRIDE                                         \
-	bool run_test = false;                                         \
+#define TEST_MAIN_OVERRIDE \
+	bool run_test = false; \
 	int return_code = Main::test_entrypoint(argc, argv, run_test); \
-	if (run_test) {                                                \
-		return return_code;                                        \
+	if (run_test) { \
+		godot_cleanup_profiler(); \
+		return return_code; \
 	}
 
-#define TEST_MAIN_PARAM_OVERRIDE(argc, argv)                       \
-	bool run_test = false;                                         \
+#define TEST_MAIN_PARAM_OVERRIDE(argc, argv) \
+	bool run_test = false; \
 	int return_code = Main::test_entrypoint(argc, argv, run_test); \
-	if (run_test) {                                                \
-		return return_code;                                        \
+	if (run_test) { \
+		godot_cleanup_profiler(); \
+		return return_code; \
 	}
-
-#endif // MAIN_H

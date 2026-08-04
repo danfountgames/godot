@@ -30,20 +30,23 @@
 
 #include "joint_2d.h"
 
+#include "core/config/engine.h"
+#include "core/object/callable_mp.h"
+#include "core/object/class_db.h"
 #include "scene/2d/physics/physics_body_2d.h"
-#include "scene/scene_string_names.h"
+#include "servers/physics_2d/physics_server_2d.h"
 
 void Joint2D::_disconnect_signals() {
 	Node *node_a = get_node_or_null(a);
 	PhysicsBody2D *body_a = Object::cast_to<PhysicsBody2D>(node_a);
 	if (body_a) {
-		body_a->disconnect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Joint2D::_body_exit_tree));
+		body_a->disconnect(SceneStringName(tree_exiting), callable_mp(this, &Joint2D::_body_exit_tree));
 	}
 
 	Node *node_b = get_node_or_null(b);
 	PhysicsBody2D *body_b = Object::cast_to<PhysicsBody2D>(node_b);
 	if (body_b) {
-		body_b->disconnect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Joint2D::_body_exit_tree));
+		body_b->disconnect(SceneStringName(tree_exiting), callable_mp(this, &Joint2D::_body_exit_tree));
 	}
 }
 
@@ -112,13 +115,17 @@ void Joint2D::_update_joint(bool p_only_free) {
 
 	ERR_FAIL_COND_MSG(!joint.is_valid(), "Failed to configure the joint.");
 
-	PhysicsServer2D::get_singleton()->joint_set_param(joint, PhysicsServer2D::JOINT_PARAM_BIAS, bias);
+	PhysicsServer2D::get_singleton()->joint_set_param(joint, PS2DE::JOINT_PARAM_BIAS, bias);
 
 	ba = body_a->get_rid();
 	bb = body_b->get_rid();
 
-	body_a->connect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Joint2D::_body_exit_tree));
-	body_b->connect(SceneStringNames::get_singleton()->tree_exiting, callable_mp(this, &Joint2D::_body_exit_tree));
+	if (!body_a->is_connected(SceneStringName(tree_exiting), callable_mp(this, &Joint2D::_body_exit_tree))) {
+		body_a->connect(SceneStringName(tree_exiting), callable_mp(this, &Joint2D::_body_exit_tree));
+	}
+	if (!body_b->is_connected(SceneStringName(tree_exiting), callable_mp(this, &Joint2D::_body_exit_tree))) {
+		body_b->connect(SceneStringName(tree_exiting), callable_mp(this, &Joint2D::_body_exit_tree));
+	}
 
 	PhysicsServer2D::get_singleton()->joint_disable_collisions_between_bodies(joint, exclude_from_collision);
 }
@@ -136,7 +143,7 @@ void Joint2D::set_node_a(const NodePath &p_node_a) {
 	if (Engine::get_singleton()->is_editor_hint()) {
 		// When in editor, the setter may be called as a result of node rename.
 		// It happens before the node actually changes its name, which triggers false warning.
-		callable_mp(this, &Joint2D::_update_joint).call_deferred();
+		callable_mp(this, &Joint2D::_update_joint).call_deferred(false);
 	} else {
 		_update_joint();
 	}
@@ -157,7 +164,7 @@ void Joint2D::set_node_b(const NodePath &p_node_b) {
 
 	b = p_node_b;
 	if (Engine::get_singleton()->is_editor_hint()) {
-		callable_mp(this, &Joint2D::_update_joint).call_deferred();
+		callable_mp(this, &Joint2D::_update_joint).call_deferred(false);
 	} else {
 		_update_joint();
 	}
@@ -188,7 +195,7 @@ void Joint2D::_notification(int p_what) {
 void Joint2D::set_bias(real_t p_bias) {
 	bias = p_bias;
 	if (joint.is_valid()) {
-		PhysicsServer2D::get_singleton()->joint_set_param(joint, PhysicsServer2D::JOINT_PARAM_BIAS, bias);
+		PhysicsServer2D::get_singleton()->joint_set_param(joint, PS2DE::JOINT_PARAM_BIAS, bias);
 	}
 }
 
@@ -250,5 +257,5 @@ Joint2D::Joint2D() {
 
 Joint2D::~Joint2D() {
 	ERR_FAIL_NULL(PhysicsServer2D::get_singleton());
-	PhysicsServer2D::get_singleton()->free(joint);
+	PhysicsServer2D::get_singleton()->free_rid(joint);
 }

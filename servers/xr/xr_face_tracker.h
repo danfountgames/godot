@@ -28,10 +28,9 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef XR_FACE_TRACKER_H
-#define XR_FACE_TRACKER_H
+#pragma once
 
-#include "core/object/ref_counted.h"
+#include "servers/xr/xr_tracker.h"
 
 /**
 	The XRFaceTracker class provides face blend shape weights.
@@ -41,8 +40,8 @@
 	and Meta Movement standards.
  */
 
-class XRFaceTracker : public RefCounted {
-	GDCLASS(XRFaceTracker, RefCounted);
+class XRFaceTracker : public XRTracker {
+	GDCLASS(XRFaceTracker, XRTracker);
 	_THREAD_SAFE_CLASS_
 
 public:
@@ -195,11 +194,15 @@ public:
 		FT_MAX // Maximum blend shape.
 	};
 
+	void set_tracker_type(XRServer::TrackerType p_type) override;
+
 	float get_blend_shape(BlendShapeEntry p_blend_shape) const;
 	void set_blend_shape(BlendShapeEntry p_blend_shape, float p_value);
 
 	PackedFloat32Array get_blend_shapes() const;
 	void set_blend_shapes(const PackedFloat32Array &p_blend_shapes);
+
+	XRFaceTracker();
 
 protected:
 	static void _bind_methods();
@@ -209,5 +212,3 @@ private:
 };
 
 VARIANT_ENUM_CAST(XRFaceTracker::BlendShapeEntry);
-
-#endif // XR_FACE_TRACKER_H

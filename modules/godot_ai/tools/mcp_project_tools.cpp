@@ -38,7 +38,7 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/variant/array.h"
-#include "editor/editor_file_system.h"
+#include "editor/file_system/editor_file_system.h"
 
 // Bounds so a single call cannot return an unbounded payload to the model or spend
 // unbounded time walking a large project.
@@ -452,7 +452,7 @@ static void register_global_class(const String &p_res_path) {
 		String icon;
 		const String global = language->get_global_class_name(p_res_path, &base, &icon);
 		if (!global.is_empty()) {
-			ScriptServer::add_global_class(global, base, language->get_name(), p_res_path);
+			ScriptServer::add_global_class(global, base, language->get_name(), p_res_path, false, false);
 		}
 		return;
 	}
@@ -544,8 +544,8 @@ public:
 		Array reported_errors;
 		for (const ScriptLanguage::ScriptError &error : errors) {
 			Dictionary entry;
-			entry["line"] = error.line;
-			entry["column"] = error.column;
+			entry["line"] = error.start_line;
+			entry["column"] = error.start_column;
 			entry["message"] = error.message;
 			entry["path"] = error.path.is_empty() ? resolved.res_path : error.path;
 			reported_errors.push_back(entry);

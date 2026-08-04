@@ -36,7 +36,7 @@
 
 #include "core/io/stream_peer_tcp.h"
 #include "core/io/tcp_server.h"
-#include "editor/editor_plugin.h"
+#include "editor/plugins/editor_plugin.h"
 
 class MCPApprovalsDialog;
 class MCPChatDock;

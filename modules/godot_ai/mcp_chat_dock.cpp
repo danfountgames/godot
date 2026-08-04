@@ -32,6 +32,7 @@
 
 #include "mcp_service.h"
 
+#include "core/object/callable_mp.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 #include "scene/gui/button.h"

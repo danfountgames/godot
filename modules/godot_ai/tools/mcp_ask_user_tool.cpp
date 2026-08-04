@@ -33,6 +33,7 @@
 #include "../mcp_deferred.h"
 #include "../mcp_tool_registry.h"
 
+#include "core/object/callable_mp.h"
 #include "core/variant/array.h"
 #include "editor/editor_node.h"
 #include "scene/gui/box_container.h"

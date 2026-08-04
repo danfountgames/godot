@@ -28,13 +28,12 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef XR_BODY_TRACKER_H
-#define XR_BODY_TRACKER_H
+#pragma once
 
-#include "core/object/ref_counted.h"
+#include "servers/xr/xr_positional_tracker.h"
 
-class XRBodyTracker : public RefCounted {
-	GDCLASS(XRBodyTracker, RefCounted);
+class XRBodyTracker : public XRPositionalTracker {
+	GDCLASS(XRBodyTracker, XRPositionalTracker);
 	_THREAD_SAFE_CLASS_
 
 public:
@@ -130,6 +129,19 @@ public:
 		JOINT_RIGHT_PINKY_FINGER_PHALANX_DISTAL,
 		JOINT_RIGHT_PINKY_FINGER_TIP,
 
+		// Extra joints that aren't part of the Godot humanoid skeleton, but are commonly used in some VR avatars.
+		JOINT_LOWER_CHEST,
+		JOINT_LEFT_SCAPULA,
+		JOINT_LEFT_WRIST_TWIST,
+		JOINT_RIGHT_SCAPULA,
+		JOINT_RIGHT_WRIST_TWIST,
+		JOINT_LEFT_FOOT_TWIST,
+		JOINT_LEFT_HEEL,
+		JOINT_LEFT_MIDDLE_FOOT,
+		JOINT_RIGHT_FOOT_TWIST,
+		JOINT_RIGHT_HEEL,
+		JOINT_RIGHT_MIDDLE_FOOT,
+
 		JOINT_MAX,
 	};
 
@@ -139,6 +151,9 @@ public:
 		JOINT_FLAG_POSITION_VALID = 4,
 		JOINT_FLAG_POSITION_TRACKED = 8,
 	};
+
+	void set_tracker_type(XRServer::TrackerType p_type) override;
+	void set_tracker_hand(const XRPositionalTracker::TrackerHand p_hand) override;
 
 	void set_has_tracking_data(bool p_has_tracking_data);
 	bool get_has_tracking_data() const;
@@ -152,12 +167,14 @@ public:
 	void set_joint_transform(Joint p_joint, const Transform3D &p_transform);
 	Transform3D get_joint_transform(Joint p_joint) const;
 
+	XRBodyTracker();
+
 protected:
 	static void _bind_methods();
 
 private:
 	bool has_tracking_data = false;
-	BitField<BodyFlags> body_flags;
+	BitField<BodyFlags> body_flags = {};
 
 	BitField<JointFlags> joint_flags[JOINT_MAX];
 	Transform3D joint_transforms[JOINT_MAX];
@@ -166,5 +183,3 @@ private:
 VARIANT_BITFIELD_CAST(XRBodyTracker::BodyFlags)
 VARIANT_ENUM_CAST(XRBodyTracker::Joint)
 VARIANT_BITFIELD_CAST(XRBodyTracker::JointFlags)
-
-#endif // XR_BODY_TRACKER_H

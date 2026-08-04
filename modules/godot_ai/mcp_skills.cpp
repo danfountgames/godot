@@ -40,8 +40,8 @@
 #include "core/version.h"
 
 #ifdef TOOLS_ENABLED
-#include "editor/editor_paths.h"
-#include "editor/editor_settings.h"
+#include "editor/file_system/editor_paths.h"
+#include "editor/settings/editor_settings.h"
 #endif
 
 static Vector<String> s_roots_override;

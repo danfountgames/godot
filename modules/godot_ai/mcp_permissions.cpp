@@ -31,7 +31,7 @@
 #include "mcp_permissions.h"
 
 #ifdef TOOLS_ENABLED
-#include "editor/editor_settings.h"
+#include "editor/settings/editor_settings.h"
 #endif
 
 static bool s_policy_override_set[MCP_CAP_MAX] = {};

@@ -33,6 +33,7 @@
 #include "mcp_service.h"
 #include "mcp_skills.h"
 
+#include "core/object/callable_mp.h"
 #include "scene/gui/box_container.h"
 
 MCPApprovalsDialog::MCPApprovalsDialog(MCPService *p_service) :

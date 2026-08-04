@@ -108,6 +108,7 @@ TEST_CASE("[godot_ai] semantic documentation capture tools declare and enforce t
 	CHECK(inspector_properties.has("node_path"));
 	CHECK(inspector_properties.has("context_above"));
 	CHECK(inspector_properties.has("context_below"));
+	CHECK(inspector_properties.has("context_properties"));
 
 	MCPToolError error;
 	Dictionary arguments;

@@ -31,6 +31,7 @@
 #include "mcp_tool_registry.h"
 
 #include "core/error/error_macros.h"
+#include "core/object/class_db.h"
 
 MCPToolRegistry *MCPToolRegistry::singleton = nullptr;
 

@@ -36,7 +36,7 @@
 #include "../mcp_tool_registry.h"
 
 #include "core/crypto/crypto_core.h"
-#include "core/object/callable_method_pointer.h"
+#include "core/object/callable_mp.h"
 #include "core/io/file_access.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
@@ -729,7 +729,7 @@ void mcp_register_input_tools() {
 			MCP_CAP_READ_RUNTIME, clearable_schema("trace")))));
 
 	{
-		RuntimeCommandTool *errors = memnew(RuntimeCommandTool(
+		Ref<RuntimeCommandTool> errors = memnew(RuntimeCommandTool(
 			"Godot_GetRuntimeErrors", "runtime_errors",
 			"Return errors and warnings the running game has reported, with file, line, "
 			"function, and the script call stack as it stood when the error was raised. "

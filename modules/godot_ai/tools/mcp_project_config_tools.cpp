@@ -51,9 +51,9 @@
 #include "core/os/os.h"
 #include "core/variant/array.h"
 #include "core/variant/variant_parser.h"
-#include "servers/display_server.h"
+#include "servers/display/display_server.h"
 
-#include "editor/editor_file_system.h"
+#include "editor/file_system/editor_file_system.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 
@@ -342,7 +342,7 @@ public:
 					"starts one");
 			return Dictionary();
 		}
-		if (!display->has_feature(DisplayServer::FEATURE_SCREEN_CAPTURE)) {
+		if (!display->has_feature(DisplayServerEnums::FEATURE_SCREEN_CAPTURE)) {
 			r_error.set(MCPToolError::UNSUPPORTED,
 					"this platform's display server cannot capture the screen; "
 					"Godot_CaptureViewport still photographs the editor's own viewport");
@@ -374,7 +374,7 @@ public:
 			r_error.set(MCPToolError::FAILED, vformat("could not save '%s'", resolved.res_path));
 			return Dictionary();
 		}
-		EditorInterface::get_singleton()->get_resource_file_system()->scan();
+		EditorInterface::get_singleton()->get_resource_filesystem()->scan();
 
 		Dictionary result;
 		result["path"] = resolved.res_path;

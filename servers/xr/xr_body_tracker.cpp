@@ -30,6 +30,8 @@
 
 #include "xr_body_tracker.h"
 
+#include "core/object/class_db.h"
+
 void XRBodyTracker::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_has_tracking_data", "has_data"), &XRBodyTracker::set_has_tracking_data);
 	ClassDB::bind_method(D_METHOD("get_has_tracking_data"), &XRBodyTracker::get_has_tracking_data);
@@ -126,12 +128,31 @@ void XRBodyTracker::_bind_methods() {
 	BIND_ENUM_CONSTANT(JOINT_RIGHT_PINKY_FINGER_PHALANX_INTERMEDIATE);
 	BIND_ENUM_CONSTANT(JOINT_RIGHT_PINKY_FINGER_PHALANX_DISTAL);
 	BIND_ENUM_CONSTANT(JOINT_RIGHT_PINKY_FINGER_TIP);
+	BIND_ENUM_CONSTANT(JOINT_LOWER_CHEST);
+	BIND_ENUM_CONSTANT(JOINT_LEFT_SCAPULA);
+	BIND_ENUM_CONSTANT(JOINT_LEFT_WRIST_TWIST);
+	BIND_ENUM_CONSTANT(JOINT_RIGHT_SCAPULA);
+	BIND_ENUM_CONSTANT(JOINT_RIGHT_WRIST_TWIST);
+	BIND_ENUM_CONSTANT(JOINT_LEFT_FOOT_TWIST);
+	BIND_ENUM_CONSTANT(JOINT_LEFT_HEEL);
+	BIND_ENUM_CONSTANT(JOINT_LEFT_MIDDLE_FOOT);
+	BIND_ENUM_CONSTANT(JOINT_RIGHT_FOOT_TWIST);
+	BIND_ENUM_CONSTANT(JOINT_RIGHT_HEEL);
+	BIND_ENUM_CONSTANT(JOINT_RIGHT_MIDDLE_FOOT);
 	BIND_ENUM_CONSTANT(JOINT_MAX);
 
 	BIND_BITFIELD_FLAG(JOINT_FLAG_ORIENTATION_VALID);
 	BIND_BITFIELD_FLAG(JOINT_FLAG_ORIENTATION_TRACKED);
 	BIND_BITFIELD_FLAG(JOINT_FLAG_POSITION_VALID);
 	BIND_BITFIELD_FLAG(JOINT_FLAG_POSITION_TRACKED);
+}
+
+void XRBodyTracker::set_tracker_type(XRServer::TrackerType p_type) {
+	ERR_FAIL_COND_MSG(p_type != XRServer::TRACKER_BODY, "XRBodyTracker must be of type TRACKER_BODY.");
+}
+
+void XRBodyTracker::set_tracker_hand(const XRPositionalTracker::TrackerHand p_hand) {
+	ERR_FAIL_COND_MSG(p_hand != XRPositionalTracker::TRACKER_HAND_UNKNOWN, "XRBodyTracker cannot specify hand.");
 }
 
 void XRBodyTracker::set_has_tracking_data(bool p_has_tracking_data) {
@@ -168,4 +189,8 @@ void XRBodyTracker::set_joint_transform(Joint p_joint, const Transform3D &p_tran
 Transform3D XRBodyTracker::get_joint_transform(Joint p_joint) const {
 	ERR_FAIL_INDEX_V(p_joint, JOINT_MAX, Transform3D());
 	return joint_transforms[p_joint];
+}
+
+XRBodyTracker::XRBodyTracker() {
+	type = XRServer::TRACKER_BODY;
 }

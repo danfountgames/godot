@@ -28,11 +28,10 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef UNDO_REDO_H
-#define UNDO_REDO_H
+#pragma once
 
-#include "core/object/class_db.h"
 #include "core/object/ref_counted.h"
+#include "core/variant/type_info.h"
 
 class UndoRedo : public Object {
 	GDCLASS(UndoRedo, Object);
@@ -84,9 +83,10 @@ private:
 	MergeMode merge_mode = MERGE_DISABLE;
 	bool merging = false;
 	uint64_t version = 1;
+	int merge_total = 0;
 
 	void _pop_history_tail();
-	void _process_operation_list(List<Operation>::Element *E, bool p_execute);
+	void _process_operation_list(List<Operation>::Element *r_elements, bool p_execute);
 	void _discard_redo();
 	bool _redo(bool p_execute);
 
@@ -128,6 +128,7 @@ public:
 	int get_current_action();
 	String get_action_name(int p_id);
 	void clear_history(bool p_increase_version = true);
+	void discard_redo();
 
 	bool has_undo() const;
 	bool has_redo() const;
@@ -144,10 +145,7 @@ public:
 	void set_method_notify_callback(MethodNotifyCallback p_method_callback, void *p_ud);
 	void set_property_notify_callback(PropertyNotifyCallback p_property_callback, void *p_ud);
 
-	UndoRedo() {}
 	~UndoRedo();
 };
 
 VARIANT_ENUM_CAST(UndoRedo::MergeMode);
-
-#endif // UNDO_REDO_H

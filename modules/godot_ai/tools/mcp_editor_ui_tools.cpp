@@ -62,7 +62,7 @@
 #include "scene/main/node.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
-#include "servers/display_server.h"
+#include "servers/display/display_server.h"
 
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
@@ -418,7 +418,7 @@ Rect2i window_screen_rect(Window *p_window) {
 // window it is embedded in and the root viewport forwards it on by position.
 struct Target {
 	Window *window = nullptr;
-	DisplayServer::WindowID window_id = DisplayServer::INVALID_WINDOW_ID;
+	DisplayServerEnums::WindowID window_id = DisplayServerEnums::INVALID_WINDOW_ID;
 	Point2i local;
 };
 
@@ -643,8 +643,10 @@ public:
 				previous = p_to;
 			};
 			auto press_at = [&](const Vector2 &p_at, bool p_pressed) {
-				held = p_pressed ? mouse_button_to_mask((MouseButton)button)
-								 : BitField<MouseButtonMask>();
+				held.clear();
+				if (p_pressed) {
+					held.set_flag(mouse_button_to_mask((MouseButton)button));
+				}
 				Ref<InputEventMouseButton> event;
 				event.instantiate();
 				event->set_window_id(target.window_id);
@@ -675,7 +677,16 @@ public:
 				events = 1;
 			} else if (action == "drag") {
 				const int steps = MAX(1, (int)p_arguments.get("steps", 8));
+				// Positioning the cursor at the gesture's start is setup, not part of
+				// the drag distance. On Godot 4.8 the GUI pipeline can apply the held
+				// state before this queued motion reaches the Control, so make that
+				// setup event explicitly zero-distance as well as unpressed.
+				previous = local;
 				motion();
+				// Settle the unpressed positioning event before changing the mouse
+				// state. Godot 4.8 otherwise buffers it until the first interpolated
+				// motion and replays the cursor jump as part of the held drag.
+				input->flush_buffered_events();
 				press(true);
 				for (int step = 1; step <= steps; step++) {
 					motion_to(local.lerp(Vector2(local_end), (float)step / (float)steps));
@@ -716,8 +727,11 @@ public:
 						event->set_button_index(wheel);
 						event->set_pressed(pressed == 1);
 						event->set_factor(1.0f);
-						event->set_button_mask(pressed == 1 ? mouse_button_to_mask(wheel)
-															: BitField<MouseButtonMask>());
+						BitField<MouseButtonMask> wheel_mask;
+						if (pressed == 1) {
+							wheel_mask.set_flag(mouse_button_to_mask(wheel));
+						}
+						event->set_button_mask(wheel_mask);
 						input->parse_input_event(event);
 					}
 				}
@@ -738,9 +752,9 @@ public:
 			// Keyboard input follows focus, not coordinates: whichever control the editor
 			// considers focused receives it. Addressing it to a window the user is not
 			// typing in would be a lie dressed as precision.
-			DisplayServer::WindowID window_id = display->get_focused_window();
-			if (window_id == DisplayServer::INVALID_WINDOW_ID) {
-				window_id = DisplayServer::MAIN_WINDOW_ID;
+			DisplayServerEnums::WindowID window_id = display->get_focused_window();
+			if (window_id == DisplayServerEnums::INVALID_WINDOW_ID) {
+				window_id = DisplayServerEnums::MAIN_WINDOW_ID;
 			}
 
 			auto key_event = [&](Key p_keycode, char32_t p_unicode, bool p_pressed) {

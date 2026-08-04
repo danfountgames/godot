@@ -45,7 +45,7 @@
 #include "core/object/ref_counted.h"
 #include "core/variant/callable.h"
 #include "core/variant/dictionary.h"
-#include "editor/plugins/editor_debugger_plugin.h"
+#include "editor/debugger/editor_debugger_plugin.h"
 
 class MCPRuntimeBridge : public EditorDebuggerPlugin {
 	GDCLASS(MCPRuntimeBridge, EditorDebuggerPlugin);

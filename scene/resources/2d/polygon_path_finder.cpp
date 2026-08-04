@@ -29,7 +29,9 @@
 /**************************************************************************/
 
 #include "polygon_path_finder.h"
+
 #include "core/math/geometry_2d.h"
+#include "core/object/class_db.h"
 
 bool PolygonPathFinder::_is_point_inside(const Vector2 &p_point) const {
 	int crosses = 0;
@@ -64,8 +66,7 @@ void PolygonPathFinder::setup(const Vector<Vector2> &p_points, const Vector<int>
 		points.write[i].pos = p_points[i];
 		points.write[i].penalty = 0;
 
-		outside_point.x = i == 0 ? p_points[0].x : (MAX(p_points[i].x, outside_point.x));
-		outside_point.y = i == 0 ? p_points[0].y : (MAX(p_points[i].y, outside_point.y));
+		outside_point = i == 0 ? p_points[0] : p_points[i].max(outside_point);
 
 		if (i == 0) {
 			bounds.position = points[i].pos;
@@ -142,12 +143,9 @@ Vector<Vector2> PolygonPathFinder::find_path(const Vector2 &p_from, const Vector
 
 		for (const Edge &E : edges) {
 			const Edge &e = E;
-			Vector2 seg[2] = {
-				points[e.points[0]].pos,
-				points[e.points[1]].pos
-			};
-
-			Vector2 closest = Geometry2D::get_closest_point_to_segment(from, seg);
+			const Vector2 segment_a = points[e.points[0]].pos;
+			const Vector2 segment_b = points[e.points[1]].pos;
+			Vector2 closest = Geometry2D::get_closest_point_to_segment(from, segment_a, segment_b);
 			float d = from.distance_squared_to(closest);
 
 			if (d < closest_dist) {
@@ -166,12 +164,9 @@ Vector<Vector2> PolygonPathFinder::find_path(const Vector2 &p_from, const Vector
 
 		for (const Edge &E : edges) {
 			const Edge &e = E;
-			Vector2 seg[2] = {
-				points[e.points[0]].pos,
-				points[e.points[1]].pos
-			};
-
-			Vector2 closest = Geometry2D::get_closest_point_to_segment(to, seg);
+			const Vector2 segment_a = points[e.points[0]].pos;
+			const Vector2 segment_b = points[e.points[1]].pos;
+			Vector2 closest = Geometry2D::get_closest_point_to_segment(to, segment_a, segment_b);
 			float d = to.distance_squared_to(closest);
 
 			if (d < closest_dist) {
@@ -302,7 +297,7 @@ Vector<Vector2> PolygonPathFinder::find_path(const Vector2 &p_from, const Vector
 	bool found_route = false;
 
 	while (true) {
-		if (open_list.size() == 0) {
+		if (open_list.is_empty()) {
 			print_verbose("Open list empty.");
 			break;
 		}
@@ -494,12 +489,9 @@ Vector2 PolygonPathFinder::get_closest_point(const Vector2 &p_point) const {
 
 	for (const Edge &E : edges) {
 		const Edge &e = E;
-		Vector2 seg[2] = {
-			points[e.points[0]].pos,
-			points[e.points[1]].pos
-		};
-
-		Vector2 closest = Geometry2D::get_closest_point_to_segment(p_point, seg);
+		const Vector2 segment_a = points[e.points[0]].pos;
+		const Vector2 segment_b = points[e.points[1]].pos;
+		Vector2 closest = Geometry2D::get_closest_point_to_segment(p_point, segment_a, segment_b);
 		float d = p_point.distance_squared_to(closest);
 
 		if (d < closest_dist) {

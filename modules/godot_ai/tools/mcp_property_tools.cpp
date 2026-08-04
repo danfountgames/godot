@@ -35,6 +35,7 @@
 #include "../mcp_tool_registry.h"
 
 #include "core/io/resource_loader.h"
+#include "core/object/callable_mp.h"
 #include "core/object/script_language.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"

@@ -30,28 +30,40 @@
 
 #include "center_container.h"
 
+#include "core/object/class_db.h"
+
 Size2 CenterContainer::get_minimum_size() const {
 	if (use_top_left) {
 		return Size2();
 	}
 	Size2 ms;
 	for (int i = 0; i < get_child_count(); i++) {
-		Control *c = Object::cast_to<Control>(get_child(i));
+		Control *c = as_sortable_control(get_child(i), SortableVisibilityMode::VISIBLE);
 		if (!c) {
 			continue;
 		}
-		if (c->is_set_as_top_level()) {
-			continue;
-		}
-		if (!c->is_visible()) {
-			continue;
-		}
-		Size2 minsize = c->get_combined_minimum_size();
-		ms.width = MAX(ms.width, minsize.width);
-		ms.height = MAX(ms.height, minsize.height);
+		Size2 minsize = c->get_bound_minimum_size();
+		ms = ms.max(minsize);
 	}
 
 	return ms;
+}
+
+Size2 CenterContainer::get_desired_size() const {
+	if (use_top_left) {
+		return Size2();
+	}
+	Size2 ds;
+	for (int i = 0; i < get_child_count(); i++) {
+		Control *c = as_sortable_control(get_child(i), SortableVisibilityMode::VISIBLE);
+		if (!c) {
+			continue;
+		}
+		Size2 minsize = c->get_bound_desired_size();
+		ds = ds.max(minsize);
+	}
+
+	return ds;
 }
 
 void CenterContainer::set_use_top_left(bool p_enable) {
@@ -82,15 +94,11 @@ void CenterContainer::_notification(int p_what) {
 		case NOTIFICATION_SORT_CHILDREN: {
 			Size2 size = get_size();
 			for (int i = 0; i < get_child_count(); i++) {
-				Control *c = Object::cast_to<Control>(get_child(i));
+				Control *c = as_sortable_control(get_child(i));
 				if (!c) {
 					continue;
 				}
-				if (c->is_set_as_top_level()) {
-					continue;
-				}
-
-				Size2 minsize = c->get_combined_minimum_size();
+				Size2 minsize = c->get_bound_minimum_size();
 				Point2 ofs = use_top_left ? (-minsize * 0.5).floor() : ((size - minsize) / 2.0).floor();
 				fit_child_in_rect(c, Rect2(ofs, minsize));
 			}
@@ -104,5 +112,3 @@ void CenterContainer::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_top_left"), "set_use_top_left", "is_using_top_left");
 }
-
-CenterContainer::CenterContainer() {}

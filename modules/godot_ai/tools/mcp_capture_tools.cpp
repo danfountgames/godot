@@ -41,20 +41,22 @@
 #include "core/io/image.h"
 #include "core/io/resource_loader.h"
 #include "core/math/math_funcs.h"
+#include "core/object/callable_mp.h"
 #include "core/os/time.h"
 #include "core/variant/array.h"
-#include "editor/editor_dock_manager.h"
+#include "editor/docks/editor_dock_manager.h"
 #include "editor/editor_interface.h"
-#include "editor/editor_inspector.h"
+#include "editor/inspector/editor_inspector.h"
 #include "editor/editor_node.h"
-#include "editor/editor_properties.h"
-#include "editor/gui/editor_scene_tabs.h"
-#include "editor/gui/scene_tree_editor.h"
-#include "editor/inspector_dock.h"
-#include "editor/scene_tree_dock.h"
+#include "editor/inspector/editor_properties.h"
+#include "editor/scene/editor_scene_tabs.h"
+#include "editor/scene/scene_tree_editor.h"
+#include "editor/docks/inspector_dock.h"
+#include "editor/docks/scene_tree_dock.h"
+#include "scene/gui/scroll_container.h"
 #include "scene/gui/tab_container.h"
 #include "scene/main/viewport.h"
-#include "servers/display_server.h"
+#include "servers/display/display_server.h"
 
 namespace {
 
@@ -252,6 +254,7 @@ class CaptureInspectorPropertyTool : public MCPTool {
 	enum Stage {
 		IDLE,
 		WAITING_FOR_INSPECTOR,
+		WAITING_FOR_LAYOUT,
 		WAITING_FOR_RENDER,
 	};
 
@@ -272,6 +275,7 @@ class CaptureInspectorPropertyTool : public MCPTool {
 	Ref<Resource> original_resource;
 	ObjectID inspected_object;
 	Array property_chain;
+	Array context_properties;
 	String resource_path;
 	String scene_path;
 	String node_path;
@@ -338,6 +342,16 @@ class CaptureInspectorPropertyTool : public MCPTool {
 			_remember_and_unfold_sections(editor_property);
 
 			if (i == property_chain.size() - 1) {
+				for (int context_index = 0; context_index < context_properties.size(); context_index++) {
+					const StringName context_property = String(context_properties[context_index]);
+					EditorProperty *context_editor_property = find_editor_property(inspector, object, context_property);
+					if (!context_editor_property) {
+						r_error = vformat("context property '%s' was not rendered beside target '%s'",
+								String(context_property), String(property));
+						return false;
+					}
+					_remember_and_unfold_sections(context_editor_property);
+				}
 				target_property = editor_property->get_instance_id();
 				editor_property->select();
 				return true;
@@ -390,6 +404,7 @@ class CaptureInspectorPropertyTool : public MCPTool {
 		original_resource.unref();
 		inspected_object = ObjectID();
 		property_chain.clear();
+		context_properties.clear();
 		resource_path = String();
 		scene_path = String();
 		node_path = String();
@@ -533,6 +548,7 @@ class CaptureInspectorPropertyTool : public MCPTool {
 		// Array is reference-counted. The operation state is cleared immediately after
 		// capture, so the result needs its own copy.
 		result["property_chain"] = property_chain.duplicate();
+		result["context_properties"] = context_properties.duplicate();
 		result["target_property"] = String(target->get_edited_property());
 		result["target_label"] = target->get_label();
 		result["target_y"] = (int)Math::round((target_rect.position.y - logical_crop.position.y) * scale.y);
@@ -576,11 +592,29 @@ class CaptureInspectorPropertyTool : public MCPTool {
 				_fail(MCPToolError::FAILED, "the target Inspector property disappeared while it was being expanded");
 				return Variant();
 			}
+			// Expanding sections and nested Resources changes the Inspector's minimum
+			// size asynchronously. Let its containers sort before asking the scroll bar
+			// for a range; otherwise a newly revealed property can be clamped against
+			// the old content height and remain below the dock.
+			capture_after_frame = Engine::get_singleton()->get_frames_drawn() + 2;
+			stage = WAITING_FOR_LAYOUT;
+			return Variant();
+		}
+
+		if (stage == WAITING_FOR_LAYOUT && Engine::get_singleton()->get_frames_drawn() >= capture_after_frame) {
+			EditorInspector *inspector = InspectorDock::get_inspector_singleton();
+			EditorProperty *target = Object::cast_to<EditorProperty>(ObjectDB::get_instance(target_property));
+			if (!inspector || !target) {
+				_fail(MCPToolError::FAILED, "the target Inspector property disappeared before it could be centered");
+				return Variant();
+			}
+			EditorInspector *root_inspector = inspector->get_root_inspector();
+			root_inspector->ensure_control_visible(target);
 			const Rect2 target_rect = target->get_global_rect();
-			const Rect2 inspector_rect = inspector->get_global_rect();
-			const int desired_scroll = inspector->get_scroll_offset() +
+			const Rect2 inspector_rect = root_inspector->get_global_rect();
+			const int desired_scroll = root_inspector->get_scroll_offset() +
 					(int)Math::round(target_rect.get_center().y - inspector_rect.get_center().y);
-			inspector->set_scroll_offset(MAX(0, desired_scroll));
+			root_inspector->set_scroll_offset(MAX(0, desired_scroll));
 			capture_after_frame = Engine::get_singleton()->get_frames_drawn() + 2;
 			stage = WAITING_FOR_RENDER;
 			return Variant();
@@ -624,6 +658,10 @@ public:
 				"Exact property names from the root Resource to the final variable. Every entry except "
 				"the last must contain a non-null Resource, which is expanded as a sub-inspector.",
 				chain_item);
+		properties["context_properties"] = MCPSchema::array_property(
+				"Optional raw property names on the final inspected object. Their Inspector groups are "
+				"expanded to provide documentation context while the property_chain target remains selected.",
+				chain_item);
 		properties["path"] = MCPSchema::string_property(
 				"Where to save the PNG, as a res:// path. Defaults to a timestamped file under res://ai_screenshots/.", "");
 		Dictionary above = MCPSchema::integer_property("Editor UI points to include above the target property.", 120);
@@ -650,6 +688,9 @@ public:
 		properties["scene"] = MCPSchema::string_property("Scene that was inspected, or empty for a Resource capture.");
 		properties["node_path"] = MCPSchema::string_property("Selected node relative to the scene root, or empty for a Resource capture.");
 		properties["property_chain"] = MCPSchema::array_property("Resolved property chain.", MCPSchema::string_property("Raw property name."));
+		properties["context_properties"] = MCPSchema::array_property(
+				"Additional properties whose groups were expanded for context.",
+				MCPSchema::string_property("Raw property name."));
 		properties["target_property"] = MCPSchema::string_property("Raw name of the centered property.");
 		properties["target_label"] = MCPSchema::string_property("Label rendered by the Inspector.");
 		properties["target_y"] = MCPSchema::integer_property("Target property's top edge within the crop, in pixels.");
@@ -677,6 +718,13 @@ public:
 		for (int i = 0; i < requested_chain.size(); i++) {
 			if (String(requested_chain[i]).strip_edges().is_empty()) {
 				r_error.set(MCPToolError::INVALID_ARGUMENTS, vformat("property_chain[%d] must not be empty", i));
+				return Dictionary();
+			}
+		}
+		const Array requested_context = p_arguments.get("context_properties", Array());
+		for (int i = 0; i < requested_context.size(); i++) {
+			if (String(requested_context[i]).strip_edges().is_empty()) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS, vformat("context_properties[%d] must not be empty", i));
 				return Dictionary();
 			}
 		}
@@ -794,6 +842,7 @@ public:
 		}
 		inspected_object = subject->get_instance_id();
 		property_chain = requested_chain.duplicate();
+		context_properties = requested_context.duplicate();
 		output_path = resolved_output;
 		context_above = (int)p_arguments.get("context_above", 120);
 		context_below = (int)p_arguments.get("context_below", 160);

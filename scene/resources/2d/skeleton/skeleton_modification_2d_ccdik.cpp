@@ -29,11 +29,10 @@
 /**************************************************************************/
 
 #include "skeleton_modification_2d_ccdik.h"
-#include "scene/2d/skeleton_2d.h"
 
-#ifdef TOOLS_ENABLED
-#include "editor/editor_settings.h"
-#endif // TOOLS_ENABLED
+#include "core/config/engine.h"
+#include "core/object/class_db.h"
+#include "scene/2d/skeleton_2d.h"
 
 bool SkeletonModification2DCCDIK::_set(const StringName &p_path, const Variant &p_value) {
 	String path = p_path;
@@ -175,13 +174,13 @@ void SkeletonModification2DCCDIK::_execute(float p_delta) {
 		return;
 	}
 
-	Node2D *target = Object::cast_to<Node2D>(ObjectDB::get_instance(target_node_cache));
+	Node2D *target = ObjectDB::get_instance<Node2D>(target_node_cache);
 	if (!target || !target->is_inside_tree()) {
 		ERR_PRINT_ONCE("Target node is not in the scene tree. Cannot execute modification!");
 		return;
 	}
 
-	Node2D *tip = Object::cast_to<Node2D>(ObjectDB::get_instance(tip_node_cache));
+	Node2D *tip = ObjectDB::get_instance<Node2D>(tip_node_cache);
 	if (!tip || !tip->is_inside_tree()) {
 		ERR_PRINT_ONCE("Tip node is not in the scene tree. Cannot execute modification!");
 		return;
@@ -257,6 +256,9 @@ void SkeletonModification2DCCDIK::_draw_editor_gizmo() {
 		if (!ccdik_data_chain[i].editor_draw_gizmo) {
 			continue;
 		}
+		if (ccdik_data_chain[i].bone_idx < 0) {
+			continue;
+		}
 
 		Bone2D *operation_bone = stack->skeleton->get_bone(ccdik_data_chain[i].bone_idx);
 		editor_draw_angle_constraints(operation_bone, ccdik_data_chain[i].constraint_angle_min, ccdik_data_chain[i].constraint_angle_max,
@@ -266,7 +268,9 @@ void SkeletonModification2DCCDIK::_draw_editor_gizmo() {
 
 void SkeletonModification2DCCDIK::update_target_cache() {
 	if (!is_setup || !stack) {
-		ERR_PRINT_ONCE("Cannot update target cache: modification is not properly setup!");
+		if (is_setup) {
+			ERR_PRINT_ONCE("Cannot update target cache: modification is not properly setup!");
+		}
 		return;
 	}
 
@@ -287,7 +291,9 @@ void SkeletonModification2DCCDIK::update_target_cache() {
 
 void SkeletonModification2DCCDIK::update_tip_cache() {
 	if (!is_setup || !stack) {
-		ERR_PRINT_ONCE("Cannot update tip cache: modification is not properly setup!");
+		if (is_setup) {
+			ERR_PRINT_ONCE("Cannot update tip cache: modification is not properly setup!");
+		}
 		return;
 	}
 
@@ -309,7 +315,9 @@ void SkeletonModification2DCCDIK::update_tip_cache() {
 void SkeletonModification2DCCDIK::ccdik_joint_update_bone2d_cache(int p_joint_idx) {
 	ERR_FAIL_INDEX_MSG(p_joint_idx, ccdik_data_chain.size(), "Cannot update bone2d cache: joint index out of range!");
 	if (!is_setup || !stack) {
-		ERR_PRINT_ONCE("Cannot update CCDIK Bone2D cache: modification is not properly setup!");
+		if (is_setup) {
+			ERR_PRINT_ONCE("Cannot update CCDIK Bone2D cache: modification is not properly setup!");
+		}
 		return;
 	}
 
@@ -390,7 +398,6 @@ void SkeletonModification2DCCDIK::set_ccdik_joint_bone_index(int p_joint_idx, in
 			ccdik_data_chain.write[p_joint_idx].bone_idx = p_bone_idx;
 		}
 	} else {
-		WARN_PRINT("Cannot verify the CCDIK joint " + itos(p_joint_idx) + " bone index for this modification...");
 		ccdik_data_chain.write[p_joint_idx].bone_idx = p_bone_idx;
 	}
 

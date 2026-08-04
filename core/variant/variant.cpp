@@ -30,18 +30,40 @@
 
 #include "variant.h"
 
-#include "core/core_string_names.h"
 #include "core/debugger/engine_debugger.h"
 #include "core/io/json.h"
-#include "core/io/marshalls.h"
 #include "core/io/resource.h"
 #include "core/math/math_funcs.h"
-#include "core/string/print_string.h"
+#include "core/object/gdtype.h"
 #include "core/variant/variant_parser.h"
+#include "core/variant/variant_pools.h"
 
-PagedAllocator<Variant::Pools::BucketSmall, true> Variant::Pools::_bucket_small;
-PagedAllocator<Variant::Pools::BucketMedium, true> Variant::Pools::_bucket_medium;
-PagedAllocator<Variant::Pools::BucketLarge, true> Variant::Pools::_bucket_large;
+// Caution: These GDTypes are work-in-progress and may not be feature complete.
+// Do not use them without consulting the core team.
+static GDType *variant_gdtypes[Variant::VARIANT_MAX] = {};
+
+GDType &Variant::_get_gdtype_for_type(Variant::Type p_type) {
+	ERR_FAIL_INDEX_V_MSG(p_type, VARIANT_MAX, *variant_gdtypes[Variant::NIL], "Invalid Variant type");
+
+	return *variant_gdtypes[p_type];
+}
+
+void Variant::_register_variant_gdtypes() {
+	for (int i = 0; i < Variant::VARIANT_MAX; i++) {
+		Variant::Type type = static_cast<Variant::Type>(i);
+		variant_gdtypes[i] = memnew(GDType(nullptr, Variant::get_type_name(type)));
+		variant_gdtypes[i]->initialize();
+	}
+}
+
+void Variant::_unregister_variant_gdtypes() {
+	for (int i = 0; i < Variant::VARIANT_MAX; i++) {
+		if (variant_gdtypes[i]) {
+			memdelete(variant_gdtypes[i]);
+			variant_gdtypes[i] = nullptr;
+		}
+	}
+}
 
 String Variant::get_type_name(Variant::Type p_type) {
 	switch (p_type) {
@@ -167,11 +189,29 @@ String Variant::get_type_name(Variant::Type p_type) {
 		case PACKED_COLOR_ARRAY: {
 			return "PackedColorArray";
 		}
+		case PACKED_VECTOR4_ARRAY: {
+			return "PackedVector4Array";
+		}
 		default: {
 		}
 	}
 
 	return "";
+}
+
+static HashMap<String, Variant::Type> _init_type_name_map() {
+	HashMap<String, Variant::Type> type_names;
+	for (int i = 0; i < Variant::VARIANT_MAX; i++) {
+		type_names[Variant::get_type_name((Variant::Type)i)] = (Variant::Type)i;
+	}
+	return type_names;
+}
+
+Variant::Type Variant::get_type_by_name(const String &p_type_name) {
+	static HashMap<String, Type> type_names = _init_type_name_map();
+
+	const Type *ptr = type_names.getptr(p_type_name);
+	return (ptr == nullptr) ? VARIANT_MAX : *ptr;
 }
 
 bool Variant::can_convert(Variant::Type p_type_from, Variant::Type p_type_to) {
@@ -404,6 +444,7 @@ bool Variant::can_convert(Variant::Type p_type_from, Variant::Type p_type_to) {
 				PACKED_COLOR_ARRAY,
 				PACKED_VECTOR2_ARRAY,
 				PACKED_VECTOR3_ARRAY,
+				PACKED_VECTOR4_ARRAY,
 				NIL
 			};
 
@@ -477,6 +518,14 @@ bool Variant::can_convert(Variant::Type p_type_from, Variant::Type p_type_to) {
 				NIL
 			};
 
+			valid_types = valid;
+
+		} break;
+		case PACKED_VECTOR4_ARRAY: {
+			static const Type valid[] = {
+				ARRAY,
+				NIL
+			};
 			valid_types = valid;
 
 		} break;
@@ -738,6 +787,7 @@ bool Variant::can_convert_strict(Variant::Type p_type_from, Variant::Type p_type
 				PACKED_COLOR_ARRAY,
 				PACKED_VECTOR2_ARRAY,
 				PACKED_VECTOR3_ARRAY,
+				PACKED_VECTOR4_ARRAY,
 				NIL
 			};
 
@@ -814,6 +864,14 @@ bool Variant::can_convert_strict(Variant::Type p_type_from, Variant::Type p_type
 			valid_types = valid;
 
 		} break;
+		case PACKED_VECTOR4_ARRAY: {
+			static const Type valid[] = {
+				ARRAY,
+				NIL
+			};
+			valid_types = valid;
+
+		} break;
 		default: {
 		}
 	}
@@ -833,17 +891,6 @@ bool Variant::can_convert_strict(Variant::Type p_type_from, Variant::Type p_type
 
 bool Variant::operator==(const Variant &p_variant) const {
 	return hash_compare(p_variant);
-}
-
-bool Variant::operator!=(const Variant &p_variant) const {
-	// Don't use `!hash_compare(p_variant)` given it makes use of OP_EQUAL
-	if (type != p_variant.type) { //evaluation of operator== needs to be more strict
-		return true;
-	}
-	bool v;
-	Variant r;
-	evaluate(OP_NOT_EQUAL, *this, p_variant, r, v);
-	return r;
 }
 
 bool Variant::operator<(const Variant &p_variant) const {
@@ -954,31 +1001,34 @@ bool Variant::is_zero() const {
 
 		// Arrays.
 		case PACKED_BYTE_ARRAY: {
-			return PackedArrayRef<uint8_t>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<uint8_t>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_INT32_ARRAY: {
-			return PackedArrayRef<int32_t>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<int32_t>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_INT64_ARRAY: {
-			return PackedArrayRef<int64_t>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<int64_t>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_FLOAT32_ARRAY: {
-			return PackedArrayRef<float>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<float>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_FLOAT64_ARRAY: {
-			return PackedArrayRef<double>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<double>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_STRING_ARRAY: {
-			return PackedArrayRef<String>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<String>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_VECTOR2_ARRAY: {
-			return PackedArrayRef<Vector2>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<Vector2>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_VECTOR3_ARRAY: {
-			return PackedArrayRef<Vector3>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<Vector3>::get_array(_data.packed_array).is_empty();
 		}
 		case PACKED_COLOR_ARRAY: {
-			return PackedArrayRef<Color>::get_array(_data.packed_array).size() == 0;
+			return PackedArrayRef<Color>::get_array(_data.packed_array).is_empty();
+		}
+		case PACKED_VECTOR4_ARRAY: {
+			return PackedArrayRef<Vector4>::get_array(_data.packed_array).is_empty();
 		}
 		default: {
 		}
@@ -1049,23 +1099,68 @@ bool Variant::is_null() const {
 	}
 }
 
-bool Variant::initialize_ref(Object *p_object) {
-	RefCounted *ref_counted = const_cast<RefCounted *>(static_cast<const RefCounted *>(p_object));
-	if (!ref_counted->init_ref()) {
-		return false;
+void Variant::ObjData::ref(const ObjData &p_from) {
+	// Mirrors Ref::ref in refcounted.h
+	if (p_from.id == id) {
+		return;
 	}
-	return true;
+
+	ObjData cleanup_ref = *this;
+
+	*this = p_from;
+	if (id.is_ref_counted()) {
+		RefCounted *reference = static_cast<RefCounted *>(obj);
+		// Assuming reference is not null because id.is_ref_counted() was true.
+		if (!reference->reference()) {
+			*this = ObjData();
+		}
+	}
+
+	cleanup_ref.unref();
 }
-void Variant::reference(const Variant &p_variant) {
-	switch (type) {
-		case NIL:
-		case BOOL:
-		case INT:
-		case FLOAT:
-			break;
-		default:
-			clear();
+
+void Variant::ObjData::ref_pointer(Object *p_object) {
+	// Mirrors Ref::ref_pointer in refcounted.h
+	if (p_object == obj) {
+		return;
 	}
+
+	ObjData cleanup_ref = *this;
+
+	if (p_object) {
+		*this = ObjData{ p_object->get_instance_id(), p_object };
+		if (p_object->is_ref_counted()) {
+			RefCounted *reference = static_cast<RefCounted *>(p_object);
+			if (!reference->init_ref()) {
+				*this = ObjData();
+			}
+		}
+	} else {
+		*this = ObjData();
+	}
+
+	cleanup_ref.unref();
+}
+
+void Variant::ObjData::unref() {
+	// Mirrors Ref::unref in refcounted.h
+	if (id.is_ref_counted()) {
+		RefCounted *reference = static_cast<RefCounted *>(obj);
+		// Assuming reference is not null because id.is_ref_counted() was true.
+		if (reference->unreference()) {
+			memdelete(reference);
+		}
+	}
+	*this = ObjData();
+}
+
+void Variant::reference(const Variant &p_variant) {
+	if (type == OBJECT && p_variant.type == OBJECT) {
+		_get_obj().ref(p_variant._get_obj());
+		return;
+	}
+
+	clear();
 
 	type = p_variant.type;
 
@@ -1102,7 +1197,7 @@ void Variant::reference(const Variant &p_variant) {
 			memnew_placement(_data._mem, Rect2i(*reinterpret_cast<const Rect2i *>(p_variant._data._mem)));
 		} break;
 		case TRANSFORM2D: {
-			_data._transform2d = (Transform2D *)Pools::_bucket_small.alloc();
+			_data._transform2d = VariantPools::alloc<Transform2D>();
 			memnew_placement(_data._transform2d, Transform2D(*p_variant._data._transform2d));
 		} break;
 		case VECTOR3: {
@@ -1121,22 +1216,22 @@ void Variant::reference(const Variant &p_variant) {
 			memnew_placement(_data._mem, Plane(*reinterpret_cast<const Plane *>(p_variant._data._mem)));
 		} break;
 		case AABB: {
-			_data._aabb = (::AABB *)Pools::_bucket_small.alloc();
+			_data._aabb = VariantPools::alloc<::AABB>();
 			memnew_placement(_data._aabb, ::AABB(*p_variant._data._aabb));
 		} break;
 		case QUATERNION: {
 			memnew_placement(_data._mem, Quaternion(*reinterpret_cast<const Quaternion *>(p_variant._data._mem)));
 		} break;
 		case BASIS: {
-			_data._basis = (Basis *)Pools::_bucket_medium.alloc();
+			_data._ptr = VariantPools::alloc<Basis>();
 			memnew_placement(_data._basis, Basis(*p_variant._data._basis));
 		} break;
 		case TRANSFORM3D: {
-			_data._transform3d = (Transform3D *)Pools::_bucket_medium.alloc();
+			_data._ptr = VariantPools::alloc<Transform3D>();
 			memnew_placement(_data._transform3d, Transform3D(*p_variant._data._transform3d));
 		} break;
 		case PROJECTION: {
-			_data._projection = (Projection *)Pools::_bucket_large.alloc();
+			_data._ptr = VariantPools::alloc<Projection>();
 			memnew_placement(_data._projection, Projection(*p_variant._data._projection));
 		} break;
 
@@ -1149,18 +1244,7 @@ void Variant::reference(const Variant &p_variant) {
 		} break;
 		case OBJECT: {
 			memnew_placement(_data._mem, ObjData);
-
-			if (p_variant._get_obj().obj && p_variant._get_obj().id.is_ref_counted()) {
-				RefCounted *ref_counted = static_cast<RefCounted *>(p_variant._get_obj().obj);
-				if (!ref_counted->reference()) {
-					_get_obj().obj = nullptr;
-					_get_obj().id = ObjectID();
-					break;
-				}
-			}
-
-			_get_obj().obj = const_cast<Object *>(p_variant._get_obj().obj);
-			_get_obj().id = p_variant._get_obj().id;
+			_get_obj().ref(p_variant._get_obj());
 		} break;
 		case CALLABLE: {
 			memnew_placement(_data._mem, Callable(*reinterpret_cast<const Callable *>(p_variant._data._mem)));
@@ -1234,6 +1318,12 @@ void Variant::reference(const Variant &p_variant) {
 			_data.packed_array = static_cast<PackedArrayRef<Color> *>(p_variant._data.packed_array)->reference();
 			if (!_data.packed_array) {
 				_data.packed_array = PackedArrayRef<Color>::create();
+			}
+		} break;
+		case PACKED_VECTOR4_ARRAY: {
+			_data.packed_array = static_cast<PackedArrayRef<Vector4> *>(p_variant._data.packed_array)->reference();
+			if (!_data.packed_array) {
+				_data.packed_array = PackedArrayRef<Vector4>::create();
 			}
 		} break;
 		default: {
@@ -1312,35 +1402,35 @@ void Variant::_clear_internal() {
 		case TRANSFORM2D: {
 			if (_data._transform2d) {
 				_data._transform2d->~Transform2D();
-				Pools::_bucket_small.free((Pools::BucketSmall *)_data._transform2d);
+				VariantPools::free(_data._transform2d);
 				_data._transform2d = nullptr;
 			}
 		} break;
 		case AABB: {
 			if (_data._aabb) {
 				_data._aabb->~AABB();
-				Pools::_bucket_small.free((Pools::BucketSmall *)_data._aabb);
+				VariantPools::free(_data._aabb);
 				_data._aabb = nullptr;
 			}
 		} break;
 		case BASIS: {
 			if (_data._basis) {
 				_data._basis->~Basis();
-				Pools::_bucket_medium.free((Pools::BucketMedium *)_data._basis);
+				VariantPools::free(_data._basis);
 				_data._basis = nullptr;
 			}
 		} break;
 		case TRANSFORM3D: {
 			if (_data._transform3d) {
 				_data._transform3d->~Transform3D();
-				Pools::_bucket_medium.free((Pools::BucketMedium *)_data._transform3d);
+				VariantPools::free(_data._transform3d);
 				_data._transform3d = nullptr;
 			}
 		} break;
 		case PROJECTION: {
 			if (_data._projection) {
 				_data._projection->~Projection();
-				Pools::_bucket_large.free((Pools::BucketLarge *)_data._projection);
+				VariantPools::free(_data._projection);
 				_data._projection = nullptr;
 			}
 		} break;
@@ -1353,15 +1443,7 @@ void Variant::_clear_internal() {
 			reinterpret_cast<NodePath *>(_data._mem)->~NodePath();
 		} break;
 		case OBJECT: {
-			if (_get_obj().id.is_ref_counted()) {
-				// We are safe that there is a reference here.
-				RefCounted *ref_counted = static_cast<RefCounted *>(_get_obj().obj);
-				if (ref_counted->unreference()) {
-					memdelete(ref_counted);
-				}
-			}
-			_get_obj().obj = nullptr;
-			_get_obj().id = ObjectID();
+			_get_obj().unref();
 		} break;
 		case RID: {
 			// Not much need probably.
@@ -1410,83 +1492,54 @@ void Variant::_clear_internal() {
 		case PACKED_COLOR_ARRAY: {
 			PackedArrayRefBase::destroy(_data.packed_array);
 		} break;
+		case PACKED_VECTOR4_ARRAY: {
+			PackedArrayRefBase::destroy(_data.packed_array);
+		} break;
 		default: {
 			// Not needed, there is no point. The following do not allocate memory:
-			// VECTOR2, VECTOR3, RECT2, PLANE, QUATERNION, COLOR.
-		}
-	}
-}
-
-Variant::operator signed int() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-}
-
-Variant::operator unsigned int() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
+			// VECTOR2, VECTOR3, VECTOR4, RECT2, PLANE, QUATERNION, COLOR.
 		}
 	}
 }
 
 Variant::operator int64_t() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
+	return _to_int<int64_t>();
+}
+
+Variant::operator int32_t() const {
+	return _to_int<int32_t>();
+}
+
+Variant::operator int16_t() const {
+	return _to_int<int16_t>();
+}
+
+Variant::operator int8_t() const {
+	return _to_int<int8_t>();
+}
+
+Variant::operator Math::int_alt_t() const {
+	return _to_int<Math::int_alt_t>();
 }
 
 Variant::operator uint64_t() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
+	return _to_int<uint64_t>();
+}
+
+Variant::operator uint32_t() const {
+	return _to_int<uint32_t>();
+}
+
+Variant::operator uint16_t() const {
+	return _to_int<uint16_t>();
+}
+
+Variant::operator uint8_t() const {
+	return _to_int<uint8_t>();
+}
+
+Variant::operator Math::uint_alt_t() const {
+	return _to_int<Math::uint_alt_t>();
 }
 
 Variant::operator ObjectID() const {
@@ -1499,158 +1552,16 @@ Variant::operator ObjectID() const {
 	}
 }
 
-#ifdef NEED_LONG_INT
-Variant::operator signed long() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-
-	return 0;
-}
-
-Variant::operator unsigned long() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-
-	return 0;
-}
-#endif
-
-Variant::operator signed short() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-}
-
-Variant::operator unsigned short() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-}
-
-Variant::operator signed char() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-}
-
-Variant::operator unsigned char() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1 : 0;
-		case INT:
-			return _data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_int();
-		default: {
-			return 0;
-		}
-	}
-}
-
 Variant::operator char32_t() const {
-	return operator unsigned int();
+	return operator uint32_t();
 }
 
 Variant::operator float() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1.0 : 0.0;
-		case INT:
-			return (float)_data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_float();
-		default: {
-			return 0;
-		}
-	}
+	return _to_float<float>();
 }
 
 Variant::operator double() const {
-	switch (type) {
-		case NIL:
-			return 0;
-		case BOOL:
-			return _data._bool ? 1.0 : 0.0;
-		case INT:
-			return (double)_data._int;
-		case FLOAT:
-			return _data._float;
-		case STRING:
-			return operator String().to_float();
-		default: {
-			return 0;
-		}
-	}
+	return _to_float<double>();
 }
 
 Variant::operator StringName() const {
@@ -1667,8 +1578,8 @@ struct _VariantStrPair {
 	String key;
 	String value;
 
-	bool operator<(const _VariantStrPair &p) const {
-		return key < p.key;
+	bool operator<(const _VariantStrPair &p_pair) const {
+		return key < p_pair.key;
 	}
 };
 
@@ -1676,8 +1587,8 @@ Variant::operator String() const {
 	return stringify(0);
 }
 
-String stringify_variant_clean(const Variant &p_variant, int recursion_count) {
-	String s = p_variant.stringify(recursion_count);
+String stringify_variant_clean(const Variant &p_variant, int p_recursion_count) {
+	String s = p_variant.stringify(p_recursion_count);
 
 	// Wrap strings in quotes to avoid ambiguity.
 	switch (p_variant.get_type()) {
@@ -1697,21 +1608,21 @@ String stringify_variant_clean(const Variant &p_variant, int recursion_count) {
 	return s;
 }
 
-template <class T>
-String stringify_vector(const T &vec, int recursion_count) {
+template <typename T>
+String stringify_vector(const T &p_vec, int p_recursion_count) {
 	String str("[");
-	for (int i = 0; i < vec.size(); i++) {
+	for (int i = 0; i < p_vec.size(); i++) {
 		if (i > 0) {
 			str += ", ";
 		}
 
-		str += stringify_variant_clean(vec[i], recursion_count);
+		str += stringify_variant_clean(p_vec[i], p_recursion_count);
 	}
 	str += "]";
 	return str;
 }
 
-String Variant::stringify(int recursion_count) const {
+String Variant::stringify(int p_recursion_count) const {
 	switch (type) {
 		case NIL:
 			return "<null>";
@@ -1720,63 +1631,61 @@ String Variant::stringify(int recursion_count) const {
 		case INT:
 			return itos(_data._int);
 		case FLOAT:
-			return rtos(_data._float);
+			return String::num_real(_data._float, true);
 		case STRING:
 			return *reinterpret_cast<const String *>(_data._mem);
 		case VECTOR2:
-			return operator Vector2();
+			return String(operator Vector2());
 		case VECTOR2I:
-			return operator Vector2i();
+			return String(operator Vector2i());
 		case RECT2:
-			return operator Rect2();
+			return String(operator Rect2());
 		case RECT2I:
-			return operator Rect2i();
+			return String(operator Rect2i());
 		case TRANSFORM2D:
-			return operator Transform2D();
+			return String(operator Transform2D());
 		case VECTOR3:
-			return operator Vector3();
+			return String(operator Vector3());
 		case VECTOR3I:
-			return operator Vector3i();
+			return String(operator Vector3i());
 		case VECTOR4:
-			return operator Vector4();
+			return String(operator Vector4());
 		case VECTOR4I:
-			return operator Vector4i();
+			return String(operator Vector4i());
 		case PLANE:
-			return operator Plane();
+			return String(operator Plane());
 		case AABB:
-			return operator ::AABB();
+			return String(operator ::AABB());
 		case QUATERNION:
-			return operator Quaternion();
+			return String(operator Quaternion());
 		case BASIS:
-			return operator Basis();
+			return String(operator Basis());
 		case TRANSFORM3D:
-			return operator Transform3D();
+			return String(operator Transform3D());
 		case PROJECTION:
-			return operator Projection();
+			return String(operator Projection());
 		case STRING_NAME:
 			return operator StringName();
 		case NODE_PATH:
-			return operator NodePath();
+			return String(operator NodePath());
 		case COLOR:
-			return operator Color();
+			return String(operator Color());
 		case DICTIONARY: {
-			ERR_FAIL_COND_V_MSG(recursion_count > MAX_RECURSION, "{ ... }", "Maximum dictionary recursion reached!");
-			recursion_count++;
+			ERR_FAIL_COND_V_MSG(p_recursion_count > MAX_RECURSION, "{ ... }", "Maximum dictionary recursion reached!");
+			p_recursion_count++;
 
 			const Dictionary &d = *reinterpret_cast<const Dictionary *>(_data._mem);
 
 			// Add leading and trailing space to Dictionary printing. This distinguishes it
 			// from array printing on fonts that have similar-looking {} and [] characters.
 			String str("{ ");
-			List<Variant> keys;
-			d.get_key_list(&keys);
 
 			Vector<_VariantStrPair> pairs;
 
-			for (List<Variant>::Element *E = keys.front(); E; E = E->next()) {
+			for (const KeyValue<Variant, Variant> &kv : d) {
 				_VariantStrPair sp;
-				sp.key = stringify_variant_clean(E->get(), recursion_count);
-				sp.value = stringify_variant_clean(d[E->get()], recursion_count);
+				sp.key = stringify_variant_clean(kv.key, p_recursion_count);
+				sp.value = stringify_variant_clean(kv.value, p_recursion_count);
 
 				pairs.push_back(sp);
 			}
@@ -1793,37 +1702,40 @@ String Variant::stringify(int recursion_count) const {
 		}
 		// Packed arrays cannot contain recursive structures, the recursion_count increment is not needed.
 		case PACKED_VECTOR2_ARRAY: {
-			return stringify_vector(operator PackedVector2Array(), recursion_count);
+			return stringify_vector(operator PackedVector2Array(), p_recursion_count);
 		}
 		case PACKED_VECTOR3_ARRAY: {
-			return stringify_vector(operator PackedVector3Array(), recursion_count);
+			return stringify_vector(operator PackedVector3Array(), p_recursion_count);
 		}
 		case PACKED_COLOR_ARRAY: {
-			return stringify_vector(operator PackedColorArray(), recursion_count);
+			return stringify_vector(operator PackedColorArray(), p_recursion_count);
+		}
+		case PACKED_VECTOR4_ARRAY: {
+			return stringify_vector(operator PackedVector4Array(), p_recursion_count);
 		}
 		case PACKED_STRING_ARRAY: {
-			return stringify_vector(operator PackedStringArray(), recursion_count);
+			return stringify_vector(operator PackedStringArray(), p_recursion_count);
 		}
 		case PACKED_BYTE_ARRAY: {
-			return stringify_vector(operator PackedByteArray(), recursion_count);
+			return stringify_vector(operator PackedByteArray(), p_recursion_count);
 		}
 		case PACKED_INT32_ARRAY: {
-			return stringify_vector(operator PackedInt32Array(), recursion_count);
+			return stringify_vector(operator PackedInt32Array(), p_recursion_count);
 		}
 		case PACKED_INT64_ARRAY: {
-			return stringify_vector(operator PackedInt64Array(), recursion_count);
+			return stringify_vector(operator PackedInt64Array(), p_recursion_count);
 		}
 		case PACKED_FLOAT32_ARRAY: {
-			return stringify_vector(operator PackedFloat32Array(), recursion_count);
+			return stringify_vector(operator PackedFloat32Array(), p_recursion_count);
 		}
 		case PACKED_FLOAT64_ARRAY: {
-			return stringify_vector(operator PackedFloat64Array(), recursion_count);
+			return stringify_vector(operator PackedFloat64Array(), p_recursion_count);
 		}
 		case ARRAY: {
-			ERR_FAIL_COND_V_MSG(recursion_count > MAX_RECURSION, "[...]", "Maximum array recursion reached!");
-			recursion_count++;
+			ERR_FAIL_COND_V_MSG(p_recursion_count > MAX_RECURSION, "[...]", "Maximum array recursion reached!");
+			p_recursion_count++;
 
-			return stringify_vector(operator Array(), recursion_count);
+			return stringify_vector(operator Array(), p_recursion_count);
 		}
 		case OBJECT: {
 			if (_get_obj().obj) {
@@ -1838,11 +1750,11 @@ String Variant::stringify(int recursion_count) const {
 		}
 		case CALLABLE: {
 			const Callable &c = *reinterpret_cast<const Callable *>(_data._mem);
-			return c;
+			return String(c);
 		}
 		case SIGNAL: {
 			const Signal &s = *reinterpret_cast<const Signal *>(_data._mem);
-			return s;
+			return String(s);
 		}
 		case RID: {
 			const ::RID &s = *reinterpret_cast<const ::RID *>(_data._mem);
@@ -2127,7 +2039,7 @@ Variant::operator ::RID() const {
 		}
 #endif
 		Callable::CallError ce;
-		Variant ret = _get_obj().obj->callp(CoreStringNames::get_singleton()->get_rid, nullptr, 0, ce);
+		const Variant ret = _get_obj().obj->callp(CoreStringName(get_rid), nullptr, 0, ce);
 		if (ce.error == Callable::CallError::CALL_OK && ret.get_type() == Variant::RID) {
 			return ret;
 		}
@@ -2188,7 +2100,7 @@ Variant::operator Signal() const {
 	}
 }
 
-template <class DA, class SA>
+template <typename DA, typename SA>
 inline DA _convert_array(const SA &p_array) {
 	DA da;
 	da.resize(p_array.size());
@@ -2200,7 +2112,7 @@ inline DA _convert_array(const SA &p_array) {
 	return da;
 }
 
-template <class DA>
+template <typename DA>
 inline DA _convert_array_from_variant(const Variant &p_variant) {
 	switch (p_variant.get_type()) {
 		case Variant::ARRAY: {
@@ -2232,6 +2144,9 @@ inline DA _convert_array_from_variant(const Variant &p_variant) {
 		}
 		case Variant::PACKED_COLOR_ARRAY: {
 			return _convert_array<DA, PackedColorArray>(p_variant.operator PackedColorArray());
+		}
+		case Variant::PACKED_VECTOR4_ARRAY: {
+			return _convert_array<DA, PackedVector4Array>(p_variant.operator PackedVector4Array());
 		}
 		default: {
 			return DA();
@@ -2319,6 +2234,14 @@ Variant::operator PackedColorArray() const {
 	}
 }
 
+Variant::operator PackedVector4Array() const {
+	if (type == PACKED_VECTOR4_ARRAY) {
+		return static_cast<PackedArrayRef<Vector4> *>(_data.packed_array)->array;
+	} else {
+		return _convert_array_from_variant<PackedVector4Array>(*this);
+	}
+}
+
 /* helpers */
 
 Variant::operator Vector<::RID>() const {
@@ -2396,14 +2319,6 @@ Variant::operator Vector<StringName>() const {
 	return to;
 }
 
-Variant::operator Side() const {
-	return (Side) operator int();
-}
-
-Variant::operator Orientation() const {
-	return (Orientation) operator int();
-}
-
 Variant::operator IPAddress() const {
 	if (type == PACKED_FLOAT32_ARRAY || type == PACKED_INT32_ARRAY || type == PACKED_FLOAT64_ARRAY || type == PACKED_INT64_ARRAY || type == PACKED_BYTE_ARRAY) {
 		Vector<int> addr = operator Vector<int>();
@@ -2415,287 +2330,300 @@ Variant::operator IPAddress() const {
 	return IPAddress(operator String());
 }
 
-Variant::Variant(bool p_bool) {
-	type = BOOL;
+Variant::Variant(bool p_bool) :
+		type(BOOL) {
 	_data._bool = p_bool;
 }
 
-Variant::Variant(signed int p_int) {
-	type = INT;
-	_data._int = p_int;
+Variant::Variant(int64_t p_int64) :
+		type(INT) {
+	_data._int = p_int64;
 }
 
-Variant::Variant(unsigned int p_int) {
-	type = INT;
-	_data._int = p_int;
+Variant::Variant(int32_t p_int32) :
+		type(INT) {
+	_data._int = p_int32;
 }
 
-#ifdef NEED_LONG_INT
-
-Variant::Variant(signed long p_int) {
-	type = INT;
-	_data._int = p_int;
+Variant::Variant(int16_t p_int16) :
+		type(INT) {
+	_data._int = p_int16;
 }
 
-Variant::Variant(unsigned long p_int) {
-	type = INT;
-	_data._int = p_int;
-}
-#endif
-
-Variant::Variant(int64_t p_int) {
-	type = INT;
-	_data._int = p_int;
+Variant::Variant(int8_t p_int8) :
+		type(INT) {
+	_data._int = p_int8;
 }
 
-Variant::Variant(uint64_t p_int) {
-	type = INT;
-	_data._int = p_int;
+Variant::Variant(Math::int_alt_t p_int_alt) :
+		type(INT) {
+	_data._int = p_int_alt;
 }
 
-Variant::Variant(signed short p_short) {
-	type = INT;
-	_data._int = p_short;
+Variant::Variant(uint64_t p_uint64) :
+		type(INT) {
+	_data._int = int64_t(p_uint64);
 }
 
-Variant::Variant(unsigned short p_short) {
-	type = INT;
-	_data._int = p_short;
+Variant::Variant(uint32_t p_uint32) :
+		type(INT) {
+	_data._int = int64_t(p_uint32);
 }
 
-Variant::Variant(signed char p_char) {
-	type = INT;
-	_data._int = p_char;
+Variant::Variant(uint16_t p_uint16) :
+		type(INT) {
+	_data._int = int64_t(p_uint16);
 }
 
-Variant::Variant(unsigned char p_char) {
-	type = INT;
-	_data._int = p_char;
+Variant::Variant(uint8_t p_uint8) :
+		type(INT) {
+	_data._int = int64_t(p_uint8);
 }
 
-Variant::Variant(float p_float) {
-	type = FLOAT;
+Variant::Variant(Math::uint_alt_t p_uint_alt) :
+		type(INT) {
+	_data._int = p_uint_alt;
+}
+
+Variant::Variant(float p_float) :
+		type(FLOAT) {
 	_data._float = p_float;
 }
 
-Variant::Variant(double p_double) {
-	type = FLOAT;
+Variant::Variant(double p_double) :
+		type(FLOAT) {
 	_data._float = p_double;
 }
 
-Variant::Variant(const ObjectID &p_id) {
-	type = INT;
-	_data._int = p_id;
+Variant::Variant(const ObjectID &p_id) :
+		type(INT) {
+	_data._int = int64_t(p_id);
 }
 
-Variant::Variant(const StringName &p_string) {
-	type = STRING_NAME;
+Variant::Variant(const StringName &p_string) :
+		type(STRING_NAME) {
 	memnew_placement(_data._mem, StringName(p_string));
+	static_assert(sizeof(StringName) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const String &p_string) {
-	type = STRING;
+Variant::Variant(const String &p_string) :
+		type(STRING) {
 	memnew_placement(_data._mem, String(p_string));
+	static_assert(sizeof(String) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const char *const p_cstring) {
-	type = STRING;
+Variant::Variant(const char *const p_cstring) :
+		type(STRING) {
 	memnew_placement(_data._mem, String((const char *)p_cstring));
+	static_assert(sizeof(String) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const char32_t *p_wstring) {
-	type = STRING;
+Variant::Variant(const char32_t *p_wstring) :
+		type(STRING) {
 	memnew_placement(_data._mem, String(p_wstring));
+	static_assert(sizeof(String) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Vector3 &p_vector3) {
-	type = VECTOR3;
+Variant::Variant(const Vector3 &p_vector3) :
+		type(VECTOR3) {
 	memnew_placement(_data._mem, Vector3(p_vector3));
+	static_assert(sizeof(Vector3) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Vector3i &p_vector3i) {
-	type = VECTOR3I;
+Variant::Variant(const Vector3i &p_vector3i) :
+		type(VECTOR3I) {
 	memnew_placement(_data._mem, Vector3i(p_vector3i));
+	static_assert(sizeof(Vector3i) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Vector4 &p_vector4) {
-	type = VECTOR4;
+Variant::Variant(const Vector4 &p_vector4) :
+		type(VECTOR4) {
 	memnew_placement(_data._mem, Vector4(p_vector4));
+	static_assert(sizeof(Vector4) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Vector4i &p_vector4i) {
-	type = VECTOR4I;
+Variant::Variant(const Vector4i &p_vector4i) :
+		type(VECTOR4I) {
 	memnew_placement(_data._mem, Vector4i(p_vector4i));
+	static_assert(sizeof(Vector4i) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Vector2 &p_vector2) {
-	type = VECTOR2;
+Variant::Variant(const Vector2 &p_vector2) :
+		type(VECTOR2) {
 	memnew_placement(_data._mem, Vector2(p_vector2));
+	static_assert(sizeof(Vector2) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Vector2i &p_vector2i) {
-	type = VECTOR2I;
+Variant::Variant(const Vector2i &p_vector2i) :
+		type(VECTOR2I) {
 	memnew_placement(_data._mem, Vector2i(p_vector2i));
+	static_assert(sizeof(Vector2i) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Rect2 &p_rect2) {
-	type = RECT2;
+Variant::Variant(const Rect2 &p_rect2) :
+		type(RECT2) {
 	memnew_placement(_data._mem, Rect2(p_rect2));
+	static_assert(sizeof(Rect2) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Rect2i &p_rect2i) {
-	type = RECT2I;
+Variant::Variant(const Rect2i &p_rect2i) :
+		type(RECT2I) {
 	memnew_placement(_data._mem, Rect2i(p_rect2i));
+	static_assert(sizeof(Rect2i) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Plane &p_plane) {
-	type = PLANE;
+Variant::Variant(const Plane &p_plane) :
+		type(PLANE) {
 	memnew_placement(_data._mem, Plane(p_plane));
+	static_assert(sizeof(Plane) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const ::AABB &p_aabb) {
-	type = AABB;
-	_data._aabb = (::AABB *)Pools::_bucket_small.alloc();
+Variant::Variant(const ::AABB &p_aabb) :
+		type(AABB) {
+	_data._aabb = VariantPools::alloc<::AABB>();
 	memnew_placement(_data._aabb, ::AABB(p_aabb));
 }
 
-Variant::Variant(const Basis &p_matrix) {
-	type = BASIS;
-	_data._basis = (Basis *)Pools::_bucket_medium.alloc();
+Variant::Variant(const Basis &p_matrix) :
+		type(BASIS) {
+	_data._basis = VariantPools::alloc<Basis>();
 	memnew_placement(_data._basis, Basis(p_matrix));
 }
 
-Variant::Variant(const Quaternion &p_quaternion) {
-	type = QUATERNION;
+Variant::Variant(const Quaternion &p_quaternion) :
+		type(QUATERNION) {
 	memnew_placement(_data._mem, Quaternion(p_quaternion));
+	static_assert(sizeof(Quaternion) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Transform3D &p_transform) {
-	type = TRANSFORM3D;
-	_data._transform3d = (Transform3D *)Pools::_bucket_medium.alloc();
+Variant::Variant(const Transform3D &p_transform) :
+		type(TRANSFORM3D) {
+	_data._transform3d = VariantPools::alloc<Transform3D>();
 	memnew_placement(_data._transform3d, Transform3D(p_transform));
 }
 
-Variant::Variant(const Projection &pp_projection) {
-	type = PROJECTION;
-	_data._projection = (Projection *)Pools::_bucket_large.alloc();
-	memnew_placement(_data._projection, Projection(pp_projection));
+Variant::Variant(const Projection &p_projection) :
+		type(PROJECTION) {
+	_data._projection = VariantPools::alloc<Projection>();
+	memnew_placement(_data._projection, Projection(p_projection));
 }
 
-Variant::Variant(const Transform2D &p_transform) {
-	type = TRANSFORM2D;
-	_data._transform2d = (Transform2D *)Pools::_bucket_small.alloc();
+Variant::Variant(const Transform2D &p_transform) :
+		type(TRANSFORM2D) {
+	_data._transform2d = VariantPools::alloc<Transform2D>();
 	memnew_placement(_data._transform2d, Transform2D(p_transform));
 }
 
-Variant::Variant(const Color &p_color) {
-	type = COLOR;
+Variant::Variant(const Color &p_color) :
+		type(COLOR) {
 	memnew_placement(_data._mem, Color(p_color));
+	static_assert(sizeof(Color) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const NodePath &p_node_path) {
-	type = NODE_PATH;
+Variant::Variant(const NodePath &p_node_path) :
+		type(NODE_PATH) {
 	memnew_placement(_data._mem, NodePath(p_node_path));
+	static_assert(sizeof(NodePath) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const ::RID &p_rid) {
-	type = RID;
+Variant::Variant(const ::RID &p_rid) :
+		type(RID) {
 	memnew_placement(_data._mem, ::RID(p_rid));
+	static_assert(sizeof(::RID) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Object *p_object) {
-	type = OBJECT;
-
-	memnew_placement(_data._mem, ObjData);
-
-	if (p_object) {
-		if (p_object->is_ref_counted()) {
-			RefCounted *ref_counted = const_cast<RefCounted *>(static_cast<const RefCounted *>(p_object));
-			if (!ref_counted->init_ref()) {
-				_get_obj().obj = nullptr;
-				_get_obj().id = ObjectID();
-				return;
-			}
-		}
-
-		_get_obj().obj = const_cast<Object *>(p_object);
-		_get_obj().id = p_object->get_instance_id();
+Variant::Variant(const Object *p_object) :
+		type(OBJECT) {
+	// Mirrors ObjData::ref_pointer(Object *) but without the cleanup
+	if (p_object && (!p_object->is_ref_counted() || static_cast<RefCounted *>(const_cast<Object *>(p_object))->init_ref())) {
+		memnew_placement(_data._mem, ObjData({ p_object->get_instance_id(), const_cast<Object *>(p_object) }));
 	} else {
-		_get_obj().obj = nullptr;
-		_get_obj().id = ObjectID();
+		memnew_placement(_data._mem, ObjData());
 	}
 }
 
-Variant::Variant(const Callable &p_callable) {
-	type = CALLABLE;
+Variant::Variant(const Callable &p_callable) :
+		type(CALLABLE) {
 	memnew_placement(_data._mem, Callable(p_callable));
+	static_assert(sizeof(Callable) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Signal &p_callable) {
-	type = SIGNAL;
+Variant::Variant(const Signal &p_callable) :
+		type(SIGNAL) {
 	memnew_placement(_data._mem, Signal(p_callable));
+	static_assert(sizeof(Signal) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Dictionary &p_dictionary) {
-	type = DICTIONARY;
+Variant::Variant(const Dictionary &p_dictionary) :
+		type(DICTIONARY) {
 	memnew_placement(_data._mem, Dictionary(p_dictionary));
+	static_assert(sizeof(Dictionary) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const Array &p_array) {
-	type = ARRAY;
+Variant::Variant(std::initializer_list<Variant> p_init) :
+		type(ARRAY) {
+	memnew_placement(_data._mem, Array(p_init));
+}
+
+Variant::Variant(const Array &p_array) :
+		type(ARRAY) {
 	memnew_placement(_data._mem, Array(p_array));
+	static_assert(sizeof(Array) <= sizeof(_data._mem));
 }
 
-Variant::Variant(const PackedByteArray &p_byte_array) {
-	type = PACKED_BYTE_ARRAY;
-
+Variant::Variant(const PackedByteArray &p_byte_array) :
+		type(PACKED_BYTE_ARRAY) {
 	_data.packed_array = PackedArrayRef<uint8_t>::create(p_byte_array);
 }
 
-Variant::Variant(const PackedInt32Array &p_int32_array) {
-	type = PACKED_INT32_ARRAY;
+Variant::Variant(const PackedInt32Array &p_int32_array) :
+		type(PACKED_INT32_ARRAY) {
 	_data.packed_array = PackedArrayRef<int32_t>::create(p_int32_array);
 }
 
-Variant::Variant(const PackedInt64Array &p_int64_array) {
-	type = PACKED_INT64_ARRAY;
+Variant::Variant(const PackedInt64Array &p_int64_array) :
+		type(PACKED_INT64_ARRAY) {
 	_data.packed_array = PackedArrayRef<int64_t>::create(p_int64_array);
 }
 
-Variant::Variant(const PackedFloat32Array &p_float32_array) {
-	type = PACKED_FLOAT32_ARRAY;
+Variant::Variant(const PackedFloat32Array &p_float32_array) :
+		type(PACKED_FLOAT32_ARRAY) {
 	_data.packed_array = PackedArrayRef<float>::create(p_float32_array);
 }
 
-Variant::Variant(const PackedFloat64Array &p_float64_array) {
-	type = PACKED_FLOAT64_ARRAY;
+Variant::Variant(const PackedFloat64Array &p_float64_array) :
+		type(PACKED_FLOAT64_ARRAY) {
 	_data.packed_array = PackedArrayRef<double>::create(p_float64_array);
 }
 
-Variant::Variant(const PackedStringArray &p_string_array) {
-	type = PACKED_STRING_ARRAY;
+Variant::Variant(const PackedStringArray &p_string_array) :
+		type(PACKED_STRING_ARRAY) {
 	_data.packed_array = PackedArrayRef<String>::create(p_string_array);
 }
 
-Variant::Variant(const PackedVector2Array &p_vector2_array) {
-	type = PACKED_VECTOR2_ARRAY;
+Variant::Variant(const PackedVector2Array &p_vector2_array) :
+		type(PACKED_VECTOR2_ARRAY) {
 	_data.packed_array = PackedArrayRef<Vector2>::create(p_vector2_array);
 }
 
-Variant::Variant(const PackedVector3Array &p_vector3_array) {
-	type = PACKED_VECTOR3_ARRAY;
+Variant::Variant(const PackedVector3Array &p_vector3_array) :
+		type(PACKED_VECTOR3_ARRAY) {
 	_data.packed_array = PackedArrayRef<Vector3>::create(p_vector3_array);
 }
 
-Variant::Variant(const PackedColorArray &p_color_array) {
-	type = PACKED_COLOR_ARRAY;
+Variant::Variant(const PackedColorArray &p_color_array) :
+		type(PACKED_COLOR_ARRAY) {
 	_data.packed_array = PackedArrayRef<Color>::create(p_color_array);
 }
 
-/* helpers */
-Variant::Variant(const Vector<::RID> &p_array) {
-	type = ARRAY;
+Variant::Variant(const PackedVector4Array &p_vector4_array) :
+		type(PACKED_VECTOR4_ARRAY) {
+	_data.packed_array = PackedArrayRef<Vector4>::create(p_vector4_array);
+}
 
+/* helpers */
+Variant::Variant(const Vector<::RID> &p_array) :
+		type(ARRAY) {
 	Array *rid_array = memnew_placement(_data._mem, Array);
 
 	rid_array->resize(p_array.size());
@@ -2705,9 +2633,8 @@ Variant::Variant(const Vector<::RID> &p_array) {
 	}
 }
 
-Variant::Variant(const Vector<Plane> &p_array) {
-	type = ARRAY;
-
+Variant::Variant(const Vector<Plane> &p_array) :
+		type(ARRAY) {
 	Array *plane_array = memnew_placement(_data._mem, Array);
 
 	plane_array->resize(p_array.size());
@@ -2733,13 +2660,10 @@ Variant::Variant(const Vector<Face3> &p_face_array) {
 		}
 	}
 
-	type = NIL;
-
 	*this = vertices;
 }
 
 Variant::Variant(const Vector<Variant> &p_array) {
-	type = NIL;
 	Array arr;
 	arr.resize(p_array.size());
 	for (int i = 0; i < p_array.size(); i++) {
@@ -2749,7 +2673,6 @@ Variant::Variant(const Vector<Variant> &p_array) {
 }
 
 Variant::Variant(const Vector<StringName> &p_array) {
-	type = NIL;
 	PackedStringArray v;
 	int len = p_array.size();
 	v.resize(len);
@@ -2844,26 +2767,7 @@ void Variant::operator=(const Variant &p_variant) {
 			*reinterpret_cast<::RID *>(_data._mem) = *reinterpret_cast<const ::RID *>(p_variant._data._mem);
 		} break;
 		case OBJECT: {
-			if (_get_obj().id.is_ref_counted()) {
-				//we are safe that there is a reference here
-				RefCounted *ref_counted = static_cast<RefCounted *>(_get_obj().obj);
-				if (ref_counted->unreference()) {
-					memdelete(ref_counted);
-				}
-			}
-
-			if (p_variant._get_obj().obj && p_variant._get_obj().id.is_ref_counted()) {
-				RefCounted *ref_counted = static_cast<RefCounted *>(p_variant._get_obj().obj);
-				if (!ref_counted->reference()) {
-					_get_obj().obj = nullptr;
-					_get_obj().id = ObjectID();
-					break;
-				}
-			}
-
-			_get_obj().obj = const_cast<Object *>(p_variant._get_obj().obj);
-			_get_obj().id = p_variant._get_obj().id;
-
+			_get_obj().ref(p_variant._get_obj());
 		} break;
 		case CALLABLE: {
 			*reinterpret_cast<Callable *>(_data._mem) = *reinterpret_cast<const Callable *>(p_variant._data._mem);
@@ -2913,13 +2817,16 @@ void Variant::operator=(const Variant &p_variant) {
 		case PACKED_COLOR_ARRAY: {
 			_data.packed_array = PackedArrayRef<Color>::reference_from(_data.packed_array, p_variant._data.packed_array);
 		} break;
+		case PACKED_VECTOR4_ARRAY: {
+			_data.packed_array = PackedArrayRef<Vector4>::reference_from(_data.packed_array, p_variant._data.packed_array);
+		} break;
 		default: {
 		}
 	}
 }
 
-Variant::Variant(const IPAddress &p_address) {
-	type = STRING;
+Variant::Variant(const IPAddress &p_address) :
+		type(STRING) {
 	memnew_placement(_data._mem, String(p_address));
 }
 
@@ -2931,7 +2838,7 @@ uint32_t Variant::hash() const {
 	return recursive_hash(0);
 }
 
-uint32_t Variant::recursive_hash(int recursion_count) const {
+uint32_t Variant::recursive_hash(int p_recursion_count) const {
 	switch (type) {
 		case NIL: {
 			return 0;
@@ -3073,7 +2980,7 @@ uint32_t Variant::recursive_hash(int recursion_count) const {
 			return hash_one_uint64(reinterpret_cast<const ::RID *>(_data._mem)->get_id());
 		} break;
 		case OBJECT: {
-			return hash_one_uint64(hash_make_uint64_t(_get_obj().obj));
+			return hash_one_uint64(reinterpret_cast<uint64_t>(_get_obj().obj));
 		} break;
 		case STRING_NAME: {
 			return reinterpret_cast<const StringName *>(_data._mem)->hash();
@@ -3082,7 +2989,7 @@ uint32_t Variant::recursive_hash(int recursion_count) const {
 			return reinterpret_cast<const NodePath *>(_data._mem)->hash();
 		} break;
 		case DICTIONARY: {
-			return reinterpret_cast<const Dictionary *>(_data._mem)->recursive_hash(recursion_count);
+			return reinterpret_cast<const Dictionary *>(_data._mem)->recursive_hash(p_recursion_count);
 
 		} break;
 		case CALLABLE: {
@@ -3096,7 +3003,7 @@ uint32_t Variant::recursive_hash(int recursion_count) const {
 		} break;
 		case ARRAY: {
 			const Array &arr = *reinterpret_cast<const Array *>(_data._mem);
-			return arr.recursive_hash(recursion_count);
+			return arr.recursive_hash(p_recursion_count);
 
 		} break;
 		case PACKED_BYTE_ARRAY: {
@@ -3234,6 +3141,25 @@ uint32_t Variant::recursive_hash(int recursion_count) const {
 
 			return hash;
 		} break;
+		case PACKED_VECTOR4_ARRAY: {
+			uint32_t hash = HASH_MURMUR3_SEED;
+			const PackedVector4Array &arr = PackedArrayRef<Vector4>::get_array(_data.packed_array);
+			int len = arr.size();
+
+			if (likely(len)) {
+				const Vector4 *r = arr.ptr();
+
+				for (int i = 0; i < len; i++) {
+					hash = hash_murmur3_one_real(r[i].x, hash);
+					hash = hash_murmur3_one_real(r[i].y, hash);
+					hash = hash_murmur3_one_real(r[i].z, hash);
+					hash = hash_murmur3_one_real(r[i].w, hash);
+				}
+				hash = hash_fmix32(hash);
+			}
+
+			return hash;
+		} break;
 		default: {
 		}
 	}
@@ -3247,51 +3173,39 @@ uint32_t Variant::recursive_hash(int recursion_count) const {
 #define hash_compare_scalar(p_lhs, p_rhs) \
 	(hash_compare_scalar_base(p_lhs, p_rhs, true))
 
-#define hash_compare_vector2(p_lhs, p_rhs)        \
-	(hash_compare_scalar((p_lhs).x, (p_rhs).x) && \
-			hash_compare_scalar((p_lhs).y, (p_rhs).y))
+#define hash_compare_vector2(p_lhs, p_rhs) \
+	(p_lhs).is_same(p_rhs)
 
-#define hash_compare_vector3(p_lhs, p_rhs)               \
-	(hash_compare_scalar((p_lhs).x, (p_rhs).x) &&        \
-			hash_compare_scalar((p_lhs).y, (p_rhs).y) && \
-			hash_compare_scalar((p_lhs).z, (p_rhs).z))
+#define hash_compare_vector3(p_lhs, p_rhs) \
+	(p_lhs).is_same(p_rhs)
 
-#define hash_compare_vector4(p_lhs, p_rhs)               \
-	(hash_compare_scalar((p_lhs).x, (p_rhs).x) &&        \
-			hash_compare_scalar((p_lhs).y, (p_rhs).y) && \
-			hash_compare_scalar((p_lhs).z, (p_rhs).z) && \
-			hash_compare_scalar((p_lhs).w, (p_rhs).w))
+#define hash_compare_vector4(p_lhs, p_rhs) \
+	(p_lhs).is_same(p_rhs)
 
-#define hash_compare_quaternion(p_lhs, p_rhs)            \
-	(hash_compare_scalar((p_lhs).x, (p_rhs).x) &&        \
-			hash_compare_scalar((p_lhs).y, (p_rhs).y) && \
-			hash_compare_scalar((p_lhs).z, (p_rhs).z) && \
-			hash_compare_scalar((p_lhs).w, (p_rhs).w))
+#define hash_compare_quaternion(p_lhs, p_rhs) \
+	(p_lhs).is_same(p_rhs)
 
-#define hash_compare_color(p_lhs, p_rhs)                 \
-	(hash_compare_scalar((p_lhs).r, (p_rhs).r) &&        \
-			hash_compare_scalar((p_lhs).g, (p_rhs).g) && \
-			hash_compare_scalar((p_lhs).b, (p_rhs).b) && \
-			hash_compare_scalar((p_lhs).a, (p_rhs).a))
+#define hash_compare_color(p_lhs, p_rhs) \
+	(p_lhs).is_same(p_rhs)
 
 #define hash_compare_packed_array(p_lhs, p_rhs, p_type, p_compare_func) \
 	const Vector<p_type> &l = PackedArrayRef<p_type>::get_array(p_lhs); \
 	const Vector<p_type> &r = PackedArrayRef<p_type>::get_array(p_rhs); \
-                                                                        \
-	if (l.size() != r.size())                                           \
-		return false;                                                   \
-                                                                        \
-	const p_type *lr = l.ptr();                                         \
-	const p_type *rr = r.ptr();                                         \
-                                                                        \
-	for (int i = 0; i < l.size(); ++i) {                                \
-		if (!p_compare_func((lr[i]), (rr[i])))                          \
-			return false;                                               \
-	}                                                                   \
-                                                                        \
+\
+	if (l.size() != r.size()) \
+		return false; \
+\
+	const p_type *lr = l.ptr(); \
+	const p_type *rr = r.ptr(); \
+\
+	for (int i = 0; i < l.size(); ++i) { \
+		if (!p_compare_func((lr[i]), (rr[i]))) \
+			return false; \
+	} \
+\
 	return true
 
-bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool semantic_comparison) const {
+bool Variant::hash_compare(const Variant &p_variant, int p_recursion_count, bool p_semantic_comparison) const {
 	if (type != p_variant.type) {
 		return false;
 	}
@@ -3302,7 +3216,7 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 		} break;
 
 		case FLOAT: {
-			return hash_compare_scalar_base(_data._float, p_variant._data._float, semantic_comparison);
+			return hash_compare_scalar_base(_data._float, p_variant._data._float, p_semantic_comparison);
 		} break;
 
 		case STRING: {
@@ -3343,13 +3257,7 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 			Transform2D *l = _data._transform2d;
 			Transform2D *r = p_variant._data._transform2d;
 
-			for (int i = 0; i < 3; i++) {
-				if (!hash_compare_vector2(l->columns[i], r->columns[i])) {
-					return false;
-				}
-			}
-
-			return true;
+			return l->is_same(*r);
 		} break;
 
 		case VECTOR3: {
@@ -3381,17 +3289,14 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 			const Plane *l = reinterpret_cast<const Plane *>(_data._mem);
 			const Plane *r = reinterpret_cast<const Plane *>(p_variant._data._mem);
 
-			return hash_compare_vector3(l->normal, r->normal) &&
-					hash_compare_scalar(l->d, r->d);
+			return l->is_same(*r);
 		} break;
 
 		case AABB: {
 			const ::AABB *l = _data._aabb;
 			const ::AABB *r = p_variant._data._aabb;
 
-			return hash_compare_vector3(l->position, r->position) &&
-					hash_compare_vector3(l->size, r->size);
-
+			return l->is_same(*r);
 		} break;
 
 		case QUATERNION: {
@@ -3405,38 +3310,20 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 			const Basis *l = _data._basis;
 			const Basis *r = p_variant._data._basis;
 
-			for (int i = 0; i < 3; i++) {
-				if (!hash_compare_vector3(l->rows[i], r->rows[i])) {
-					return false;
-				}
-			}
-
-			return true;
+			return l->is_same(*r);
 		} break;
 
 		case TRANSFORM3D: {
 			const Transform3D *l = _data._transform3d;
 			const Transform3D *r = p_variant._data._transform3d;
 
-			for (int i = 0; i < 3; i++) {
-				if (!hash_compare_vector3(l->basis.rows[i], r->basis.rows[i])) {
-					return false;
-				}
-			}
-
-			return hash_compare_vector3(l->origin, r->origin);
+			return l->is_same(*r);
 		} break;
 		case PROJECTION: {
 			const Projection *l = _data._projection;
 			const Projection *r = p_variant._data._projection;
 
-			for (int i = 0; i < 4; i++) {
-				if (!hash_compare_vector4(l->columns[i], r->columns[i])) {
-					return false;
-				}
-			}
-
-			return true;
+			return l->is_same(*r);
 		} break;
 
 		case COLOR: {
@@ -3450,7 +3337,7 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 			const Array &l = *(reinterpret_cast<const Array *>(_data._mem));
 			const Array &r = *(reinterpret_cast<const Array *>(p_variant._data._mem));
 
-			if (!l.recursive_equal(r, recursion_count + 1)) {
+			if (!l.recursive_equal(r, p_recursion_count + 1)) {
 				return false;
 			}
 
@@ -3461,7 +3348,7 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 			const Dictionary &l = *(reinterpret_cast<const Dictionary *>(_data._mem));
 			const Dictionary &r = *(reinterpret_cast<const Dictionary *>(p_variant._data._mem));
 
-			if (!l.recursive_equal(r, recursion_count + 1)) {
+			if (!l.recursive_equal(r, p_recursion_count + 1)) {
 				return false;
 			}
 
@@ -3487,6 +3374,10 @@ bool Variant::hash_compare(const Variant &p_variant, int recursion_count, bool s
 
 		case PACKED_COLOR_ARRAY: {
 			hash_compare_packed_array(_data.packed_array, p_variant._data.packed_array, Color, hash_compare_color);
+		} break;
+
+		case PACKED_VECTOR4_ARRAY: {
+			hash_compare_packed_array(_data.packed_array, p_variant._data.packed_array, Vector4, hash_compare_vector4);
 		} break;
 
 		default:
@@ -3527,7 +3418,8 @@ bool Variant::identity_compare(const Variant &p_variant) const {
 		case PACKED_STRING_ARRAY:
 		case PACKED_VECTOR2_ARRAY:
 		case PACKED_VECTOR3_ARRAY:
-		case PACKED_COLOR_ARRAY: {
+		case PACKED_COLOR_ARRAY:
+		case PACKED_VECTOR4_ARRAY: {
 			return _data.packed_array == p_variant._data.packed_array;
 		} break;
 
@@ -3550,78 +3442,72 @@ bool StringLikeVariantComparator::compare(const Variant &p_lhs, const Variant &p
 	return false;
 }
 
+bool StringLikeVariantOrder::compare(const Variant &p_lhs, const Variant &p_rhs) {
+	if (p_lhs.get_type() == Variant::STRING) {
+		const String &lhs = *VariantInternal::get_string(&p_lhs);
+		if (p_rhs.get_type() == Variant::STRING) {
+			return StringName::AlphCompare::compare(lhs, *VariantInternal::get_string(&p_rhs));
+		} else if (p_rhs.get_type() == Variant::STRING_NAME) {
+			return StringName::AlphCompare::compare(lhs, *VariantInternal::get_string_name(&p_rhs));
+		}
+	} else if (p_lhs.get_type() == Variant::STRING_NAME) {
+		const StringName &lhs = *VariantInternal::get_string_name(&p_lhs);
+		if (p_rhs.get_type() == Variant::STRING) {
+			return StringName::AlphCompare::compare(lhs, *VariantInternal::get_string(&p_rhs));
+		} else if (p_rhs.get_type() == Variant::STRING_NAME) {
+			return StringName::AlphCompare::compare(lhs, *VariantInternal::get_string_name(&p_rhs));
+		}
+	}
+
+	return p_lhs < p_rhs;
+}
+
 bool Variant::is_ref_counted() const {
 	return type == OBJECT && _get_obj().id.is_ref_counted();
-}
-
-Vector<Variant> varray() {
-	return Vector<Variant>();
-}
-
-Vector<Variant> varray(const Variant &p_arg1) {
-	Vector<Variant> v;
-	v.push_back(p_arg1);
-	return v;
-}
-
-Vector<Variant> varray(const Variant &p_arg1, const Variant &p_arg2) {
-	Vector<Variant> v;
-	v.push_back(p_arg1);
-	v.push_back(p_arg2);
-	return v;
-}
-
-Vector<Variant> varray(const Variant &p_arg1, const Variant &p_arg2, const Variant &p_arg3) {
-	Vector<Variant> v;
-	v.push_back(p_arg1);
-	v.push_back(p_arg2);
-	v.push_back(p_arg3);
-	return v;
-}
-
-Vector<Variant> varray(const Variant &p_arg1, const Variant &p_arg2, const Variant &p_arg3, const Variant &p_arg4) {
-	Vector<Variant> v;
-	v.push_back(p_arg1);
-	v.push_back(p_arg2);
-	v.push_back(p_arg3);
-	v.push_back(p_arg4);
-	return v;
-}
-
-Vector<Variant> varray(const Variant &p_arg1, const Variant &p_arg2, const Variant &p_arg3, const Variant &p_arg4, const Variant &p_arg5) {
-	Vector<Variant> v;
-	v.push_back(p_arg1);
-	v.push_back(p_arg2);
-	v.push_back(p_arg3);
-	v.push_back(p_arg4);
-	v.push_back(p_arg5);
-	return v;
-}
-
-void Variant::static_assign(const Variant &p_variant) {
 }
 
 bool Variant::is_type_shared(Variant::Type p_type) {
 	switch (p_type) {
 		case OBJECT:
-		case ARRAY:
 		case DICTIONARY:
+		case ARRAY:
+		// NOTE: Packed array constructors **do** copies (unlike `Array()` and `Dictionary()`),
+		// whereas they pass by reference when inside a `Variant`.
+		case PACKED_BYTE_ARRAY:
+		case PACKED_INT32_ARRAY:
+		case PACKED_INT64_ARRAY:
+		case PACKED_FLOAT32_ARRAY:
+		case PACKED_FLOAT64_ARRAY:
+		case PACKED_STRING_ARRAY:
+		case PACKED_VECTOR2_ARRAY:
+		case PACKED_VECTOR3_ARRAY:
+		case PACKED_COLOR_ARRAY:
+		case PACKED_VECTOR4_ARRAY:
 			return true;
-		default: {
-		}
+		default:
+			return false;
 	}
-
-	return false;
 }
 
 bool Variant::is_shared() const {
 	return is_type_shared(type);
 }
 
-void Variant::_variant_call_error(const String &p_method, Callable::CallError &error) {
-	switch (error.error) {
+bool Variant::is_read_only() const {
+	switch (type) {
+		case ARRAY:
+			return reinterpret_cast<const Array *>(_data._mem)->is_read_only();
+		case DICTIONARY:
+			return reinterpret_cast<const Dictionary *>(_data._mem)->is_read_only();
+		default:
+			return false;
+	}
+}
+
+void Variant::_variant_call_error(const String &p_method, Callable::CallError &r_error) {
+	switch (r_error.error) {
 		case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT: {
-			String err = "Invalid type for argument #" + itos(error.argument) + ", expected '" + Variant::get_type_name(Variant::Type(error.expected)) + "'.";
+			String err = "Invalid type for argument #" + itos(r_error.argument) + ", expected '" + Variant::get_type_name(Variant::Type(r_error.expected)) + "'.";
 			ERR_PRINT(err.utf8().get_data());
 
 		} break;
@@ -3644,36 +3530,36 @@ void Variant::construct_from_string(const String &p_string, Variant &r_value, Ob
 
 String Variant::get_construct_string() const {
 	String vars;
-	VariantWriter::write_to_string(*this, vars);
+	VariantWriter::write_to_string(*this, vars, false);
 
 	return vars;
 }
 
-String Variant::get_call_error_text(const StringName &p_method, const Variant **p_argptrs, int p_argcount, const Callable::CallError &ce) {
-	return get_call_error_text(nullptr, p_method, p_argptrs, p_argcount, ce);
+String Variant::get_call_error_text(const StringName &p_method, const Variant **p_argptrs, int p_argcount, const Callable::CallError &p_ce) {
+	return get_call_error_text(nullptr, p_method, p_argptrs, p_argcount, p_ce);
 }
 
-String Variant::get_call_error_text(Object *p_base, const StringName &p_method, const Variant **p_argptrs, int p_argcount, const Callable::CallError &ce) {
+String Variant::get_call_error_text(Object *p_base, const StringName &p_method, const Variant **p_argptrs, int p_argcount, const Callable::CallError &p_ce) {
 	String err_text;
 
-	if (ce.error == Callable::CallError::CALL_ERROR_INVALID_ARGUMENT) {
-		int errorarg = ce.argument;
+	if (p_ce.error == Callable::CallError::CALL_ERROR_INVALID_ARGUMENT) {
+		int errorarg = p_ce.argument;
 		if (p_argptrs) {
-			err_text = "Cannot convert argument " + itos(errorarg + 1) + " from " + Variant::get_type_name(p_argptrs[errorarg]->get_type()) + " to " + Variant::get_type_name(Variant::Type(ce.expected));
+			err_text = "Cannot convert argument " + itos(errorarg + 1) + " from " + Variant::get_type_name(p_argptrs[errorarg]->get_type()) + " to " + Variant::get_type_name(Variant::Type(p_ce.expected));
 		} else {
-			err_text = "Cannot convert argument " + itos(errorarg + 1) + " from [missing argptr, type unknown] to " + Variant::get_type_name(Variant::Type(ce.expected));
+			err_text = "Cannot convert argument " + itos(errorarg + 1) + " from [missing argptr, type unknown] to " + Variant::get_type_name(Variant::Type(p_ce.expected));
 		}
-	} else if (ce.error == Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS) {
-		err_text = "Method expected " + itos(ce.expected) + " arguments, but called with " + itos(p_argcount);
-	} else if (ce.error == Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS) {
-		err_text = "Method expected " + itos(ce.expected) + " arguments, but called with " + itos(p_argcount);
-	} else if (ce.error == Callable::CallError::CALL_ERROR_INVALID_METHOD) {
+	} else if (p_ce.error == Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS) {
+		err_text = "Method expected " + itos(p_ce.expected) + " argument(s), but called with " + itos(p_argcount);
+	} else if (p_ce.error == Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS) {
+		err_text = "Method expected " + itos(p_ce.expected) + " argument(s), but called with " + itos(p_argcount);
+	} else if (p_ce.error == Callable::CallError::CALL_ERROR_INVALID_METHOD) {
 		err_text = "Method not found";
-	} else if (ce.error == Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL) {
+	} else if (p_ce.error == Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL) {
 		err_text = "Instance is null";
-	} else if (ce.error == Callable::CallError::CALL_ERROR_METHOD_NOT_CONST) {
+	} else if (p_ce.error == Callable::CallError::CALL_ERROR_METHOD_NOT_CONST) {
 		err_text = "Method not const in const instance";
-	} else if (ce.error == Callable::CallError::CALL_OK) {
+	} else if (p_ce.error == Callable::CallError::CALL_OK) {
 		return "Call OK";
 	}
 
@@ -3689,26 +3575,29 @@ String Variant::get_call_error_text(Object *p_base, const StringName &p_method, 
 	return "'" + base_text + String(p_method) + "': " + err_text;
 }
 
-String Variant::get_callable_error_text(const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Callable::CallError &ce) {
+String Variant::get_callable_error_text(const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Callable::CallError &p_ce) {
 	Vector<Variant> binds;
-	int args_bound;
-	p_callable.get_bound_arguments_ref(binds, args_bound);
-	if (args_bound <= 0) {
-		return get_call_error_text(p_callable.get_object(), p_callable.get_method(), p_argptrs, MAX(0, p_argcount + args_bound), ce);
+	p_callable.get_bound_arguments_ref(binds);
+
+	int args_unbound = p_callable.get_unbound_arguments_count();
+
+	if (p_argcount - args_unbound < 0) {
+		return "Callable unbinds " + itos(args_unbound) + " arguments, but called with " + itos(p_argcount);
 	} else {
 		Vector<const Variant *> argptrs;
-		argptrs.resize(p_argcount + binds.size());
-		for (int i = 0; i < p_argcount; i++) {
+		argptrs.resize(p_argcount - args_unbound + binds.size());
+		for (int i = 0; i < p_argcount - args_unbound; i++) {
 			argptrs.write[i] = p_argptrs[i];
 		}
 		for (int i = 0; i < binds.size(); i++) {
-			argptrs.write[i + p_argcount] = &binds[i];
+			argptrs.write[i + p_argcount - args_unbound] = &binds[i];
 		}
-		return get_call_error_text(p_callable.get_object(), p_callable.get_method(), (const Variant **)argptrs.ptr(), argptrs.size(), ce);
+		return get_call_error_text(p_callable.get_object(), p_callable.get_method(), (const Variant **)argptrs.ptr(), argptrs.size(), p_ce);
 	}
 }
 
 void Variant::register_types() {
+	_register_variant_gdtypes();
 	_register_variant_operators();
 	_register_variant_methods();
 	_register_variant_setters_getters();
@@ -3722,4 +3611,5 @@ void Variant::unregister_types() {
 	_unregister_variant_setters_getters();
 	_unregister_variant_destructors();
 	_unregister_variant_utility_functions();
+	_unregister_variant_gdtypes();
 }

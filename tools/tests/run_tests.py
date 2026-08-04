@@ -179,6 +179,8 @@ def ensure_ignores_a_display_variable_that_names_nothing():
 
 @test
 def ensure_degrades_instead_of_raising_when_it_cannot_help():
+    if sys.platform not in ("linux", "linux2"):
+        raise Skip("the host has a native window server and does not need Xvfb")
     previous = os.environ.get("DISPLAY")
     os.environ.pop("DISPLAY", None)
     real_which = virtual_display.shutil.which

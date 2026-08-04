@@ -28,11 +28,12 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#ifndef PHYSICAL_BONE_3D_H
-#define PHYSICAL_BONE_3D_H
+#pragma once
 
 #include "scene/3d/physics/physics_body_3d.h"
 #include "scene/3d/skeleton_3d.h"
+
+class PhysicalBoneSimulator3D;
 
 class PhysicalBone3D : public PhysicsBody3D {
 	GDCLASS(PhysicalBone3D, PhysicsBody3D);
@@ -82,8 +83,8 @@ public:
 		virtual bool _get(const StringName &p_name, Variant &r_ret) const;
 		virtual void _get_property_list(List<PropertyInfo> *p_list) const;
 
-		real_t swing_span = Math_PI * 0.25;
-		real_t twist_span = Math_PI;
+		real_t swing_span = Math::PI * 0.25;
+		real_t twist_span = Math::PI;
 		real_t bias = 0.3;
 		real_t softness = 0.8;
 		real_t relaxation = 1.;
@@ -97,8 +98,8 @@ public:
 		virtual void _get_property_list(List<PropertyInfo> *p_list) const;
 
 		bool angular_limit_enabled = false;
-		real_t angular_limit_upper = Math_PI * 0.5;
-		real_t angular_limit_lower = -Math_PI * 0.5;
+		real_t angular_limit_upper = Math::PI * 0.5;
+		real_t angular_limit_lower = -Math::PI * 0.5;
 		real_t angular_limit_bias = 0.3;
 		real_t angular_limit_softness = 0.9;
 		real_t angular_limit_relaxation = 1.;
@@ -155,8 +156,6 @@ public:
 		virtual void _get_property_list(List<PropertyInfo> *p_list) const;
 
 		SixDOFAxisData axis_data[3];
-
-		SixDOFJointData() {}
 	};
 
 private:
@@ -169,7 +168,7 @@ private:
 	Transform3D joint_offset;
 	RID joint;
 
-	Skeleton3D *parent_skeleton = nullptr;
+	ObjectID simulator_id;
 	Transform3D body_offset;
 	Transform3D body_offset_inverse;
 	bool simulate_physics = false;
@@ -198,7 +197,7 @@ protected:
 	bool _get(const StringName &p_name, Variant &r_ret) const;
 	void _get_property_list(List<PropertyInfo> *p_list) const;
 	void _notification(int p_what);
-	GDVIRTUAL1(_integrate_forces, PhysicsDirectBodyState3D *)
+	GDVIRTUAL1(_integrate_forces, RequiredParam<PhysicsDirectBodyState3D>)
 	static void _body_state_changed_callback(void *p_instance, PhysicsDirectBodyState3D *p_state);
 	void _body_state_changed(PhysicsDirectBodyState3D *p_state);
 
@@ -206,14 +205,18 @@ protected:
 
 private:
 	void _sync_body_state(PhysicsDirectBodyState3D *p_state);
-	static Skeleton3D *find_skeleton_parent(Node *p_parent);
 
 	void _update_joint_offset();
 	void _fix_joint_offset();
 	void _reload_joint();
 
+	void _update_simulator_path();
+
 public:
 	void _on_bone_parent_changed();
+
+	PhysicalBoneSimulator3D *get_simulator() const;
+	Skeleton3D *get_skeleton() const;
 
 	void set_linear_velocity(const Vector3 &p_velocity);
 	Vector3 get_linear_velocity() const override;
@@ -231,10 +234,13 @@ public:
 #endif
 
 	const JointData *get_joint_data() const;
-	Skeleton3D *find_skeleton_parent();
 
 	int get_bone_id() const {
 		return bone_id;
+	}
+
+	RID get_joint_rid() const {
+		return joint;
 	}
 
 	void set_joint_type(JointType p_joint_type);
@@ -302,5 +308,3 @@ private:
 
 VARIANT_ENUM_CAST(PhysicalBone3D::JointType);
 VARIANT_ENUM_CAST(PhysicalBone3D::DampMode);
-
-#endif // PHYSICAL_BONE_3D_H

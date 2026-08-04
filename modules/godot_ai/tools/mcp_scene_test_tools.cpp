@@ -54,6 +54,7 @@
 #include "../mcp_tool_registry.h"
 
 #include "core/io/dir_access.h"
+#include "core/object/callable_mp.h"
 #include "core/os/os.h"
 #include "core/variant/array.h"
 
