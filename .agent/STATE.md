@@ -35,6 +35,10 @@ debugger channel silently drops messages over 8 MiB. Whole-window function total
 come from the game's accumulated `servers:profile_total`; both replies carry a
 reading guide with jq recipes. Verified by 3 new doctest cases and a live e2e
 capture (316 records, 163 KB, all five streams, stop-before-start refused).
+The game-production template teaches the workflow (tool table, performance
+testing doctrine, an evidence bullet in the Definition of Done), and
+`misc/godot_ai/skills/performance-profiling/` ships it as a skill with a full
+export-format reference beside it.
 
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;

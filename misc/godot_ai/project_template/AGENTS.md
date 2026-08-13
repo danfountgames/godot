@@ -123,7 +123,7 @@ confidence.
 | Play mode | `Godot_PlayCurrentScene`, `Godot_PlayMainScene`, `Godot_StopPlaying` |
 | **Real input** | `Godot_SendPointerInput`, `Godot_SendKeyInput`, `Godot_SendTouchInput`, `Godot_SendGamepadInput`, `Godot_GetInputTrace` |
 | Running game | `Godot_GetRuntimeSceneTree`, `Godot_GetRuntimeProperty`, `Godot_SetRuntimeProperty`, `Godot_GetRuntimeNodeInfo`, `Godot_WaitForRuntimeCondition`, `Godot_GetRuntimeErrors`, `Godot_GetGameWindowInfo`, `Godot_SetGameWindowSize` |
-| Performance | `Godot_GetPerformanceMetrics`, `Godot_ProfileWindow` |
+| Performance | `Godot_GetPerformanceMetrics`, `Godot_ProfileWindow`; the full profiler as a windowed capture: `Godot_StartProfiler`, `Godot_GetProfilerStatus`, `Godot_StopProfiler` |
 | Audio | `Godot_GetAudioState`, `Godot_DetectAudioStacking` |
 | Pace | `Godot_SetTimeScale` |
 | Output | `Godot_ReadOutputLog` |
@@ -1156,9 +1156,30 @@ object and node counts and draw calls — one call is one sample. For a judgemen
 `Godot_ProfileWindow`: it measures a window of frames and reports the mean *and the
 worst*, and with `budget_frame_ms` returns a verdict. Judge on the worst. A mean that
 meets a budget while one frame in sixty takes 40ms is a mean hiding a stutter the
-player can feel. Load, import and transition times still need instrumentation you add. Use the specification's budgets; if none are supplied, choose
-reasonable target-platform budgets, record them, and validate on representative
-hardware.
+player can feel.
+
+When a budget fails — or any number needs a *why* — capture the full profiler:
+`Godot_StartProfiler`, reproduce the heavy moment with real input, `Godot_StopProfiler`.
+The stop reply's summary names the top script functions by self time, the per-server
+category costs, the GPU passes, and the CPU and video memory movement across the
+window; the bulk streams to a JSON Lines export that both replies name, along with a
+reading guide and `jq` recipes for drilling in. Rules that keep a capture honest:
+profile the reproduction, not an idle scene — the window is an explicit start/stop
+precisely so you can drive the game while it records; capture at time scale 1, because
+a window taken at 2x is not evidence about pacing; treat `partial: true` as the
+shortened window it is rather than the whole-window truth; and after a fix, re-capture
+the *same* reproduction and compare summaries — a fix without a second capture is a
+hypothesis. For a suspected leak, hold a longer window over repeated gameplay and read
+`summary.cpu_memory.static_delta_bytes` and `summary.gpu_memory.video_mem_delta_bytes`;
+the closing VRAM snapshot lists resources largest-first, so the culprit has a name.
+Exports are pruned to the newest ten — copy anything that must survive into the
+evidence folder. The repository ships a `performance-profiling` skill that teaches
+this workflow; copy it into `res://ai_skills/` and allow it by name to hand it to any
+client.
+
+Load, import and transition times still need instrumentation you add. Use the
+specification's budgets; if none are supplied, choose reasonable target-platform
+budgets, record them, and validate on representative hardware.
 
 ---
 
@@ -1386,6 +1407,8 @@ Do not ask for approval to continue. Do not report a feature complete without ev
 ## Performance and platform
 
 - Representative gameplay meets documented or recorded targets.
+- Where a budget failed and was fixed, the profiler capture exports behind the
+  diagnosis and the re-measurement are kept as evidence, not just the final number.
 - Required resolutions and input methods have been tested.
 - Required platform builds have been produced where the environment supports them.
 - Unavailable verification is identified honestly rather than marked passing.
