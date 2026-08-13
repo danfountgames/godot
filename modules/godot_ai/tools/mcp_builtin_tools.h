@@ -72,4 +72,7 @@ void mcp_register_editor_ui_tools();
 // Discovering and running the project's own test scenes.
 void mcp_register_scene_test_tools();
 
+// Windowed full-profiler captures of the running game, exported to a file.
+void mcp_register_profiler_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

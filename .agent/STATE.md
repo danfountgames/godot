@@ -25,9 +25,20 @@ against a running editor.
 
 ## Current vertical slice
 
+S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
+`Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
+engine's own debugger profiler stream (`mcp_profiler_recorder.{h,cpp}` listening on
+`ScriptEditorDebugger`'s `debug_data` signal): per-function script times, server
+categories, GPU pass deltas, 1 Hz monitors, CPU and video memory with per-resource
+VRAM snapshots, exported as JSON Lines to `user://godot_ai_profiles/` because the
+debugger channel silently drops messages over 8 MiB. Whole-window function totals
+come from the game's accumulated `servers:profile_total`; both replies carry a
+reading guide with jq recipes. Verified by 3 new doctest cases and a live e2e
+capture (316 records, 163 KB, all five streams, stop-before-start refused).
+
 S-17 (in progress): closing the gap between what the game-production template asks for
 and what the interface provides. `docs/godot-ai-agent-interface-spec.md` breaks it down;
-`.agent/INTERFACE_LEDGER.md` tracks it. 60 tools are advertised over `tools/list`.
+`.agent/INTERFACE_LEDGER.md` tracks it. 63 tools are advertised over `tools/list` (the profiler capture slice added three).
 Group I is complete: the editor's own
 interface is listable (`Godot_ListWindows`), addressable by what it says
 (`Godot_FindControl`) and actionable (`Godot_SendEditorInput`). Group B is complete too:
@@ -90,7 +101,18 @@ virtual display and the editor's render-capability reporting.
 
 ## Last verified state
 
-All of the following on the current working tree, in one sweep:
+On the current working tree with the S-18 profiler slice (2026-08-13, native macOS
+arm64):
+
+- `python3 tools/relay/tests/run_tests.py` → 64/64 pass.
+- Module suite (`--test-case="*[godot_ai]*"`, run from `/tmp`) → 74 cases,
+  526 assertions, all pass.
+- `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on the real
+  display, including the new profiler-capture block.
+- The full engine suite, `tools/tests`, `run_editor_ui_e2e.py` and the headless
+  e2e mode were not re-run for this slice.
+
+From the earlier full sweep (predating S-18; counts are of that time):
 
 - `python3 tools/relay/tests/run_tests.py` → 59/59 pass.
 - `python3 tools/tests/run_tests.py` → 16/16 pass (the virtual display).
@@ -108,7 +130,7 @@ All of the following on the current working tree, in one sweep:
   script starts itself, including a real 1152x648 screenshot, a running game's scene
   tree (`root > Main > Player, Hud, Field, Target, EnemySpawner`), a runtime edit that
   leaves the scene file byte-identical, and a question answered by clicking its dialog.
-  60 tools are advertised over `tools/list`.
+  63 tools are advertised over `tools/list` (the profiler capture slice added three).
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass, with the
   visual tools refusing as they should.
 - Native macOS arm64 editor build with Vulkan/Metal and OpenGL enabled →
@@ -123,7 +145,11 @@ All of the following on the current working tree, in one sweep:
 
 ## Working-tree expectations
 
-Clean. Everything is committed and pushed. Scratch material for the end-to-end run
+The S-18 profiler slice is committed and pushed. Three pre-existing uncommitted
+changes from the documentation-captures work remain deliberately unstaged, waiting
+for their author's session: the X4/X5 evidence rewrite in `.agent/SPEC_LEDGER.md`,
++258 lines in `modules/godot_ai/tools/mcp_editor_ui_tools.cpp`, and the untracked
+`tools/relay/tests/call_running_editor.py`. Scratch material for the end-to-end run
 lives outside the repository, under the session scratchpad.
 
 ## Active failures

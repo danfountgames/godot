@@ -1770,6 +1770,104 @@ def run(editor_binary, display):
                       "the failing verdict does not name the worst frame: %r" % strict)
                 print("PASS Godot_ProfileWindow judges the worst frame against a budget")
 
+                # --- the full profiler: start, drive, stop, read the export -------
+                # Godot_ProfileWindow answers "how slow"; the capture answers "why".
+                # The window is explicit because the point is to drive the game while
+                # it records; the bulk lands in a file because a capture is megabytes.
+                reply = call({"jsonrpc": "2.0", "id": 940, "method": "tools/call",
+                              "params": {"name": "Godot_GetProfilerStatus",
+                                         "arguments": {}}})
+                check(reply["result"]["structuredContent"]["state"] == "idle",
+                      "the profiler is not idle before the capture: %r"
+                      % reply["result"]["structuredContent"])
+
+                reply = call({"jsonrpc": "2.0", "id": 941, "method": "tools/call",
+                              "params": {"name": "Godot_StopProfiler", "arguments": {}}})
+                check(refused(reply), "stopping with nothing recording did not refuse")
+                check("Godot_StartProfiler" in refusal_text(reply),
+                      "the refusal does not say which tool starts a capture: %s"
+                      % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 942, "method": "tools/call",
+                              "params": {"name": "Godot_StartProfiler",
+                                         "arguments": {"max_seconds": 60,
+                                                       "label": "e2e"}}})
+                check(not refused(reply), "starting the profiler failed: %s"
+                      % refusal_text(reply))
+                started = reply["result"]["structuredContent"]
+                check(started["export_path"].startswith("user://godot_ai_profiles/"),
+                      "the export is not in the shared user directory: %r" % started)
+                check("jq" in started["reading_guide"],
+                      "the start reply carries no reading guide: %r"
+                      % sorted(started.keys()))
+
+                reply = call({"jsonrpc": "2.0", "id": 943, "method": "tools/call",
+                              "params": {"name": "Godot_StartProfiler",
+                                         "arguments": {}}})
+                check(refused(reply), "a second start did not refuse while recording")
+
+                # The window has to contain something worth profiling: real frames,
+                # at least one monitor sample (they arrive once a second), and a
+                # script that actually runs.
+                time.sleep(2.5)
+
+                reply = call({"jsonrpc": "2.0", "id": 944, "method": "tools/call",
+                              "params": {"name": "Godot_GetProfilerStatus",
+                                         "arguments": {}}})
+                mid = reply["result"]["structuredContent"]
+                check(mid["state"] == "recording", "not recording mid-window: %r" % mid)
+                check(mid["frames"] > 10,
+                      "the capture is not receiving profiler frames: %r" % mid)
+
+                reply = call({"jsonrpc": "2.0", "id": 945, "method": "tools/call",
+                              "params": {"name": "Godot_StopProfiler", "arguments": {}}})
+                check(not refused(reply), "stopping the profiler failed: %s"
+                      % refusal_text(reply))
+                capture = reply["result"]["structuredContent"]
+                check(capture["end_reason"] == "stopped",
+                      "an explicit stop reported end_reason %r" % capture["end_reason"])
+                check(capture["partial"] is False,
+                      "a stop with the game alive was partial: %r" % capture)
+                check("jq" in capture["reading_guide"],
+                      "the stop reply carries no reading guide")
+                summary = capture["summary"]
+                check(summary["window"]["frames"] > 10,
+                      "the summary window is empty: %r" % summary["window"])
+                check(summary["top_functions"]["source"] == "accumulated_total",
+                      "the function totals did not come from the whole-window "
+                      "accumulation: %r" % summary["top_functions"])
+                check(summary["frame_ms"]["worst_ms"] >= summary["frame_ms"]["mean_ms"],
+                      "the worst frame is below the mean: %r" % summary["frame_ms"])
+
+                # The export itself: every line parses, the header opens it, the
+                # summary closes it, and the streams the summary claims are there
+                # actually are.
+                export_records = []
+                with open(capture["export_absolute_path"], "r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if line:
+                            export_records.append(json.loads(line))
+                types = [record["type"] for record in export_records]
+                check(types[0] == "header", "the export does not open with a header")
+                check(types[-1] == "summary", "the export does not close with a summary")
+                for expected in ("frame", "mon", "total", "vram", "mem"):
+                    check(expected in types,
+                          "the export has no '%s' record; streams present: %r"
+                          % (expected, sorted(set(types))))
+                frame_record = next(r for r in export_records if r["type"] == "frame")
+                check(frame_record["frame_ms"] > 0,
+                      "a frame record has no frame time: %r" % frame_record)
+                # GPU records exist exactly when the summary says they do, so a
+                # headless run stays honest rather than silently thin.
+                if summary["gpu"].get("frames", 0) > 0:
+                    check("gpu" in types, "the summary counts GPU frames the file lacks")
+                else:
+                    check("note" in summary["gpu"],
+                          "no GPU data and no explanation why: %r" % summary["gpu"])
+                print("PASS the profiler capture exported %d records (%d bytes) and "
+                      "summarized them" % (len(export_records), capture["export_bytes"]))
+
                 reply = call({"jsonrpc": "2.0", "id": 126, "method": "tools/call",
                               "params": {"name": "Godot_GetAudioState"}})
                 check(reply["result"]["isError"] is False,

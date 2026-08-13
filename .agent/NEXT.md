@@ -8,7 +8,7 @@ The interface tranche tracked in `.agent/INTERFACE_LEDGER.md` is finished: **all
 items are VERIFIED**, including the five sub-clauses an audit found the ledger rows had
 glossed over — pointer drag and scroll, touch cancellation, error stack traces, audio
 stacking across a burst, and a save-corruption fixture proven against a game that has
-saves. 60 tools.
+saves. 63 tools after the profiler capture slice.
 
 Nothing in this repository is outstanding that can be done on this machine. New work
 should start from `docs/godot-ai-clone-spec.md`, from

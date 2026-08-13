@@ -32,6 +32,7 @@
 #define MCP_SERVICE_H
 
 #include "mcp_protocol.h"
+#include "mcp_profiler_recorder.h"
 #include "mcp_runtime_bridge.h"
 
 #include "core/io/stream_peer_tcp.h"
@@ -91,6 +92,7 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	MCPApprovalsDialog *approvals_dialog = nullptr;
 	MCPChatDock *chat_dock = nullptr;
 	Ref<MCPRuntimeBridge> runtime_bridge;
+	Ref<MCPProfilerRecorder> profiler_recorder;
 
 	Vector<OutgoingRequest> outgoing;
 	int64_t next_outgoing_id = 1;

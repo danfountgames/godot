@@ -117,6 +117,9 @@ void MCPService::_notification(int p_what) {
 				if (runtime_bridge.is_valid()) {
 					runtime_bridge->poll();
 				}
+				if (profiler_recorder.is_valid()) {
+					profiler_recorder->poll();
+				}
 				for (int i = peers.size() - 1; i >= 0; i--) {
 					if (peers[i]->connection.is_null() || peers[i]->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
 						_drop_peer(i);
@@ -550,6 +553,10 @@ void MCPService::_register_editor_commands() {
 	// as the editor plugin does.
 	runtime_bridge.instantiate();
 	add_debugger_plugin(runtime_bridge);
+
+	// Windowed profiler captures. Lives beside the bridge because it harvests the
+	// same debugger session the bridge talks through.
+	profiler_recorder.instantiate();
 
 	chat_dock = memnew(MCPChatDock(this));
 	add_control_to_dock(DOCK_SLOT_RIGHT_BL, chat_dock);
