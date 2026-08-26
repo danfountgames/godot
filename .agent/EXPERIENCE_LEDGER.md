@@ -25,12 +25,21 @@ solves with `tools/virtual_display.py`.
 | ID | Requirement | Status | Code | Tests | Evidence | Remaining |
 |---|---|---|---|---|---|---|
 | E1 | Live activity stream from the service | VERIFIED | `mcp_activity.{h,cpp}`, hooks in `mcp_protocol.cpp` | `tests/test_mcp_activity.h` | 10 doctest cases, plus `run_editor_e2e.py`: 51 records after a real session, every outcome in the allowed set, polling by `after_sequence` returns only newer records | **a deferred tool's record closes as `deferred`, not when its work ends** — the protocol hands the caller a token and this layer is never told when it resolves. Closing that loop needs the token plumbed to the service's completion path |
-| E2 | Activity dock renders the stream, in-flight call distinguished | NOT_STARTED | — | — | — | everything |
+| E2 | Activity dock renders the stream, in-flight call distinguished | IMPLEMENTED | `mcp_activity_dock.{h,cpp}` | `run_editor_e2e.py` covers the data it renders | a bottom panel answering the six questions: declared goal, current activity, one row per call with its outcome, what it touched, what changed, Pause/Stop, and Revert on the selected call's checkpoint. Appends rather than rebuilds, so a poll does not throw away the selection | **not verified by pressing its controls.** Rule 1 of this ledger wants `Godot_FindControl` + `Godot_SendEditorInput` under a display, and `xdotool` is not installed here |
 | E3 | Each record names the node paths and `res://` paths it touched | VERIFIED | `MCPActivity::extract_subjects`, `MCPTool::get_activity_subjects` | `tests/test_mcp_activity.h` | doctest for extraction, and `run_editor_e2e.py` asserts real calls carried file subjects — so the dock will have something to reveal | **heuristic for every tool** — the default reads argument keys it does not own. No tool overrides `get_activity_subjects()` yet; the ones that resolve a node by search know a path the arguments never carry |
-| E4 | Selecting a record reveals its subjects in the Scene and FileSystem docks | NOT_STARTED | — | — | — | everything |
-| E5 | Checkpoint scrubber with per-record diff and revert | NOT_STARTED | — | — | — | `Godot_DiffCheckpoint` and `Godot_RestoreCheckpoint` exist; the timeline UI does not |
-| E6 | Activity survives a dock restart, not an editor restart | NOT_STARTED | — | — | — | everything |
+| E4 | Selecting a record reveals its subjects in the Scene and FileSystem docks | IMPLEMENTED | `MCPActivityDock::_reveal_pressed` | — | `EditorInterface::select_file` for `res://` subjects, `edit_node` for node subjects, falling back to a root-relative path | unverified by clicking, same as E2 |
+| E5 | Checkpoint scrubber with per-record diff and revert | PARTLY | `MCPActivityDock::_diff_pressed/_revert_pressed` | — | the selected record's checkpoint lists the files it captured, and Revert restores just that one call, saying so | **no scrubber, deliberately.** The user's build order says a thin dock first; a timeline decorating an unproven workflow comes later |
+| E6 | Activity survives a dock restart, not an editor restart | IMPLEMENTED | `MCPActivity` is process-wide | `tests/test_mcp_activity.h` | the buffer outlives any dock that renders it and dies with the editor, which is the requirement | none |
 | E7 | `Godot_GetActivity` exposes the same stream as a tool | VERIFIED | `tools/mcp_activity_tools.cpp` | `run_editor_e2e.py` | called against a live editor; reply shape, sequence polling and refusal recording all asserted | none |
+
+## C — Intent and control
+
+| ID | Requirement | Status | Code | Tests | Evidence | Remaining |
+|---|---|---|---|---|---|---|
+| C1 | The agent declares a goal and a current activity, stamped on every call | VERIFIED | `mcp_agent_state.{h,cpp}`, `Godot_SetIntent` | `tests/test_mcp_agent_state.h`, `run_editor_e2e.py` | a call made after the intent was set carries it; an earlier record keeps what was true when *it* ran | none |
+| C2 | The user can pause or stop the agent, and it is enforced | VERIFIED | `MCPAgentControl::may_run`, gate in `mcp_protocol.cpp` | `tests/test_mcp_agent_state.h`, `run_editor_e2e.py` | a stopped agent's write is refused **and the file is not on disk**; the refusal names the reason the user gave | none |
+| C3 | Reads that explain what already happened survive a hold | VERIFIED | allowlist in `mcp_agent_state.cpp` | same | `Godot_GetActivity`, `Godot_ListCheckpoints`, `Godot_DiffCheckpoint`, `Godot_GetEditorStatus`, `Godot_ListInstances` still answer while held — otherwise the dock loses its own data source exactly when it matters | none |
+| C4 | The agent cannot release itself | VERIFIED | `Godot_SetAgentControl` has no resume action and is not allowlisted | `run_editor_e2e.py` | a stopped agent calling `Godot_SetAgentControl` is refused. A control the held party can lift is advisory, not a control | none |
 
 ## S — Sessions: record and replay
 

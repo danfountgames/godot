@@ -31,6 +31,7 @@
 #include "mcp_protocol.h"
 
 #include "mcp_activity.h"
+#include "mcp_agent_state.h"
 #include "mcp_checkpoints.h"
 #include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
@@ -288,6 +289,21 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 		}
 		if (arguments_value.get_type() == Variant::DICTIONARY) {
 			arguments = arguments_value;
+		}
+	}
+
+	// The user's stop, checked before permissions and before anything runs. This is the
+	// dock's "can I stop it" and it has to mean it: a held agent performs no tool call
+	// that is not a read explaining what it already did.
+	{
+		String held_reason;
+		if (!MCPAgentControl::may_run(tool_name, tool->is_mutating(), held_reason)) {
+			const String held_summary = tool->describe_invocation(arguments);
+			p_delegate->record_invocation(r_session, tool_name, held_summary, false, held_reason);
+			MCPActivity::refuse(r_session.client_name, tool_name, tool->get_capability(),
+					held_summary, tool->get_activity_subjects(arguments), held_reason);
+			r_response = make_error(p_id, ERROR_PERMISSION_DENIED, held_reason);
+			return true;
 		}
 	}
 

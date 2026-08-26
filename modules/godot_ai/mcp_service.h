@@ -41,6 +41,7 @@
 
 class MCPApprovalsDialog;
 class MCPChatDock;
+class MCPActivityDock;
 class MCPRuntimeBridge;
 
 // Editor-side half of the bridge: a loopback listener that godot-ai-relay connects
@@ -91,6 +92,7 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 
 	MCPApprovalsDialog *approvals_dialog = nullptr;
 	MCPChatDock *chat_dock = nullptr;
+	MCPActivityDock *activity_dock = nullptr;
 	Ref<MCPRuntimeBridge> runtime_bridge;
 	Ref<MCPProfilerRecorder> profiler_recorder;
 

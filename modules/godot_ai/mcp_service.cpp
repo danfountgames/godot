@@ -33,6 +33,7 @@
 #include "mcp_approvals_dialog.h"
 #include "mcp_audit.h"
 #include "mcp_chat.h"
+#include "mcp_activity_dock.h"
 #include "mcp_chat_dock.h"
 #include "mcp_runtime_bridge.h"
 #include "mcp_deferred.h"
@@ -560,6 +561,20 @@ void MCPService::_register_editor_commands() {
 
 	chat_dock = memnew(MCPChatDock(this));
 	add_control_to_dock(DOCK_SLOT_RIGHT_BL, chat_dock);
+
+	// The bottom panel, not a side dock.
+	//
+	// It went in beside the chat first, and that shrank the Inspector enough that
+	// Godot_CaptureInspectorProperty could no longer scroll a property into view - a
+	// tool regression caused purely by where a panel was put. The bottom panel is also
+	// where the workspace specification wants the evidence plane, so this is the smaller
+	// change and the more correct one.
+	//
+	// It does mean the thin dock currently carries both the control plane (pause, stop)
+	// and the evidence plane (records, diff, revert). Splitting them is worth doing once
+	// there is a task hierarchy for the control side to show.
+	activity_dock = memnew(MCPActivityDock);
+	add_control_to_bottom_panel(activity_dock, TTR("Agent Activity"));
 
 	// The Tools menu is where a user goes looking; the command palette is where they
 	// go when they already know what they want.

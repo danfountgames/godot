@@ -1232,6 +1232,33 @@ def run(editor_binary, display):
         print("PASS Godot_GetActivity streams %d records, with the files they touched"
               % len(records))
 
+        # --- declared intent --------------------------------------------------
+        reply = call({"jsonrpc": "2.0", "id": 260, "method": "tools/call",
+                      "params": {"name": "Godot_SetIntent",
+                                 "arguments": {"goal": "Prove the activity stream",
+                                               "activity": "Declaring an intent"}}})
+        check(not refused(reply), "setting intent failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["goal"] == "Prove the activity stream",
+              "the goal did not stick")
+
+        # Poll from here, not from the start: snapshot() returns the *oldest* records
+        # after a sequence, so a bare limit would hand back the beginning of the run and
+        # find an earlier Godot_ListScenes that predates the intent.
+        reply = call({"jsonrpc": "2.0", "id": 261, "method": "tools/call",
+                      "params": {"name": "Godot_GetActivity", "arguments": {"limit": 1}}})
+        before_intent_calls = reply["result"]["structuredContent"]["latest_sequence"]
+
+        call({"jsonrpc": "2.0", "id": 262, "method": "tools/call",
+              "params": {"name": "Godot_ListScenes", "arguments": {}}})
+        reply = call({"jsonrpc": "2.0", "id": 263, "method": "tools/call",
+                      "params": {"name": "Godot_GetActivity",
+                                 "arguments": {"after_sequence": before_intent_calls}}})
+        stamped = [r for r in reply["result"]["structuredContent"]["records"]
+                   if r["tool"] == "Godot_ListScenes"]
+        check(stamped and stamped[-1]["goal"] == "Prove the activity stream",
+              "a call made after the intent was set did not carry it: %r" % stamped)
+        print("PASS Godot_SetIntent stamps every call made after it")
+
         reply = call({"jsonrpc": "2.0", "id": 61, "method": "tools/call",
                       "params": {"name": "Godot_ReadOutputLog",
                                  "arguments": {"contains": "this string appears nowhere"}}})
@@ -2991,6 +3018,43 @@ def run(editor_binary, display):
                       "params": {"name": "Godot_ReadTextFile", "arguments": {"nope": 1}}})
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
+
+        # --- the stop control, last ------------------------------------------
+        # Deliberately the final check that needs a working agent: there is no resume
+        # tool, by design, so once this runs nothing else can act. A control the held
+        # party could lift would be advisory rather than a control.
+        reply = call({"jsonrpc": "2.0", "id": 270, "method": "tools/call",
+                      "params": {"name": "Godot_SetAgentControl",
+                                 "arguments": {"action": "stop",
+                                               "reason": "checking the gate holds"}}})
+        check(not refused(reply), "stopping the agent failed: %s" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 271, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": "res://should_not_exist.txt",
+                                               "text": "the gate should have refused this"}}})
+        check(refused(reply), "a stopped agent was allowed to write a file")
+        check("checking the gate holds" in refusal_text(reply),
+              "the refusal does not say why it was stopped: %r" % refusal_text(reply))
+        check(not os.path.exists(os.path.join(project, "should_not_exist.txt")),
+              "the refused write reached the disk anyway")
+
+        # Reads that explain what already happened still work, or the dock loses its own
+        # data source at the moment it matters most.
+        reply = call({"jsonrpc": "2.0", "id": 272, "method": "tools/call",
+                      "params": {"name": "Godot_GetActivity", "arguments": {"limit": 3}}})
+        check(not refused(reply), "a stopped agent could not read its own activity")
+        control = reply["result"]["structuredContent"]["control"]
+        check(control["state"] == "stopped", "the stream does not report the hold: %r" % control)
+        check("checking the gate holds" in control["reason"],
+              "the stream does not carry the reason: %r" % control)
+
+        # And it cannot let itself go.
+        reply = call({"jsonrpc": "2.0", "id": 273, "method": "tools/call",
+                      "params": {"name": "Godot_SetAgentControl",
+                                 "arguments": {"action": "pause"}}})
+        check(refused(reply), "a stopped agent could still change its own control state")
+        print("PASS a stopped agent is genuinely stopped, and cannot release itself")
 
         exit_code, stray_stdout, _ = relay.finish()
         check(exit_code == 0, "relay exited with %d" % exit_code)

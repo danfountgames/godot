@@ -30,6 +30,8 @@
 
 #include "mcp_activity.h"
 
+#include "mcp_agent_state.h"
+
 #include "core/os/mutex.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
@@ -156,6 +158,10 @@ MCPActivity::Id MCPActivity::begin(const String &p_client, const String &p_tool,
 	record["capability"] = mcp_capability_to_string(p_capability);
 	record["summary"] = p_summary;
 	record["subjects"] = p_subjects.duplicate();
+	// What the agent said it was doing when it made this call. Declared, not inferred -
+	// the dock shows it beside what the call actually did, and the two can disagree.
+	record["goal"] = MCPAgentIntent::get_goal();
+	record["intent"] = MCPAgentIntent::get_activity();
 	record["started"] = Time::get_singleton()->get_datetime_string_from_system(true);
 	record["outcome"] = "running";
 	record["detail"] = String();
