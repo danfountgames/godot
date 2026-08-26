@@ -30,6 +30,7 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "../mcp_editor_refresh.h"
 #include "../mcp_tool_registry.h"
 
 #include "../mcp_paths.h"
@@ -581,8 +582,9 @@ public:
 			r_error.set(MCPToolError::FAILED, vformat("could not write '%s'", resolved.res_path));
 			return Dictionary();
 		}
-		if (EditorFileSystem::get_singleton()) {
-			EditorFileSystem::get_singleton()->update_file(resolved.res_path);
+		// Not a null check: the singleton can exist outside the tree. See mcp_editor_refresh.h.
+		if (MCPEditorRefresh::can_refresh()) {
+			MCPEditorRefresh::update_file(resolved.res_path);
 		}
 
 		bool opened = false;

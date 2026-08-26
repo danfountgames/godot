@@ -31,6 +31,7 @@
 #include "mcp_checkpoints.h"
 
 #include "mcp_paths.h"
+#include "mcp_editor_refresh.h"
 #include "mcp_service.h"
 
 #include "core/config/project_settings.h"
@@ -271,8 +272,9 @@ bool MCPCheckpoints::restore(const String &p_id, int &r_restored, int &r_removed
 		}
 
 #ifdef TOOLS_ENABLED
-		if (EditorFileSystem::get_singleton()) {
-			EditorFileSystem::get_singleton()->update_file(resolved.res_path);
+		// Not a null check: the singleton can exist outside the tree. See mcp_editor_refresh.h.
+		if (MCPEditorRefresh::can_refresh()) {
+			MCPEditorRefresh::update_file(resolved.res_path);
 		}
 #endif
 	}

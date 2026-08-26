@@ -3815,6 +3815,15 @@ EditorFileSystem::EditorFileSystem() {
 }
 
 EditorFileSystem::~EditorFileSystem() {
+	// The constructor sets `singleton = this`; leaving it set here hands every later
+	// `get_singleton()` a pointer to freed memory. Tests that create and destroy an
+	// EditorFileSystem (modules/gltf, modules/gdscript LSP) made that reachable in the
+	// same process: afterwards the usual `if (EditorFileSystem::get_singleton())` guard
+	// passes and the caller works on a dead object. It surfaced as an intermittent
+	// SIGSEGV deep inside `scan_changes()` -> `set_process()` -> a dangling SceneTree.
+	if (singleton == this) {
+		singleton = nullptr;
+	}
 	memdelete(filesystem);
 	filesystem = nullptr;
 	ResourceSaver::set_get_resource_id_for_path(nullptr);

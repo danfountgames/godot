@@ -26,12 +26,21 @@ document in the repository).
 in `.agent/EXPERIENCE_LEDGER.md`. The problem it addresses is not missing capability —
 72 tools exist and nearly all are verified — but **legibility and composition**: no
 interface shows the agent working, and nothing strings the primitives into a workflow.
-Nothing in the tranche is started. Q1 (build on 4.8) gates all of it.
+Started. Q1 (build the engine on 4.8) is done and was the gate; E1, E3 and E7 — the
+live activity stream and `Godot_GetActivity` — are IMPLEMENTED, as is Q3.
 
 M1 (foundation and protocol) and M2 (the agent interface) are both complete; see the
 spec ledger and interface ledger for their evidence.
 
 ## Current vertical slice
+
+S-19 (in progress): the agent-experience tranche, opened by
+`docs/godot-ai-agent-experience-spec.md` and tracked in `.agent/EXPERIENCE_LEDGER.md`.
+Landed so far: the live activity stream (`mcp_activity.{h,cpp}`, hooked into
+`mcp_protocol.cpp`, read back by `Godot_GetActivity`) and both write tools accepting
+`text` and `content` interchangeably. Building the engine on 4.8 for the first time
+since the merge also turned up and fixed a real engine bug — see *Active failures*.
+Next in order: the Activity dock (E2/E4/E5), then session record and replay (S1–S8).
 
 S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
 `Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
@@ -113,13 +122,21 @@ virtual display and the editor's render-capability reporting.
 
 ## Last verified state
 
-On this Linux container at 4.8-dev (2026-08-26), after the engine merge:
+On this Linux container at 4.8-dev (2026-08-26), with the S-19 slice:
 
-- `tools/relay/build.sh` → builds clean.
+- Editor builds clean on 4.8 — 9m46s from scratch, SCU, 4 cores, 0 errors. This is the
+  first build since the merge; the module needed no source changes to link.
+- Module suite (`--test-case="*[godot_ai]*"`, from `/tmp`) → **85 cases, 575
+  assertions**, all pass. On the merged code before this slice it was 74/526, matching
+  the 4.3 numbers exactly, so the merge caused no module regression.
 - `python3 tools/relay/tests/run_tests.py` → **64/64 pass**.
-- The engine has **not** been built or tested on this tree since the 4.8 merge. The
-  module compiles against nested-layout includes by inspection only; nothing here has
-  linked it. Build before trusting any editor-side claim below.
+- Full engine suite from the repository root → **1502 cases**, one failure:
+  `[IP] resolve_hostname`, which needs outbound DNS this container does not have and
+  fails identically on the unmodified tree. **Ten consecutive runs**, after the
+  `EditorFileSystem` singleton fix; the pre-fix binary crashed eight times in ten.
+- Not re-run for this slice: `tools/tests`, `run_editor_e2e.py`,
+  `run_editor_ui_e2e.py`. The end-to-end scripts are what would move E7 and Q3 from
+  IMPLEMENTED to VERIFIED.
 
 On the working tree with the S-18 profiler slice (2026-08-13, native macOS
 arm64), at the pre-merge 4.3 baseline:
@@ -178,19 +195,19 @@ until you make them. `tools/relay/build.sh` takes seconds; the editor takes ~8 m
 
 None.
 
+The intermittent full-suite SIGSEGV that Q1 turned up is **fixed**: `EditorFileSystem`'s
+destructor never cleared its own singleton, so after any test that created and destroyed
+one (`modules/gltf`, the GDScript LSP tests) `get_singleton()` returned freed memory and
+the standard null guard passed. Ten consecutive full-suite runs are clean where the
+pre-fix binary crashed eight times in ten. Details and the three lessons are in
+`.agent/EXPERIENCE_LEDGER.md`.
+
+One failure remains and is environmental: `[IP] resolve_hostname` fails because this
+container has no outbound DNS. It fails identically on the unmodified tree.
+
 ## In-flight operation
 
-**First editor build on the 4.8 tree** (2026-08-26, Linux container). This is the
-build that has never happened since the merge, so it is also the real test of whether
-`modules/godot_ai/` still links against 4.8.
-
-```sh
-scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no \
-      scu_build=yes tests=yes -j4
-```
-
-Log: `/tmp/claude-0/-home-user-godot/91ff8c38-a753-5827-add6-7012c7a63d9c/scratchpad/build48.log`.
-If this session dies mid-build, re-run the command above; SCons resumes incrementally.
+None.
 
 ## Risks
 

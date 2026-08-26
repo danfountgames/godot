@@ -32,6 +32,7 @@
 
 #include "core/object/script_language.h"
 
+#include "../mcp_editor_refresh.h"
 #include "../mcp_paths.h"
 #include "../mcp_tool_registry.h"
 
@@ -313,14 +314,17 @@ public:
 
 		// Make the change visible to the editor immediately, so a following tool call
 		// or a human looking at the FileSystem dock sees the same project state.
-		// Null in headless runs and unit tests, where there is nothing to refresh.
-		if (EditorFileSystem::get_singleton()) {
-			EditorFileSystem::get_singleton()->update_file(resolved.res_path);
+		// Does nothing when there is no editor to refresh - and "no editor" means the
+		// filesystem node is not in a tree, not merely that the singleton is null. This
+		// comment used to say the latter, and the difference was a segfault; see
+		// mcp_editor_refresh.h.
+		if (MCPEditorRefresh::can_refresh()) {
+			MCPEditorRefresh::update_file(resolved.res_path);
 			if (created) {
 				// `update_file` locates the file's *directory* first and returns silently
 				// when it cannot - which is exactly what happens to the first file written
 				// into a folder the editor has never scanned.
-				EditorFileSystem::get_singleton()->scan_changes();
+				MCPEditorRefresh::scan_changes();
 			}
 		}
 

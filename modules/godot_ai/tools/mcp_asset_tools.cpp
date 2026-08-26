@@ -40,6 +40,7 @@
 #include "../mcp_checkpoints.h"
 #include "../mcp_deferred.h"
 #include "../mcp_paths.h"
+#include "../mcp_editor_refresh.h"
 #include "../mcp_tool_registry.h"
 
 #include "core/io/dir_access.h"
@@ -272,9 +273,8 @@ public:
 				dir->remove(sidecar);
 			}
 		}
-		if (EditorFileSystem::get_singleton()) {
-			EditorFileSystem::get_singleton()->scan_changes();
-		}
+		// Not a null check: the singleton can exist outside the tree. See mcp_editor_refresh.h.
+		MCPEditorRefresh::scan_changes();
 
 		Dictionary result;
 		result["deleted"] = true;
