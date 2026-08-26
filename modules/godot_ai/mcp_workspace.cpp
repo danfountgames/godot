@@ -38,6 +38,8 @@
 #include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/run/editor_run.h"
+#include "editor/run/editor_run_bar.h"
+#include "editor/settings/editor_settings.h"
 #include "editor/run/embedded_process.h"
 #include "scene/gui/separator.h"
 #include "scene/main/window.h"
@@ -299,7 +301,24 @@ void MCPWorkspace::refresh() {
 		summary->set_text(TTR("No agent instances. The agent will open them here when it runs a game."));
 	} else {
 		// A sentence, not a row of counts.
-		summary->set_text(vformat(TTR("%d running, %d recorded in this session."), live, total));
+		String text = vformat(TTR("%d running, %d recorded in this session."), live, total);
+
+		// A game the user started with Embed on Play turned off is a top-level window.
+		// The editor cannot put it behind itself - that is the window manager's business
+		// - so it floats over these tiles, and the first report of "embedded games draw
+		// over the tile chrome" turned out to be exactly this and nothing else. Say so
+		// rather than let it look like the workspace is broken.
+		if (live > 0 && EditorSettings::get_singleton() && EditorRunBar::get_singleton() &&
+				EditorRunBar::get_singleton()->is_playing()) {
+			const bool embed_on_play = (bool)EditorSettings::get_singleton()->get_project_metadata(
+					"game_view", "embed_on_play", true);
+			if (!embed_on_play) {
+				text += " ";
+				text += TTR("Your own run is not embedded, so its window floats over these tiles. Turn on Embed on Play in the Game workspace to keep it in place.");
+			}
+		}
+
+		summary->set_text(text);
 	}
 	if (stop_all_button) {
 		stop_all_button->set_disabled(live == 0);

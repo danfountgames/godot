@@ -16,6 +16,7 @@ alive" and "three games are visible side by side" are different claims.
 """
 import base64
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,36 @@ import virtual_display  # noqa: E402
 import run_editor_e2e as e2e  # noqa: E402
 
 FAILURES = []
+
+
+def x_window_geometries(display):
+    """Every *viewable* game window on the display, as (x, y, width, height).
+
+    The map state is asked for per window. `xwininfo -root -tree` walks the whole tree
+    and lists unmapped windows exactly like mapped ones, so reading only the tree
+    reports a hidden game as still on screen - which is how a floating window once got
+    filed as an embedding defect.
+    """
+    environment = display.environment()
+    listing = subprocess.run(["xwininfo", "-root", "-tree", "-int"],
+                             capture_output=True, text=True, env=environment).stdout
+    pattern = re.compile(
+        r"^\s*(0x[0-9a-fA-F]+|\d+)\s.*?\s(\d+)x(\d+)\+-?\d+\+-?\d+\s+\+(-?\d+)\+(-?\d+)\s*$")
+    geometries = []
+    for line in listing.splitlines():
+        found = pattern.match(line)
+        if not found:
+            continue
+        identifier, width, height, x, y = found.groups()
+        width, height, x, y = int(width), int(height), int(x), int(y)
+        if width < 80 or height < 80 or width > 1400:
+            continue
+        detail = subprocess.run(["xwininfo", "-id", identifier, "-stats"],
+                                capture_output=True, text=True, env=environment).stdout
+        if "IsViewable" not in detail:
+            continue
+        geometries.append((x, y, width, height))
+    return geometries
 
 
 def check(condition, message):
@@ -58,7 +89,8 @@ def main():
     environment["GODOT_AI_AUTO_APPROVE"] = "1"
 
     editor = subprocess.Popen(
-        [editor_binary, "--path", project, "--editor"] + display.godot_arguments(),
+        [editor_binary, "--path", project, "--editor",
+         "--resolution", "1560x960", "--position", "0,0"] + display.godot_arguments(),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         env=environment, cwd=workspace_dir,
     )
@@ -130,6 +162,54 @@ def main():
         check(alive.isdigit() and int(alive) >= (5 if with_user_game else 4),
               "editor%s and three agent instances are all running (%s)"
               % (" + user's game" if with_user_game else "", alive))
+
+        # Where the tiles actually ended up, once the grid has settled. The launch reply
+        # reports the rect a game was *asked* for; if the embedder never followed the
+        # tile when later tiles changed the layout, these two disagree and the games
+        # overlap - which is W8.
+        found = call({"jsonrpc": "2.0", "id": 29, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"class": "MCPWorkspaceTile", "limit": 10}}})
+        tile_rects = found.get("result", {}).get("structuredContent", {}).get("matches", [])
+        for entry in tile_rects:
+            print("  tile now at x=%s y=%s %sx%s" % (entry["x"], entry["y"],
+                                                     entry["width"], entry["height"]))
+        overlapping = []
+        for i in range(len(tile_rects)):
+            for j in range(i + 1, len(tile_rects)):
+                a, b = tile_rects[i], tile_rects[j]
+                if (a["x"] < b["x"] + b["width"] and b["x"] < a["x"] + a["width"] and
+                        a["y"] < b["y"] + b["height"] and b["y"] < a["y"] + a["height"]):
+                    overlapping.append((i, j))
+        check(not overlapping, "the tiles do not overlap each other (%s)" % overlapping)
+
+        # And where the games actually are, from X itself. The embedder controls agreeing
+        # with the tiles proves the editor's intent; only the X geometry proves the
+        # native windows followed. W8 is precisely the gap between those two.
+        embedders = call({"jsonrpc": "2.0", "id": 28, "method": "tools/call",
+                          "params": {"name": "Godot_FindControl",
+                                     "arguments": {"class": "EmbeddedProcess", "limit": 10}}})
+        embed_rects = embedders.get("result", {}).get("structuredContent", {}).get("matches", [])
+        for entry in embed_rects:
+            print("  embedder control at x=%s y=%s %sx%s" % (entry["x"], entry["y"],
+                                                             entry["width"], entry["height"]))
+        actual = x_window_geometries(display)
+        for geometry in actual:
+            print("  X window %s" % (geometry,))
+
+        # Every embedder holds exactly one game, and that game is inside it. Windows that
+        # belong to nobody's embedder are not this check's business: a game the user
+        # started without Embed on Play is a top-level window that floats over the
+        # editor on any desktop, and `spike_workspace_overdraw.py` is where that lives.
+        def contained(embedder):
+            return [g for g in actual
+                    if g[0] >= embedder["x"] - 3 and g[1] >= embedder["y"] - 3 and
+                    g[0] + g[2] <= embedder["x"] + embedder["width"] + 3 and
+                    g[1] + g[3] <= embedder["y"] + embedder["height"] + 3]
+
+        occupancy = [len(contained(e)) for e in embed_rects]
+        check(len(embed_rects) == 3 and occupancy == [1, 1, 1],
+              "each of the three tiles holds exactly one embedded game (%s)" % (occupancy,))
 
         shot, error = tool(31, "Godot_CaptureEditorWindow", {})
         reply = call({"jsonrpc": "2.0", "id": 32, "method": "tools/call",

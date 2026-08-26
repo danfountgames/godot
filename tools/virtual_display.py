@@ -81,8 +81,55 @@ def _lock_path(number):
     return "/tmp/.X%d-lock" % number
 
 
+def _lock_holder_alive(number):
+    """True when the process named in `/tmp/.X<n>-lock` still exists.
+
+    The lock file holds the X server's pid, space-padded. A lock naming a pid that has
+    gone is debris.
+    """
+    try:
+        with open(_lock_path(number)) as handle:
+            pid = int(handle.read().strip())
+    except (OSError, ValueError):
+        # Unreadable or malformed: assume it is real rather than stealing a live display.
+        return True
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Someone else's process, so it is alive and not ours to reclaim.
+        return True
+    return True
+
+
+def _reclaim_stale_display(number):
+    """Remove the lock and socket for a display nothing is serving. Returns True if freed.
+
+    Every run that ends without calling `stop()` - a killed test, a crashed script, an
+    interpreter that simply exits - leaves a lock behind, and the number then looks
+    permanently taken. Forty runs later there are no numbers left and the next run
+    reports "all numbers in use" while no X server is running at all. That is exactly
+    what happened here, so freeing debris is done on the way in rather than trusting
+    every caller to clean up on the way out.
+    """
+    if _lock_holder_alive(number) or _display_answers(":%d" % number):
+        return False
+    freed = False
+    for path in (_lock_path(number), _socket_path(number)):
+        with contextlib.suppress(OSError):
+            if os.path.exists(path):
+                os.remove(path)
+                freed = True
+    return freed
+
+
 def _display_is_free(number):
-    return not os.path.exists(_socket_path(number)) and not os.path.exists(_lock_path(number))
+    if not os.path.exists(_socket_path(number)) and not os.path.exists(_lock_path(number)):
+        return True
+    return _reclaim_stale_display(number)
 
 
 def _display_answers(display, environment=None):

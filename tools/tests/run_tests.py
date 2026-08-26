@@ -109,6 +109,43 @@ def two_displays_do_not_collide():
 
 
 @test
+def a_stale_lock_does_not_use_up_a_display_number():
+    """A run that never calls stop() leaves a lock behind. It must not cost a number.
+
+    Every abandoned lock used to make one display number permanently unavailable, and
+    about forty runs later starting a display failed with "all numbers in use" while no
+    X server existed at all.
+    """
+    number = virtual_display.LAST_DISPLAY
+    lock = virtual_display._lock_path(number)
+    if os.path.exists(lock):
+        raise AssertionError("display :%d is genuinely in use; this test needs a free one" % number)
+
+    # A pid that cannot exist, written the way the X server writes it.
+    with open(lock, "w") as handle:
+        handle.write("%10d\n" % 0x7FFFFFF0)
+    try:
+        assert_true(virtual_display._display_is_free(number),
+                    "a lock naming a dead process still counted as in use")
+        assert_true(not os.path.exists(lock), "the stale lock was left on disk")
+    finally:
+        if os.path.exists(lock):
+            os.remove(lock)
+
+
+@test
+def a_live_lock_is_left_alone():
+    """The reclaim must never steal a display from a server that is actually running."""
+    require_x_server()
+    with virtual_display.start(width=320, height=240) as display:
+        number = int(display.display.lstrip(":").split(".")[0])
+        assert_true(not virtual_display._display_is_free(number),
+                    "a running server's display :%d was reported free" % number)
+        assert_true(virtual_display._display_answers(display.display),
+                    "the display stopped answering after the check")
+
+
+@test
 def the_environment_points_children_at_the_display():
     require_x_server()
     with virtual_display.start(width=320, height=240) as display:
