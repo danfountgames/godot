@@ -31,10 +31,26 @@
 #pragma once
 
 #include "core/os/process_id.h"
+#include "core/templates/list.h"
 #include "scene/gui/control.h"
+#include "servers/display/display_server_enums.h"
 
 class ScriptEditorDebugger;
 class Timer;
+
+// Builds the command line a game process needs in order to be embedded in an editor
+// window, and returns it through r_arguments.
+//
+// Extracted from GameView so it has exactly one implementation. Anything that wants to
+// host an embedded game - the Game workspace, or a workspace showing several instances
+// at once - must produce byte-identical arguments, and the way to guarantee that is not
+// to write them twice. It strips the flags that fight embedding (fullscreen, maximized,
+// always-on-top, and any caller-supplied position, resolution or display driver), adds
+// the host window's native handle, and pins the game to the rect it should occupy.
+//
+// p_window is the editor window that will be the parent. p_rect is where the game should
+// sit, in screen coordinates.
+void embedded_process_apply_arguments(List<String> &r_arguments, DisplayServerEnums::WindowID p_window, const Rect2i &p_rect);
 
 class EmbeddedProcessBase : public Control {
 	GDCLASS(EmbeddedProcessBase, Control);

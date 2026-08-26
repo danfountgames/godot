@@ -48,6 +48,24 @@ String EditorRun::get_running_scene() const {
 	return running_scene;
 }
 
+// Registration order is call order. Kept in a function-local static so its lifetime
+// starts on first use rather than at static-initialisation time.
+static List<EditorRunInstanceStarting> &_instance_starting_callbacks() {
+	static List<EditorRunInstanceStarting> callbacks;
+	return callbacks;
+}
+
+void EditorRun::add_instance_starting_callback(EditorRunInstanceStarting p_callback) {
+	ERR_FAIL_NULL(p_callback);
+	if (!_instance_starting_callbacks().find(p_callback)) {
+		_instance_starting_callbacks().push_back(p_callback);
+	}
+}
+
+void EditorRun::remove_instance_starting_callback(EditorRunInstanceStarting p_callback) {
+	_instance_starting_callbacks().erase(p_callback);
+}
+
 Error EditorRun::run(const String &p_scene, const String &p_write_movie, const Vector<String> &p_run_args) {
 	List<String> args;
 
@@ -164,8 +182,8 @@ Error EditorRun::run(const String &p_scene, const String &p_write_movie, const V
 		List<String> instance_args(args);
 		RunInstancesDialog::get_singleton()->get_argument_list_for_instance(i, instance_args);
 		RunInstancesDialog::get_singleton()->apply_custom_features(i);
-		if (instance_starting_callback) {
-			instance_starting_callback(i, instance_args);
+		for (const EditorRunInstanceStarting &callback : _instance_starting_callbacks()) {
+			callback(i, instance_args);
 		}
 
 		if (OS::get_singleton()->is_stdout_verbose()) {

@@ -68,6 +68,20 @@ solves with `tools/virtual_display.py`.
 
 ---
 
+## W — The agent workspace (multi-instance embedding)
+
+Derived from the user's *GodotAI Agent Workspace* specification. Phase Zero is DEC-0011.
+
+| ID | Requirement | Status | Code | Tests | Evidence | Remaining |
+|---|---|---|---|---|---|---|
+| W0 | Prove several game processes can embed at once | VERIFIED | throwaway patch, reverted | manual spike | two games rendered inside one editor window; `.agent/evidence/spike_two_embedded_processes.png` | Linux/X11 only. macOS uses a separate `EmbeddedProcessMacOS` path; Windows and Wayland unmeasured |
+| W1 | One implementation of the embed command line, reusable by any host | IMPLEMENTED | `embedded_process_apply_arguments()` in `editor/run/embedded_process.cpp` | `run_editor_e2e.py` | extracted from `GameView`, which now delegates to it; the end-to-end run still embeds and drives a real game | not yet called by anything but `GameView` |
+| W2 | Several owners can shape a launching instance's arguments | IMPLEMENTED | `EditorRun::add/remove_instance_starting_callback` | `run_editor_e2e.py` | was a single callback slot, so whoever registered last silently displaced the other; now a list called in registration order | no second listener registered yet |
+| W3 | Agent-owned processes are distinguishable from the user's own run | IMPLEMENTED | `mcp_runtime_instances.{h,cpp}` | `tests/test_mcp_runtime_instances.h` | 10 cases: registration before launch, pid binding, one pid cannot be claimed twice, a closed instance keeps its record but releases its pid, grouping, serialisation | nothing launches through it yet |
+| W4 | Debugger control targets one instance instead of broadcasting | IMPLEMENTED | `MCPRuntimeInstances::set_suspended/next_frame/set_time_scale/set_muted` | `tests/test_mcp_runtime_instances.h` | routes by `ScriptEditorDebugger::get_remote_pid()`, the same join `GameView` already uses; refuses rather than broadcasting when it cannot resolve a session | **only unit-tested against the refusal path** — no live editor has yet proven that pausing one instance leaves another running |
+| W5 | A GodotAI main-screen workspace hosting N embedded tiles | NOT_STARTED | — | — | — | everything |
+| W6 | First vertical slice: compare three live runtime variants | NOT_STARTED | — | — | — | everything; depends on W5 |
+
 ## Quick wins, tracked here so they do not get lost
 
 | ID | Item | Status | Notes |

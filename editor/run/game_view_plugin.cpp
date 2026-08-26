@@ -1226,7 +1226,7 @@ void GameView::_notification(int p_what) {
 
 				EditorRunBar::get_singleton()->connect("play_pressed", callable_mp(this, &GameView::_play_pressed));
 				EditorRunBar::get_singleton()->connect("stop_pressed", callable_mp(this, &GameView::_stop_pressed));
-				EditorRun::instance_starting_callback = _instance_starting_static;
+				EditorRun::add_instance_starting_callback(_instance_starting_static);
 				EditorRun::instance_rq_screenshot_callback = _instance_rq_screenshot_static;
 
 				// Listen for project settings changes to update the window size and aspect ratio.
@@ -1316,72 +1316,6 @@ void GameView::_update_arguments_for_instance(int p_idx, List<String> &r_argumen
 		return;
 	}
 
-	// Remove duplicates/unwanted parameters.
-	List<String>::Element *E = r_arguments.front();
-	List<String>::Element *user_args_element = nullptr;
-	HashSet<String> remove_args({ "--position", "--resolution", "--screen" });
-#ifdef MACOS_ENABLED
-	// macOS requires the embedded display driver.
-	remove_args.insert("--display-driver");
-#endif
-
-#ifdef WAYLAND_ENABLED
-	// Wayland requires its display driver.
-	if (DisplayServer::get_singleton()->get_name() == "Wayland") {
-		remove_args.insert("--display-driver");
-	}
-#endif
-
-#ifdef X11_ENABLED
-	// X11 requires its display driver.
-	if (DisplayServer::get_singleton()->get_name() == "X11") {
-		remove_args.insert("--display-driver");
-	}
-#endif
-
-	while (E) {
-		List<String>::Element *N = E->next();
-
-		// For these parameters, we need to also remove the value.
-		if (remove_args.has(E->get())) {
-			r_arguments.erase(E);
-			if (N) {
-				List<String>::Element *V = N->next();
-				r_arguments.erase(N);
-				N = V;
-			}
-		} else if (E->get() == "-f" || E->get() == "--fullscreen" || E->get() == "-m" || E->get() == "--maximized" || E->get() == "-t" || E->get() == "-always-on-top") {
-			r_arguments.erase(E);
-		} else if (E->get() == "--" || E->get() == "++") {
-			user_args_element = E;
-			break;
-		}
-
-		E = N;
-	}
-
-	// Add the editor window's native ID so the started game can directly set it as its parent.
-	List<String>::Element *N = r_arguments.insert_before(user_args_element, "--wid");
-	N = r_arguments.insert_after(N, itos(DisplayServer::get_singleton()->window_get_native_handle(DisplayServerEnums::WINDOW_HANDLE, get_window()->get_window_id())));
-
-#if MACOS_ENABLED
-	N = r_arguments.insert_after(N, "--embedded");
-#endif
-
-#ifdef WAYLAND_ENABLED
-	if (DisplayServer::get_singleton()->get_name() == "Wayland") {
-		N = r_arguments.insert_after(N, "--display-driver");
-		N = r_arguments.insert_after(N, "wayland");
-	}
-#endif
-
-#ifdef X11_ENABLED
-	if (DisplayServer::get_singleton()->get_name() == "X11") {
-		N = r_arguments.insert_after(N, "--display-driver");
-		N = r_arguments.insert_after(N, "x11");
-	}
-#endif
-
 	// Be sure to have the correct window size in the embedded_process control.
 	_update_embed_window_size();
 	Rect2i rect = embedded_process->get_screen_embedded_window_rect();
@@ -1416,10 +1350,10 @@ void GameView::_update_arguments_for_instance(int p_idx, List<String> &r_argumen
 		}
 	}
 
-	N = r_arguments.insert_after(N, "--position");
-	N = r_arguments.insert_after(N, itos(rect.position.x) + "," + itos(rect.position.y));
-	N = r_arguments.insert_after(N, "--resolution");
-	r_arguments.insert_after(N, itos(rect.size.x) + "x" + itos(rect.size.y));
+	// The argument construction itself lives in embedded_process.cpp, so that anything
+	// else hosting an embedded game produces the same command line rather than a
+	// near-copy that drifts.
+	embedded_process_apply_arguments(r_arguments, get_window()->get_window_id(), rect);
 }
 
 void GameView::_window_close_request() {

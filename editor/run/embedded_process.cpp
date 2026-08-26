@@ -189,6 +189,79 @@ int EmbeddedProcess::get_embedded_pid() const {
 	return current_process_id;
 }
 
+void embedded_process_apply_arguments(List<String> &r_arguments, DisplayServerEnums::WindowID p_window, const Rect2i &p_rect) {
+	// Remove duplicates/unwanted parameters.
+	List<String>::Element *E = r_arguments.front();
+	List<String>::Element *user_args_element = nullptr;
+	HashSet<String> remove_args({ "--position", "--resolution", "--screen" });
+#ifdef MACOS_ENABLED
+	// macOS requires the embedded display driver.
+	remove_args.insert("--display-driver");
+#endif
+
+#ifdef WAYLAND_ENABLED
+	// Wayland requires its display driver.
+	if (DisplayServer::get_singleton()->get_name() == "Wayland") {
+		remove_args.insert("--display-driver");
+	}
+#endif
+
+#ifdef X11_ENABLED
+	// X11 requires its display driver.
+	if (DisplayServer::get_singleton()->get_name() == "X11") {
+		remove_args.insert("--display-driver");
+	}
+#endif
+
+	while (E) {
+		List<String>::Element *N = E->next();
+
+		// For these parameters, we need to also remove the value.
+		if (remove_args.has(E->get())) {
+			r_arguments.erase(E);
+			if (N) {
+				List<String>::Element *V = N->next();
+				r_arguments.erase(N);
+				N = V;
+			}
+		} else if (E->get() == "-f" || E->get() == "--fullscreen" || E->get() == "-m" || E->get() == "--maximized" || E->get() == "-t" || E->get() == "-always-on-top") {
+			r_arguments.erase(E);
+		} else if (E->get() == "--" || E->get() == "++") {
+			user_args_element = E;
+			break;
+		}
+
+		E = N;
+	}
+
+	// Add the editor window's native ID so the started game can directly set it as its parent.
+	List<String>::Element *N = r_arguments.insert_before(user_args_element, "--wid");
+	N = r_arguments.insert_after(N, itos(DisplayServer::get_singleton()->window_get_native_handle(DisplayServerEnums::WINDOW_HANDLE, p_window)));
+
+#if MACOS_ENABLED
+	N = r_arguments.insert_after(N, "--embedded");
+#endif
+
+#ifdef WAYLAND_ENABLED
+	if (DisplayServer::get_singleton()->get_name() == "Wayland") {
+		N = r_arguments.insert_after(N, "--display-driver");
+		N = r_arguments.insert_after(N, "wayland");
+	}
+#endif
+
+#ifdef X11_ENABLED
+	if (DisplayServer::get_singleton()->get_name() == "X11") {
+		N = r_arguments.insert_after(N, "--display-driver");
+		N = r_arguments.insert_after(N, "x11");
+	}
+#endif
+
+	N = r_arguments.insert_after(N, "--position");
+	N = r_arguments.insert_after(N, itos(p_rect.position.x) + "," + itos(p_rect.position.y));
+	N = r_arguments.insert_after(N, "--resolution");
+	r_arguments.insert_after(N, itos(p_rect.size.x) + "x" + itos(p_rect.size.y));
+}
+
 void EmbeddedProcess::embed_process(ProcessID p_pid) {
 	if (!window) {
 		return;

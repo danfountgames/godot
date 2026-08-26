@@ -64,7 +64,15 @@ private:
 	String running_scene;
 
 public:
-	inline static EditorRunInstanceStarting instance_starting_callback = nullptr;
+	// Several owners may need to shape the arguments of a launching instance: the Game
+	// workspace claims instance 0 for embedding, and a workspace showing several agent
+	// instances at once claims the others. A single callback slot meant whoever
+	// registered last silently displaced the other, so this is a list and every
+	// registered listener is called in registration order.
+	//
+	// A listener must only touch instances it owns and leave the rest untouched.
+	static void add_instance_starting_callback(EditorRunInstanceStarting p_callback);
+	static void remove_instance_starting_callback(EditorRunInstanceStarting p_callback);
 	inline static EditorRunInstanceRequestScreenshot instance_rq_screenshot_callback = nullptr;
 
 	Status get_status() const;
