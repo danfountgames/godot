@@ -265,3 +265,52 @@ Durable decisions that are not obvious from the resulting code.
   gated on new platform capability. It is gated on an instance registry, per-tile
   embedder hosts, and a debugger router. That is a tractable amount of work against
   three named seams.
+
+## DEC-0012 — The terminal is ported from GodotBeamDev with its lifecycle rewritten
+
+- **Date:** 2026-08-26
+- **Context:** `origin/GodotBeamDev` (and `feature/debug-ai`, `feature/mcp-agent-toggle`)
+  carry `modules/mcp_server/terminal/`: a pty-backed terminal emulator, widget and agent
+  panel that launches Claude Code inside the editor. The user asked for that
+  functionality here and warned it was "very very prone to crashing", specifically around
+  opening and closing instances.
+- **Decision:** Port it in layers, rewriting the process lifecycle rather than copying it.
+  `modules/godot_ai/terminal/mcp_pty.{h,cpp}` is the first layer.
+- **The crash, found by reading `PTYManager`:**
+  `bool PTYManager::is_running() const` called `waitpid(child_pid, &status, WNOHANG)`
+  every frame from `NOTIFICATION_INTERNAL_PROCESS`. When the child had exited that call
+  **reaped** it — but because the method was `const` it could not clear `child_pid`. The
+  pid was then free for the kernel to reuse. A later `kill_child()` sent SIGTERM and then
+  SIGKILL to that same number, which by then could belong to **an unrelated process on
+  the machine**. Nothing about it is deterministic, which fits "prone to crashing" better
+  than any single reproducible fault.
+- **What the rewrite does differently:**
+  - Reaping happens in `poll()`, which is not const, and clears `child_pid` in the same
+    breath. After a reap there is no pid to signal — a stale signal is unrepresentable
+    rather than merely avoided.
+  - `is_running()` reads a flag. No syscall, no state change.
+  - Termination is asynchronous. The original blocked the editor's main thread in
+    `usleep(100000)` between SIGTERM and SIGKILL, per terminal closed. `request_stop()`
+    signals and returns; `poll()` escalates when the grace period is up.
+  - `close()` is idempotent. The original's `stop_process()` called `kill_child()` and
+    then `close_pty()`, which called `kill_child()` again.
+  - The one blocking wait left is in `close()`, after SIGKILL, from the destructor. That
+    is the right place: leaking a child process is worse than a brief stall.
+- **A second bug, found by testing rather than reading.** The child inherits the parent's
+  signal mask, and dispositions set to `SIG_IGN` survive `exec`. The editor ignores or
+  blocks signals for its own reasons, so a shell started under the original code came up
+  with **SIGTERM already ignored** — and POSIX says a shell cannot install a trap for a
+  signal it inherited as ignored. Every polite stop was therefore a no-op and every
+  terminal had to be SIGKILLed. Measured directly: without the reset,
+  `trap 'exit 42' TERM` never fires; with it, the child exits 42. The child now clears its
+  signal mask and resets every disposition to `SIG_DFL` before `exec`.
+- **A third thing, about testing signals.** Signalling straight after `start()` signals a
+  process that has not finished exec'ing, so a shell asked to install a trap dies to the
+  default action first and the test measures a race. Every signal test waits for the child
+  to print a readiness marker.
+- **Boundary that must hold as the rest is ported.** A terminal running `claude` is a
+  user-facing panel, not a tool. No MCP tool may spawn it, or the rule that tools never
+  execute arbitrary shell commands becomes decorative. The user pressing Launch is not the
+  agent executing a command.
+- **Consequences:** POSIX only. Windows needs ConPTY and is a separate implementation;
+  `MCPPty::is_supported()` exists so callers can say so rather than failing at launch.

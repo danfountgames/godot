@@ -7,3 +7,4 @@ env_godot_ai = env_modules.Clone()
 
 env_godot_ai.add_source_files(env.modules_sources, "*.cpp")
 env_godot_ai.add_source_files(env.modules_sources, "tools/*.cpp")
+env_godot_ai.add_source_files(env.modules_sources, "terminal/*.cpp")
