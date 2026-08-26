@@ -99,6 +99,25 @@ public:
 		KEY_PAGEUP = 13,
 		KEY_PAGEDOWN = 14,
 		KEY_FUNCTION_0 = 256, // Add n for Fn; KEY_FUNCTION_0 + 1 is F1.
+		KEY_FUNCTION_MAX = 511,
+		KEY_KP_0 = 512,
+		KEY_KP_1 = 513,
+		KEY_KP_2 = 514,
+		KEY_KP_3 = 515,
+		KEY_KP_4 = 516,
+		KEY_KP_5 = 517,
+		KEY_KP_6 = 518,
+		KEY_KP_7 = 519,
+		KEY_KP_8 = 520,
+		KEY_KP_9 = 521,
+		KEY_KP_MULT = 522,
+		KEY_KP_PLUS = 523,
+		KEY_KP_COMMA = 524,
+		KEY_KP_MINUS = 525,
+		KEY_KP_PERIOD = 526,
+		KEY_KP_DIVIDE = 527,
+		KEY_KP_ENTER = 528,
+		KEY_KP_EQUAL = 529,
 	};
 
 	// Modifier bitmask, also mirroring libvterm's `VTermModifier`.

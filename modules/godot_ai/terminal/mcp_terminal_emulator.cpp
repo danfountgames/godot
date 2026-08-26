@@ -61,6 +61,17 @@ static_assert((int)MCPTerminalEmulator::KEY_END == (int)VTERM_KEY_END, "VTermKey
 static_assert((int)MCPTerminalEmulator::KEY_PAGEUP == (int)VTERM_KEY_PAGEUP, "VTermKey renumbered");
 static_assert((int)MCPTerminalEmulator::KEY_PAGEDOWN == (int)VTERM_KEY_PAGEDOWN, "VTermKey renumbered");
 static_assert((int)MCPTerminalEmulator::KEY_FUNCTION_0 == (int)VTERM_KEY_FUNCTION_0, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_FUNCTION_MAX == (int)VTERM_KEY_FUNCTION_MAX, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_0 == (int)VTERM_KEY_KP_0, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_9 == (int)VTERM_KEY_KP_9, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_MULT == (int)VTERM_KEY_KP_MULT, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_PLUS == (int)VTERM_KEY_KP_PLUS, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_COMMA == (int)VTERM_KEY_KP_COMMA, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_MINUS == (int)VTERM_KEY_KP_MINUS, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_PERIOD == (int)VTERM_KEY_KP_PERIOD, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_DIVIDE == (int)VTERM_KEY_KP_DIVIDE, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_ENTER == (int)VTERM_KEY_KP_ENTER, "VTermKey renumbered");
+static_assert((int)MCPTerminalEmulator::KEY_KP_EQUAL == (int)VTERM_KEY_KP_EQUAL, "VTermKey renumbered");
 static_assert((int)MCPTerminalEmulator::MOD_NONE == (int)VTERM_MOD_NONE, "VTermModifier renumbered");
 static_assert((int)MCPTerminalEmulator::MOD_SHIFT == (int)VTERM_MOD_SHIFT, "VTermModifier renumbered");
 static_assert((int)MCPTerminalEmulator::MOD_ALT == (int)VTERM_MOD_ALT, "VTermModifier renumbered");
