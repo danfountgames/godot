@@ -5,6 +5,72 @@ Import("env_modules")
 
 env_godot_ai = env_modules.Clone()
 
-env_godot_ai.add_source_files(env.modules_sources, "*.cpp")
-env_godot_ai.add_source_files(env.modules_sources, "tools/*.cpp")
-env_godot_ai.add_source_files(env.modules_sources, "terminal/*.cpp")
+# --------------------------------------------------------------------------
+# Terminal support: vendored libvterm.
+#
+# Editor builds only, and only where a pseudo-terminal exists. Windows needs
+# ConPTY and has no implementation here yet; the web build has no processes at
+# all. `MCPPty::is_supported()` reports the same thing at runtime, so a caller
+# on an unsupported platform is told rather than left with a terminal that
+# never prints anything.
+#
+# libvterm is MIT and lives under this module rather than the engine's own
+# thirdparty/ directory: keeping the fork's additions inside one module is what
+# makes the module removable, which matters more here than convention.
+# --------------------------------------------------------------------------
+
+thirdparty_obj = []
+terminal_enabled = env.editor_build and env["platform"] not in ("windows", "web")
+
+if terminal_enabled:
+    # The flag goes on the shared `env`, not just this module's clone: "this build has a
+    # terminal" is a property of the build, and the test suite is compiled by tests/SCsub
+    # with the shared environment. Without this the emulator's tests compile to nothing
+    # and pass by being absent - which is exactly what happened the first time.
+    #
+    # The include path deliberately does NOT go on the shared env. The emulator's public
+    # header hides libvterm behind an opaque impl pointer, so a caller needs the flag and
+    # nothing else. SConstruct processes modules before tests, so the flag is in place by
+    # the time tests/SCsub runs; directories built earlier (core, scene, editor) do not
+    # see it and have no business including the terminal anyway.
+    env.Append(CPPDEFINES=["MCP_TERMINAL_ENABLED"])
+    env_godot_ai.Append(CPPDEFINES=["MCP_TERMINAL_ENABLED"])
+
+    thirdparty_dir = "thirdparty/libvterm/"
+    thirdparty_sources = [
+        "src/encoding.c",
+        "src/keyboard.c",
+        # mouse.c is omitted: nothing here forwards mouse events to the child.
+        "src/parser.c",
+        "src/pen.c",
+        "src/screen.c",
+        "src/state.c",
+        "src/unicode.c",
+        "src/vterm.c",
+    ]
+    thirdparty_sources = [thirdparty_dir + s for s in thirdparty_sources]
+
+    env_thirdparty = env_godot_ai.Clone()
+    env_thirdparty.Prepend(CPPPATH=[thirdparty_dir + "include", thirdparty_dir + "src"])
+    env_thirdparty.disable_warnings()
+    env_thirdparty.add_source_files(thirdparty_obj, thirdparty_sources)
+    env.modules_sources += thirdparty_obj
+
+    # The wrapper needs the public header too.
+    env_godot_ai.Prepend(CPPPATH=[thirdparty_dir + "include"])
+
+module_obj = []
+
+env_godot_ai.add_source_files(module_obj, "*.cpp")
+env_godot_ai.add_source_files(module_obj, "tools/*.cpp")
+
+# mcp_pty.cpp compiles everywhere - it carries its own stubs for platforms with
+# no pty - but the emulator above it needs libvterm.
+env_godot_ai.add_source_files(module_obj, "terminal/mcp_pty.cpp")
+if terminal_enabled:
+    env_godot_ai.add_source_files(module_obj, "terminal/mcp_terminal_*.cpp")
+
+env.modules_sources += module_obj
+
+# Rebuild the wrapper when the vendored library changes.
+env.Depends(module_obj, thirdparty_obj)
