@@ -36,14 +36,14 @@ solves with `tools/virtual_display.py`.
 
 | ID | Requirement | Status | Code | Tests | Evidence | Remaining |
 |---|---|---|---|---|---|---|
-| S1 | `Godot_RecordSession` start/stop | NOT_STARTED | — | — | — | everything |
-| S2 | Trace is frame-locked, not wall-clock | NOT_STARTED | — | — | — | `input_trace` already carries the frame; the recorder does not exist |
-| S3 | `Godot_AssertRuntimeState` captures assertions during recording | NOT_STARTED | — | — | — | everything |
+| S1 | `Godot_RecordSession` start/stop | IN_PROGRESS | `mcp_sessions.{h,cpp}` | `tests/test_mcp_sessions.h` | the on-disk half is done and covered: begin/append/finish, re-recording truncates, appending to a session never started fails | the **tools** do not exist yet; nothing calls the store from `tools/`. That is the next commit |
+| S2 | Trace is frame-locked, not wall-clock | IMPLEMENTED | `MCPSessions::append_events` | `tests/test_mcp_sessions.h` | an event with no `frame` is refused at write time, not discovered at replay time | none |
+| S3 | `Godot_AssertRuntimeState` captures assertions during recording | IN_PROGRESS | `MCPSessions::append_assertions` | `tests/test_mcp_sessions.h` | storage and validation done — an assertion with no `node_path` or no `property` is refused | the tool that captures one from a live game |
 | S4 | `Godot_ReplaySession` re-injects and reports first divergence | NOT_STARTED | — | — | — | everything |
 | S5 | Speed multiplier, with the achieved rate reported | NOT_STARTED | — | — | — | `Godot_SetTimeScale` exists; the honesty check does not |
 | S6 | Non-determinism reported as `indeterminate`, never as `passed` | NOT_STARTED | — | — | — | the hard requirement of this group; do not skip it to make S4 look green |
-| S7 | `Godot_ListSessions` | NOT_STARTED | — | — | — | everything |
-| S8 | JSONL under `user://godot_ai_sessions/`, reading guide in the reply | NOT_STARTED | — | — | — | mirror `mcp_profiler_recorder.cpp`'s export |
+| S7 | `Godot_ListSessions` | IN_PROGRESS | `MCPSessions::list` | `tests/test_mcp_sessions.h` | lists slug, verdict, counts and `user://` directory, newest first; an absent root is zero sessions rather than an error | the tool wrapper |
+| S8 | JSONL under `user://godot_ai_sessions/`, reading guide in the reply | IMPLEMENTED | `mcp_sessions.cpp` | `tests/test_mcp_sessions.h` | `meta.json` + `trace.jsonl` + `asserts.jsonl`; a value containing a newline survives the round trip, so the framing holds; removal refuses any slug that escapes the root | the reading guide belongs in the tool reply, which does not exist yet |
 | S9 | A playtest crash emits a replay file | NOT_STARTED | — | — | — | depends on P3 |
 
 ## P — Playtest sessions
