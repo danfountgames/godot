@@ -49,8 +49,42 @@ to end but inside one editor process, and this tranche's own rule 2 requires two
 (replay speed multiplier) was not built at all. **S6** (indeterminate verdicts) is
 unit-tested hard but has not been produced against a live game.
 
-Next in order: the Activity dock (E2/E4/E5) — **paused pending the user's input**, at
-their request.
+S-20 (in progress): the terminal, ported from `origin/GodotBeamDev` at the user's
+request — "a full agent ai terminal built into the editor via a terminal emulator …
+pay very very careful attention to how that branch opens and closes the instances of
+the windows since it was very very prone to crashing." Four layers, each landed with
+tests, each with the branch's defects fixed at the source rather than guarded against:
+
+1. `terminal/mcp_pty.{h,cpp}` — the pty, rewritten. The original reaped the child inside
+   a `const` query and then signalled the same pid afterwards, so it could signal an
+   unrelated process. Reaping now happens in a non-const `poll()` that clears the pid in
+   the same breath, so a stale signal is unrepresentable rather than avoided.
+2. `terminal/mcp_terminal_emulator.{h,cpp}` + vendored libvterm (MIT, module-local) —
+   the VT state machine, behind an opaque impl so the header does not leak libvterm and
+   the test suite needs only the build flag. `init()` now clears scrollback, output,
+   cursor and title, which it did not.
+3. `terminal/mcp_terminal_widget.{h,cpp}` with `mcp_terminal_keys` and
+   `mcp_terminal_selection` pulled out as pure, testable functions. **Ctrl-C did not
+   work on the branch**: libvterm maps letter+MOD_CTRL to a control code itself, and
+   being handed an already-mapped one it emits `ESC[3;5u`, which a shell ignores. Every
+   platform's reporting form is now normalised back to the letter.
+4. `terminal/mcp_agent_terminal_panel.{h,cpp}` + `mcp_agent_launch.{h,cpp}` — the
+   bottom panel. Wired to this fork's relay over stdio rather than the branch's HTTP
+   endpoint with a `Math::random()` bearer token; there is no credential to leak.
+
+Verified on a virtual display by `.agent/evidence/spike_agent_terminal_panel.py`, whose
+screenshot shows a shell prompt, a typed command and its output drawn inside the editor.
+That live run found two defects no unit test would have: the panel handed Claude Code's
+flags to every command (so a shell died instantly on an unknown option), and the bottom
+panel opened at the height of its toolbar with the terminal invisible.
+
+Still to do on this slice: nothing blocking. `claude` is not installed in this
+container, so the one thing not exercised is Claude Code itself accepting the generated
+configuration — a string in a text field and a file whose shape is unit-tested.
+
+Next in order: the Activity dock's remaining rows (E2/E4/E5 controls verified by
+pressing them, which needs `xdotool`), then W8 (embedded native windows draw over tile
+chrome).
 
 S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
 `Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
@@ -132,7 +166,24 @@ virtual display and the editor's render-capability reporting.
 
 ## Last verified state
 
-On this Linux container at 4.8-dev (2026-08-26), with the S-19 slice:
+On this Linux container at 4.8-dev (2026-08-26), with the S-20 terminal slice:
+
+- Editor builds clean, SCU, 4 cores, 0 errors.
+- Module suite (`--test-case="*[godot_ai]*"`, from `/tmp`) → **175 cases, 3074
+  assertions**, all pass (106 before this slice).
+- `python3 tools/relay/tests/run_tests.py` → **64/64 pass**.
+- `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a real virtual
+  display.
+- Full engine suite from the repository root → **1590 cases, 1589 pass**. The one
+  failure is `[IP] resolve_hostname`, which asks for `localhost` over IPv6; this
+  container's `/etc/hosts` has no `::1` entry, so it fails identically on the
+  unmodified tree.
+- `python3 .agent/evidence/spike_agent_terminal_panel.py` → all checks pass: the panel
+  is in the tree, its tab opens it, the command field takes a new command, Start runs a
+  real process under a pty, typing into the widget reaches the child and its output is
+  drawn, and Stop reports the agent stopped. Screenshot beside the script.
+
+With the S-19 slice, earlier the same day:
 
 - Editor builds clean on 4.8 — 9m46s from scratch, SCU, 4 cores, 0 errors. This is the
   first build since the merge; the module needed no source changes to link.
@@ -218,7 +269,9 @@ pre-fix binary crashed eight times in ten. Details and the three lessons are in
 `.agent/EXPERIENCE_LEDGER.md`.
 
 One failure remains and is environmental: `[IP] resolve_hostname` fails because this
-container has no outbound DNS. It fails identically on the unmodified tree.
+container's `/etc/hosts` maps `localhost` to `127.0.0.1` only, with no `::1` line, so
+the IPv6 half of the test resolves to nothing. `getent ahostsv6 localhost` returns
+nothing here. It fails identically on the unmodified tree.
 
 ## In-flight operation
 
@@ -241,8 +294,8 @@ None.
 
 ## Last completed command
 
-The bundled macOS executable's targeted GodotAI suite: 69 cases / 433 assertions,
-all passing.
+`python3 .agent/evidence/spike_agent_terminal_panel.py` — all checks passed, with a
+screenshot of a live shell running inside the editor's Agent Terminal panel.
 
 ## Next command
 

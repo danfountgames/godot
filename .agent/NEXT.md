@@ -118,6 +118,30 @@ generalisation of existing seams, not a new harness and not a rewrite.
 Still unmeasured: macOS (a different `EmbeddedProcessMacOS` path), Windows, Wayland, how
 many instances stay usable at once, and anything about tile resize, focus or z-order.
 
+## The terminal, landed 2026-08-26
+
+The user's other instruction: port the agent terminal from `origin/GodotBeamDev` and
+"pay very very careful attention to how that branch opens and closes the instances of
+the windows since it was very very prone to crashing."
+
+Done, in four layers — pty, VT emulator, widget, panel — each with its defects fixed at
+the source rather than guarded against, and each covered by tests. `.agent/STATE.md`
+carries the detail; `.agent/DECISIONS.md` DEC-0012 carries the reasoning. The one thing
+not exercised here is Claude Code itself, which is not installed in this container.
+
+Three defects the branch shipped, all now pinned by tests:
+
+- The pty reaped its child inside a `const` query and could then signal a pid the
+  operating system had already reissued.
+- Ctrl-C reached the child as `ESC[3;5u` rather than `0x03`, so it interrupted nothing —
+  the single most important key in a panel running an agent.
+- The panel's `stop()` was never called on the way out, so every launch left its MCP
+  configuration in the cache directory forever.
+
+What the terminal is *for* sits inside the build order above rather than beside it: a
+coding agent running in the editor, against the editor, is the shortest path to the
+closed loop, and the Activity dock is the thing that makes what it does legible.
+
 ## Still blocked on hardware or a remote runner
 
 - **C1** — watch `.github/workflows/godot_ai.yml` go green. Plausible for the first time.
