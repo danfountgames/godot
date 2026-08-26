@@ -625,6 +625,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_editor_ui_tools();
 	mcp_register_scene_test_tools();
 	mcp_register_profiler_tools();
+	mcp_register_activity_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(CloseSceneTool)));

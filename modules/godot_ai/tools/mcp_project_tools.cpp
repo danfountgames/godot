@@ -247,10 +247,15 @@ public:
 		Dictionary properties;
 		properties["path"] = MCPSchema::string_property("File to write, as a res:// or project-relative path.");
 		properties["text"] = MCPSchema::string_property("New file contents.");
+		properties["content"] = MCPSchema::string_property(
+				"Accepted as a spelling of 'text', because Godot_WriteUserFile calls the same "
+				"argument 'content' and getting it wrong should not cost a round trip. Send one "
+				"or the other, not both.");
 		properties["create_directories"] = MCPSchema::bool_property("Create missing parent folders.", false);
+		// 'text' cannot be required while 'content' is a legitimate substitute; the
+		// either-or is enforced in run() so the message can name both spellings.
 		Vector<String> required;
 		required.push_back("path");
-		required.push_back("text");
 		return MCPSchema::object_schema(properties, required);
 	}
 	virtual Dictionary get_output_schema() const override {
@@ -268,6 +273,13 @@ public:
 		return paths;
 	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		String text;
+		String alias_error;
+		if (!MCPSchema::read_aliased_string(p_arguments, "text", "content", text, alias_error)) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, alias_error);
+			return Dictionary();
+		}
+
 		MCPPaths::Resolved resolved;
 		String error;
 		if (!MCPPaths::resolve(p_arguments["path"], resolved, error)) {
@@ -287,7 +299,6 @@ public:
 			}
 		}
 
-		const String text = p_arguments["text"];
 		Ref<FileAccess> file = FileAccess::open(resolved.absolute, FileAccess::WRITE);
 		if (file.is_null()) {
 			r_error.set(MCPToolError::FAILED,

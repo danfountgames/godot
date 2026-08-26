@@ -22,9 +22,14 @@ document in the repository).
 
 ## Current milestone
 
-M1 — Foundation and protocol core. Relay and editor module both exist and pass their
-own suites; what remains for M1 is a live end-to-end exchange through the relay
-against a running editor.
+**M3 — Agent experience.** Defined by `docs/godot-ai-agent-experience-spec.md`, tracked
+in `.agent/EXPERIENCE_LEDGER.md`. The problem it addresses is not missing capability —
+72 tools exist and nearly all are verified — but **legibility and composition**: no
+interface shows the agent working, and nothing strings the primitives into a workflow.
+Nothing in the tranche is started. Q1 (build on 4.8) gates all of it.
+
+M1 (foundation and protocol) and M2 (the agent interface) are both complete; see the
+spec ledger and interface ledger for their evidence.
 
 ## Current vertical slice
 
@@ -175,7 +180,17 @@ None.
 
 ## In-flight operation
 
-None.
+**First editor build on the 4.8 tree** (2026-08-26, Linux container). This is the
+build that has never happened since the merge, so it is also the real test of whether
+`modules/godot_ai/` still links against 4.8.
+
+```sh
+scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no \
+      scu_build=yes tests=yes -j4
+```
+
+Log: `/tmp/claude-0/-home-user-godot/91ff8c38-a753-5827-add6-7012c7a63d9c/scratchpad/build48.log`.
+If this session dies mid-build, re-run the command above; SCons resumes incrementally.
 
 ## Risks
 

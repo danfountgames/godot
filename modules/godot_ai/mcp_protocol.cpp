@@ -30,6 +30,7 @@
 
 #include "mcp_protocol.h"
 
+#include "mcp_activity.h"
 #include "mcp_checkpoints.h"
 #include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
@@ -303,9 +304,12 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 	}
 
 	const String summary = tool->describe_invocation(arguments);
+	const Array subjects = tool->get_activity_subjects(arguments);
 	if (decision.outcome != MCPPermissions::OUTCOME_ALLOW) {
 		// Refusals are audited too, so the trail shows what was attempted.
 		p_delegate->record_invocation(r_session, tool_name, summary, false, decision.reason);
+		MCPActivity::refuse(r_session.client_name, tool_name, tool->get_capability(),
+				summary, subjects, decision.reason);
 		Dictionary data;
 		data["capability"] = mcp_capability_to_string(tool->get_capability());
 		r_response = make_error(p_id, ERROR_PERMISSION_DENIED, decision.reason, data);
@@ -325,12 +329,20 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 				// Refusing is the safe answer: running anyway would silently drop the
 				// user's only way back.
 				p_delegate->record_invocation(r_session, tool_name, summary, false, checkpoint_error);
+				MCPActivity::refuse(r_session.client_name, tool_name, tool->get_capability(),
+						summary, subjects, checkpoint_error);
 				r_response = make_error(p_id, ERROR_INTERNAL,
 						vformat("could not create a checkpoint before running '%s': %s", tool_name, checkpoint_error));
 				return true;
 			}
 		}
 	}
+
+	// Opened before the call, not after: tools are allowed to pump the main loop, so a
+	// slow one has to be visible as "running" while it runs. That is the whole point of
+	// the stream - the audit log already covers "what happened".
+	const MCPActivity::Id activity = MCPActivity::begin(r_session.client_name, tool_name,
+			tool->get_capability(), summary, subjects);
 
 	MCPToolError error;
 	const Dictionary structured = registry->call_tool(tool_name, arguments, error);
@@ -339,6 +351,7 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 			error.has_error() ? error.message : String("ok"));
 
 	if (error.has_error()) {
+		MCPActivity::finish(activity, "failed", error.message, checkpoint_id);
 		// Invalid arguments are the caller's protocol mistake; everything else is a
 		// tool-level failure the model should see and can react to.
 		if (error.kind == MCPToolError::INVALID_ARGUMENTS) {
@@ -354,13 +367,24 @@ bool MCPProtocol::_handle_tools_call(const Dictionary &p_params, const Variant &
 	MCPDeferred::Token deferred_token = MCPDeferred::INVALID_TOKEN;
 	if (MCPDeferred::get_deferred_token(structured, deferred_token)) {
 		if (p_delegate->defer_response(p_id, deferred_token, tool, checkpoint_id)) {
+			// Honest rather than tidy: this layer hands the caller a token and is never
+			// told when it resolves, so the record closes as "deferred" instead of
+			// pretending to a duration it does not have. Closing the loop is the
+			// remaining half of E1 - see EXPERIENCE_LEDGER.md.
+			MCPActivity::finish(activity, "deferred",
+					"the tool is still working; this stream is not notified when it finishes",
+					checkpoint_id);
 			return false;
 		}
 		MCPDeferred::abandon(deferred_token);
+		MCPActivity::finish(activity, "failed",
+				"the tool needed to answer asynchronously and this connection cannot", checkpoint_id);
 		r_response = make_error(p_id, ERROR_INTERNAL,
 				vformat("'%s' needs to answer asynchronously, which this connection cannot do", tool_name));
 		return true;
 	}
+
+	MCPActivity::finish(activity, "ok", String(), checkpoint_id);
 
 	Dictionary tool_result = make_tool_result(structured, tool->get_output_schema());
 	if (!checkpoint_id.is_empty()) {

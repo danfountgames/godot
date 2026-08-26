@@ -282,3 +282,36 @@ Dictionary MCPSchema::array_property(const String &p_description, const Dictiona
 	property["items"] = p_items;
 	return property;
 }
+
+bool MCPSchema::read_aliased_string(const Dictionary &p_arguments, const String &p_canonical,
+		const String &p_alias, String &r_value, String &r_error) {
+	// get() rather than operator[]: reading a missing key through a const Dictionary
+	// inserts a null, and the argument dictionary is echoed into the audit summary.
+	const Variant canonical = p_arguments.get(p_canonical, Variant());
+	const Variant alias = p_arguments.get(p_alias, Variant());
+	const bool has_canonical = canonical.get_type() == Variant::STRING;
+	const bool has_alias = alias.get_type() == Variant::STRING;
+
+	if (has_canonical && has_alias) {
+		if (String(canonical) != String(alias)) {
+			r_error = vformat(
+					"'%s' and '%s' were both given and differ; they are two spellings of one "
+					"argument, so send only one",
+					p_canonical, p_alias);
+			return false;
+		}
+		r_value = canonical;
+		return true;
+	}
+	if (has_canonical) {
+		r_value = canonical;
+		return true;
+	}
+	if (has_alias) {
+		r_value = alias;
+		return true;
+	}
+	r_error = vformat("'%s' is required (this tool also accepts it spelled '%s')",
+			p_canonical, p_alias);
+	return false;
+}

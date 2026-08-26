@@ -75,4 +75,7 @@ void mcp_register_scene_test_tools();
 // Windowed full-profiler captures of the running game, exported to a file.
 void mcp_register_profiler_tools();
 
+// Reading back the live stream of what the agent has been doing.
+void mcp_register_activity_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

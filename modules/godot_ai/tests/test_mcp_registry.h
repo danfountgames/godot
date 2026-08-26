@@ -262,6 +262,67 @@ TEST_CASE("[godot_ai] Script-registered tools are validated") {
 	}
 }
 
+// Godot_WriteTextFile has always taken `text` and Godot_WriteUserFile `content`.
+// Renaming either breaks callers, so both accept both spellings through this reader.
+TEST_CASE("[godot_ai] An aliased string argument accepts either spelling") {
+	String value;
+	String error;
+
+	SUBCASE("the canonical spelling is read") {
+		Dictionary arguments;
+		arguments["text"] = "hello";
+		CHECK(MCPSchema::read_aliased_string(arguments, "text", "content", value, error));
+		CHECK(value == "hello");
+	}
+
+	SUBCASE("the alias is read") {
+		Dictionary arguments;
+		arguments["content"] = "hello";
+		CHECK(MCPSchema::read_aliased_string(arguments, "text", "content", value, error));
+		CHECK(value == "hello");
+	}
+
+	SUBCASE("both spellings agreeing is accepted") {
+		Dictionary arguments;
+		arguments["text"] = "hello";
+		arguments["content"] = "hello";
+		CHECK(MCPSchema::read_aliased_string(arguments, "text", "content", value, error));
+		CHECK(value == "hello");
+	}
+
+	SUBCASE("both spellings disagreeing is refused rather than resolved") {
+		// Picking one would silently discard content the caller believed it was writing.
+		Dictionary arguments;
+		arguments["text"] = "one";
+		arguments["content"] = "two";
+		CHECK_FALSE(MCPSchema::read_aliased_string(arguments, "text", "content", value, error));
+		CHECK(error.contains("differ"));
+	}
+
+	SUBCASE("neither spelling is refused, and the message names both") {
+		Dictionary arguments;
+		CHECK_FALSE(MCPSchema::read_aliased_string(arguments, "text", "content", value, error));
+		CHECK(error.contains("text"));
+		CHECK(error.contains("content"));
+	}
+
+	SUBCASE("reading does not insert the missing key") {
+		// Dictionary::operator[] adds a null for a missing key even through a const
+		// reference, and the call is then rejected by schema validation as wrongly typed.
+		Dictionary arguments;
+		arguments["text"] = "hello";
+		MCPSchema::read_aliased_string(arguments, "text", "content", value, error);
+		CHECK(arguments.size() == 1);
+		CHECK_FALSE(arguments.has("content"));
+	}
+
+	SUBCASE("a non-string value under either key is treated as absent") {
+		Dictionary arguments;
+		arguments["text"] = 42;
+		CHECK_FALSE(MCPSchema::read_aliased_string(arguments, "text", "content", value, error));
+	}
+}
+
 } // namespace TestMCPRegistry
 
 #endif // TEST_MCP_REGISTRY_H

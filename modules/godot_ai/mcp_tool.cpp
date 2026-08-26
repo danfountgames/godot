@@ -30,7 +30,13 @@
 
 #include "mcp_tool.h"
 
+#include "mcp_activity.h"
+
 #include "core/io/json.h"
+
+Array MCPTool::get_activity_subjects(const Dictionary &p_arguments) const {
+	return MCPActivity::extract_subjects(p_arguments);
+}
 
 String MCPTool::describe_invocation(const Dictionary &p_arguments) const {
 	if (p_arguments.is_empty()) {

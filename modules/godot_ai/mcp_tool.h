@@ -61,6 +61,16 @@ public:
 	// live in the undo history until the scene is saved.
 	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const { return Vector<String>(); }
 
+	// The concrete things this invocation touches, as an Array of
+	// { kind: "node" | "file", path: String }. The Activity dock reveals them in the
+	// Scene and FileSystem docks, which is what turns "ran Godot_ManageNode" into
+	// "renamed Main/Player/Sprite".
+	//
+	// The default reads the arguments heuristically (MCPActivity::extract_subjects).
+	// Override wherever the tool knows better - a tool that resolves a node by search,
+	// for instance, knows the path it settled on and the arguments do not carry it.
+	virtual Array get_activity_subjects(const Dictionary &p_arguments) const;
+
 	// Runs the tool. Arguments have already been schema-validated and defaulted.
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) = 0;
 

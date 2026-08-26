@@ -62,6 +62,19 @@ public:
 	// A property with no type constraint, for arguments whose shape depends on what
 	// they are addressing (a Godot property value can be any Variant).
 	static Dictionary any_property(const String &p_description);
+
+	// Reads a string argument that is spelled two ways.
+	//
+	// Godot_WriteTextFile has always taken `text` and Godot_WriteUserFile `content`.
+	// Renaming either breaks callers, so both tools accept both spellings and this is
+	// how they read one. Neither argument can be `required` in the schema when a caller
+	// may legitimately send the other, so absence is diagnosed here instead - which is
+	// why the message names both spellings rather than the canonical one only.
+	//
+	// Both present and disagreeing is refused, not silently resolved: picking one would
+	// discard content the caller believed it was writing.
+	static bool read_aliased_string(const Dictionary &p_arguments, const String &p_canonical,
+			const String &p_alias, String &r_value, String &r_error);
 };
 
 #endif // MCP_SCHEMA_H

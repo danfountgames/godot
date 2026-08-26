@@ -224,9 +224,14 @@ public:
 		Dictionary properties;
 		properties["path"] = MCPSchema::string_property("File to write, as a user:// path.");
 		properties["content"] = MCPSchema::string_property("Contents to write.");
+		properties["text"] = MCPSchema::string_property(
+				"Accepted as a spelling of 'content', because Godot_WriteTextFile calls the same "
+				"argument 'text' and getting it wrong should not cost a round trip. Send one or "
+				"the other, not both.");
+		// 'content' cannot be required while 'text' is a legitimate substitute; the
+		// either-or is enforced in run() so the message can name both spellings.
 		Vector<String> required;
 		required.push_back("path");
-		required.push_back("content");
 		return MCPSchema::object_schema(properties, required);
 	}
 
@@ -239,6 +244,13 @@ public:
 	}
 
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		String content;
+		String alias_error;
+		if (!MCPSchema::read_aliased_string(p_arguments, "content", "text", content, alias_error)) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, alias_error);
+			return Dictionary();
+		}
+
 		MCPPaths::Resolved resolved;
 		String error;
 		if (!MCPPaths::resolve_user(p_arguments["path"], resolved, error)) {
@@ -264,7 +276,6 @@ public:
 			r_error.set(MCPToolError::FAILED, vformat("could not write '%s'", resolved.res_path));
 			return Dictionary();
 		}
-		const String content = p_arguments["content"];
 		file->store_string(content);
 		file.unref();
 
