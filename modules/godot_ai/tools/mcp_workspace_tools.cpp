@@ -41,6 +41,10 @@
 #include "../mcp_tool_registry.h"
 #include "../mcp_workspace.h"
 
+#include "../mcp_deferred.h"
+
+#include "core/object/callable_mp.h"
+#include "core/os/os.h"
 #include "core/variant/array.h"
 
 namespace {
@@ -59,6 +63,47 @@ Dictionary instance_reply(const String &p_instance_id) {
 }
 
 class LaunchInstanceTool : public MCPTool {
+	// Launch answers only once the game's debugger session has appeared.
+	//
+	// Without this the tool returned as soon as the process existed, and a caller that
+	// immediately paused the instance got a refusal - the session had not connected yet.
+	// Worse, whether it connected in time depended on how much else was starting, so the
+	// same sequence passed or failed run to run. A tool that races is worse than a slow
+	// one; this waits, and says in `debugger_connected` whether the wait succeeded.
+	String pending_instance_id;
+	Rect2i pending_rect;
+	double deadline = 0.0;
+
+	bool _poll() {
+		MCPRuntimeInstances::Instance instance;
+		if (!MCPRuntimeInstances::get(pending_instance_id, instance)) {
+			return true;
+		}
+		const bool connected = MCPRuntimeInstances::debugger_for(pending_instance_id) != nullptr;
+		const bool expired = OS::get_singleton()->get_ticks_msec() / 1000.0 > deadline;
+		if (!connected && !expired) {
+			return false;
+		}
+		Dictionary result = instance_reply(pending_instance_id);
+		result["live_count"] = MCPRuntimeInstances::live().size();
+		Dictionary rect;
+		rect["x"] = pending_rect.position.x;
+		rect["y"] = pending_rect.position.y;
+		rect["width"] = pending_rect.size.x;
+		rect["height"] = pending_rect.size.y;
+		result["embed_rect"] = rect;
+		if (!connected) {
+			result["note"] = "The game started and embedded, but its debugger session has not "
+							 "connected, so Godot_ControlInstance cannot reach it yet. Read "
+							 "`debugger_connected` before trying to pause or step it.";
+		}
+		MCPDeferred::complete(pending_token, result);
+		pending_token = MCPDeferred::INVALID_TOKEN;
+		return true;
+	}
+
+	MCPDeferred::Token pending_token = MCPDeferred::INVALID_TOKEN;
+
 public:
 	virtual String get_tool_name() const override { return "Godot_LaunchInstance"; }
 	virtual String get_description() const override {
@@ -102,6 +147,9 @@ public:
 		properties["lifecycle"] = MCPSchema::string_property("Where it got to.");
 		properties["pid"] = MCPSchema::integer_property("Its process id.");
 		properties["live_count"] = MCPSchema::integer_property("Agent instances now running.");
+		properties["embed_rect"] = MCPSchema::object_schema(Dictionary(), Vector<String>(), true);
+		properties["debugger_connected"] = MCPSchema::bool_property(
+				"True when the instance can be controlled. Launch waits for this.");
 		return MCPSchema::object_schema(properties);
 	}
 
@@ -126,23 +174,31 @@ public:
 		}
 
 		String error;
+		Rect2i embed_rect;
 		const String instance_id = MCPWorkspaceLauncher::launch(workspace,
 				p_arguments.get("label", String()), p_arguments.get("role", "candidate"),
 				p_arguments.get("task", String()), p_arguments.get("scene", String()),
-				retention, error);
+				retention, error, &embed_rect);
 		if (instance_id.is_empty()) {
 			r_error.set(MCPToolError::FAILED, error);
 			return Dictionary();
 		}
 
-		Dictionary result = instance_reply(instance_id);
 		if (!error.is_empty()) {
-			// Registered but did not reach a running state. The id is still returned so
-			// the caller can read its lifecycle rather than being told only "failed".
+			// Registered but never reached a running state. Answer now rather than waiting
+			// for a session that is not coming.
+			Dictionary result = instance_reply(instance_id);
 			result["error"] = error;
+			result["live_count"] = MCPRuntimeInstances::live().size();
+			return result;
 		}
-		result["live_count"] = MCPRuntimeInstances::live().size();
-		return result;
+
+		// Wait for the debugger session, so the caller can control what it just launched.
+		pending_instance_id = instance_id;
+		pending_rect = embed_rect;
+		deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + 20.0;
+		pending_token = MCPDeferred::begin_polled(35.0, callable_mp(this, &LaunchInstanceTool::_poll));
+		return MCPDeferred::make_deferred_result(pending_token);
 	}
 };
 

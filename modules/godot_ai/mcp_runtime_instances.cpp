@@ -243,6 +243,10 @@ Dictionary MCPRuntimeInstances::to_dictionary(const Instance &p_instance) {
 	out["started_msec"] = p_instance.started_msec;
 	out["ended_msec"] = p_instance.ended_msec;
 	out["detail"] = p_instance.detail;
+	// Whether a debugger session for this process can actually be resolved. Without it
+	// every targeted control silently refuses, and a caller has no way to tell a paused
+	// instance from an unreachable one.
+	out["debugger_connected"] = debugger_for(p_instance.instance_id) != nullptr;
 	return out;
 }
 

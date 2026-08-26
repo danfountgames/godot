@@ -141,7 +141,7 @@ public:
 	// string with r_error filled in.
 	static String launch(MCPWorkspace *p_workspace, const String &p_label, const String &p_role,
 			const String &p_task, const String &p_scene, MCPRuntimeInstances::Retention p_retention,
-			String &r_error);
+			String &r_error, Rect2i *r_embed_rect = nullptr);
 
 	// Stops one agent-owned instance. Never touches a process this module did not launch.
 	static bool stop(const String &p_instance_id);

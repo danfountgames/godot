@@ -34,6 +34,7 @@
 #include "core/object/message_queue.h"
 #include "core/os/os.h"
 
+#include "editor/debugger/editor_debugger_node.h"
 #include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/run/editor_run.h"
@@ -85,6 +86,13 @@ MCPWorkspaceTile::MCPWorkspaceTile(const String &p_instance_id) {
 	embedder = memnew(EmbeddedProcess);
 	embedder->set_h_size_flags(SIZE_EXPAND_FILL);
 	embedder->set_v_size_flags(SIZE_EXPAND_FILL);
+	// Fit the game to this tile rather than leaving it at its launched resolution. An
+	// embedded game is a native child window drawn above the editor's own controls, so a
+	// game larger than its tile does not clip - it covers whatever is beside it,
+	// including the neighbouring tiles' headers and buttons. An empty size means
+	// "follow the frame".
+	embedder->set_window_size(Size2i());
+	embedder->set_keep_aspect(false);
 	column->add_child(embedder);
 
 	refresh();
@@ -320,7 +328,7 @@ void MCPWorkspace::_notification(int p_what) {
 
 String MCPWorkspaceLauncher::launch(MCPWorkspace *p_workspace, const String &p_label,
 		const String &p_role, const String &p_task, const String &p_scene,
-		MCPRuntimeInstances::Retention p_retention, String &r_error) {
+		MCPRuntimeInstances::Retention p_retention, String &r_error, Rect2i *r_embed_rect) {
 	if (!p_workspace) {
 		r_error = "the GodotAI workspace is not available";
 		return String();
@@ -360,6 +368,23 @@ String MCPWorkspaceLauncher::launch(MCPWorkspace *p_workspace, const String &p_l
 	}
 	MCPRuntimeInstances::set_lifecycle(instance_id, MCPRuntimeInstances::LIFECYCLE_LAUNCHING);
 
+	// Make sure something is listening before handing the game a --remote-debug URI.
+	//
+	// build_base_arguments() copies the debugger's server URI into the command line, but
+	// the server is only started by the run bar when a human presses play. Launching
+	// without this produced a game that ran and embedded perfectly and could never be
+	// controlled - and, because a human's own run *does* start the server, whether
+	// targeted control worked depended on whether they happened to be playing. That is
+	// exactly the kind of race that passes a test once and fails it later.
+	EditorDebuggerNode *debugger_node = EditorDebuggerNode::get_singleton();
+	if (debugger_node) {
+		String uri = debugger_node->get_server_uri();
+		if (uri.is_empty()) {
+			uri = "tcp://";
+			debugger_node->start(uri);
+		}
+	}
+
 	// The same two builders the play button uses. Reimplementing either would drift the
 	// moment a flag is added upstream.
 	List<String> arguments;
@@ -371,7 +396,11 @@ String MCPWorkspaceLauncher::launch(MCPWorkspace *p_workspace, const String &p_l
 		r_error = "the workspace has no window to embed into";
 		return instance_id;
 	}
-	embedded_process_apply_arguments(arguments, window->get_window_id(), tile->get_embed_rect());
+	const Rect2i embed_rect = tile->get_embed_rect();
+	if (r_embed_rect) {
+		*r_embed_rect = embed_rect;
+	}
+	embedded_process_apply_arguments(arguments, window->get_window_id(), embed_rect);
 
 	ProcessID pid = 0;
 	const Error error = OS::get_singleton()->create_instance(arguments, &pid);

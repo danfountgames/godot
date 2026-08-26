@@ -88,9 +88,15 @@ def main():
             return result.get("structuredContent", {}), None
 
         # The user's own game, started the ordinary way. Nothing below may stop it.
-        users_game, error = tool(10, "Godot_PlayMainScene", {})
-        check(error is None, "the user's own game started (%s)" % error)
-        time.sleep(6)
+        # W6_NO_USER_GAME=1 leaves it out, which is how the workspace's own layout was
+        # separated from the Game workspace's embedded window drawing over it.
+        with_user_game = os.environ.get("W6_NO_USER_GAME") != "1"
+        if with_user_game:
+            users_game, error = tool(10, "Godot_PlayMainScene", {})
+            check(error is None, "the user's own game started (%s)" % error)
+            time.sleep(6)
+        else:
+            print("  (skipping the user's own game)")
 
         ids = []
         for index, label in enumerate(["Jump Variant A", "Jump Variant B", "Jump Variant C"]):
@@ -102,9 +108,9 @@ def main():
                 check(False, "launching %s: %s" % (label, error))
                 continue
             ids.append(payload["instance_id"])
-            print("  %s -> %s (pid %s, %s)"
+            print("  %s -> %s (pid %s, %s) rect=%s"
                   % (label, payload["instance_id"], payload.get("pid"),
-                     payload.get("lifecycle")))
+                     payload.get("lifecycle"), payload.get("embed_rect")))
             time.sleep(5)
 
         check(len(ids) == 3, "three instances were launched")
@@ -121,8 +127,9 @@ def main():
         alive = subprocess.run(["pgrep", "-fc", "godot.linuxbsd.editor.dev"],
                                capture_output=True, text=True).stdout.strip()
         print("  godot processes alive: %s" % alive)
-        check(alive.isdigit() and int(alive) >= 5,
-              "editor + user's game + three agent instances are all running (%s)" % alive)
+        check(alive.isdigit() and int(alive) >= (5 if with_user_game else 4),
+              "editor%s and three agent instances are all running (%s)"
+              % (" + user's game" if with_user_game else "", alive))
 
         shot, error = tool(31, "Godot_CaptureEditorWindow", {})
         reply = call({"jsonrpc": "2.0", "id": 32, "method": "tools/call",
@@ -164,9 +171,10 @@ def main():
             check(all_stopped["live_count"] == 0, "no agent instance is left running")
         time.sleep(3)
 
-        still, error = tool(70, "Godot_GetRuntimeSceneTree", {})
-        check(error is None and still is not None,
-              "the user's own game survived 'stop all agent instances' (%s)" % error)
+        if with_user_game:
+            still, error = tool(70, "Godot_GetRuntimeSceneTree", {})
+            check(error is None and still is not None,
+                  "the user's own game survived 'stop all agent instances' (%s)" % error)
 
         tool(80, "Godot_StopPlaying", {})
     finally:
