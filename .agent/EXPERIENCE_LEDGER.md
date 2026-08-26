@@ -30,12 +30,13 @@ solves with `tools/virtual_display.py`.
 | E4 | Selecting a record reveals its subjects in the Scene and FileSystem docks | NOT_STARTED | — | — | — | everything |
 | E5 | Checkpoint scrubber with per-record diff and revert | NOT_STARTED | — | — | — | `Godot_DiffCheckpoint` and `Godot_RestoreCheckpoint` exist; the timeline UI does not |
 | E6 | Activity survives a dock restart, not an editor restart | NOT_STARTED | — | — | — | everything |
-| E7 | `Godot_GetActivity` exposes the same stream as a tool | NOT_STARTED | — | — | — | everything |
+| E7 | `Godot_GetActivity` exposes the same stream as a tool | IMPLEMENTED | `tools/mcp_activity_tools.cpp` | covered indirectly by `test_mcp_activity.h` | registered in `mcp_register_builtin_tools()`; returns records, `latest_sequence` for polling, `running`, and capacity | not VERIFIED — no end-to-end call yet, and no test asserts the tool's own reply shape |
 
 ## S — Sessions: record and replay
 
 | ID | Requirement | Status | Code | Tests | Evidence | Remaining |
 |---|---|---|---|---|---|---|
+| S1b | Recording covers **editor-injected input only**; nothing may imply a human can author a trace by playing | IMPLEMENTED | `mcp_sessions.{h,cpp}` | `tests/test_mcp_sessions.h` | every session is stamped `input_source: editor_injected` and the meta carries a note saying so; asserted in the round-trip case | none — but keep it true as the tools get written |
 | S1 | `Godot_RecordSession` start/stop | IN_PROGRESS | `mcp_sessions.{h,cpp}` | `tests/test_mcp_sessions.h` | the on-disk half is done and covered: begin/append/finish, re-recording truncates, appending to a session never started fails | the **tools** do not exist yet; nothing calls the store from `tools/`. That is the next commit |
 | S2 | Trace is frame-locked, not wall-clock | IMPLEMENTED | `MCPSessions::append_events` | `tests/test_mcp_sessions.h` | an event with no `frame` is refused at write time, not discovered at replay time | none |
 | S3 | `Godot_AssertRuntimeState` captures assertions during recording | IN_PROGRESS | `MCPSessions::append_assertions` | `tests/test_mcp_sessions.h` | storage and validation done — an assertion with no `node_path` or no `property` is refused | the tool that captures one from a live game |
