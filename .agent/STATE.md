@@ -9,7 +9,10 @@ document in the repository).
 
 ## Engine baseline
 
-- Godot **4.3-dev**, flat `editor/` layout (spec quotes 4.6-era paths — see DEC-0002).
+- Godot **4.8-dev** (`version.py`: 4.8.0-dev), **nested** `editor/` layout —
+  `editor/file_system/`, `editor/docks/`, `editor/scene/`. Merged up from 4.3 in
+  `117870273`; the module's includes already use the nested paths. DEC-0002's
+  4.3 remapping table is superseded by DEC-0009.
 - In-tree precedents followed: `editor/debugger/debug_adapter/` (EditorPlugin +
   TCPServer + poll on `NOTIFICATION_INTERNAL_PROCESS` with a re-entrancy guard),
   `modules/gdscript/register_types.cpp` (`EditorNode::add_init_callback` →
@@ -105,8 +108,16 @@ virtual display and the editor's render-capability reporting.
 
 ## Last verified state
 
-On the current working tree with the S-18 profiler slice (2026-08-13, native macOS
-arm64):
+On this Linux container at 4.8-dev (2026-08-26), after the engine merge:
+
+- `tools/relay/build.sh` → builds clean.
+- `python3 tools/relay/tests/run_tests.py` → **64/64 pass**.
+- The engine has **not** been built or tested on this tree since the 4.8 merge. The
+  module compiles against nested-layout includes by inspection only; nothing here has
+  linked it. Build before trusting any editor-side claim below.
+
+On the working tree with the S-18 profiler slice (2026-08-13, native macOS
+arm64), at the pre-merge 4.3 baseline:
 
 - `python3 tools/relay/tests/run_tests.py` → 64/64 pass.
 - Module suite (`--test-case="*[godot_ai]*"`, run from `/tmp`) → 74 cases,
@@ -149,12 +160,14 @@ From the earlier full sweep (predating S-18; counts are of that time):
 
 ## Working-tree expectations
 
-The S-18 profiler slice is committed and pushed. Three pre-existing uncommitted
-changes from the documentation-captures work remain deliberately unstaged, waiting
-for their author's session: the X4/X5 evidence rewrite in `.agent/SPEC_LEDGER.md`,
-+258 lines in `modules/godot_ai/tools/mcp_editor_ui_tools.cpp`, and the untracked
-`tools/relay/tests/call_running_editor.py`. Scratch material for the end-to-end run
-lives outside the repository, under the session scratchpad.
+Clean. The three changes this section previously listed as pending have resolved:
+the X4/X5 evidence rewrite and the `mcp_editor_ui_tools.cpp` additions both landed
+(the latter in the 4.8 merge `117870273`); the untracked scratch script
+`tools/relay/tests/call_running_editor.py` was never committed and no longer exists.
+`claude/status-i8oaes` is level with `origin`.
+
+This checkout is a **fresh container**: there is no engine build and no relay binary
+until you make them. `tools/relay/build.sh` takes seconds; the editor takes ~8 minutes.
 
 ## Active failures
 

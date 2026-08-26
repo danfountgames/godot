@@ -28,6 +28,9 @@ Durable decisions that are not obvious from the resulting code.
 
 ## DEC-0002 — Spec paths are 4.6-era; this tree is 4.3 and paths are remapped
 
+> **SUPERSEDED by DEC-0009 (2026-08-26).** The tree is now 4.8-dev with a nested
+> editor layout. The mapping below is historical; do not apply it.
+
 - **Date:** 2026-07-28
 - **Context:** The specification's hook table names 4.6-era paths. This checkout is
   4.3-dev with a flat editor layout.
@@ -172,3 +175,23 @@ Durable decisions that are not obvious from the resulting code.
   never called from `main()`, which POSIX forgives and Windows would not have — every
   socket call there would have failed with WSANOTINITIALISED.
 - **Spec IDs:** O2, O3, O4, R8.
+
+## DEC-0009 — The tree is rebased onto 4.8; DEC-0002's path remapping is retired
+
+- **Date:** 2026-08-26
+- **Context:** Commit `117870273` merged Godot 4.8 development into this fork.
+  `version.py` now reads 4.8.0-dev and the editor layout is nested
+  (`editor/file_system/`, `editor/docks/`, `editor/scene/`). Three documents still
+  asserted a 4.3-dev tree with a flat editor layout, and DEC-0002 still carried a
+  remapping table from the spec's 4.6-era paths onto flat ones.
+- **Decision:** Record 4.8-dev as the engine baseline. DEC-0002 is **superseded**: the
+  specification's nested paths now largely land as written, so no remapping table is
+  maintained. Where a spec path still does not resolve, fix the include against the
+  real tree rather than reintroducing a table that has already gone stale once.
+- **Evidence:** `modules/godot_ai/` already includes
+  `editor/file_system/editor_file_system.h`, `editor/docks/scene_tree_dock.h`,
+  `editor/scene/scene_tree_editor.h` — the migration was done as part of the merge.
+- **Consequences:** No editor build has been produced on this tree since the merge, so
+  the module's link against 4.8 is unverified. The relay is unaffected (no engine
+  headers) and still passes 64/64. The first editor build after the merge is the real
+  test, and any 4.8 API breakage will surface there rather than in the relay loop.

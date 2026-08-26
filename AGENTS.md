@@ -6,7 +6,7 @@ continuity protocol.
 
 ## Repository purpose
 
-This is a fork of Godot Engine 4.3 that adds Unity-style AI editor tooling:
+This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 
 - an MCP server inside the editor, with a schema-declared tool registry
 - a local relay binary that bridges MCP stdio clients to the running editor
@@ -26,7 +26,8 @@ Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
 - `tools/relay/` — the standalone `godot-ai-relay` binary and its tests
 - `tools/virtual_display.py` — an in-memory X server, so an editor can draw where there
   is no screen; `tools/tests/` covers it
-- `editor/` — engine editor code this module drives (4.3 layout: flat, not `editor/scene/…`)
+- `editor/` — engine editor code this module drives (4.8 layout: nested — `editor/scene/`,
+  `editor/docks/`, `editor/file_system/`)
 - `.agent/` — persistent implementation state; read it before starting
 
 ## Build commands

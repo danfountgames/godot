@@ -2,7 +2,7 @@
 
 Project instructions for Claude Code sessions working in this repository.
 
-This is a fork of **Godot Engine 4.3-dev** that adds a Unity-style AI tooling stack
+This is a fork of **Godot Engine 4.8-dev** that adds a Unity-style AI tooling stack
 (MCP server in the editor, an external stdio relay, skills, permissions, checkpoints).
 
 Tool-neutral repository rules live in @AGENTS.md — read it as well; this file adds
@@ -121,9 +121,11 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
   `Godot_GetRuntimeSceneTree` had to ask for it and wait.
 - Record `In-flight operation` in `.agent/STATE.md` before starting a build.
   Incremental rebuilds after a module-only change take well under a minute.
-- This tree is Godot **4.3**, not 4.6. The editor source is **flat**
-  (`editor/editor_file_system.cpp`), not `editor/file_system/...`. The specification
-  quotes 4.6-era paths; map them onto this tree, do not "fix" the spec.
+- This tree is Godot **4.8-dev** (`version.py`), merged up from 4.3 in commit
+  `117870273`. The editor source is **nested** (`editor/file_system/`, `editor/docks/`,
+  `editor/scene/`), so the specification's 4.6-era paths now largely land as written and
+  the old remapping table in DEC-0002 is superseded by DEC-0009. Check the real path
+  before assuming either layout.
 - **`Dictionary::operator[]` inserts a null for a missing key, even through a
   `const Dictionary &`.** Reading an optional argument that way silently adds it, and
   the call is then rejected by schema validation as wrongly typed. Always
