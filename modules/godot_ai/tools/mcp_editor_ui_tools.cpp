@@ -58,6 +58,7 @@
 #include "core/variant/array.h"
 #include "scene/gui/control.h"
 #include "scene/gui/item_list.h"
+#include "scene/gui/tab_bar.h"
 #include "scene/gui/tree.h"
 #include "scene/main/node.h"
 #include "scene/main/scene_tree.h"
@@ -169,8 +170,11 @@ public:
 	virtual String get_description() const override {
 		return "Find parts of the editor's own interface by what they say, and report where "
 			   "they are on screen. Searches Controls by text, name, class or tooltip, and also "
-			   "searches the rows of Tree and ItemList widgets - an approvals list's rows and "
-			   "the buttons inside them are not nodes, so nothing else can locate them. "
+			   "searches the rows of Tree and ItemList widgets and the tabs of a TabBar - an "
+			   "approvals list's rows, the buttons inside them, and the bottom panel's own "
+			   "tabs are not nodes, so nothing else can locate them. Opening the Output, "
+			   "Debugger, Agent Activity or Agent Terminal panel means clicking a tab found "
+			   "this way. "
 			   "Returns screen rectangles and centres, ready to aim a pointer at. This is for "
 			   "the editor's UI; to find something in the running game use "
 			   "Godot_GetRuntimeNodeInfo.";
@@ -181,7 +185,7 @@ public:
 		Dictionary properties;
 		properties["text"] = MCPSchema::string_property(
 				"Visible text to match, case-insensitively and in full. Also matches a Tree or "
-				"ItemList row's text.");
+				"ItemList row's text, and a TabBar tab's title.");
 		properties["name"] = MCPSchema::string_property("Node name to match exactly.");
 		properties["class"] = MCPSchema::string_property(
 				"Class to match, including subclasses - 'Button' also finds a CheckBox.");
@@ -273,6 +277,29 @@ public:
 		}
 	}
 
+	static void search_tabs(TabBar *p_tabs, const Query &p_query, const Point2i &p_origin,
+			const String &p_window, Array &r_matches) {
+		for (int index = 0; index < p_tabs->get_tab_count(); index++) {
+			if (p_tabs->is_tab_hidden(index)) {
+				continue;
+			}
+			const String text = p_tabs->get_tab_title(index);
+			if (!p_query.matches_text(text)) {
+				continue;
+			}
+			Dictionary entry;
+			entry["kind"] = "tab";
+			entry["node_path"] = String(p_tabs->get_path());
+			entry["class"] = p_tabs->get_class();
+			entry["text"] = text;
+			entry["index"] = index;
+			entry["disabled"] = p_tabs->is_tab_disabled(index);
+			entry["window"] = p_window;
+			write_rect(entry, to_window_space(p_tabs, p_tabs->get_tab_rect(index)), p_origin);
+			r_matches.push_back(entry);
+		}
+	}
+
 	static void search(Node *p_node, const Query &p_query, Array &r_matches) {
 		if (!p_node || r_matches.size() > p_query.limit) {
 			return;
@@ -334,6 +361,15 @@ public:
 						ItemList *list = Object::cast_to<ItemList>(control);
 						if (list) {
 							search_list_items(list, p_query, origin, window_title, r_matches);
+						}
+						// Tabs, for the same reason as rows: they are not nodes, they carry
+						// their label inside the bar that draws them, and in 4.8 the bottom
+						// panel switches with them rather than with buttons. Without this
+						// there is no way through this tool to open Output, the Debugger,
+						// the Agent Activity dock or the Agent Terminal at all.
+						TabBar *tabs = Object::cast_to<TabBar>(control);
+						if (tabs) {
+							search_tabs(tabs, p_query, origin, window_title, r_matches);
 						}
 					}
 				}

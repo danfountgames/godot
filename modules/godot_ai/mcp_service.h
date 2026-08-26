@@ -43,6 +43,9 @@ class MCPApprovalsDialog;
 class MCPChatDock;
 class MCPActivityDock;
 class MCPRuntimeBridge;
+#ifdef MCP_TERMINAL_ENABLED
+class MCPAgentTerminalPanel;
+#endif
 
 // Editor-side half of the bridge: a loopback listener that godot-ai-relay connects
 // to, following the lifecycle pattern of the in-tree debug adapter server.
@@ -93,6 +96,9 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	MCPApprovalsDialog *approvals_dialog = nullptr;
 	MCPChatDock *chat_dock = nullptr;
 	MCPActivityDock *activity_dock = nullptr;
+#ifdef MCP_TERMINAL_ENABLED
+	MCPAgentTerminalPanel *agent_terminal = nullptr;
+#endif
 	Ref<MCPRuntimeBridge> runtime_bridge;
 	Ref<MCPProfilerRecorder> profiler_recorder;
 
@@ -133,6 +139,10 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 public:
 	MCPService();
 	~MCPService();
+
+	// The editor has one service. The agent terminal panel needs to know whether it is
+	// listening before telling a user their agent will have no tools.
+	static MCPService *get_singleton();
 
 	void start();
 	void stop();

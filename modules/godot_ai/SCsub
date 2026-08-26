@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import os
+
 Import("env")
 Import("env_modules")
 
@@ -65,10 +67,15 @@ env_godot_ai.add_source_files(module_obj, "*.cpp")
 env_godot_ai.add_source_files(module_obj, "tools/*.cpp")
 
 # mcp_pty.cpp compiles everywhere - it carries its own stubs for platforms with
-# no pty - but the emulator above it needs libvterm.
+# no pty - but everything above it needs libvterm. Listed by exclusion rather than
+# by prefix: a new file in this directory should be built, and a glob that quietly
+# skipped one cost a link error rather than saying so.
 env_godot_ai.add_source_files(module_obj, "terminal/mcp_pty.cpp")
 if terminal_enabled:
-    env_godot_ai.add_source_files(module_obj, "terminal/mcp_terminal_*.cpp")
+    terminal_sources = [
+        f for f in Glob("terminal/*.cpp") if os.path.basename(str(f)) != "mcp_pty.cpp"
+    ]
+    env_godot_ai.add_source_files(module_obj, terminal_sources)
 
 env.modules_sources += module_obj
 

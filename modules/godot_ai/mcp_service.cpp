@@ -34,6 +34,9 @@
 #include "mcp_audit.h"
 #include "mcp_chat.h"
 #include "mcp_activity_dock.h"
+#ifdef MCP_TERMINAL_ENABLED
+#include "terminal/mcp_agent_terminal_panel.h"
+#endif
 #include "mcp_chat_dock.h"
 #include "mcp_runtime_bridge.h"
 #include "mcp_deferred.h"
@@ -57,7 +60,17 @@
 static const int PORT_PROBE_RANGE = 20;
 static const int MAX_FRAME_CHARACTERS = 32 * 1024 * 1024;
 
+// One per editor, set in the constructor. Not an Engine singleton: this is an
+// EditorPlugin whose lifetime the editor owns, and registering it as one would outlive
+// the editor node that frees it.
+static MCPService *mcp_service_singleton = nullptr;
+
+MCPService *MCPService::get_singleton() {
+	return mcp_service_singleton;
+}
+
 MCPService::MCPService() {
+	mcp_service_singleton = this;
 	_EDITOR_DEF("network/godot_ai/enabled", true);
 	_EDITOR_DEF("network/godot_ai/port", configured_port);
 	_EDITOR_DEF("network/godot_ai/auto_approve_clients", false);
@@ -66,6 +79,11 @@ MCPService::MCPService() {
 
 MCPService::~MCPService() {
 	stop();
+	// Leaving this set hands every later get_singleton() a pointer to freed memory -
+	// the same defect this fork found and fixed in EditorFileSystem.
+	if (mcp_service_singleton == this) {
+		mcp_service_singleton = nullptr;
+	}
 }
 
 String MCPService::get_state_dir() {
@@ -575,6 +593,14 @@ void MCPService::_register_editor_commands() {
 	// there is a task hierarchy for the control side to show.
 	activity_dock = memnew(MCPActivityDock);
 	add_control_to_bottom_panel(activity_dock, TTR("Agent Activity"));
+
+#ifdef MCP_TERMINAL_ENABLED
+	// A terminal running a coding agent against this editor, beside the activity it
+	// produces. Nothing starts it but the user pressing Start: an editor that spawns
+	// programs on a tool's say-so is not what this module is.
+	agent_terminal = memnew(MCPAgentTerminalPanel);
+	add_control_to_bottom_panel(agent_terminal, TTR("Agent Terminal"));
+#endif
 
 	// The Tools menu is where a user goes looking; the command palette is where they
 	// go when they already know what they want.

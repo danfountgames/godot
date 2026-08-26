@@ -1,0 +1,239 @@
+/**************************************************************************/
+/*  test_mcp_agent_launch.h                                               */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#ifndef TEST_MCP_AGENT_LAUNCH_H
+#define TEST_MCP_AGENT_LAUNCH_H
+
+#ifdef MCP_TERMINAL_ENABLED
+
+#include "modules/godot_ai/terminal/mcp_agent_launch.h"
+
+#include "core/io/json.h"
+
+#include "tests/test_macros.h"
+
+namespace TestMCPAgentLaunch {
+
+static Dictionary parse_config(const String &p_json) {
+	JSON json;
+	REQUIRE(json.parse(p_json) == OK);
+	return json.get_data();
+}
+
+static Dictionary godot_server(const String &p_json) {
+	const Dictionary config = parse_config(p_json);
+	REQUIRE(config.has("mcpServers"));
+	const Dictionary servers = config["mcpServers"];
+	REQUIRE(servers.has("godot-ai"));
+	return servers["godot-ai"];
+}
+
+static int index_of(const Vector<String> &p_list, const String &p_value) {
+	for (int i = 0; i < p_list.size(); i++) {
+		if (p_list[i] == p_value) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+TEST_CASE("[godot_ai] The agent's MCP configuration launches the relay against this editor") {
+	const String json = mcp_agent_build_mcp_config("/opt/godot/bin/godot-ai-relay", 4242, "Godot Agent Terminal", false);
+	const Dictionary server = godot_server(json);
+
+	CHECK(String(server["type"]) == "stdio");
+	CHECK(String(server["command"]) == "/opt/godot/bin/godot-ai-relay");
+
+	const Array args = server["args"];
+	Vector<String> arguments;
+	for (int i = 0; i < args.size(); i++) {
+		arguments.push_back(args[i]);
+	}
+
+	CHECK(index_of(arguments, "--mcp") >= 0);
+
+	// By process id, not by project path: two editors can have the same project open,
+	// and an agent that attaches to whichever answered first is worse than one that
+	// fails to start.
+	const int instance_flag = index_of(arguments, "--instance");
+	REQUIRE(instance_flag >= 0);
+	REQUIRE(instance_flag + 1 < arguments.size());
+	CHECK(arguments[instance_flag + 1] == "4242");
+
+	const int name_flag = index_of(arguments, "--client-name");
+	REQUIRE(name_flag >= 0);
+	CHECK(arguments[name_flag + 1] == "Godot Agent Terminal");
+
+	CHECK(index_of(arguments, "--read-only") == -1);
+}
+
+TEST_CASE("[godot_ai] A read-only session is asked for on the relay's command line") {
+	const String json = mcp_agent_build_mcp_config("godot-ai-relay", 7, "x", true);
+	const Dictionary server = godot_server(json);
+	const Array args = server["args"];
+
+	bool found = false;
+	for (int i = 0; i < args.size(); i++) {
+		found = found || String(args[i]) == "--read-only";
+	}
+	CHECK(found);
+}
+
+TEST_CASE("[godot_ai] The configuration carries no credential of any kind") {
+	// The branch this descends from wrote a bearer token generated from Math::random()
+	// into this file. There is nothing to write here: the transport is stdio and the
+	// editor's own approval flow decides what the agent may do. If a secret ever appears
+	// in this file again, this test is where it should stop.
+	const String json = mcp_agent_build_mcp_config("godot-ai-relay", 1, "x", false);
+	const String lowered = json.to_lower();
+	CHECK_FALSE(lowered.contains("authorization"));
+	CHECK_FALSE(lowered.contains("bearer"));
+	CHECK_FALSE(lowered.contains("token"));
+	CHECK_FALSE(lowered.contains("password"));
+	CHECK_FALSE(lowered.contains("secret"));
+}
+
+TEST_CASE("[godot_ai] The relay is looked for in a definite order") {
+	const Vector<String> paths = mcp_agent_relay_search_paths("/repo/bin", "/custom/relay");
+
+	REQUIRE(paths.size() == 3);
+	// An explicit override first, so someone testing a relay build does not have to move
+	// files around.
+	CHECK(paths[0] == "/custom/relay");
+	// Then beside the editor, which in a development build is the repository's bin/ -
+	// the relay the contributor just built, not one installed months ago.
+	CHECK(paths[1].begins_with("/repo/bin/godot-ai-relay"));
+	// Then the bare name, for PATH to resolve.
+	CHECK_FALSE(paths[2].contains("/"));
+
+	// With no override the order still holds and nothing empty is offered.
+	const Vector<String> without_override = mcp_agent_relay_search_paths("/repo/bin", String());
+	REQUIRE(without_override.size() == 2);
+	CHECK(without_override[0].begins_with("/repo/bin/godot-ai-relay"));
+
+	// An editor whose own path is unknown still gets the PATH lookup rather than a
+	// candidate that is just the relay name joined to nothing.
+	const Vector<String> without_dir = mcp_agent_relay_search_paths(String(), String());
+	REQUIRE(without_dir.size() == 1);
+	CHECK_FALSE(without_dir[0].is_empty());
+}
+
+TEST_CASE("[godot_ai] Claude Code is pointed at that configuration and nothing else") {
+	const Vector<String> arguments = mcp_agent_build_claude_arguments("/tmp/agent.json", String());
+
+	const int config_flag = index_of(arguments, "--mcp-config");
+	REQUIRE(config_flag >= 0);
+	CHECK(arguments[config_flag + 1] == "/tmp/agent.json");
+
+	// Without this the agent also loads whatever the user configured globally, and a
+	// tool of the same name from elsewhere would be indistinguishable in the activity log.
+	CHECK(index_of(arguments, "--strict-mcp-config") >= 0);
+}
+
+TEST_CASE("[godot_ai] Nothing pre-authorises the editor's tools") {
+	// The branch passed `--allowedTools mcp__godot__*`, which silences the client's own
+	// confirmation for every editor tool at once. The editor asks too, but leaving only
+	// one gate between an agent and the project is not a decision to make by accident.
+	const Vector<String> arguments = mcp_agent_build_claude_arguments("/tmp/agent.json", String());
+	for (int i = 0; i < arguments.size(); i++) {
+		CHECK(arguments[i] != "--allowedTools");
+		CHECK(arguments[i] != "--dangerously-skip-permissions");
+		CHECK_FALSE(arguments[i].contains("bypassPermissions"));
+	}
+}
+
+TEST_CASE("[godot_ai] A system prompt is appended only when there is one") {
+	CHECK(index_of(mcp_agent_build_claude_arguments("/tmp/a.json", String()), "--append-system-prompt") == -1);
+
+	const Vector<String> with_prompt = mcp_agent_build_claude_arguments("/tmp/a.json", "You are in Godot.");
+	const int flag = index_of(with_prompt, "--append-system-prompt");
+	REQUIRE(flag >= 0);
+	CHECK(with_prompt[flag + 1] == "You are in Godot.");
+}
+
+TEST_CASE("[godot_ai] Only a command we recognise is given a command line") {
+	// The panel used to hand every command Claude Code's flags. Point it at a shell and
+	// the process died at once on an option it had never heard of - which is exactly how
+	// the first real run of the panel failed.
+	CHECK(mcp_agent_command_is_claude("claude"));
+	CHECK(mcp_agent_command_is_claude("/usr/local/bin/claude"));
+	CHECK(mcp_agent_command_is_claude("  claude  "));
+	CHECK_FALSE(mcp_agent_command_is_claude("sh"));
+	CHECK_FALSE(mcp_agent_command_is_claude("/bin/bash"));
+	CHECK_FALSE(mcp_agent_command_is_claude("codex"));
+	CHECK_FALSE(mcp_agent_command_is_claude(""));
+
+	CHECK(mcp_agent_build_arguments("claude", "/tmp/a.json", String()).size() > 0);
+	CHECK(mcp_agent_build_arguments("/opt/bin/claude", "/tmp/a.json", String()).size() > 0);
+
+	// Anything else starts exactly as the user typed it.
+	CHECK(mcp_agent_build_arguments("sh", "/tmp/a.json", String()).is_empty());
+	CHECK(mcp_agent_build_arguments("codex", "/tmp/a.json", String()).is_empty());
+}
+
+TEST_CASE("[godot_ai] An agent we do not know finds the configuration in its environment") {
+	Vector<String> inherited;
+	const Vector<String> environment = mcp_agent_build_environment(inherited, "/tmp/agent.json");
+	CHECK(index_of(environment, "GODOT_AI_MCP_CONFIG=/tmp/agent.json") >= 0);
+
+	// And nothing is exported when there is no configuration to point at, rather than an
+	// empty variable that reads as a path to a file that is not there.
+	const Vector<String> without = mcp_agent_build_environment(inherited, String());
+	for (int i = 0; i < without.size(); i++) {
+		CHECK_FALSE(without[i].begins_with("GODOT_AI_MCP_CONFIG="));
+	}
+}
+
+TEST_CASE("[godot_ai] The agent's environment is an allowlist, plus the terminal's own settings") {
+	const Vector<String> names = mcp_agent_inherited_variable_names();
+
+	// PATH decides which agent binary runs at all; GODOT_AI_HOME decides whether the
+	// relay can find this editor. Losing either turns into a confusing failure much
+	// later than here.
+	CHECK(index_of(names, "PATH") >= 0);
+	CHECK(index_of(names, "HOME") >= 0);
+	CHECK(index_of(names, "GODOT_AI_HOME") >= 0);
+
+	Vector<String> inherited;
+	inherited.push_back("PATH=/usr/bin");
+	const Vector<String> environment = mcp_agent_build_environment(inherited);
+
+	CHECK(index_of(environment, "PATH=/usr/bin") >= 0);
+	// Without TERM the child falls back to a dumb terminal: no colour, no cursor
+	// addressing, and an agent's output close to unreadable.
+	CHECK(index_of(environment, "TERM=xterm-256color") >= 0);
+	CHECK(index_of(environment, "GODOT_AI_TERMINAL=1") >= 0);
+}
+
+} // namespace TestMCPAgentLaunch
+
+#endif // MCP_TERMINAL_ENABLED
+
+#endif // TEST_MCP_AGENT_LAUNCH_H

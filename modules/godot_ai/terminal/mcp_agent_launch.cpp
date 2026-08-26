@@ -1,0 +1,184 @@
+/**************************************************************************/
+/*  mcp_agent_launch.cpp                                                  */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#ifdef MCP_TERMINAL_ENABLED
+
+#include "mcp_agent_launch.h"
+
+#include "core/io/json.h"
+#include "core/os/os.h"
+
+Vector<String> mcp_agent_relay_search_paths(const String &p_executable_dir, const String &p_env_override) {
+	Vector<String> paths;
+
+#ifdef WINDOWS_ENABLED
+	const String relay_name = "godot-ai-relay.exe";
+#else
+	const String relay_name = "godot-ai-relay";
+#endif
+
+	// An explicit override wins: someone testing a relay build needs to point at it
+	// without moving files around.
+	if (!p_env_override.is_empty()) {
+		paths.push_back(p_env_override);
+	}
+
+	// Next to the editor. In a development build that is the repository's bin/, which is
+	// exactly where tools/relay/build.sh puts it, so a contributor gets the relay they
+	// just built rather than one installed months ago.
+	if (!p_executable_dir.is_empty()) {
+		paths.push_back(p_executable_dir.path_join(relay_name));
+	}
+
+	// Finally the name alone, resolved through PATH by the exec.
+	paths.push_back(relay_name);
+
+	return paths;
+}
+
+String mcp_agent_build_mcp_config(const String &p_relay_path, int p_editor_pid, const String &p_client_name, bool p_read_only) {
+	Array arguments;
+	arguments.push_back("--mcp");
+
+	// By process id, not by project path. Two editors can have the same project open -
+	// that is the whole point of the workspace - and an agent that attaches to whichever
+	// one answered first is worse than one that fails to start.
+	arguments.push_back("--instance");
+	arguments.push_back(itos(p_editor_pid));
+
+	if (!p_client_name.is_empty()) {
+		arguments.push_back("--client-name");
+		arguments.push_back(p_client_name);
+	}
+
+	if (p_read_only) {
+		arguments.push_back("--read-only");
+	}
+
+	Dictionary server;
+	server["type"] = "stdio";
+	server["command"] = p_relay_path;
+	server["args"] = arguments;
+
+	Dictionary servers;
+	servers["godot-ai"] = server;
+
+	Dictionary config;
+	config["mcpServers"] = servers;
+
+	return JSON::stringify(config, "\t");
+}
+
+Vector<String> mcp_agent_build_claude_arguments(const String &p_mcp_config_path, const String &p_extra_system_prompt) {
+	Vector<String> arguments;
+
+	if (!p_mcp_config_path.is_empty()) {
+		arguments.push_back("--mcp-config");
+		arguments.push_back(p_mcp_config_path);
+		// Only this editor's tools. Without it the agent also loads whatever the user
+		// has configured globally, and a tool named the same thing from somewhere else
+		// would be indistinguishable in the activity log.
+		arguments.push_back("--strict-mcp-config");
+	}
+
+	if (!p_extra_system_prompt.is_empty()) {
+		arguments.push_back("--append-system-prompt");
+		arguments.push_back(p_extra_system_prompt);
+	}
+
+	// Deliberately absent: any blanket tool pre-authorisation. The branch this descends
+	// from passed `--allowedTools mcp__godot__*`, which turns off the client's own
+	// confirmation for every editor tool at once. This fork already asks on the editor
+	// side, where the user can see what is being asked for and revoke it afterwards;
+	// silencing the client's prompt as well would leave nothing between an agent and the
+	// project but one dialog it can be told to expect.
+	return arguments;
+}
+
+bool mcp_agent_command_is_claude(const String &p_command) {
+	// By file name, so an absolute path to a particular build is still recognised, and
+	// case-insensitively for the platforms that do not care.
+	const String name = p_command.strip_edges().get_file().to_lower();
+	return name == "claude" || name == "claude.exe" || name == "claude.cmd";
+}
+
+Vector<String> mcp_agent_build_arguments(const String &p_command, const String &p_mcp_config_path, const String &p_extra_system_prompt) {
+	if (mcp_agent_command_is_claude(p_command)) {
+		return mcp_agent_build_claude_arguments(p_mcp_config_path, p_extra_system_prompt);
+	}
+	// Started exactly as the user typed it. Guessing at flags for a command we do not
+	// know is how a terminal ends up unable to run a shell.
+	return Vector<String>();
+}
+
+Vector<String> mcp_agent_inherited_variable_names() {
+	Vector<String> names;
+	names.push_back("PATH");
+	names.push_back("HOME");
+	names.push_back("USER");
+	names.push_back("SHELL");
+	names.push_back("LANG");
+	names.push_back("LC_ALL");
+	names.push_back("LC_CTYPE");
+	names.push_back("TMPDIR");
+	names.push_back("XDG_RUNTIME_DIR");
+	names.push_back("XDG_DATA_HOME");
+	names.push_back("XDG_CONFIG_HOME");
+	names.push_back("XDG_CACHE_HOME");
+	names.push_back("SSH_AUTH_SOCK");
+	names.push_back("DISPLAY");
+	names.push_back("WAYLAND_DISPLAY");
+	// The relay reads this to find the editor's state directory. An editor started with a
+	// non-default one would otherwise be invisible to the agent it just launched.
+	names.push_back("GODOT_AI_HOME");
+	return names;
+}
+
+Vector<String> mcp_agent_build_environment(const Vector<String> &p_inherited, const String &p_mcp_config_path) {
+	Vector<String> environment = p_inherited;
+
+	// How an agent we do not know the command line of finds this editor.
+	if (!p_mcp_config_path.is_empty()) {
+		environment.push_back("GODOT_AI_MCP_CONFIG=" + p_mcp_config_path);
+	}
+
+	// The emulator implements enough of xterm-256color to be honest about it, and a
+	// child told nothing at all falls back to a dumb terminal with no colour and no
+	// cursor addressing - which for an agent's output is close to unreadable.
+	environment.push_back("TERM=xterm-256color");
+
+	// Tells anything that checks that it is running inside this editor's panel. Cheap,
+	// and it makes a shell prompt able to say so.
+	environment.push_back("GODOT_AI_TERMINAL=1");
+
+	return environment;
+}
+
+#endif // MCP_TERMINAL_ENABLED
