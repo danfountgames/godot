@@ -81,4 +81,7 @@ void mcp_register_activity_tools();
 // Recording a play session and replaying it against the running game.
 void mcp_register_session_tools();
 
+// Launching and addressing several agent-owned game instances at once.
+void mcp_register_workspace_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

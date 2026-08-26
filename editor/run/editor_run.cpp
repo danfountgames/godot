@@ -66,8 +66,16 @@ void EditorRun::remove_instance_starting_callback(EditorRunInstanceStarting p_ca
 	_instance_starting_callbacks().erase(p_callback);
 }
 
-Error EditorRun::run(const String &p_scene, const String &p_write_movie, const Vector<String> &p_run_args) {
-	List<String> args;
+// The command line every launched instance starts from: forwardable arguments, the
+// project path, the debugger URI, the debug-visualisation flags, breakpoints and the
+// scene. Extracted so that anything launching a game for this editor - the play button,
+// or a workspace running several agent-owned instances - starts from the same arguments
+// instead of a near-copy that drifts as flags are added here.
+//
+// Per-instance arguments (the run-instances dialog's, and embedding) are layered on top
+// by the caller.
+void EditorRun::build_base_arguments(const String &p_scene, const String &p_write_movie, const Vector<String> &p_run_args, List<String> &args) {
+	args.clear();
 
 	for (const String &a : Main::get_forwardable_cli_arguments(Main::CLI_SCOPE_PROJECT)) {
 		args.push_back(a);
@@ -175,6 +183,12 @@ Error EditorRun::run(const String &p_scene, const String &p_write_movie, const V
 			args.push_back(run_arg);
 		}
 	}
+
+}
+
+Error EditorRun::run(const String &p_scene, const String &p_write_movie, const Vector<String> &p_run_args) {
+	List<String> args;
+	build_base_arguments(p_scene, p_write_movie, p_run_args, args);
 
 	String exec = OS::get_singleton()->get_executable_path();
 	int instance_count = RunInstancesDialog::get_singleton()->get_instance_count();

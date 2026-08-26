@@ -40,6 +40,8 @@
 
 #ifdef TOOLS_ENABLED
 #include "editor/editor_node.h"
+
+#include "mcp_workspace.h"
 #endif
 
 static MCPToolRegistry *mcp_tool_registry = nullptr;
@@ -50,6 +52,14 @@ static void _godot_ai_editor_init() {
 	// way the debug adapter and language servers do.
 	MCPService *service = memnew(MCPService);
 	EditorNode::get_singleton()->add_editor_plugin(service);
+
+	// The main-screen workspace where agent-owned games are embedded, alongside 2D, 3D,
+	// Script and Game. The ordinary Game workspace is untouched: a human pressing play
+	// still gets their own run there.
+	MCPWorkspacePlugin *workspace = memnew(MCPWorkspacePlugin);
+	EditorNode::get_singleton()->add_editor_plugin(workspace);
+	mcp_workspace_set_plugin(workspace);
+
 	mcp_register_builtin_tools();
 }
 #endif

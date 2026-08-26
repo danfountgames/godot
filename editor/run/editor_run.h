@@ -78,6 +78,11 @@ public:
 	Status get_status() const;
 	String get_running_scene() const;
 
+	// The arguments every launched instance starts from. Public so a workspace hosting
+	// its own agent-owned instances launches from the same command line the play button
+	// does. See the note on the definition.
+	static void build_base_arguments(const String &p_scene, const String &p_write_movie, const Vector<String> &p_run_args, List<String> &r_args);
+
 	Error run(const String &p_scene, const String &p_write_movie = "", const Vector<String> &p_run_args = Vector<String>());
 	void run_native_notify() { status = STATUS_PLAY; }
 	void stop();
