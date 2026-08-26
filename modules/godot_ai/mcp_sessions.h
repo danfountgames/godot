@@ -103,6 +103,11 @@ public:
 	static Result finish(const String &p_slug, int64_t p_end_frame, const String &p_verdict,
 			const Dictionary &p_summary);
 
+	// Records how a replay of this session went, without touching the recording's own
+	// frames. A replay reports on a session; it does not re-record it.
+	static Result set_replay_result(const String &p_slug, const String &p_verdict,
+			const Dictionary &p_report);
+
 	// One entry per recorded session, newest first, each the session's metadata plus its
 	// on-disk sizes. Never fails: a missing root is zero sessions, not an error.
 	static Array list();

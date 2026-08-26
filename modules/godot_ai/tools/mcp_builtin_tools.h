@@ -78,4 +78,7 @@ void mcp_register_profiler_tools();
 // Reading back the live stream of what the agent has been doing.
 void mcp_register_activity_tools();
 
+// Recording a play session and replaying it against the running game.
+void mcp_register_session_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

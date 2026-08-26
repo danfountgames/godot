@@ -36,11 +36,21 @@ spec ledger and interface ledger for their evidence.
 
 S-19 (in progress): the agent-experience tranche, opened by
 `docs/godot-ai-agent-experience-spec.md` and tracked in `.agent/EXPERIENCE_LEDGER.md`.
-Landed so far: the live activity stream (`mcp_activity.{h,cpp}`, hooked into
-`mcp_protocol.cpp`, read back by `Godot_GetActivity`) and both write tools accepting
-`text` and `content` interchangeably. Building the engine on 4.8 for the first time
-since the merge also turned up and fixed a real engine bug — see *Active failures*.
-Next in order: the Activity dock (E2/E4/E5), then session record and replay (S1–S8).
+Landed so far: the live activity stream (E1/E3/E7, verified end to end), session
+record/assert/list/replay (S1–S4, S7, S8), and both write tools accepting `text` and
+`content` interchangeably. Building the engine on 4.8 for the first time since the merge
+turned up and fixed a real engine bug (the `EditorFileSystem` singleton), and running
+`run_editor_e2e.py` on Linux for the first time turned up and fixed a second — a
+hardcoded drag coordinate that made the suite unpassable under a virtual display, which
+is very likely why C1 has never gone green.
+
+Two rows are deliberately short of VERIFIED and say so: **S4** (replay) is exercised end
+to end but inside one editor process, and this tranche's own rule 2 requires two; **S5**
+(replay speed multiplier) was not built at all. **S6** (indeterminate verdicts) is
+unit-tested hard but has not been produced against a live game.
+
+Next in order: the Activity dock (E2/E4/E5) — **paused pending the user's input**, at
+their request.
 
 S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
 `Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
@@ -126,17 +136,22 @@ On this Linux container at 4.8-dev (2026-08-26), with the S-19 slice:
 
 - Editor builds clean on 4.8 — 9m46s from scratch, SCU, 4 cores, 0 errors. This is the
   first build since the merge; the module needed no source changes to link.
-- Module suite (`--test-case="*[godot_ai]*"`, from `/tmp`) → **85 cases, 575
+- Module suite (`--test-case="*[godot_ai]*"`, from `/tmp`) → **106 cases, 698
   assertions**, all pass. On the merged code before this slice it was 74/526, matching
   the 4.3 numbers exactly, so the merge caused no module regression.
 - `python3 tools/relay/tests/run_tests.py` → **64/64 pass**.
-- Full engine suite from the repository root → **1502 cases**, one failure:
+- Full engine suite from the repository root → **1523 cases**, one failure:
   `[IP] resolve_hostname`, which needs outbound DNS this container does not have and
   fails identically on the unmodified tree. **Ten consecutive runs**, after the
   `EditorFileSystem` singleton fix; the pre-fix binary crashed eight times in ten.
-- Not re-run for this slice: `tools/tests`, `run_editor_e2e.py`,
-  `run_editor_ui_e2e.py`. The end-to-end scripts are what would move E7 and Q3 from
-  IMPLEMENTED to VERIFIED.
+- `python3 tools/tests/run_tests.py` → 14 passed, 2 skipped, 16 total.
+- `python3 tools/relay/tests/run_editor_e2e.py` → **all checks pass on a real virtual
+  display**, including the new activity and session blocks. This is the first time this
+  script has ever passed on Linux.
+- `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass.
+- 77 tools are advertised over `tools/list`, up from 73.
+- Not re-run: `run_editor_ui_e2e.py` (needs `xdotool`, which is not installed here; the
+  e2e reports the one dialog-clicking check it skips for the same reason).
 
 On the working tree with the S-18 profiler slice (2026-08-13, native macOS
 arm64), at the pre-merge 4.3 baseline:

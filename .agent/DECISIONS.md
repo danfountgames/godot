@@ -195,3 +195,24 @@ Durable decisions that are not obvious from the resulting code.
   the module's link against 4.8 is unverified. The relay is unaffected (no engine
   headers) and still passes 64/64. The first editor build after the merge is the real
   test, and any 4.8 API breakage will surface there rather than in the relay loop.
+
+## DEC-0010 — Replay requires a running game rather than starting one
+
+- **Date:** 2026-08-26
+- **Context:** `Godot_ReplaySession` needs two authorities if it launches the project:
+  `run_project` to start the game and `simulate_input` to drive it. A tool declares
+  exactly one capability (`MCPTool::get_capability`), so whichever it named, it would
+  hold authority the permission model could not see it using.
+- **Decision:** Replay does **not** start the game. It refuses when none is running and
+  names the tool to call first. Its one declared capability, `simulate_input`, is then
+  the whole of what it does.
+- **Consequences:** One more call for the caller, and a composition benefit — the caller
+  chooses which scene to replay against. The alternative considered and rejected was
+  declaring `run_project` and checking `MCPPermissions::get_policy(SIMULATE_INPUT)` by
+  hand: that check cannot see per-session narrowing or a read-only session, so it would
+  have looked like a gate without being one.
+- **Related:** `Godot_RecordSession` and `Godot_AssertRuntimeState` declare
+  `read_runtime`, following the profiler tools, which also write JSON Lines into a
+  tool-owned directory under `user://` and treat that as bookkeeping rather than as
+  editing the player's data. `Godot_WriteUserFile`, which takes an arbitrary `user://`
+  path, remains `edit_user_data`.

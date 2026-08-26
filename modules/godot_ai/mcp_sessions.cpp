@@ -288,6 +288,28 @@ MCPSessions::Result MCPSessions::finish(const String &p_slug, int64_t p_end_fram
 	return Result::good();
 }
 
+MCPSessions::Result MCPSessions::set_replay_result(const String &p_slug,
+		const String &p_verdict, const Dictionary &p_report) {
+	Dictionary meta = read_meta(p_slug);
+	if (meta.is_empty()) {
+		return Result::bad(vformat("no session '%s'", p_slug));
+	}
+	meta["verdict"] = p_verdict;
+	Dictionary replay;
+	replay["verdict"] = p_verdict;
+	replay["at"] = Time::get_singleton()->get_datetime_string_from_system(true);
+	replay["report"] = p_report.duplicate(true);
+	meta["last_replay"] = replay;
+
+	Ref<FileAccess> file = FileAccess::open(get_session_dir(p_slug).path_join(META_FILE),
+			FileAccess::WRITE);
+	if (file.is_null()) {
+		return Result::bad(vformat("could not update the metadata for '%s'", p_slug));
+	}
+	file->store_string(JSON::stringify(meta, "  "));
+	return Result::good();
+}
+
 Dictionary MCPSessions::read_meta(const String &p_slug) {
 	const String path = get_session_dir(p_slug).path_join(META_FILE);
 	if (!FileAccess::exists(path)) {

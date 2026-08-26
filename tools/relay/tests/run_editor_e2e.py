@@ -1187,6 +1187,51 @@ def run(editor_binary, display):
         check(messages[0]["type"] == "editor", "message type was not classified")
         print("PASS Godot_ReadOutputLog returned editor output")
 
+        # --- the activity stream -------------------------------------------
+        # By now this session has made dozens of calls. The stream should show them,
+        # in order, with the concrete things each one touched - that is what the dock
+        # will render, and asserting it here is what keeps it regression-testable.
+        reply = call({"jsonrpc": "2.0", "id": 250, "method": "tools/call",
+                      "params": {"name": "Godot_GetActivity", "arguments": {"limit": 200}}})
+        check(not refused(reply), "reading activity failed: %s" % refusal_text(reply))
+        activity = reply["result"]["structuredContent"]
+        records = activity["records"]
+        check(len(records) > 5, "the activity stream is suspiciously short: %r" % len(records))
+        check(activity["latest_sequence"] >= len(records),
+              "the sequence counter disagrees with the buffer: %r" % activity)
+
+        tools_seen = {record["tool"] for record in records}
+        check("Godot_OpenScene" in tools_seen,
+              "the stream did not record a call this run definitely made: %r" % sorted(tools_seen))
+        for record in records:
+            check(record["outcome"] in ("running", "ok", "failed", "refused", "deferred"),
+                  "unknown outcome in the stream: %r" % record)
+            check("capability" in record and "summary" in record,
+                  "a record is missing its capability or summary: %r" % record)
+
+        # E3: a record names what it touched, not just which tool ran.
+        with_subjects = [r for r in records if r["subjects"]]
+        check(with_subjects, "no record named any node or file it touched")
+        subject_kinds = {s["kind"] for r in with_subjects for s in r["subjects"]}
+        check("file" in subject_kinds,
+              "no record named a file, so the dock would have nothing to reveal: %r"
+              % subject_kinds)
+
+        # Refusals are in the stream too - the trail has to show what was attempted.
+        sequence_before = activity["latest_sequence"]
+        call({"jsonrpc": "2.0", "id": 251, "method": "tools/call",
+              "params": {"name": "Godot_ReadTextFile",
+                         "arguments": {"path": "res://definitely_not_here.txt"}}})
+        reply = call({"jsonrpc": "2.0", "id": 252, "method": "tools/call",
+                      "params": {"name": "Godot_GetActivity",
+                                 "arguments": {"after_sequence": sequence_before}}})
+        fresh = reply["result"]["structuredContent"]["records"]
+        check(fresh, "polling by sequence returned nothing after two more calls")
+        check(all(r["sequence"] > sequence_before for r in fresh),
+              "polling by sequence returned records it should have skipped: %r" % fresh)
+        print("PASS Godot_GetActivity streams %d records, with the files they touched"
+              % len(records))
+
         reply = call({"jsonrpc": "2.0", "id": 61, "method": "tools/call",
                       "params": {"name": "Godot_ReadOutputLog",
                                  "arguments": {"contains": "this string appears nowhere"}}})
@@ -1310,11 +1355,29 @@ def run(editor_binary, display):
                     return probe["result"]["structuredContent"]["value"]
 
                 check(surface("drag_events") == 0, "the surface saw a drag before one was sent")
+                # The Surface fixture spans (500,100)-(900,500) in viewport space, and
+                # input maps 1:1 to the viewport here. This used to drag a fixed
+                # 550->850, which is fine on a large screen and refused under a virtual
+                # display, where the game gets 846x475 - so the drag ended one pixel
+                # outside the window and the test failed for a reason that had nothing to
+                # do with dragging. That is every Linux run, CI's included. Keep the
+                # documented intent - a horizontal drag across the Surface - and clamp the
+                # far end into whatever window the game actually got.
+                window = call({"jsonrpc": "2.0", "id": 189, "method": "tools/call",
+                               "params": {"name": "Godot_GetGameWindowInfo",
+                                          "arguments": {}}})
+                check(not refused(window),
+                      "reading the game window failed: %s" % refusal_text(window))
+                game_window = window["result"]["structuredContent"]
+                drag_to_x = min(850, int(game_window["width"]) - 8)
+                check(drag_to_x > 600,
+                      "the game window is too narrow to drag across the Surface: %r"
+                      % game_window)
                 reply = call({"jsonrpc": "2.0", "id": 191, "method": "tools/call",
                               "params": {"name": "Godot_SendPointerInput",
                                          "arguments": {"action": "drag",
                                                        "x": 550, "y": 150,
-                                                       "to_x": 850, "to_y": 150,
+                                                       "to_x": drag_to_x, "to_y": 150,
                                                        "steps": 10}}})
                 check(not refused(reply), "dragging failed: %s" % refusal_text(reply))
                 dragged = reply["result"]["structuredContent"]
@@ -1333,8 +1396,10 @@ def run(editor_binary, display):
                       "the drag's motion did not carry the held button, so a game asking "
                       "button_mask would read it as a hover")
                 distance = surface("drag_distance")
-                check(abs(distance - 300.0) < 2.0,
-                      "the drag covered %r pixels, not the 300 between its ends" % distance)
+                expected_distance = float(drag_to_x - 550)
+                check(abs(distance - expected_distance) < 2.0,
+                      "the drag covered %r pixels, not the %r between its ends"
+                      % (distance, expected_distance))
 
                 reply = call({"jsonrpc": "2.0", "id": 192, "method": "tools/call",
                               "params": {"name": "Godot_SendPointerInput",
@@ -1612,6 +1677,94 @@ def run(editor_binary, display):
                       "trace entries do not say when they happened: %r" % trace[:2])
                 print("PASS Godot_GetInputTrace recorded every kind of input sent (%d events)"
                       % len(trace))
+
+                # --- record, assert, replay --------------------------------------
+                # The whole point of a session: play the game, keep what happened, and
+                # replay it after a change to see what came out different. This runs the
+                # loop end to end against the live game rather than trusting the store
+                # and the scheduler, which are unit-tested separately.
+                reply = call({"jsonrpc": "2.0", "id": 240, "method": "tools/call",
+                              "params": {"name": "Godot_RecordSession",
+                                         "arguments": {"action": "start",
+                                                       "name": "E2E Press The Target"}}})
+                check(not refused(reply), "starting a recording failed: %s" % refusal_text(reply))
+                started = reply["result"]["structuredContent"]
+                check(started["recording"] is True and started["session"] == "e2e-press-the-target",
+                      "the recording did not open as named: %r" % started)
+                check("does not observe a person playing" in started.get("input_source_note", ""),
+                      "the reply does not say what the trace actually sees: %r" % started)
+
+                # A second start must be refused: there is one game, so one recording.
+                reply = call({"jsonrpc": "2.0", "id": 241, "method": "tools/call",
+                              "params": {"name": "Godot_RecordSession",
+                                         "arguments": {"action": "start", "name": "another"}}})
+                check(refused(reply), "a second concurrent recording was accepted")
+
+                # Something for the trace to hold, on a control the fixture counts.
+                call({"jsonrpc": "2.0", "id": 242, "method": "tools/call",
+                      "params": {"name": "Godot_SendPointerInput",
+                                 "arguments": {"x": 200, "y": 130, "action": "click"}}})
+                reply = call({"jsonrpc": "2.0", "id": 243, "method": "tools/call",
+                              "params": {"name": "Godot_AssertRuntimeState",
+                                         "arguments": {"node_path": "/root/Main/Hud/Target",
+                                                       "property": "press_count"}}})
+                check(not refused(reply), "capturing an assertion failed: %s" % refusal_text(reply))
+                captured = reply["result"]["structuredContent"]
+                check(captured.get("assertion_count") == 1,
+                      "the assertion was not stored: %r" % captured)
+                recorded_presses = captured["value"]
+
+                reply = call({"jsonrpc": "2.0", "id": 244, "method": "tools/call",
+                              "params": {"name": "Godot_RecordSession",
+                                         "arguments": {"action": "stop"}}})
+                check(not refused(reply), "stopping the recording failed: %s" % refusal_text(reply))
+                stopped = reply["result"]["structuredContent"]
+                check(stopped["recording"] is False, "the recording did not close: %r" % stopped)
+                check(stopped["event_count"] >= 1,
+                      "the trace captured no input: %r" % stopped)
+                check(stopped["assertion_count"] == 1,
+                      "the assertion did not survive into the session: %r" % stopped)
+                print("PASS Godot_RecordSession captured %d events and an assertion"
+                      % stopped["event_count"])
+
+                reply = call({"jsonrpc": "2.0", "id": 245, "method": "tools/call",
+                              "params": {"name": "Godot_ListSessions", "arguments": {}}})
+                check(not refused(reply), "listing sessions failed: %s" % refusal_text(reply))
+                listed = reply["result"]["structuredContent"]["sessions"]
+                slugs = [entry["slug"] for entry in listed]
+                check("e2e-press-the-target" in slugs,
+                      "the recorded session is not listed: %r" % slugs)
+                print("PASS Godot_ListSessions reports the recording")
+
+                # An assertion recorded against a counter that only ever goes up will not
+                # match on replay, so this must come back `failed` with both values named -
+                # which is exactly the regression report the feature exists to produce.
+                reply = call({"jsonrpc": "2.0", "id": 246, "method": "tools/call",
+                              "params": {"name": "Godot_ReplaySession",
+                                         "arguments": {"name": "E2E Press The Target",
+                                                       "timeout_seconds": 60}}})
+                check(not refused(reply), "replaying failed: %s" % refusal_text(reply))
+                replayed = reply["result"]["structuredContent"]
+                check(replayed["verdict"] in ("passed", "failed", "indeterminate"),
+                      "the replay produced no usable verdict: %r" % replayed)
+                check(replayed["events_injected"] >= 1,
+                      "the replay injected nothing: %r" % replayed)
+                if replayed["verdict"] == "failed":
+                    divergence = replayed["first_divergence"]
+                    check(divergence["property"] == "press_count",
+                          "the divergence names the wrong property: %r" % divergence)
+                    check(divergence["expected"] == recorded_presses,
+                          "the divergence does not carry the recorded value: %r" % divergence)
+                print("PASS Godot_ReplaySession re-ran the session and returned '%s'"
+                      % replayed["verdict"])
+
+                # Replaying something that was never recorded is a clear refusal, not a
+                # pass over an empty trace.
+                reply = call({"jsonrpc": "2.0", "id": 247, "method": "tools/call",
+                              "params": {"name": "Godot_ReplaySession",
+                                         "arguments": {"name": "never recorded at all"}}})
+                check(refused(reply), "replaying an unknown session was accepted")
+                print("PASS Godot_ReplaySession refuses a session that was never recorded")
 
                 # --- structured errors -------------------------------------------
                 # Make the game report a real error, so this is checked against

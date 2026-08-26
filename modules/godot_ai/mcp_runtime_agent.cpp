@@ -1489,6 +1489,10 @@ Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String 
 	String text;
 	VariantWriter::write_to_string(value, text);
 	result["text"] = text;
+	// The frame this value was read at. A session assertion is only meaningful paired
+	// with when it was observed, and asking separately would return a frame that had
+	// already moved on.
+	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
 	return result;
 }
 
@@ -1744,6 +1748,10 @@ Dictionary MCPRuntimeAgent::_input_trace(const Dictionary &p_arguments, String &
 	Dictionary result;
 	result["events"] = g_trace.duplicate();
 	result["count"] = g_trace.size();
+	// The frame this answer was taken at. Session recording needs it to know where a
+	// recording starts and ends, and without it that costs a second round trip to `ping`
+	// whose answer would already be a frame or two stale.
+	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
 	if (clear) {
 		g_trace.clear();
 	}
