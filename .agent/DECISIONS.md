@@ -216,3 +216,52 @@ Durable decisions that are not obvious from the resulting code.
   tool-owned directory under `user://` and treat that as bookkeeping rather than as
   editing the player's data. `Godot_WriteUserFile`, which takes an arbitrary `user://`
   path, remains `edit_user_data`.
+
+## DEC-0011 — Multi-instance embedding is an editor-layer problem, not a platform one
+
+- **Date:** 2026-08-26
+- **Context:** The agent-workspace specification requires several live game processes
+  displayed at once, and instructs that this be proven before any stage UI is built:
+  *"Do not build a polished stage on top of an unproven assumption that the current
+  single-instance embedder can simply be multiplied."* A related question was whether
+  the editor should become the harness for agent test instances, described as a
+  potentially big rewrite.
+- **What was measured.** A throwaway patch let `GameView` hold a second
+  `EmbeddedProcess`, allowed run instance 1 to receive the embed arguments, and fed it
+  the second launched pid. The editor ran on a 1600x900 virtual display and was driven
+  through the real relay (`Godot_PlayMainScene`, `Godot_CaptureEditorWindow`).
+- **Result: two game processes embedded and rendered inside one editor window,
+  simultaneously.** Three Godot processes alive (editor + two games), the editor logged
+  embedding the second pid, and the screenshot shows both games drawing. Evidence:
+  `.agent/evidence/spike_two_embedded_processes.png`. The patch was then reverted; it
+  exists only in this record.
+- **Why it works.** The platform layer was never single-instance. Every backend keys
+  embedding by process id:
+  `DisplayServerX11::embed_process(WindowID, ProcessID, Rect2i, visible, grab_focus)`
+  over a `HashMap<ProcessID, EmbeddedProcessData *>`, and Windows, macOS and Wayland
+  have the same shape. `EmbeddedProcessBase` is a `Control`, not a singleton, so N
+  controls is structurally ordinary.
+- **Decision:** Build the workspace by generalising the existing editor seams. Do **not**
+  write a separate harness, and do **not** treat this as a rewrite. Three seams carry
+  the whole limitation:
+  1. `GameView::_update_arguments_for_instance()` returns early unless `p_idx == 0`, so
+     only the first instance is ever told to embed.
+  2. `GameView` owns exactly one `embedded_process` and one `_update_embed_window_size()`
+     path. A second embedder renders, but nothing positions it — visible in the
+     screenshot, where the second game floats over the layout instead of tiling.
+  3. `GameViewDebugger::set_suspend/next_frame/set_time_scale/reset_time_scale` iterate
+     `sessions` and broadcast to every active one. Pausing one instance pauses all.
+- **The routing key already exists.** `GameView::_attach_script_debugger()` matches a
+  session to a process with `script_debugger->get_remote_pid() == embedded_process->
+  get_embedded_pid()`. A per-instance router is that join generalised, not new
+  machinery. `EditorRun::pids` is already public and already tracks every launched pid.
+- **Not established.** Only Linux/X11 under Xvfb was measured. macOS routes through a
+  separate `EmbeddedProcessMacOS` object and `embed_process_update()`, which is more
+  per-platform machinery than X11 needs and must be spiked separately. Windows and
+  Wayland are unmeasured. Nothing here says how many instances remain usable at once,
+  and the second embedder's positioning was never wired up, so nothing is known about
+  resize, focus or z-order with several tiles.
+- **Consequences:** The workspace's first vertical slice — three live variants — is not
+  gated on new platform capability. It is gated on an instance registry, per-tile
+  embedder hosts, and a debugger router. That is a tractable amount of work against
+  three named seams.

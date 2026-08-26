@@ -1,63 +1,124 @@
 # NEXT
 
-The first two specifications are finished. The third has just opened.
+The build order below is **the user's**, given 2026-08-26, and it supersedes the tier
+ordering in `docs/godot-ai-agent-experience-spec.md`. Where the two disagree, this wins.
 
-- `docs/godot-ai-clone-spec.md` — 53 of 55 requirements verified. The two that are not
-  need hardware this machine is not (see the bottom of this file).
-- `docs/godot-ai-agent-interface-spec.md` — all 41 items verified.
-- `docs/godot-ai-agent-experience-spec.md` — **new**. Tracked in
-  `.agent/EXPERIENCE_LEDGER.md`. Nothing in it is started.
+## The positioning, in the user's words
 
-## The immediate next action
+The product is not seventy-seven tools. It is the closed loop:
 
-**Q1 — build the engine on 4.8 and re-establish the editor-side baseline.**
+> The agent can make a change, run the game, interact with it, discover that the result
+> is wrong, diagnose why, revise the change and prove that it now works.
 
-Commit `117870273` merged Godot 4.8 development into this fork and moved
-`modules/godot_ai/` onto the nested editor layout. Nothing has linked it since. Every
-editor-side claim in `SPEC_LEDGER.md` and `INTERFACE_LEDGER.md` was verified against
-4.3 and is currently unproven on this tree.
+"AI verifies your game" is the **wedge, not the boundary**. The unique capability is that
+the agent can observe, operate and modify a *running* game and connect what happened back
+to the project. Verification is the best first commercial use of that; live tuning,
+debugging, performance investigation and iterative design come from the same capability.
 
-```sh
-scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no \
-      scu_build=yes tests=yes -j$(nproc)
-cd /tmp && godot --headless --test --test-case="*[godot_ai]*"   # module suite
-python3 tools/relay/tests/run_editor_e2e.py                      # whole stack
-```
+Do not describe the backend as "essentially finished". It is **feature-complete but only
+partly revalidated** — see below.
 
-Do this before touching any code below. A 4.8 API break in the module is both the most
-likely problem on this tree and the cheapest one to find.
+## Revalidation, before the roadmap
 
-## Then, in order
+| # | Job | State |
+|---|---|---|
+| 1 | Rebuild on Godot 4.8 and run the full module suite | **Done.** Builds clean; module suite 106 cases / 698 assertions; full engine suite 1523 cases over several runs. Found and fixed a dangling `EditorFileSystem` singleton that crashed the suite roughly one run in four. |
+| 2 | Observe `.github/workflows/godot_ai.yml` succeeding on Actions | **Not done — but unblocked.** `run_editor_e2e.py` had never been able to pass on Linux: a hardcoded drag coordinate exceeded the 846px window a virtual display gives, so the suite failed on an unrelated check. Fixed; it now passes on Linux with a display and headless. That was very likely the blocker. Someone still has to push and watch a run. |
+| 3 | Run the Windows relay against a Godot editor | **Not done.** Needs a Windows host. Unchanged. |
 
-The sequencing argument is in the spec's *Sequencing* section and is not repeated here.
-Short version: **E before P before D, with S alongside P.**
+## Build order
 
-1. **E1 + E7 — the activity stream and its tool.** No UI yet. The service publishes a
-   live record per tool call; `Godot_GetActivity` reads it back. Doing the tool first
-   means the dock has something regression-testable underneath it, which rule 1 of the
-   ledger's verification rules requires anyway.
-2. **E2 + E3 + E4 — the Activity dock.** The single biggest gap in the category; no
-   competitor has it. Verify by pressing its controls under a virtual display, not by
-   unit-testing the methods behind them.
-3. **S1–S8 — session record and replay.** The capability an authoring-only integration
-   cannot copy. S6 (honest reporting of non-determinism) is the requirement to protect;
-   it is the one that will be tempting to drop to make S4 look finished.
-4. **P1–P5 — playtest sessions.** Depends on E1 for P5.
-5. **D1–D4 — propose-then-apply and variants.**
+1. **Finish revalidation.** Items 2 and 3 above.
+2. **Minimal Activity dock.** Not a magnificent one. It only has to answer six questions:
+   what is the agent trying to achieve; what is it doing now; what file, node or runtime
+   object is it touching; what changed; can I stop it; can I undo *that* change.
+   Highlight the node and the file. Offer a checkpoint diff and a revert. Pause and stop
+   are essential. The scrubber, animation and timeline come later.
+   Build it as an **observability system, not a panel**: every operation emits one
+   consistent event carrying intention, tool call, affected objects, result, checkpoint
+   and error state. The dock is one presentation of that stream; reports, logs and
+   external clients are others. The underlying model matters more than the visuals.
+3. **One constrained goal-directed playtest workflow** that produces a genuinely useful
+   report. Built *together with* the thin dock, not after a finished one. The target
+   demonstration: the agent launches a small test game, is asked to reach a state, you
+   watch it in the dock, it hits a crash or an unreachable state or a frame spike, and it
+   returns a report with screenshots, runtime state, errors and a profiler window that
+   you can then replay or inspect.
+4. **Reproducible bug-session capture.** Start as bug reproduction — "capture the sequence
+   that caused this crash and replay it" — not as a comprehensive regression suite.
+   Strict deterministic replay is an *optional stronger mode*, never the minimum promise.
+5. **Promote runtime values, and a focused live-tuning workspace.** Promotion is small and
+   closes the loop: the agent adjusts a value in the running game, you decide it feels
+   right, the temporary value becomes the authored value. Without it, live tuning is
+   theatre because the last act is manual. Frame variants as a **live tuning workspace**,
+   not as general AI-generated alternatives.
+6. **Grow the skills library around concrete jobs**: crash investigation, performance
+   regression, menu traversal, input-path testing, scene cleanup.
 
-Q2 through Q5 are independent of all of the above and can be taken whenever the main
-line is blocked.
+Alongside all of it: **benchmark projects and real success rates**.
+
+## Two replay levels
+
+Do not promise "deterministic replay". Raw input is one source of state among many —
+variable frame timing, physics, random seeds, async resource loading, network, animation
+timing, audio callbacks, wall-clock reads. A replay can diverge after an engine update or
+on another machine.
+
+- **Strict.** For games that opt into fixed time steps, known seeds and controlled async
+  behaviour. May aim at genuine determinism.
+- **General (semantic, resilient).** Records input but waits on *observed conditions*
+  rather than assuming identical frames: "wait until the menu is visible, then press this
+  control", not "press the button on frame 800". Stores runtime snapshots and visual
+  references at important moments. On divergence it reports where and how rather than
+  simply failing.
+
+`Godot_WaitForRuntimeCondition` already exists and is the primitive the general level is
+built from. What ships today is closer to strict-without-the-guarantees;
+`MCPReplayPlan` already refuses to call a drifting run a pass, which is the honest floor
+to build the general level on.
+
+## Three risks the specification barely covered
+
+- **Fork adoption friction.** Teams are cautious about a custom engine branch. They will
+  ask how fast it follows upstream, whether existing projects open unchanged, whether
+  export templates stay compatible, whether the AI module can be removed later, and
+  whether they depend on one maintainer. This may be a bigger commercial obstacle than any
+  missing feature. Keep changes to core Godot limited, documented and ideally
+  upstreamable; keep as much as possible in the module. The `EditorFileSystem` destructor
+  fix is exactly the kind of change that should go upstream.
+- **No evaluation.** Counts of tools, tests and verified requirements measure engineering
+  coverage, not agent effectiveness. Build benchmark Godot projects and measure: how often
+  the agent reaches a stated condition; how often it correctly identifies a regression;
+  how reliably it reproduces a crash; how often it modifies the wrong node or property;
+  how long a playtest takes; how much model usage it costs; how many false alarms appear
+  in reports. Competitors can add runtime tools; a mature evaluation suite is far harder
+  to copy.
+- **The 77-tool surface is itself a reliability risk.** More similarly-named primitives
+  means more chances to pick wrong or to build an invalid sequence. Skills and
+  higher-level sessions must become **the normal way the model operates** — "run a
+  performance investigation", "reproduce this input sequence" — with the primitives
+  composed underneath and available for unusual cases, not equally prominent in every
+  interaction.
+
+## The workspace specification
+
+The user's *GodotAI Agent Workspace — UX and Implementation Specification* is the
+authoritative UX definition for the dock, the central workspace and the evidence panel.
+Its headline decisions: the **dock is the control plane**, a new **GodotAI main-screen
+workspace is the view plane**, and the **Activity bottom panel is the evidence plane**.
+Several playable instances must not be squeezed into a side dock.
+
+Its Phase Zero has been executed — see **DEC-0011**. Short version: **two game processes
+already embed and render inside one editor window simultaneously.** The platform layer
+was never single-instance; every backend keys embedding by process id. The limitation is
+three editor-layer seams — argument gating to instance 0, one `EmbeddedProcess` per
+`GameView`, and debugger operations that broadcast to every session. So the workspace is a
+generalisation of existing seams, not a new harness and not a rewrite.
+
+Still unmeasured: macOS (a different `EmbeddedProcessMacOS` path), Windows, Wayland, how
+many instances stay usable at once, and anything about tile resize, focus or z-order.
 
 ## Still blocked on hardware or a remote runner
 
-- **C1** — confirm `.github/workflows/godot_ai.yml` goes green on GitHub Actions. Every
-  command in it passes locally. Cheap to settle: push and watch one run.
-- **R8** — on a Windows host, run the cross-compiled relay against a Godot editor. The
-  POSIX backend passes all 64 relay tests on Linux and native macOS arm64. The Windows
-  backend has never executed.
-
-## One wart recorded rather than fixed
-
-`Godot_WriteTextFile` takes `text`; `Godot_WriteUserFile` takes `content`. Changing
-either would break clients. Q3 is the fix that does not: accept both, warn on the old
-one. The template's AGENTS.md warns about it until then.
+- **C1** — watch `.github/workflows/godot_ai.yml` go green. Plausible for the first time.
+- **R8** — run the cross-compiled relay on Windows. Never executed.
