@@ -90,4 +90,7 @@ void mcp_register_playtest_tools();
 // Keeping a value that was tuned while the game was running.
 void mcp_register_promote_tools();
 
+// Trying several values for one property against the running game.
+void mcp_register_variant_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

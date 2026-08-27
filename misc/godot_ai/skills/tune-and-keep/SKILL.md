@@ -6,6 +6,7 @@ required_editor_version: ">=4.3"
 tools:
   - Godot_GetRuntimeProperty
   - Godot_SetRuntimeProperty
+  - Godot_OfferVariants
   - Godot_PromoteRuntimeValue
   - Godot_SaveScene
   - Godot_UndoLastAction
@@ -19,6 +20,37 @@ answer is a feeling, not a number — and the point of this skill is that the fe
 survives into the project.
 
 The game must already be running.
+
+## When you have candidates in mind, offer them as a set
+
+`Godot_OfferVariants` is the workspace for exactly this. `offer` captures the current
+value and takes a list of candidates; `switch` puts one into the running game; `note`
+records what you saw; `keep` names the winner; `discard` puts the original back. Prefer
+it over a sequence of bare `Godot_SetRuntimeProperty` calls whenever you have more than
+one value in mind, because it keeps three things the bare calls lose:
+
+- **The original**, captured before anything changed and always available to switch back
+  to. Comparing a candidate against what the game already had is the comparison that gets
+  forgotten, and often the one that settles it.
+- **Your notes, attached to the value they are about.** "260 overshoots the platform" is
+  the session; a list of numbers is not.
+- **How long each value was actually live**, which the reply reports back to you. If you
+  flipped through four numbers in a second it will say the set recorded a choice rather
+  than a comparison, and it will be right. Play each candidate properly before judging
+  it.
+
+Two rules it enforces, both worth understanding rather than working around:
+
+- A candidate that was never switched to cannot be kept. Keeping a value nobody played is
+  editing the scene by a longer route; if that is what you want, say so and use
+  `Godot_SetSceneProperty`.
+- `keep` writes nothing to the project. It names the winner and hands you to
+  `Godot_PromoteRuntimeValue`, which is the tool that holds the authority to change a
+  scene. Do that while the game is still running and still holding the kept value.
+
+Then continue at step 5 below.
+
+## When you are feeling your way to a value
 
 1. `Godot_GetRuntimeProperty` first, and say what the current value is. A tuning session
    that cannot report where it started cannot report what it changed.
@@ -44,7 +76,12 @@ The game must already be running.
   back.
 - Use `Godot_AskUser` when the judgement is genuinely the person's — "does this feel
   right?" is not a question you can answer for them, and offering two or three candidate
-  values is more useful than asking for a number.
+  values is more useful than asking for a number. `Godot_OfferVariants` and `Godot_AskUser`
+  go together well: offer the set, switch through it while they watch, then ask which one
+  they want kept.
+- `discard` puts the original back into the *running game*. It writes nothing to the
+  project either way, so a session you abandon leaves no trace — which is the point of
+  tuning live.
 
 ## When not to use this
 

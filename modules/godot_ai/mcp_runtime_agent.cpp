@@ -1529,6 +1529,27 @@ bool MCPRuntimeAgent::coerce(const Variant &p_value, Variant::Type p_target, Var
 		return false;
 	}
 
+	// A string holding Godot's own text form of the target type - `(128, 64)` for a
+	// Vector2, `1, 0, 0, 1` for a Color. This is what `get_property` hands back as `text`,
+	// so without it the two halves of the interface disagree: you can read a position out
+	// and not write the same string back in, and anything that round-trips a value (the
+	// tuning workspace putting the original back, most obviously) silently fails on every
+	// structured property. `can_convert` says no for String to Vector2, and it is right to
+	// - a general String is not a Vector2 - but a string that parses as one is.
+	if (p_value.get_type() == Variant::STRING && p_target != Variant::STRING &&
+			p_target != Variant::STRING_NAME && p_target != Variant::NODE_PATH) {
+		VariantParser::StreamString stream;
+		stream.s = String(p_value).strip_edges();
+		Variant parsed;
+		String parse_error;
+		int line = 0;
+		if (VariantParser::parse(&stream, parsed, parse_error, line) == OK &&
+				parsed.get_type() == p_target) {
+			r_out = parsed;
+			return true;
+		}
+	}
+
 	// Numbers and strings convert where Godot itself says they can.
 	if (Variant::can_convert(p_value.get_type(), p_target)) {
 		Callable::CallError call_error;

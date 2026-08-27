@@ -1740,6 +1740,156 @@ def run(editor_binary, display):
                 check(refused(reply), "promoting out of a scene the editor has not open was allowed")
                 print("PASS promoting out of a scene the editor does not have open is refused")
 
+                # --- the live tuning workspace ----------------------------------
+                #
+                # Promotion keeps one value. This is the gesture around it: try several
+                # against the same running game, flip between them, and keep the one that
+                # felt right. Run against the whole loop rather than the store, because
+                # the interesting failures are all at the join with the game.
+                def tune(identifier, arguments):
+                    return call({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                                 "params": {"name": "Godot_OfferVariants",
+                                            "arguments": arguments}})
+
+                reply = tune(730, {"action": "offer", "path": "/root/Main/Player",
+                                   "property": "position",
+                                   "values": [{"name": "left", "value": [64, 123]},
+                                              {"name": "right", "value": [512, 123]}]})
+                check(not refused(reply), "offering variants failed: %s" % refusal_text(reply))
+                offered = reply["result"]["structuredContent"]
+                check(offered["tuning"] is True, "the set did not open: %r" % offered)
+                # Three candidates: the two offered, plus the value the game already had.
+                # Comparing against that is the comparison a designer forgets to make.
+                names = [entry["name"] for entry in offered["candidates"]]
+                check(names == ["original", "left", "right"],
+                      "the set does not hold the original alongside the candidates: %r" % names)
+                check(offered["current"] == "original",
+                      "offering changed the running game before anything was chosen: %r" % offered)
+
+                # The original must be what the game is actually holding, read through the
+                # tool that knows nothing about tuning sets. Not a fixed number: whatever
+                # the game happened to be at is the thing discard has to restore.
+                reply = call({"jsonrpc": "2.0", "id": 729, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(not refused(reply), "reading the live value failed: %s" % refusal_text(reply))
+                check(offered["original"] == reply["result"]["structuredContent"]["text"],
+                      "the set's original is not what the game holds: %r vs %r"
+                      % (offered["original"], reply["result"]["structuredContent"]["text"]))
+                print("PASS Godot_OfferVariants captured the original and opened a set")
+
+                # A candidate that was never live cannot be kept: that is editing the scene
+                # by a longer route, and calling it a comparison would be a claim about
+                # something that did not happen.
+                reply = tune(731, {"action": "keep", "name": "left"})
+                check(refused(reply), "a value that was never applied was allowed to be kept")
+                check("never applied" in refusal_text(reply),
+                      "the refusal does not say why: %r" % refusal_text(reply))
+                print("PASS a value nobody played cannot be kept")
+
+                reply = tune(732, {"action": "switch", "name": "left"})
+                check(not refused(reply), "switching failed: %s" % refusal_text(reply))
+                switched = reply["result"]["structuredContent"]
+                check(switched["current"] == "left", "the switch did not take: %r" % switched)
+                check("64" in switched["text"], "the game did not take the value: %r" % switched)
+
+                # Read it back through the tool that knows nothing about tuning sets.
+                reply = call({"jsonrpc": "2.0", "id": 733, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(not refused(reply), "reading the tuned value back failed: %s" % refusal_text(reply))
+                live = reply["result"]["structuredContent"]
+                check("64" in live["text"],
+                      "the running game is not holding the switched value: %r" % live)
+                print("PASS switching put the candidate into the running game")
+
+                reply = tune(734, {"action": "note", "note": "lands short of the platform"})
+                check(not refused(reply), "noting failed: %s" % refusal_text(reply))
+                reply = tune(735, {"action": "switch", "name": "right"})
+                check(not refused(reply), "switching to the second candidate failed: %s"
+                      % refusal_text(reply))
+                reply = tune(736, {"action": "note", "note": "clears it with room to spare"})
+                check(not refused(reply), "noting the second candidate failed: %s" % refusal_text(reply))
+                noted = reply["result"]["structuredContent"]
+                by_name = {entry["name"]: entry for entry in noted["candidates"]}
+                check(by_name["left"]["note"] == "lands short of the platform",
+                      "the first note did not stay with its candidate: %r" % by_name["left"])
+                check(by_name["right"]["note"] == "clears it with room to spare",
+                      "the second note landed on the wrong candidate: %r" % by_name["right"])
+                # Flipped through in well under a second, so the reply must not present this
+                # as a comparison anybody made.
+                check("choice rather than a comparison" in noted["comparison"],
+                      "a set flipped through in a moment claimed to be a comparison: %r"
+                      % noted["comparison"])
+                print("PASS notes stay with their candidate, and a hurried set says so")
+
+                reply = tune(737, {"action": "keep", "name": "right"})
+                check(not refused(reply), "keeping failed: %s" % refusal_text(reply))
+                kept = reply["result"]["structuredContent"]
+                check(kept["kept"] == "right", "the wrong candidate was kept: %r" % kept)
+                check(kept["tuning"] is False, "keeping did not close the set: %r" % kept)
+                # Keeping writes nothing to the project: this tool is read_runtime, and a
+                # tool holding more authority than it declares is the thing the capability
+                # model exists to prevent.
+                check("Godot_PromoteRuntimeValue" in kept.get("next", ""),
+                      "keeping does not point at the tool that makes it stick: %r" % kept)
+                print("PASS keeping names the winner and hands off to promotion")
+
+                # And the handoff works: the game is still holding the kept value, so
+                # promoting now writes that one.
+                reply = call({"jsonrpc": "2.0", "id": 738, "method": "tools/call",
+                              "params": {"name": "Godot_PromoteRuntimeValue",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(not refused(reply), "promoting the kept value failed: %s" % refusal_text(reply))
+                promoted_variant = reply["result"]["structuredContent"]
+                check("512" in promoted_variant["text"],
+                      "the promoted value is not the one that was kept: %r" % promoted_variant)
+                print("PASS the value kept from a tuning set is the one promotion writes")
+                call({"jsonrpc": "2.0", "id": 739, "method": "tools/call",
+                      "params": {"name": "Godot_UndoLastAction", "arguments": {}}})
+
+                # Discarding puts the original back in the running game. Otherwise
+                # "discard" leaves the last thing tried in place and looks like it worked.
+                reply = tune(740, {"action": "offer", "path": "/root/Main/Player",
+                                   "property": "position", "values": [[10, 20], [30, 40]]})
+                check(not refused(reply), "opening a second set failed: %s" % refusal_text(reply))
+                second_set = reply["result"]["structuredContent"]
+                before_discard = second_set["original"]
+                # Unnamed candidates are named after their own printed value, and the reply
+                # is where a caller learns what that came out as - so read it rather than
+                # guess at the formatting.
+                unnamed = [entry["name"] for entry in second_set["candidates"]
+                           if entry["name"] != "original"]
+                check(len(unnamed) == 2, "the second set did not take both values: %r" % second_set)
+                reply = tune(741, {"action": "switch", "name": unnamed[0]})
+                check(not refused(reply), "switching in the second set failed: %s" % refusal_text(reply))
+                reply = tune(742, {"action": "discard"})
+                check(not refused(reply), "discarding failed: %s" % refusal_text(reply))
+                discarded = reply["result"]["structuredContent"]
+                check(discarded["restored"] is True,
+                      "discarding did not put the original back: %r" % discarded)
+
+                reply = call({"jsonrpc": "2.0", "id": 743, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(reply["result"]["structuredContent"]["text"] == before_discard,
+                      "the running game did not go back to the value it started with: %r vs %r"
+                      % (reply["result"]["structuredContent"]["text"], before_discard))
+                print("PASS discarding a set puts the original back in the running game")
+
+                # One value is not a choice, and the refusal says which tool is.
+                reply = tune(744, {"action": "offer", "path": "/root/Main/Player",
+                                   "property": "position", "values": [[1, 2]]})
+                check(refused(reply), "a set with one candidate was accepted")
+                check("Godot_SetRuntimeProperty" in refusal_text(reply),
+                      "the refusal does not point at the tool for setting one value: %r"
+                      % refusal_text(reply))
+                print("PASS a tuning set with one value is refused, and says what to use instead")
+
                 # --- seeing the running game -----------------------------------
                 reply = call({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
                               "params": {"name": "Godot_CaptureGame"}})
