@@ -48,13 +48,19 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "../mcp_capture_metadata.h"
+#include "../mcp_paths.h"
 #include "../mcp_tool_registry.h"
 
+#include "core/crypto/crypto_core.h"
+#include "core/io/dir_access.h"
+#include "core/io/image.h"
 #include "core/input/input.h"
 #include "core/input/input_event.h"
 #include "core/object/object.h"
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
+#include "core/os/time.h"
 #include "core/variant/array.h"
 #include "scene/gui/control.h"
 #include "scene/gui/item_list.h"
@@ -163,6 +169,36 @@ struct Query {
 		return !text.is_empty() && p_candidate.strip_edges().to_lower() == text;
 	}
 };
+
+static const int MAX_INLINE_CAPTURE_BYTES = 3 * 1024 * 1024;
+
+void add_inline_capture(const Ref<Image> &p_image, Dictionary &r_result) {
+	const Vector<uint8_t> png = p_image->save_png_to_buffer();
+	if (png.is_empty() || png.size() > MAX_INLINE_CAPTURE_BYTES) {
+		return;
+	}
+	Dictionary block;
+	block["type"] = "image";
+	block["data"] = CryptoCore::b64_encode_str(png.ptr(), png.size());
+	block["mimeType"] = "image/png";
+	Array content;
+	content.push_back(block);
+	r_result["_content"] = content;
+	r_result["inlined"] = true;
+}
+
+void collect_visible_windows(Node *p_node, Vector<Window *> &r_windows) {
+	if (!p_node) {
+		return;
+	}
+	Window *window = Object::cast_to<Window>(p_node);
+	if (window && window->is_visible()) {
+		r_windows.push_back(window);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		collect_visible_windows(p_node->get_child(i), r_windows);
+	}
+}
 
 class FindControlTool : public MCPTool {
 public:
@@ -423,6 +459,227 @@ public:
 		result["matches"] = matches;
 		result["count"] = matches.size();
 		result["truncated"] = truncated;
+		return result;
+	}
+};
+
+class CaptureEditorControlTool : public MCPTool {
+	static void draw_outline(const Ref<Image> &p_image, const Rect2i &p_rect) {
+		if (p_image.is_null() || p_rect.size.x < 2 || p_rect.size.y < 2) {
+			return;
+		}
+		const int thickness = MAX(2, (int)Math::round(MIN(p_image->get_width(), p_image->get_height()) / 240.0));
+		const Color color(0.96, 0.2, 0.16, 1.0);
+		const Rect2i clipped = p_rect.intersection(Rect2i(0, 0, p_image->get_width(), p_image->get_height()));
+		p_image->fill_rect(Rect2i(clipped.position, Size2i(clipped.size.x, MIN(thickness, clipped.size.y))), color);
+		p_image->fill_rect(Rect2i(Point2i(clipped.position.x, clipped.get_end().y - MIN(thickness, clipped.size.y)),
+				Size2i(clipped.size.x, MIN(thickness, clipped.size.y))), color);
+		p_image->fill_rect(Rect2i(clipped.position, Size2i(MIN(thickness, clipped.size.x), clipped.size.y)), color);
+		p_image->fill_rect(Rect2i(Point2i(clipped.get_end().x - MIN(thickness, clipped.size.x), clipped.position.y),
+				Size2i(MIN(thickness, clipped.size.x), clipped.size.y)), color);
+	}
+
+	static Control *resolve_control(const String &p_path) {
+		SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+		if (!tree || !tree->get_root()) {
+			return nullptr;
+		}
+		return Object::cast_to<Control>(tree->get_root()->get_node_or_null(NodePath(p_path)));
+	}
+
+	static Window *resolve_window(const String &p_title) {
+		SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+		if (!tree || !tree->get_root()) {
+			return nullptr;
+		}
+		Vector<Window *> windows;
+		collect_visible_windows(tree->get_root(), windows);
+		Window *match = nullptr;
+		for (Window *window : windows) {
+			if (window->get_title() == p_title) {
+				match = window;
+			}
+		}
+		return match;
+	}
+
+public:
+	virtual String get_tool_name() const override { return "Godot_CaptureEditorControl"; }
+	virtual String get_description() const override {
+		return "Capture only a named part of the editor UI or one popup window, never the desktop. "
+			   "Use a Control node_path returned by Godot_FindControl, optionally name a larger "
+			   "capture_node_path for surrounding dock context, or provide a window title returned by "
+			   "Godot_ListWindows. The exact target can be outlined and context above/below is explicit.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_EDIT_FILES; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["node_path"] = MCPSchema::string_property("Exact Control node_path returned by Godot_FindControl.");
+		properties["capture_node_path"] = MCPSchema::string_property(
+				"Optional containing Control to use as the crop boundary; the target remains node_path.");
+		properties["window"] = MCPSchema::string_property(
+				"Instead of node_path, capture the visible editor window with this exact title.");
+		properties["path"] = MCPSchema::string_property("Destination PNG as a res:// path.");
+		properties["context_above"] = MCPSchema::integer_property("Extra UI points above the target; defaults to 24.", 24);
+		properties["context_below"] = MCPSchema::integer_property("Extra UI points below the target; defaults to 24.", 24);
+		properties["context_left"] = MCPSchema::integer_property("Extra UI points left of the target; defaults to 24.", 24);
+		properties["context_right"] = MCPSchema::integer_property("Extra UI points right of the target; defaults to 24.", 24);
+		properties["highlight"] = MCPSchema::bool_property("Draw a red outline around node_path. Defaults to false.", false);
+		properties["inline_image"] = MCPSchema::bool_property("Return the image inline when small enough.", true);
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property("Where the PNG was saved.");
+		properties["width"] = MCPSchema::integer_property("Image width in pixels.");
+		properties["height"] = MCPSchema::integer_property("Image height in pixels.");
+		properties["inlined"] = MCPSchema::bool_property("True when returned inline.");
+		properties["node_path"] = MCPSchema::string_property("Exact highlighted Control, when used.");
+		properties["capture_node_path"] = MCPSchema::string_property("Control that bounded the crop, when used.");
+		properties["window"] = MCPSchema::string_property("Popup/editor window captured, when used.");
+		properties["target_x"] = MCPSchema::integer_property("Target left edge within the PNG.");
+		properties["target_y"] = MCPSchema::integer_property("Target top edge within the PNG.");
+		properties["target_width"] = MCPSchema::integer_property("Target width within the PNG.");
+		properties["target_height"] = MCPSchema::integer_property("Target height within the PNG.");
+		MCPCaptureMetadata::declare(properties);
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Vector<String> get_checkpoint_paths(const Dictionary &p_arguments) const override {
+		Vector<String> paths;
+		const String path = p_arguments.has("path") ? String(p_arguments["path"]).strip_edges() : String();
+		if (!path.is_empty()) {
+			paths.push_back(path);
+		}
+		return paths;
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (!EditorNode::get_singleton() || !EditorInterface::get_singleton()) {
+			r_error.set(MCPToolError::UNSUPPORTED, "this process has no running Godot editor");
+			return Dictionary();
+		}
+		if (DisplayServer::get_singleton() && DisplayServer::get_singleton()->get_name() == "headless") {
+			r_error.set(MCPToolError::UNSUPPORTED, "this editor is headless, so its controls cannot be photographed");
+			return Dictionary();
+		}
+		const String node_path = String(p_arguments.get("node_path", String())).strip_edges();
+		const String window_title = String(p_arguments.get("window", String())).strip_edges();
+		if (node_path.is_empty() == window_title.is_empty()) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, "provide exactly one of node_path or window");
+			return Dictionary();
+		}
+
+		Viewport *viewport = nullptr;
+		Rect2 viewport_rect;
+		Rect2 crop_rect;
+		Rect2 target_rect;
+		String capture_path;
+		if (!node_path.is_empty()) {
+			Control *target = resolve_control(node_path);
+			if (!target || !target->is_visible_in_tree()) {
+				r_error.set(MCPToolError::NOT_FOUND, vformat("visible Control '%s' was not found", node_path));
+				return Dictionary();
+			}
+			const String requested_capture = String(p_arguments.get("capture_node_path", String())).strip_edges();
+			Control *capture = requested_capture.is_empty() ? target : resolve_control(requested_capture);
+			if (!capture || !capture->is_visible_in_tree() || capture->get_viewport() != target->get_viewport()) {
+				r_error.set(MCPToolError::INVALID_ARGUMENTS, "capture_node_path must be a visible Control in the target's viewport");
+				return Dictionary();
+			}
+			viewport = target->get_viewport();
+			viewport_rect = viewport->get_visible_rect();
+			target_rect = target->get_global_rect();
+			const Rect2 boundary = capture->get_global_rect().intersection(viewport_rect);
+			crop_rect = Rect2(
+					Point2(target_rect.position.x - (int)p_arguments.get("context_left", 24),
+							target_rect.position.y - (int)p_arguments.get("context_above", 24)),
+					Size2(target_rect.size.x + (int)p_arguments.get("context_left", 24) + (int)p_arguments.get("context_right", 24),
+							target_rect.size.y + (int)p_arguments.get("context_above", 24) + (int)p_arguments.get("context_below", 24)));
+			if (capture != target && (int)p_arguments.get("context_above", 24) == 24 &&
+					(int)p_arguments.get("context_below", 24) == 24 && (int)p_arguments.get("context_left", 24) == 24 &&
+					(int)p_arguments.get("context_right", 24) == 24) {
+				crop_rect = boundary;
+			} else {
+				crop_rect = crop_rect.intersection(boundary);
+			}
+			capture_path = String(capture->get_path());
+		} else {
+			Window *window = resolve_window(window_title);
+			if (!window) {
+				r_error.set(MCPToolError::NOT_FOUND, vformat("visible editor window titled '%s' was not found", window_title));
+				return Dictionary();
+			}
+			viewport = window;
+			viewport_rect = viewport->get_visible_rect();
+			crop_rect = viewport_rect;
+			target_rect = crop_rect;
+		}
+
+		const Ref<Image> screen = viewport && viewport->get_texture().is_valid() ? viewport->get_texture()->get_image() : Ref<Image>();
+		if (screen.is_null() || screen->is_empty() || crop_rect.size.x <= 1 || crop_rect.size.y <= 1) {
+			r_error.set(MCPToolError::FAILED, "the requested editor control produced no rendered pixels");
+			return Dictionary();
+		}
+		const Vector2 scale((double)screen->get_width() / viewport_rect.size.x, (double)screen->get_height() / viewport_rect.size.y);
+		const Point2 begin = crop_rect.position - viewport_rect.position;
+		const Point2 end = crop_rect.get_end() - viewport_rect.position;
+		Rect2i pixels(Point2i(Math::floor(begin.x * scale.x), Math::floor(begin.y * scale.y)),
+				Point2i(Math::ceil(end.x * scale.x) - Math::floor(begin.x * scale.x),
+						Math::ceil(end.y * scale.y) - Math::floor(begin.y * scale.y)));
+		pixels = pixels.intersection(Rect2i(0, 0, screen->get_width(), screen->get_height()));
+		Ref<Image> image = screen->get_region(pixels);
+		const Rect2i target_pixels(
+				Point2i(Math::round((target_rect.position.x - crop_rect.position.x) * scale.x),
+						Math::round((target_rect.position.y - crop_rect.position.y) * scale.y)),
+				Point2i(MAX(1, (int)Math::round(target_rect.size.x * scale.x)), MAX(1, (int)Math::round(target_rect.size.y * scale.y))));
+		if (!node_path.is_empty() && (bool)p_arguments.get("highlight", false)) {
+			draw_outline(image, target_pixels);
+		}
+
+		String requested_output = String(p_arguments.get("path", String())).strip_edges();
+		if (requested_output.is_empty()) {
+			requested_output = vformat("res://ai_screenshots/editor-control-%d.png", Time::get_singleton()->get_ticks_msec());
+		}
+		if (requested_output.get_extension().to_lower() != "png") {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, "the capture path must end in .png");
+			return Dictionary();
+		}
+		MCPPaths::Resolved resolved;
+		String path_error;
+		if (!MCPPaths::resolve(requested_output, resolved, path_error)) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, path_error);
+			return Dictionary();
+		}
+		Ref<DirAccess> dir = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+		if (dir.is_valid()) {
+			dir->make_dir_recursive(resolved.absolute.get_base_dir());
+		}
+		if (image.is_null() || image->save_png(resolved.absolute) != OK) {
+			r_error.set(MCPToolError::FAILED, vformat("could not write '%s'", resolved.res_path));
+			return Dictionary();
+		}
+
+		Dictionary result;
+		result["path"] = resolved.res_path;
+		result["width"] = image->get_width();
+		result["height"] = image->get_height();
+		result["inlined"] = false;
+		result["node_path"] = node_path;
+		result["capture_node_path"] = capture_path;
+		result["window"] = window_title;
+		result["target_x"] = target_pixels.position.x;
+		result["target_y"] = target_pixels.position.y;
+		result["target_width"] = target_pixels.size.x;
+		result["target_height"] = target_pixels.size.y;
+		MCPCaptureMetadata::stamp(result, MCPCaptureMetadata::SOURCE_EDITOR_VIEWPORT,
+				!window_title.is_empty() ? vformat("editor window '%s'", window_title) : vformat("editor Control %s", node_path));
+		MCPCaptureMetadata::add_note(result, "This is a tight editor UI crop, not the desktop, whole app, or running game.");
+		if ((bool)p_arguments.get("inline_image", true)) {
+			add_inline_capture(image, result);
+		}
 		return result;
 	}
 };
@@ -901,5 +1158,6 @@ void mcp_register_editor_ui_tools() {
 	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
 	ERR_FAIL_NULL(registry);
 	registry->register_tool(Ref<MCPTool>(memnew(FindControlTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(CaptureEditorControlTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(SendEditorInputTool)));
 }
