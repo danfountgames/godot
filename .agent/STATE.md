@@ -265,10 +265,11 @@ until you make them. `tools/relay/build.sh` takes seconds; the editor takes ~8 m
 
 ## Active failures
 
-None known. The GitHub Actions workflow had been red on every one of its 62 runs and
-nobody had looked; the cause was five `werror` diagnostics that are only warnings in the
-default local build, all now fixed and verified by running CI's own command line here.
-A green run still has to be observed - see `.agent/NEXT.md` item 2.
+None. **CI is green**: run 64 (`33028524808`, 2026-08-27) is the first successful run of
+`.github/workflows/godot_ai.yml`, after 63 failures nobody had looked at. Two causes,
+both fixed: five `werror` diagnostics that are only warnings in the default local build,
+and then a `Godot_CaptureInspectorProperty` timeout on the runner once the build got far
+enough for the end-to-end step to run at all.
 
 The intermittent full-suite SIGSEGV that Q1 turned up is **fixed**: `EditorFileSystem`'s
 destructor never cleared its own singleton, so after any test that created and destroyed
