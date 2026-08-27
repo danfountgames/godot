@@ -17,21 +17,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The relay is engine-independent and builds in seconds, so it gates the slower
-  # editor job: a broken transport should fail in under a minute, not after a build.
-  relay:
-    name: Relay build and integration tests
+  # Everything with no engine dependency, gating the slower editor job. The relay
+  # binary is gone (DEC-0015) - the stdio gateway is `godot --godot-ai-stdio`, so its
+  # integration tests moved to the editor job, after the build that produces it.
+  fast:
+    name: Engine-free checks
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the relay
-        run: tools/relay/build.sh
-
-      - name: Run relay integration tests
-        run: python3 tools/relay/tests/run_tests.py
-
-      # The virtual display has no engine dependency either, so it is checked on the
+      # The virtual display has no engine dependency, so it is checked on the
       # fast job rather than after a ten-minute build.
       - name: Install a virtual display
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb x11-utils
@@ -55,22 +50,9 @@ jobs:
       - name: Check the shipped skills name tools that exist
         run: python3 tools/skills/check_skills.py
 
-      # The Windows backend cannot be run here, but keeping it compiling is what
-      # stops it rotting between releases.
-      - name: Install the Windows cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64
-
-      - name: Cross-compile the relay for Windows
-        run: tools/relay/build.sh --windows
-
-      # Builds from the tracked tree only, so a missing file or a build that relies
-      # on local state fails here rather than for whoever clones it next.
-      - name: Verify a clean checkout builds and packages
-        run: python3 tools/relay/tests/run_clean_checkout.py
-
   editor:
     name: Editor module tests and end-to-end
-    needs: relay
+    needs: fast
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -113,8 +95,10 @@ jobs:
           scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no \
             scu_build=yes tests=yes warnings=extra werror=yes -j$(nproc)
 
-      - name: Build the relay
-        run: tools/relay/build.sh
+      # The stdio gateway is a mode of the editor binary built above; its suite runs
+      # here because there is nothing else to build.
+      - name: Run gateway integration tests
+        run: python3 tools/relay/tests/run_tests.py
 
       # Run from outside the checkout: the test binary's working directory is what a
       # misbehaving fixture would damage.
@@ -132,6 +116,10 @@ jobs:
       # The refusal paths still have to hold on a machine that really has no display.
       - name: Run end-to-end test headless
         run: python3 tools/relay/tests/run_editor_e2e.py --headless
+
+      # The editor's own HTTP MCP endpoint, driven with no gateway at all.
+      - name: Run editor HTTP end-to-end test
+        run: python3 tools/relay/tests/run_editor_http_e2e.py
 
       # Drives the editor by keyboard and pointer: the command palette, and the
       # approvals dialog that is the only way a client or a skill gets allowed.

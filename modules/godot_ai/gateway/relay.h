@@ -91,21 +91,7 @@ struct RelayOptions {
 	// that never held. --continue-on-error opts into the old behaviour.
 	bool batch_continue_on_error = false;
 
-	// HTTP transport. A port turns it on; without one the relay serves stdio, which
-	// is what an MCP client launching us as a child process expects.
-	int http_port = 0;
-	std::string http_host = "127.0.0.1";
-	std::string http_path = "/mcp";
-	std::string http_token;
-	bool http_allow_remote = false;
-
-	// Client-configuration management. See backends.h.
-	std::string install_backend;
-	std::string backend_config;
-	bool list_backends = false;
-	bool check_backends = false;
-
-	// Parsed but not otherwise meaningful: the relay always speaks MCP.
+	// Parsed but not otherwise meaningful: the gateway always speaks MCP.
 	bool mcp = false;
 };
 

@@ -3855,7 +3855,7 @@ def run(editor_binary, display):
         # --- headless one-shot execution --------------------------------------
         # The scripted path: no MCP client, no editor UI, just a tool and a result.
         one_shot = subprocess.run(
-            [RELAY_BINARY, "--call", "Godot_GetEditorStatus"],
+            list(RELAY_BINARY) + ["--call", "Godot_GetEditorStatus"],
             input=b"", stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=dict(environment), timeout=60)
         check(one_shot.returncode == 0,

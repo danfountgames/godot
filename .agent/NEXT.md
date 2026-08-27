@@ -15,12 +15,11 @@ the system second nature for the agent, and cut weight that duplicates.** Concre
   grow a case that asks an agent to "change something" and scores whether it ran,
   looked and iterated before reporting — the briefing's effect, measured rather than
   assumed. **Not yet built.**
-- **Relay teardown (DEC-0014), in order.** The editor now serves MCP over loopback
-  HTTP and the terminal connects straight to it; the relay is no longer in the product
-  path. Remaining steps: (1) port `run_editor_e2e.py` and the UI e2e to the HTTP
-  endpoint so the harness stops depending on the binary; (2) point
-  `--install-backend`-generated client configs at the HTTP endpoint; (3) retire the
-  binary and its CI job. Do not delete it while its tests are still the harness.
+- **Relay teardown: done (DEC-0015).** The binary, its HTTP server, backends,
+  build/package scripts and clean-checkout test are gone; the stdio gateway is
+  `godot --godot-ai-stdio`, entered before engine init, and the whole harness runs
+  through it. Remaining cosmetic debt: `tools/relay/tests/` keeps its historical name
+  while it is the harness's home.
 - Open injection seam: non-Claude agents (codex etc.) get no `--append-system-prompt`;
   the briefing currently reaches only Claude Code. The seam exists
   (`mcp_agent_build_arguments`); teach it other agents' flags only from their real

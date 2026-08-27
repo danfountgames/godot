@@ -54,9 +54,9 @@ static const char *HELLO_ID = "godot-ai-relay/hello";
 // ----------------------------------------------------------------- options ---
 
 static const char *USAGE =
-		"godot-ai-relay - MCP stdio bridge to a running Godot editor\n"
+		"godot --godot-ai-stdio - MCP stdio gateway to a running Godot editor\n"
 		"\n"
-		"Usage: godot-ai-relay [options]\n"
+		"Usage: godot --godot-ai-stdio [options]\n"
 		"\n"
 		"Options:\n"
 		"  --mcp                      Serve the Model Context Protocol over stdio (default).\n"
@@ -81,15 +81,6 @@ static const char *USAGE =
 		"                             half a second - which is fine for three calls and\n"
 		"                             ruinous for a thousand. Use this, or --mcp.\n"
 		"  --arguments <json>         Arguments object for --call (default: {}).\n"
-		"  --http-port <port>         Serve MCP over HTTP on this port instead of stdio.\n"
-		"  --http-host <host>         Address to bind (default: 127.0.0.1).\n"
-		"  --http-path <path>         Endpoint path (default: /mcp).\n"
-		"  --http-token <token>       Bearer token clients must present (default: generated).\n"
-		"  --http-allow-remote        Permit binding somewhere other than loopback.\n"
-		"  --list-backends            List the MCP client configurations this can write.\n"
-		"  --install-backend <name>   Write this relay into a client's configuration.\n"
-		"  --check-backends           Report whether that configuration is still current.\n"
-		"  --backend-config <path>    The client configuration file to write or check.\n"
 		"  --version                  Print the relay version and exit.\n"
 		"  --help                     Print this message and exit.\n"
 		"\n"
@@ -135,7 +126,7 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			return true;
 		} else if (arg == "--version") {
 			r_exit_immediately = true;
-			r_immediate_output = std::string("godot-ai-relay ") + RELAY_VERSION + " (bridge protocol " + RELAY_BRIDGE_VERSION + ")\n";
+			r_immediate_output = std::string("godot-ai-stdio-gateway ") + RELAY_VERSION + " (bridge protocol " + RELAY_BRIDGE_VERSION + ")\n";
 			return true;
 		} else if (arg == "--editor-socket") {
 			std::string value;
@@ -217,48 +208,6 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			JSONValueRef parsed = json_parse(r_options.call_arguments, &parse_error);
 			if (!parsed || !parsed->is_object()) {
 				r_error = "--arguments must be a JSON object: " + parse_error;
-				return false;
-			}
-		} else if (arg == "--http-port") {
-			std::string value;
-			if (!next(value)) {
-				return false;
-			}
-			char *end = nullptr;
-			const long port = strtol(value.c_str(), &end, 10);
-			if (!end || *end != '\0' || port < 1 || port > 65535) {
-				r_error = "invalid --http-port value: " + value;
-				return false;
-			}
-			r_options.http_port = (int)port;
-		} else if (arg == "--http-host") {
-			if (!next(r_options.http_host)) {
-				return false;
-			}
-		} else if (arg == "--http-path") {
-			if (!next(r_options.http_path)) {
-				return false;
-			}
-			if (r_options.http_path.empty() || r_options.http_path[0] != '/') {
-				r_error = "--http-path must start with '/'";
-				return false;
-			}
-		} else if (arg == "--http-token") {
-			if (!next(r_options.http_token)) {
-				return false;
-			}
-		} else if (arg == "--http-allow-remote") {
-			r_options.http_allow_remote = true;
-		} else if (arg == "--list-backends") {
-			r_options.list_backends = true;
-		} else if (arg == "--install-backend") {
-			if (!next(r_options.install_backend)) {
-				return false;
-			}
-		} else if (arg == "--check-backends") {
-			r_options.check_backends = true;
-		} else if (arg == "--backend-config") {
-			if (!next(r_options.backend_config)) {
 				return false;
 			}
 		} else if (arg == "--home") {
@@ -852,7 +801,7 @@ int Relay::run_one_shot() {
 	initialize_params->set("protocolVersion", JSONValue::make_string("2025-06-18"));
 	initialize_params->set("capabilities", JSONValue::make_object());
 	JSONValueRef client_info = JSONValue::make_object();
-	client_info->set("name", JSONValue::make_string("godot-ai-relay --call"));
+	client_info->set("name", JSONValue::make_string("godot --godot-ai-stdio --call"));
 	client_info->set("version", JSONValue::make_string(RELAY_VERSION));
 	initialize_params->set("clientInfo", client_info);
 

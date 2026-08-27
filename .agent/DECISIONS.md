@@ -408,3 +408,35 @@ harness still use it; it is no longer required by anything the editor itself doe
 Teardown order recorded in NEXT.md: port the e2e harness to the HTTP endpoint, migrate
 `--install-backend` configs to HTTP, then retire the binary. Do not delete it before
 its tests stop being the harness.
+
+## DEC-0015 — No relay program: the stdio gateway is `godot --godot-ai-stdio`
+
+**Date:** 2026-08-27. **Instruction:** the user: "I want it gone - it should be a
+commandline in the binary if it's needed at all."
+
+**What happened.** `tools/relay/src` no longer exists. Its engine-free core (relay,
+JSON, platform seam) moved to `modules/godot_ai/gateway/`, compiled into the editor
+binary, and the three platform mains (macOS, Linux, Windows) check for
+`--godot-ai-stdio` **before any engine initialisation** and hand the whole process to
+`godot_ai_gateway_main()`. That ordering is the entire design: the reason the relay
+was a separate program was that engine prints would corrupt a protocol stream on the
+editor's stdout — and a mode entered before the engine exists has the same clean
+stdout as a separate process, without the separate process. The gateway directory must
+therefore stay engine-free C++17 forever; one engine include reintroduces the problem
+the binary existed to avoid.
+
+**What went with it.** The relay's own HTTP server (the editor serves HTTP itself,
+DEC-0014), the backend-config installers, `build.sh`, `package.sh`, the clean-checkout
+packaging test, and the terminal panel's relay search with its "build tools/relay
+first" failure mode. The launch-plan functions that generated stdio-relay configs are
+deleted with their tests; the HTTP config builder is the one that remains.
+
+**What the suite says now.** The integration suite (44 cases, down from 64 by exactly
+the deleted features' tests) spawns `godot --godot-ai-stdio` instead of a binary that
+no longer exists; the full editor e2e runs through the gateway mode unchanged. CI's
+fast job keeps every engine-free check; the gateway tests moved to the editor job,
+after the build that produces their binary.
+
+**Kept, deliberately.** The bridge protocol between gateway and editor socket, its
+version lock (`RELAY_BRIDGE_VERSION`), and the `tools/relay/tests/` path — the tests
+are the harness of everything and renaming their home is churn for another day.

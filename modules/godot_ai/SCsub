@@ -66,6 +66,11 @@ module_obj = []
 env_godot_ai.add_source_files(module_obj, "*.cpp")
 env_godot_ai.add_source_files(module_obj, "tools/*.cpp")
 
+# The stdio gateway (`godot --godot-ai-stdio`): engine-free C++17, formerly the
+# standalone godot-ai-relay binary. The platform mains call into it before engine
+# initialisation, so nothing in here may grow an engine include.
+env_godot_ai.add_source_files(module_obj, "gateway/*.cpp")
+
 # mcp_pty.cpp compiles everywhere - it carries its own stubs for platforms with
 # no pty - but everything above it needs libvterm. Listed by exclusion rather than
 # by prefix: a new file in this directory should be built, and a glob that quietly

@@ -1,23 +1,42 @@
-"""Process harness for driving the real godot-ai-relay binary from tests."""
+"""Process harness for driving the stdio gateway (`godot --godot-ai-stdio`).
+
+There is no separate relay binary any more (DEC-0015): the gateway is a mode of the
+editor binary, entered before any engine initialisation. RELAY_BINARY is kept as the
+name of the *command list* so the many callers keep reading naturally.
+"""
 
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-RELAY_BINARY = os.path.join(REPO_ROOT, "bin", "godot-ai-relay")
+
+
+def _default_editor():
+    if sys.platform == "darwin":
+        arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
+        return os.path.join(REPO_ROOT, "bin", "godot.macos.editor.dev.%s" % arch)
+    if sys.platform.startswith("win"):
+        return os.path.join(REPO_ROOT, "bin", "godot.windows.editor.dev.x86_64.exe")
+    return os.path.join(REPO_ROOT, "bin", "godot.linuxbsd.editor.dev.x86_64")
+
+
+EDITOR_BINARY = os.environ.get("GODOT_AI_EDITOR_BINARY") or _default_editor()
+RELAY_BINARY = [EDITOR_BINARY, "--godot-ai-stdio"]
 
 
 class RelayProcess:
     """Runs the relay with a private state directory and line-oriented stdio."""
 
     def __init__(self, args=None, home=None, env=None, owns_home=None):
-        if not os.path.exists(RELAY_BINARY):
+        if not os.path.exists(RELAY_BINARY[0]):
             raise RuntimeError(
-                "relay binary not found at %s; run tools/relay/build.sh" % RELAY_BINARY
+                "editor binary not found at %s; the gateway is a mode of the editor "
+                "(build it, or point GODOT_AI_EDITOR_BINARY at one)" % RELAY_BINARY[0]
             )
         self.home = home or tempfile.mkdtemp(prefix="godot-ai-relay-test-")
         # A caller that had to create the directory itself (to seed it before the
@@ -31,7 +50,7 @@ class RelayProcess:
             process_env.update(env)
 
         self.process = subprocess.Popen(
-            [RELAY_BINARY] + list(args or []),
+            list(RELAY_BINARY) + list(args or []),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -169,7 +188,7 @@ def run_relay_one_shot(args, home, timeout=30.0, stdin=""):
     process_env = dict(os.environ)
     process_env["GODOT_AI_HOME"] = home
     return subprocess.run(
-        [RELAY_BINARY] + list(args),
+        list(RELAY_BINARY) + list(args),
         input=stdin.encode("utf-8") if isinstance(stdin, str) else stdin,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -184,7 +203,7 @@ def run_relay(args, timeout=10.0, env=None):
     if env:
         process_env.update(env)
     return subprocess.run(
-        [RELAY_BINARY] + list(args),
+        list(RELAY_BINARY) + list(args),
         input=b"",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

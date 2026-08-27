@@ -35,67 +35,6 @@
 #include "core/io/json.h"
 #include "core/os/os.h"
 
-Vector<String> mcp_agent_relay_search_paths(const String &p_executable_dir, const String &p_env_override) {
-	Vector<String> paths;
-
-#ifdef WINDOWS_ENABLED
-	const String relay_name = "godot-ai-relay.exe";
-#else
-	const String relay_name = "godot-ai-relay";
-#endif
-
-	// An explicit override wins: someone testing a relay build needs to point at it
-	// without moving files around.
-	if (!p_env_override.is_empty()) {
-		paths.push_back(p_env_override);
-	}
-
-	// Next to the editor. In a development build that is the repository's bin/, which is
-	// exactly where tools/relay/build.sh puts it, so a contributor gets the relay they
-	// just built rather than one installed months ago.
-	if (!p_executable_dir.is_empty()) {
-		paths.push_back(p_executable_dir.path_join(relay_name));
-	}
-
-	// Finally the name alone, resolved through PATH by the exec.
-	paths.push_back(relay_name);
-
-	return paths;
-}
-
-String mcp_agent_build_mcp_config(const String &p_relay_path, int p_editor_pid, const String &p_client_name, bool p_read_only) {
-	Array arguments;
-	arguments.push_back("--mcp");
-
-	// By process id, not by project path. Two editors can have the same project open -
-	// that is the whole point of the workspace - and an agent that attaches to whichever
-	// one answered first is worse than one that fails to start.
-	arguments.push_back("--instance");
-	arguments.push_back(itos(p_editor_pid));
-
-	if (!p_client_name.is_empty()) {
-		arguments.push_back("--client-name");
-		arguments.push_back(p_client_name);
-	}
-
-	if (p_read_only) {
-		arguments.push_back("--read-only");
-	}
-
-	Dictionary server;
-	server["type"] = "stdio";
-	server["command"] = p_relay_path;
-	server["args"] = arguments;
-
-	Dictionary servers;
-	servers["godot-ai"] = server;
-
-	Dictionary config;
-	config["mcpServers"] = servers;
-
-	return JSON::stringify(config, "\t");
-}
-
 String mcp_agent_build_http_mcp_config(int p_http_port, const String &p_client_name, bool p_read_only) {
 	// Straight to the editor: it spawned this agent, so it serves this agent (DEC-0014).
 	// No relay process, no binary to find, no stdio bridge.

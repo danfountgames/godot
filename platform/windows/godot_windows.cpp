@@ -33,6 +33,11 @@
 #include "core/profiling/profiling.h"
 #include "main/main.h"
 
+#include "modules/modules_enabled.gen.h"
+#ifdef MODULE_GODOT_AI_ENABLED
+#include "modules/godot_ai/gateway/gateway_main.h"
+#endif
+
 #include <clocale>
 
 // For export templates, add a section; the exporter will patch it to enclose
@@ -67,6 +72,26 @@ char *wc_to_utf8(const wchar_t *wc) {
 
 int widechar_main(int argc, wchar_t **argv) {
 	godot_init_profiler();
+
+#ifdef MODULE_GODOT_AI_ENABLED
+	// `godot --godot-ai-stdio`: the MCP stdio gateway, formerly a separate relay
+	// binary (DEC-0015). Before ANY engine initialisation - even OS_Windows - so
+	// nothing can print into the protocol stream a client is reading from stdout.
+	for (int i = 1; i < argc; i++) {
+		if (wcscmp(argv[i], L"--godot-ai-stdio") == 0) {
+			char **gateway_argv = new char *[argc];
+			for (int j = 0; j < argc; j++) {
+				gateway_argv[j] = wc_to_utf8(argv[j]);
+			}
+			const int status = godot_ai_gateway_main(argc, gateway_argv);
+			for (int j = 0; j < argc; j++) {
+				delete[] gateway_argv[j];
+			}
+			delete[] gateway_argv;
+			return status;
+		}
+	}
+#endif
 
 	// Prevent Windows from replacing the window with a "ghost" when the main
 	// thread briefly stalls (e.g. during editor startup or focus transitions).

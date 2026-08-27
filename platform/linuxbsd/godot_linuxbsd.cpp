@@ -33,6 +33,11 @@
 #include "core/profiling/profiling.h"
 #include "main/main.h"
 
+#include "modules/modules_enabled.gen.h"
+#ifdef MODULE_GODOT_AI_ENABLED
+#include "modules/godot_ai/gateway/gateway_main.h"
+#endif
+
 #include <unistd.h>
 
 #include <clocale>
@@ -68,6 +73,15 @@ extern "C" const char *pck_section_dummy_call() {
 #endif
 
 int main(int argc, char *argv[]) {
+#ifdef MODULE_GODOT_AI_ENABLED
+	// `godot --godot-ai-stdio`: the MCP stdio gateway, formerly a separate relay
+	// binary (DEC-0015). It must run before ANY engine initialisation - nothing may
+	// print to stdout, because a client is reading it as a protocol stream.
+	if (godot_ai_gateway_requested(argc, argv)) {
+		return godot_ai_gateway_main(argc, argv);
+	}
+#endif
+
 #if defined(__x86_64) || defined(__x86_64__)
 	int cpuinfo[4];
 	__cpuid(cpuinfo, 0x01);

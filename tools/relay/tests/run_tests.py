@@ -84,7 +84,7 @@ def test_version_and_help_keep_stdout_clean():
         assert_eq(result.stdout, b"", "stdout for %s" % args)
         if not result.stderr.strip():
             raise AssertionError("expected stderr output for %s" % args)
-    assert_in("godot-ai-relay", run_relay(["--version"]).stderr.decode(), "version banner")
+    assert_in("godot-ai-stdio-gateway", run_relay(["--version"]).stderr.decode(), "version banner")
     assert_in("--approval-mode", run_relay(["--help"]).stderr.decode(), "usage text")
 
 
@@ -933,11 +933,9 @@ def test_every_stdout_line_is_valid_json():
 # The HTTP transport's cases live in their own file - they need a different fixture
 # (a listening relay and a fake editor that accepts several connections) and would
 # otherwise bury the stdio tests they have nothing to do with.
-import test_backends  # noqa: E402
-import test_http  # noqa: E402
-
-test_http.register(test, assert_eq, assert_in)
-test_backends.register(test, assert_eq, assert_in)
+# The relay's own HTTP transport and backend installers went with the binary
+# (DEC-0015): the editor serves HTTP itself, and the gateway is `godot
+# --godot-ai-stdio`.
 
 
 def main():
@@ -946,8 +944,9 @@ def main():
     parser.add_argument("-v", dest="verbose", action="store_true")
     args = parser.parse_args()
 
-    if not os.path.exists(RELAY_BINARY):
-        print("relay binary missing: run tools/relay/build.sh first", file=sys.stderr)
+    if not os.path.exists(RELAY_BINARY[0]):
+        print("editor binary missing at %s; the gateway is a mode of the editor"
+              % RELAY_BINARY[0], file=sys.stderr)
         return 2
 
     selected = [t for t in TESTS if not args.filter or args.filter in t.__name__]

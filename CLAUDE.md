@@ -55,8 +55,8 @@ never put task progress, logs, or temporary next actions in `CLAUDE.md`.
 | `docs/godot-ai-fork-footprint.md` | What this fork changes in Godot itself, measured |
 | `modules/godot_ai/` | Editor-side MCP service, tool registry, tools, permissions |
 | `modules/godot_ai/tests/` | doctest unit tests, auto-included when `tests=yes` |
-| `tools/relay/` | Standalone `godot-ai-relay` stdio↔TCP bridge (no engine dependency) |
-| `tools/relay/tests/` | Python integration tests for the relay (fast, no engine build) |
+| `modules/godot_ai/gateway/` | Stdio gateway (`godot --godot-ai-stdio`), engine-free C++17 |
+| `tools/relay/tests/` | Python integration tests: gateway, HTTP endpoint, editor end-to-end |
 | `tools/virtual_display.py` | Starts an X server in memory so the editor can draw on a machine with no screen |
 | `tools/tests/` | Tests for the standalone tooling (currently the virtual display) |
 | `.agent/` | Persistent implementation-control workspace |
@@ -90,10 +90,8 @@ bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*
 # resolve their test data relative to the working directory.
 ./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test
 
-# Relay build (seconds, no engine dependency).
-tools/relay/build.sh
-
-# Relay integration tests (fast loop, no engine build).
+# Stdio-gateway integration tests. The relay binary is gone (DEC-0015): the gateway is
+# `godot --godot-ai-stdio`, a mode of the editor binary, so this needs an editor build.
 python3 tools/relay/tests/run_tests.py
 
 # Virtual-display tests (fast loop, no engine build).
@@ -132,8 +130,9 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
 
 ## Engineering rules
 
-- **Prefer the fast loop.** Relay/protocol work is verifiable in seconds via
-  `tools/relay/tests/run_tests.py`. Only rebuild the engine when editor C++ changed.
+- **Prefer the fast loop.** Protocol work is verifiable in under a minute via
+  `tools/relay/tests/run_tests.py` (gateway) and `run_editor_http_e2e.py` (HTTP);
+  an incremental rebuild after a module-only change is well under a minute.
 - **A missing screen is not an external blocker.** Screenshots, dialogs and a running
   game's scene tree all need a display, and a Linux container has none — so the repository
   starts one: `tools/virtual_display.py`. (On macOS the screen is already there and
@@ -159,12 +158,12 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
 - Editor mutations must run on the main thread, go through `EditorUndoRedoManager`,
   and preserve node ownership. Never hand-edit `.tscn`/`.tres` as text when a
   structured editor API exists.
-- Keep the relay free of Godot dependencies; it must build standalone with a C++17
-  compiler. **The relay owns stdio, the editor owns its sockets** — engine prints would
-  corrupt a protocol stream on the editor's stdio, which is why the editor must never
-  serve MCP there. The editor *does* serve MCP directly over loopback HTTP
-  (`mcp_http.{h,cpp}`, DEC-0014); that is the terminal agent's path, and the relay is
-  only for stdio-bound external clients until its teardown completes.
+- There is **no relay binary** (DEC-0015). The editor serves MCP over loopback HTTP
+  (`mcp_http.{h,cpp}`, DEC-0014) — the terminal agent's path — and
+  `godot --godot-ai-stdio` is the stdio gateway for clients that need one, entered in
+  the platform mains **before any engine initialisation** so nothing can print into
+  the protocol stream. `modules/godot_ai/gateway/` must stay engine-free C++17 for
+  exactly that reason; never add an engine include there.
 - Clean-room only. Reproduce Unity's *behaviour* from the specification; never copy
   proprietary Unity implementation code, and use `Godot_*` tool names.
 

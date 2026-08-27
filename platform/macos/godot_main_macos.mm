@@ -34,11 +34,25 @@
 #include "core/profiling/profiling.h"
 #include "main/main.h"
 
+#include "modules/modules_enabled.gen.h"
+#ifdef MODULE_GODOT_AI_ENABLED
+#include "modules/godot_ai/gateway/gateway_main.h"
+#endif
+
 #if defined(ASAN_ENABLED)
 #include <sys/resource.h>
 #endif
 
 __attribute__((visibility("default"))) int main(int argc, char **argv) {
+#ifdef MODULE_GODOT_AI_ENABLED
+	// `godot --godot-ai-stdio`: the MCP stdio gateway, formerly a separate relay
+	// binary (DEC-0015). It must run before ANY engine initialisation - nothing may
+	// print to stdout, because a client is reading it as a protocol stream.
+	if (godot_ai_gateway_requested(argc, argv)) {
+		return godot_ai_gateway_main(argc, argv);
+	}
+#endif
+
 	godot_init_profiler();
 
 #if defined(VULKAN_ENABLED)

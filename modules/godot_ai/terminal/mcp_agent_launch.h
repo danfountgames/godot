@@ -73,13 +73,7 @@ String mcp_agent_editor_briefing(bool p_read_only);
 // environment.
 String mcp_agent_build_http_mcp_config(int p_http_port, const String &p_client_name, bool p_read_only);
 
-// Where the relay might be, in the order they are tried. Exposed so the panel can say
-// exactly where it looked when it finds nothing, rather than "not found".
-Vector<String> mcp_agent_relay_search_paths(const String &p_executable_dir, const String &p_env_override);
 
-// The MCP client configuration for an agent driving this editor: one stdio server that
-// runs the relay against this process id.
-String mcp_agent_build_mcp_config(const String &p_relay_path, int p_editor_pid, const String &p_client_name, bool p_read_only);
 
 // The command line for Claude Code, given a configuration file to read.
 Vector<String> mcp_agent_build_claude_arguments(const String &p_mcp_config_path, const String &p_extra_system_prompt);

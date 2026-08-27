@@ -11,7 +11,8 @@ This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 - an MCP server inside the editor, with a schema-declared tool registry
 - the editor serving Streamable HTTP MCP itself (DEC-0014) - the terminal's agent and
   any local client connect straight to it, no relay process
-- a relay binary for stdio-bound external clients, being retired from the product path
+- a stdio gateway for external clients that need one: `godot --godot-ai-stdio`, a mode
+  of the editor binary entered before engine init (DEC-0015) - no separate program
 - capability-based permissions, client approval, and an audit trail
 - filesystem-discovered skills, trusted only after the user allows them
 - checkpoints taken before any tool writes to the project
@@ -34,7 +35,9 @@ Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
 - `modules/godot_ai/` — editor-side service, registry, protocol, permissions, tools
 - `modules/godot_ai/tools/` — the built-in `Godot_*` tools
 - `modules/godot_ai/tests/` — doctest cases, auto-included when built with `tests=yes`
-- `tools/relay/` — the standalone `godot-ai-relay` binary and its tests
+- `modules/godot_ai/gateway/` — the stdio gateway (`godot --godot-ai-stdio`), engine-free
+- `tools/relay/tests/` — integration tests for the gateway, the HTTP endpoint, and the
+  editor end-to-end suites
 - `tools/virtual_display.py` — an in-memory X server, so an editor can draw where there
   is no screen; `tools/tests/` covers it
 - `editor/` — engine editor code this module drives (4.8 layout: nested — `editor/scene/`,
@@ -47,8 +50,6 @@ Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
 # Editor. scu_build=yes is required for a tolerable build time (~8 min on 4 cores).
 scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no scu_build=yes tests=yes -j$(nproc)
 
-# Relay: seconds, no engine dependency.
-tools/relay/build.sh
 ```
 
 First-time Linux dependencies: `libxcursor-dev libxinerama-dev libxi-dev
@@ -57,7 +58,7 @@ libxrandr-dev libasound2-dev`, plus `pip install scons`. Run `apt-get update` fi
 ## Test commands
 
 ```sh
-python3 tools/relay/tests/run_tests.py                 # fastest signal, no engine build
+python3 tools/relay/tests/run_tests.py                 # stdio gateway (needs an editor build)
 python3 tools/tests/run_tests.py                       # virtual display, no engine build
 python3 tools/skills/check_skills.py                   # shipped skills name tools that exist
 python3 tools/benchmarks/tests/run_tests.py            # benchmark scoring, no engine build
@@ -79,7 +80,7 @@ path and says so. Run any editor by hand the same way:
 python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path <project> --editor
 ```
 
-- Run the relay suite before the editor suite; a broken transport makes editor
+- Run the gateway suite before the editor e2e; a broken transport makes editor
   failures unreadable.
 - Run the end-to-end script after any change to tool behaviour, path handling, or
   the protocol. It has already caught a defect that unit tests missed.
@@ -157,10 +158,12 @@ in `.agent/MACOS_EMBEDDING_SPIKE.md`. Read it before touching
 - Mutating tools must honour read-only sessions. Files they may write are declared
   through `MCPTool::get_checkpoint_paths()`; the protocol layer snapshots them, so a
   tool must never write a file it did not declare.
-- Keep relay stdout free of everything except protocol frames; diagnostics go to
-  stderr.
-- HTTP transports - the editor's own (`mcp_http.{h,cpp}`) and the relay's - are
-  loopback-and-token, compared in constant time. Do not add a path that serves MCP
+- Keep gateway stdout free of everything except protocol frames; diagnostics go to
+  stderr. The gateway (`modules/godot_ai/gateway/`) runs before engine init and must
+  stay engine-free C++17 - an engine include there reintroduces the prints the
+  separate relay binary existed to avoid.
+- The editor's HTTP transport (`mcp_http.{h,cpp}`) is loopback-and-token, compared in
+  constant time. Do not add a path that serves MCP
   without authorisation, and never write a token into a generated client
   configuration - reference an environment variable instead. The token may live in the
   instance descriptor because that file is chmod 600 in the user's own state dir.
@@ -177,14 +180,15 @@ in `.agent/MACOS_EMBEDDING_SPIKE.md`. Read it before touching
   editor API exists.
 - The service polls from `NOTIFICATION_INTERNAL_PROCESS` behind a re-entrancy guard,
   because tools can pump the main loop.
-- The relay and the editor share a bridge protocol version; change both together and
+- The gateway and the editor share a bridge protocol version; change both together and
   bump `RELAY_BRIDGE_VERSION` / `MCPProtocol::BRIDGE_VERSION`.
 
 ## Conventions
 
 - Godot style: licence header on new files, `p_` parameters, `_` private methods,
   `memnew`/`memdelete`, `Ref<>` for RefCounted, engine containers over STL.
-- The relay is the exception: plain C++17 and the standard library, no engine headers.
+- The gateway (`modules/godot_ai/gateway/`) is the exception: plain C++17 and the
+  standard library, no engine headers - it runs before the engine exists.
 - Clean-room implementation. Reproduce the specified *behaviour*; do not copy
   proprietary implementation code, and use `Godot_*` tool names.
 
