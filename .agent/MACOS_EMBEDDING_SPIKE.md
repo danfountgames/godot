@@ -7,6 +7,87 @@ result.
 
 Context: `.agent/DECISIONS.md` DEC-0011 and the `W` group in `.agent/EXPERIENCE_LEDGER.md`.
 
+## RUN, 2026-08-27, native arm64 — and the prediction below was wrong
+
+Everything from here down was written on Linux and marked "expected". It has now been
+run on a Mac. **Spike A passes and Spike B fails harder than predicted.** Read this
+section first; the analysis below is kept because it is still correct about
+`GameViewDebuggerMacOS`, but it is no longer the *first* thing in the way.
+
+Evidence: `.agent/evidence/spike_macos_embedding.py`, `spike_macos_embedding.png`,
+`spike_macos_tile_{0,1,2}.png`, `spike_macos_embedding_editor.log`.
+
+**Spike A — the regression risk from W1/W2 — is clean.** The macOS editor builds (after
+one real fix, below), the module suite passes 276 cases / 3575 assertions, the relay
+suite 64/64, and `run_editor_e2e.py` passes 124 checks natively. In particular
+`embedded_process_apply_arguments()`, the W1 extraction, is macOS-correct already: it
+strips `--display-driver` and adds `--embedded` under `MACOS_ENABLED`.
+
+**Spike B — the prediction was "one game embeds and the second stays blank". Measured:
+none embed.** Three instances launch, all three processes run, all three tiles lay out,
+and all three tiles are blank. The editor says why, three times, once per instance:
+
+```
+WARNING: Embedded process not supported by this display server.
+     at: embed_process (./servers/display/display_server.cpp:1162)
+```
+
+That is `DisplayServer`'s **base-class** `embed_process`, not a macOS override — because
+**`DisplayServerMacOS` does not override `embed_process` at all.** X11 declares
+`virtual Error embed_process(WindowID, ProcessID, Rect2i, bool, bool) override`; macOS
+declares only `Error embed_process_update(WindowID, EmbeddedProcessMacOS *)`, a different
+signature that takes the macOS embedder itself. macOS cannot implement the generic
+pid-keyed call, because at that moment it does not yet have the CALayer context id.
+
+So the blocker is one level earlier than this document assumed, and it is in **our
+module, not in the platform**: `MCPWorkspaceTile` does `memnew(EmbeddedProcess)`
+unconditionally (`modules/godot_ai/mcp_workspace.cpp:88`). That is the reparenting
+implementation. Upstream never picks that class directly on macOS — it picks it through
+the plugin seam, where `editor/run/game_view_plugin.cpp:1799` constructs `EmbeddedProcess`
+and `platform/macos/editor/embedded_game_view_plugin.mm:169` constructs
+`EmbeddedProcessMacOS` instead. The workspace bypassed that seam.
+
+**The `set_context_id` collision described below is real but currently unreachable.**
+Confirmed by reading it here: `capture()` receives `p_session`, uses it only to null-check
+the session, then calls `(this->**fn_ptr)(p_data)` and drops it. It will matter the moment
+a tile holds a real `EmbeddedProcessMacOS` — but no tile does yet, so it is the *second*
+thing to fix, not the first.
+
+**A flag that disagrees with its implementation.** `DisplayServerMacOS::has_feature()`
+returns **true** for `FEATURE_WINDOW_EMBEDDING`, and `EmbeddedProcess::embed_process()`
+gates on exactly that flag before calling a method the platform does not implement. So
+the gate passes and the call then warns. On macOS the feature is real but is reached
+through a different API than the flag advertises. This is upstream engine behaviour, not
+something this fork introduced, and it is a plausible upstream report.
+
+**What does work on macOS, measured.** Everything except the picture: three instances
+launch with their own ids and pids, `debugger_connected` is true, `Godot_ListInstances`
+sees three live, pausing one reports `applied` and stops none of the others, and
+`Godot_StopAllInstances` clears exactly the agent's three. The W3/W4/W9 routing layer is
+platform-independent and behaves here as it does on Linux.
+
+**Also found on the way in:** the agent terminal did not compile on macOS at all.
+`mcp_pty.cpp` called `execvpe`, a glibc extension absent on macOS and the BSDs, so the
+whole editor build stopped there and nothing downstream had ever been measured. Fixed.
+
+### Answers to "What to report back"
+
+| Question | Answer |
+|---|---|
+| Does the single-instance path still work after W1/W2? | The argument builder is correct; the embed itself never happens, for the reason above. Not a W1/W2 regression. |
+| Do two processes embed unpatched? | No — and neither does one. |
+| Is the `set_context_id` collision real? | Real in source, unreachable today. |
+| How many instances before the CALayer path degrades? | Unanswerable until a tile holds a macOS embedder. |
+| Does taking control of one leave the others alone? | Yes — pause targeted exactly one, three times over. |
+| Focus, z-order, resize vs X11? | The games are ordinary floating windows on macOS today, so none of it is comparable yet. |
+
+### Revised order of work
+
+1. Give `MCPWorkspaceTile` the platform's embedder instead of hardcoding `EmbeddedProcess`
+   — a seam in the module, resolved per platform, mirroring what the game-view plugin does.
+2. Then Spike C below: thread `p_session` through `GameViewDebuggerMacOS` and key the
+   embedders by pid, because with step 1 done the collision becomes reachable.
+
 ## What is already established (on Linux/X11)
 
 Two game processes embed and render inside one editor window at once. The platform layer

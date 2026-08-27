@@ -433,6 +433,31 @@ nothing here. It fails identically on the unmodified tree.
 
 None.
 
+## macOS, measured 2026-08-27 (branch `ai2`)
+
+This fork had never been compiled on a Mac. Doing it turned up four things, in the
+order they were hit:
+
+1. **The editor did not build.** `modules/godot_ai/terminal/mcp_pty.cpp` called
+   `execvpe`, a glibc extension that does not exist on macOS or the BSDs. Fixed by
+   pointing `environ` at the block and calling `execvp`. Nothing downstream of the
+   terminal had ever been measured here, because the build stopped at that file.
+2. **Two end-to-end checks were asserting properties of a slow Linux container.** The
+   drag check demanded a game window wider than 600 while also clamping the drag into
+   whatever window it got; macOS embeds the game in the Game panel, sized in editor
+   points, so HiDPI gives 604x340 where X11 gives 846x475. The zero-tolerance replay
+   check demanded an `indeterminate` verdict on the premise that "there is always
+   some" drift - untrue on native hardware, where it measures zero and `passed` is
+   correct. Both now assert the invariant instead of the environment.
+3. **Baseline is green.** 276 module cases / 3575 assertions, 64/64 relay, 124
+   end-to-end checks, two documented `xdotool` skips.
+4. **W7 is located.** Nothing embeds on macOS - not one game, where the written
+   prediction was that one would. `mcp_workspace.cpp:88` hardcodes the reparenting
+   `EmbeddedProcess`; `DisplayServerMacOS` never overrides `embed_process`, so the
+   base class warns and returns `ERR_UNAVAILABLE`. Detail and revised order of work in
+   `.agent/MACOS_EMBEDDING_SPIKE.md`; the red spike is
+   `.agent/evidence/spike_macos_embedding.py` (9 pass, 2 fail, by design).
+
 ## Two traps this environment sets
 
 Both cost real time here, and both look like product bugs until measured properly.
