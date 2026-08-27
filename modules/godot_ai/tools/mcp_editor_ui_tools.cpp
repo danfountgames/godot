@@ -62,6 +62,7 @@
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/variant/array.h"
+#include "editor/run/embedded_process.h"
 #include "scene/gui/control.h"
 #include "scene/gui/item_list.h"
 #include "scene/gui/tab_bar.h"
@@ -185,6 +186,28 @@ void add_inline_capture(const Ref<Image> &p_image, Dictionary &r_result) {
 	content.push_back(block);
 	r_result["_content"] = content;
 	r_result["inlined"] = true;
+}
+
+// Whether any embedded game is composited inside this rect. An embedded game's pixels
+// are not in the editor's render target on any platform - X11 reparents a foreign
+// native window, macOS attaches a window-server CALayer - so a texture read of a region
+// holding one returns the editor's own background where the game visibly is. The only
+// honest source for such a region is the screen.
+bool rect_holds_embedded_game(Node *p_node, const Viewport *p_viewport, const Rect2 &p_rect) {
+	if (!p_node) {
+		return false;
+	}
+	const EmbeddedProcessBase *embedder = Object::cast_to<EmbeddedProcessBase>(p_node);
+	if (embedder && embedder->is_embedding_completed() && embedder->get_viewport() == p_viewport &&
+			embedder->is_visible_in_tree() && p_rect.intersects(embedder->get_global_rect())) {
+		return true;
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		if (rect_holds_embedded_game(p_node->get_child(i), p_viewport, p_rect)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void collect_visible_windows(Node *p_node, Vector<Window *> &r_windows) {
@@ -630,7 +653,44 @@ public:
 				Point2i(Math::ceil(end.x * scale.x) - Math::floor(begin.x * scale.x),
 						Math::ceil(end.y * scale.y) - Math::floor(begin.y * scale.y)));
 		pixels = pixels.intersection(Rect2i(0, 0, screen->get_width(), screen->get_height()));
-		Ref<Image> image = screen->get_region(pixels);
+		Ref<Image> image;
+		bool from_screen = false;
+		// A crop that holds an embedded game cannot come from the render target: the
+		// game is composited by the display system, and the texture holds editor
+		// background where the game visibly is. Take exactly the same crop from the
+		// screen instead, mapped through the same logical-to-pixel scale.
+		Window *host_window = Object::cast_to<Window>(viewport);
+		DisplayServer *display = DisplayServer::get_singleton();
+		if (host_window && display && rect_holds_embedded_game(host_window, viewport, crop_rect)) {
+			// The one source that can promise both halves: the window server's copy of
+			// this window carries the game's layer, and nothing that overlaps the editor
+			// on screen. A screen-rect grab was tried first and photographed whichever
+			// window happened to be frontmost - which in an automated run is routinely
+			// not the editor.
+			const Ref<Image> whole = display->window_get_image(host_window->get_window_id());
+			if (whole.is_valid() && !whole->is_empty()) {
+				const Vector2 window_scale((double)whole->get_width() / viewport_rect.size.x,
+						(double)whole->get_height() / viewport_rect.size.y);
+				Rect2i window_pixels(
+						Point2i(Math::floor((crop_rect.position.x - viewport_rect.position.x) * window_scale.x),
+								Math::floor((crop_rect.position.y - viewport_rect.position.y) * window_scale.y)),
+						Point2i(Math::ceil(crop_rect.size.x * window_scale.x), Math::ceil(crop_rect.size.y * window_scale.y)));
+				window_pixels = window_pixels.intersection(Rect2i(0, 0, whole->get_width(), whole->get_height()));
+				if (window_pixels.size.x > 1 && window_pixels.size.y > 1) {
+					image = whole->get_region(window_pixels);
+					if (image->get_format() != Image::FORMAT_RGBA8) {
+						image->convert(Image::FORMAT_RGBA8);
+					}
+					if (image->get_width() != pixels.size.x || image->get_height() != pixels.size.y) {
+						image->resize(pixels.size.x, pixels.size.y, Image::INTERPOLATE_BILINEAR);
+					}
+					from_screen = true;
+				}
+			}
+		}
+		if (image.is_null()) {
+			image = screen->get_region(pixels);
+		}
 		const Rect2i target_pixels(
 				Point2i(Math::round((target_rect.position.x - crop_rect.position.x) * scale.x),
 						Math::round((target_rect.position.y - crop_rect.position.y) * scale.y)),
@@ -674,9 +734,17 @@ public:
 		result["target_y"] = target_pixels.position.y;
 		result["target_width"] = target_pixels.size.x;
 		result["target_height"] = target_pixels.size.y;
-		MCPCaptureMetadata::stamp(result, MCPCaptureMetadata::SOURCE_EDITOR_VIEWPORT,
+		MCPCaptureMetadata::stamp(result,
+				from_screen ? MCPCaptureMetadata::SOURCE_EDITOR_SCREEN : MCPCaptureMetadata::SOURCE_EDITOR_VIEWPORT,
 				!window_title.is_empty() ? vformat("editor window '%s'", window_title) : vformat("editor Control %s", node_path));
-		MCPCaptureMetadata::add_note(result, "This is a tight editor UI crop, not the desktop, whole app, or running game.");
+		if (from_screen) {
+			MCPCaptureMetadata::add_note(result,
+					"This crop holds an embedded game, whose pixels the display system composites "
+					"outside the editor's render target - so it was taken from the screen. Anything "
+					"overlapping the editor in that region appears too.");
+		} else {
+			MCPCaptureMetadata::add_note(result, "This is a tight editor UI crop, not the desktop, whole app, or running game.");
+		}
 		if ((bool)p_arguments.get("inline_image", true)) {
 			add_inline_capture(image, result);
 		}

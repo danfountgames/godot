@@ -351,6 +351,11 @@ public:
 	virtual Color screen_get_pixel(const Point2i &p_position) const { return Color(); }
 	virtual Ref<Image> screen_get_image(int p_screen = DisplayServerEnums::SCREEN_OF_MAIN_WINDOW) const { return Ref<Image>(); }
 	virtual Ref<Image> screen_get_image_rect(const Rect2i &p_rect) const { return Ref<Image>(); }
+	// One window's composited contents, straight from the window server - including
+	// content the window system draws into it that is not part of the process's own
+	// render target (an embedded game's layer), and regardless of what overlaps it on
+	// screen. Platforms without a way to ask return empty.
+	virtual Ref<Image> window_get_image(DisplayServerEnums::WindowID p_window) const { return Ref<Image>(); }
 	virtual bool is_touchscreen_available() const;
 
 	virtual void screen_set_orientation(DisplayServerEnums::ScreenOrientation p_orientation, int p_screen = DisplayServerEnums::SCREEN_OF_MAIN_WINDOW);

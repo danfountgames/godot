@@ -1752,6 +1752,43 @@ Ref<Image> DisplayServerMacOS::screen_get_image_rect(const Rect2i &p_rect) const
 	return img;
 }
 
+Ref<Image> DisplayServerMacOS::window_get_image(DisplayServerEnums::WindowID p_window) const {
+	_THREAD_SAFE_METHOD_
+
+	ERR_FAIL_COND_V(!windows.has(p_window), Ref<Image>());
+	const WindowData &wd = windows[p_window];
+
+	// The window server's own copy of this one window, embedded CALayers included and
+	// whatever overlaps it on screen excluded - which a screen-rect capture cannot
+	// promise. The same CGWindowList API the screen capture above uses, asked about a
+	// single window instead of all of them.
+	CGWindowID window_number = (CGWindowID)[wd.window_object windowNumber];
+	CGImageRef image = CGWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, window_number, kCGWindowImageBoundsIgnoreFraming);
+	if (!image) {
+		return Ref<Image>();
+	}
+
+	Ref<Image> img;
+	CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+	if (color_space) {
+		NSUInteger width = CGImageGetWidth(image);
+		NSUInteger height = CGImageGetHeight(image);
+		if (width > 0 && height > 0) {
+			Vector<uint8_t> img_data;
+			img_data.resize_initialized(height * width * 4);
+			CGContextRef context = CGBitmapContextCreate(img_data.ptrw(), width, height, 8, 4 * width, color_space, (uint32_t)kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+			if (context) {
+				CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
+				img = Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, img_data);
+				CGContextRelease(context);
+			}
+		}
+		CGColorSpaceRelease(color_space);
+	}
+	CGImageRelease(image);
+	return img;
+}
+
 Vector<DisplayServerEnums::WindowID> DisplayServerMacOS::get_window_list() const {
 	_THREAD_SAFE_METHOD_
 

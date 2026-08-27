@@ -314,6 +314,7 @@ public:
 	virtual Color screen_get_pixel(const Point2i &p_position) const override;
 	virtual Ref<Image> screen_get_image(int p_screen = DisplayServerEnums::SCREEN_OF_MAIN_WINDOW) const override;
 	virtual Ref<Image> screen_get_image_rect(const Rect2i &p_rect) const override;
+	virtual Ref<Image> window_get_image(DisplayServerEnums::WindowID p_window) const override;
 	virtual Vector<int> get_window_list() const override;
 
 	virtual DisplayServerEnums::WindowID create_sub_window(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::VSyncMode p_vsync_mode, uint32_t p_flags, const Rect2i &p_rect = Rect2i(), bool p_exclusive = false, DisplayServerEnums::WindowID p_transient_parent = DisplayServerEnums::INVALID_WINDOW_ID) override;
