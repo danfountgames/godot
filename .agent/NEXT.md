@@ -68,6 +68,11 @@ partly revalidated** — see below.
    off to promotion, because the two hold different authority.
 6. **Grow the skills library around concrete jobs**: crash investigation, performance
    regression, menu traversal, input-path testing, scene cleanup.
+   **Done — all five named jobs have a skill**, plus `playtest-a-goal`,
+   `tune-and-keep` and `performance-profiling`. Checking their tool lists turned up
+   `Godot_SendActionInput`, named by three of them and implemented by none, which is now
+   implemented; `tools/skills/check_skills.py` fails the build on any skill naming a tool
+   nothing answers to.
 
 Alongside all of it: **benchmark projects and real success rates**.
 

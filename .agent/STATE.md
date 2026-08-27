@@ -139,6 +139,15 @@ reproduce** (`.agent/evidence/spike_workspace_overdraw.py`).
   ordinary way, because the hold, the permission check, the checkpoint and the audit record
   all live in the protocol's call path.
 
+- **The skills library** now covers all five jobs the user named, and
+  `tools/skills/check_skills.py` fails on any skill naming a tool nothing answers to. That
+  check found `Godot_SendActionInput` referenced by three shipped skills and implemented by
+  none — now implemented, because it is the right primitive: a game reads an action, so a
+  test bound to the key passes until somebody rebinds it. Its first implementation used
+  `Input::action_press`, which only sets the singleton's internal state and never calls
+  `_input`; the end-to-end check caught that on the first run, and it now injects an
+  `InputEventAction` through the ordinary pipeline.
+
 Next in order, from `.agent/NEXT.md`: P2 — moving the playtest's perceive/decide/act loop
 into the editor over MCP sampling — and then whatever the benchmarks say is weakest.
 Build-order items 4 (bug capture), 5 (promotion and the tuning workspace) and the D1/D2

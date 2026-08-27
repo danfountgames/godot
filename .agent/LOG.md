@@ -458,3 +458,49 @@ remains the fastest way to settle a question about the screen.
 ### Next
 - P2: moving the playtest's perceive/decide/act loop into the editor over MCP sampling.
 - Then whatever the benchmarks say is weakest, which is the point of having them.
+
+## 2026-08-27 — S-21 continued: the skills library, and a tool three skills invented
+
+### Build-order item 6
+
+- `test-an-input-path` and `find-a-performance-regression` added; `scene-cleanup` rewritten
+  around `Godot_ProposeChange`, which is now a real tool rather than a step the skill was
+  hand-rolling. All five jobs the user named have a skill.
+- The regression skill is deliberately not a profiling skill. A profile of the slow version
+  says where the time goes now, which is mostly where it went before; the answer needs the
+  *same sequence* measured twice, so the skill is built on record-and-replay and says that
+  an indeterminate replay under a profiler is an indeterminate measurement.
+
+### Godot_SendActionInput
+
+- Checking the skills' tool lists found `Godot_SendActionInput` named by three of them and
+  implemented by none. Implemented rather than deleted, because it is the right primitive:
+  a game reads an action, so a test written against the key passes until somebody rebinds
+  it and then fails for a reason that has nothing to do with jumping.
+- An action the project does not define is refused, with the actions it does define named.
+- **The first implementation was wrong and the e2e caught it in one run.**
+  `Input::action_press` only sets the singleton's internal state: `is_action_pressed`
+  becomes true and `_input` is never called, so a game reading the event — most games, and
+  every menu — sees nothing at all. It now injects an `InputEventAction` through the
+  ordinary pipeline, which updates both. The fixture counts `is_action_pressed` from the
+  event *and* the held state from `Input`, so neither half can pass alone.
+- Recorded in the trace as kind `action`, which replay and retroactive capture both map.
+
+### tools/skills/check_skills.py
+
+- Reads tool names out of the C++ that registers them and skills out of their own front
+  matter, and fails on any name nothing answers to. No build needed, so it runs in the fast
+  CI job.
+- Its own first run reported four real tools missing — the check was wrong, not the skills:
+  two tools pick their name from a flag (`Godot_PlayMainScene`/`Godot_PlayCurrentScene`,
+  `Godot_UndoLastAction`/`Godot_RedoLastAction`) and the pattern only understood a plain
+  `return "X";`. It now reads the whole `get_tool_name` body.
+
+### Also
+
+- An e2e check pinned the scene-cleanup skill's opening sentence in order to prove the
+  front matter was stripped, so improving the skill failed it. It now asserts what it
+  meant to.
+
+### Next
+- P2: the playtest's perceive/decide/act loop, editor-side over MCP sampling.
