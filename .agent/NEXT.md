@@ -113,6 +113,13 @@ to build the general level on.
   missing feature. Keep changes to core Godot limited, documented and ideally
   upstreamable; keep as much as possible in the module. The `EditorFileSystem` destructor
   fix is exactly the kind of change that should go upstream.
+  *(Started: `docs/godot-ai-fork-footprint.md` measures it.* **Nothing in the engine runtime
+  is touched** — not `core/`, `scene/`, `servers/`, `drivers/`, `main/`, or any platform
+  backend. Outside its own module the fork is 22 files: 16 in `editor/` at +285/−76, and 6
+  of macOS branding, with 14 of the 16 purely additive. Two claims in that document are
+  still labelled **not yet measured** and must be run before they are believed: that an
+  export template carries none of the tooling, and that `module_godot_ai_enabled=no` gives a
+  working stock editor.*)
 - **No evaluation.** *(Started: `tools/benchmarks/` exists.)* Counts of tools, tests and
   verified requirements measure engineering coverage, not agent effectiveness. Build benchmark Godot projects and measure: how often
   the agent reaches a stated condition; how often it correctly identifies a regression;
