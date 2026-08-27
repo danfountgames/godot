@@ -169,6 +169,27 @@ TEST_CASE("[godot_ai] Nothing pre-authorises the editor's tools") {
 	}
 }
 
+TEST_CASE("[godot_ai] The briefing teaches the loop, not just the tools") {
+	const String briefing = mcp_agent_editor_briefing(false);
+	// The point of injecting anything is that the agent runs and looks at the game
+	// rather than reporting an untested edit. If these disappear from the text, the
+	// injection has stopped doing its one job.
+	CHECK(briefing.contains("run the game"));
+	CHECK(briefing.contains("Godot_CaptureGame"));
+	CHECK(briefing.contains("Godot_GetRuntimeSceneTree"));
+	CHECK(briefing.contains("iterate"));
+	CHECK(briefing.contains("ai_skills/"));
+	// Compact is a requirement, not a taste: past a screenful, models skim.
+	CHECK(briefing.length() < 3000);
+	// It must not name project-specific files; it is injected into every project.
+	CHECK(!briefing.contains("GAME_SPEC"));
+	CHECK(!briefing.contains("res://scenes"));
+
+	const String read_only = mcp_agent_editor_briefing(true);
+	CHECK(read_only.contains("READ-ONLY"));
+	CHECK(!mcp_agent_editor_briefing(false).contains("READ-ONLY"));
+}
+
 TEST_CASE("[godot_ai] A system prompt is appended only when there is one") {
 	CHECK(index_of(mcp_agent_build_claude_arguments("/tmp/a.json", String()), "--append-system-prompt") == -1);
 

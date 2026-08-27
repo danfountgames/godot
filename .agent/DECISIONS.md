@@ -314,3 +314,44 @@ Durable decisions that are not obvious from the resulting code.
   agent executing a command.
 - **Consequences:** POSIX only. Windows needs ConPTY and is a separate implementation;
   `MCPPty::is_supported()` exists so callers can say so rather than failing at launch.
+
+## DEC-0013 — One conversation surface, and the agent is briefed rather than discovered
+
+**Date:** 2026-08-27. **Instruction:** the user, reviewing the running editor: remove
+weight that duplicates ("that duplicate chat box in the inspector side"), design a
+genuinely useful experience, and make the terminal agent treat the editor's tools as
+second nature — "go away and use the tools, including testing and iterating, when I ask
+it to change something."
+
+**The duplication.** The editor had two conversation surfaces. The AI Chat dock
+(`mcp_chat*`, 818 lines + 5 tests) borrowed an attached MCP client's model through
+`sampling/createMessage`; the Agent Terminal runs a whole coding agent against the
+editor over the relay. Everything the chat could do, the terminal does with tools,
+iteration and a transcript the user already knows; the chat's one distinctive property —
+the editor holds no credentials — is equally true of the terminal, which authenticates
+nothing and asks the editor's own approval flow for everything. The dock also cost
+non-UI weight: an outgoing-request table, a timeout poll, and a response router in the
+service, all for its sampling round trip. All of it is removed. The spec's own
+architecture section already warned against making embedded chat the centrepiece; the
+removal is that sentence, enforced.
+
+**The experience, stated as planes so nothing duplicates again.** Conversation happens
+in exactly one place, the Agent Terminal (bottom panel). Control — approvals, permissions,
+skills, read-only — is the dock and dialogs. Viewing runs is the GodotAI workspace.
+Evidence is the Activity panel. A feature that wants a second home in one of these
+planes is the same mistake as the chat dock and should be argued down.
+
+**Second nature, by injection.** A coding agent left alone treats a project as files: it
+edits, reports, and never watches anything run. The terminal now injects a compact
+briefing (`mcp_agent_editor_briefing()`, ~2.5 KB, pinned by test to stay under 3 KB and
+project-neutral) as a system-prompt appendix at launch: the tools are the editor; the
+loop is change → run → look → fix → iterate; screenshots are evidence; runtime and
+persistent edits are different tools on purpose; checkpoints make acting safe; skills
+are recipes to read before improvising. Read-only sessions are told they are read-only
+so they diagnose instead of fighting refusals. The 1600-line template `AGENTS.md`
+remains what it was — a production harness for template projects — but the briefing is
+what every agent gets in every project, template or not.
+
+**Rejected:** keeping the chat dock hidden behind a setting (weight is weight; the code
+path still has to be maintained and tested), and injecting the full template document
+(past a screenful, models skim — compact and always-present beats complete and unread).

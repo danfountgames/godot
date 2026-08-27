@@ -32,12 +32,10 @@
 
 #include "mcp_approvals_dialog.h"
 #include "mcp_audit.h"
-#include "mcp_chat.h"
 #include "mcp_activity_dock.h"
 #ifdef MCP_TERMINAL_ENABLED
 #include "terminal/mcp_agent_terminal_panel.h"
 #endif
-#include "mcp_chat_dock.h"
 #include "mcp_runtime_bridge.h"
 #include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
@@ -132,7 +130,6 @@ void MCPService::_notification(int p_what) {
 					_poll_peer(peers[i]);
 				}
 				_poll_deferred();
-				_poll_outgoing();
 				if (runtime_bridge.is_valid()) {
 					runtime_bridge->poll();
 				}
@@ -288,11 +285,9 @@ void MCPService::_handle_line(Peer *p_peer, const String &p_line) {
 		return;
 	}
 
-	// An answer to something *this* editor asked (see send_sampling_request) is not a
-	// request to handle, and must not be fed to the protocol layer as one.
-	if (_route_outgoing_response(p_peer, parsed)) {
-		return;
-	}
+	// This editor no longer sends requests to clients (the sampling round trip left
+	// with the chat, DEC-0013), so every inbound frame is the client's own; a stray
+	// response is handled by the protocol layer's no-method path.
 
 	Dictionary response;
 	current_peer = p_peer;
@@ -322,142 +317,6 @@ bool MCPService::defer_response(const Variant &p_id, int64_t p_token, const Ref<
 // the other way: the editor's chat panel has no model, so it asks a connected client
 // to run one. MCP calls that sampling, and it is why the relay is a straight pump
 // rather than a request/response proxy - a frame has to be able to originate here.
-
-namespace {
-
-// A client that accepted a sampling request and then went quiet must not leave the
-// chat waiting forever. Generous, because a model answering a real question is slow.
-const double SAMPLING_TIMEOUT_SECONDS = 180.0;
-
-String sampling_request_id(int64_t p_id) {
-	return vformat("godot-ai-sampling-%d", p_id);
-}
-
-} // namespace
-
-bool MCPService::has_sampling_client() const {
-	for (const Peer *peer : peers) {
-		if (peer->session.initialized && peer->session.client_approved && peer->session.supports_sampling) {
-			return true;
-		}
-	}
-	return false;
-}
-
-int64_t MCPService::send_sampling_request(const Dictionary &p_params, const Ref<RefCounted> &p_owner) {
-	Peer *chosen = nullptr;
-	for (Peer *peer : peers) {
-		if (peer->session.initialized && peer->session.client_approved && peer->session.supports_sampling) {
-			chosen = peer;
-			break;
-		}
-	}
-	if (!chosen) {
-		return 0;
-	}
-
-	OutgoingRequest request;
-	request.id = next_outgoing_id++;
-	request.peer_address = chosen->address;
-	request.owner = p_owner;
-	request.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + SAMPLING_TIMEOUT_SECONDS;
-	outgoing.push_back(request);
-
-	Dictionary message;
-	message["jsonrpc"] = "2.0";
-	message["id"] = sampling_request_id(request.id);
-	message["method"] = "sampling/createMessage";
-	message["params"] = p_params;
-	_send(chosen, message);
-	return request.id;
-}
-
-void MCPService::cancel_sampling_request(int64_t p_request) {
-	for (int i = 0; i < outgoing.size(); i++) {
-		if (outgoing[i].id != p_request) {
-			continue;
-		}
-		for (Peer *peer : peers) {
-			if (peer->address != outgoing[i].peer_address) {
-				continue;
-			}
-			Dictionary params;
-			params["requestId"] = sampling_request_id(p_request);
-			params["reason"] = "cancelled in the editor";
-			Dictionary message;
-			message["jsonrpc"] = "2.0";
-			message["method"] = "notifications/cancelled";
-			message["params"] = params;
-			_send(peer, message);
-			break;
-		}
-		outgoing.remove_at(i);
-		return;
-	}
-}
-
-bool MCPService::_route_outgoing_response(Peer *p_peer, const Dictionary &p_message) {
-	if (p_message.has("method") || !p_message.has("id")) {
-		return false;
-	}
-	const String id = p_message["id"];
-	if (!id.begins_with("godot-ai-sampling-")) {
-		return false;
-	}
-
-	for (int i = 0; i < outgoing.size(); i++) {
-		if (sampling_request_id(outgoing[i].id) != id) {
-			continue;
-		}
-		// A different client answering our request is either confusion or mischief.
-		if (outgoing[i].peer_address != p_peer->address) {
-			return true;
-		}
-		const OutgoingRequest request = outgoing[i];
-		outgoing.remove_at(i);
-
-		Ref<MCPChat> chat = request.owner;
-		if (chat.is_valid()) {
-			if (p_message.has("error")) {
-				const Dictionary error = p_message["error"];
-				chat->accept_failure(request.id, vformat("the client refused: %s",
-													   String(error.get("message", "no reason given"))));
-			} else {
-				chat->accept_response(request.id, p_message.get("result", Dictionary()));
-			}
-		}
-		return true;
-	}
-	// An id in our namespace that we are not waiting for: a late answer to something
-	// already cancelled. Swallow it rather than treat it as a client request.
-	return true;
-}
-
-void MCPService::_poll_outgoing() {
-	const bool available = has_sampling_client();
-	if (available != sampling_was_available) {
-		sampling_was_available = available;
-		if (chat_dock) {
-			chat_dock->refresh();
-		}
-	}
-
-	if (outgoing.is_empty()) {
-		return;
-	}
-	const double now = OS::get_singleton()->get_ticks_msec() / 1000.0;
-	for (int i = outgoing.size() - 1; i >= 0; i--) {
-		if (outgoing[i].deadline > now) {
-			continue;
-		}
-		const OutgoingRequest request = outgoing[i];
-		outgoing.remove_at(i);
-		Ref<MCPChat> chat = request.owner;
-		if (chat.is_valid()) {
-			chat->accept_failure(request.id, "the client did not answer in time");
-		}
-	}
-}
 
 void MCPService::_poll_deferred() {
 	MCPDeferred::update();
@@ -577,9 +436,6 @@ void MCPService::_register_editor_commands() {
 	// same debugger session the bridge talks through.
 	profiler_recorder.instantiate();
 
-	chat_dock = memnew(MCPChatDock(this));
-	add_control_to_dock(DOCK_SLOT_RIGHT_BL, chat_dock);
-
 	// The bottom panel, not a side dock.
 	//
 	// It went in beside the chat first, and that shrank the Inspector enough that
@@ -616,23 +472,12 @@ void MCPService::_register_editor_commands() {
 		EditorCommandPalette::get_singleton()->add_command(
 				TTR("Godot AI: Restart Service"), "godot_ai/restart",
 				callable_mp(this, &MCPService::restart), Ref<Shortcut>());
-		EditorCommandPalette::get_singleton()->add_command(
-				TTR("Godot AI: Chat"), "godot_ai/chat",
-				callable_mp(this, &MCPService::_show_chat), Ref<Shortcut>());
 	}
 }
 
 void MCPService::_show_approvals() {
 	if (approvals_dialog) {
 		approvals_dialog->popup_centered(Size2(720, 460));
-	}
-}
-
-void MCPService::_show_chat() {
-	if (chat_dock) {
-		// Focus rather than merely reveal: someone reaching for this through the
-		// palette wants to type, not to look at a panel.
-		chat_dock->focus_input();
 	}
 }
 

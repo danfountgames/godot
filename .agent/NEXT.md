@@ -1,5 +1,26 @@
 # NEXT
 
+## The experience, first (2026-08-27, user instruction)
+
+The user's standing direction, given while watching the real editor run: **make using
+the system second nature for the agent, and cut weight that duplicates.** Concretely:
+
+- Four planes, one home each — conversation (Agent Terminal), control (dock/dialogs),
+  view (GodotAI workspace), evidence (Activity). DEC-0013. The chat dock is gone;
+  anything proposing a second home in an occupied plane is presumed wrong.
+- The terminal injects `mcp_agent_editor_briefing()` at launch so "change something"
+  means change → run → look → fix → iterate, unprompted. The briefing is pinned by
+  test: compact, project-neutral, teaches the loop.
+- Measure the experience where it is used: the benchmarks (`tools/benchmarks/`) should
+  grow a case that asks an agent to "change something" and scores whether it ran,
+  looked and iterated before reporting — the briefing's effect, measured rather than
+  assumed. **Not yet built.**
+- Open injection seam: non-Claude agents (codex etc.) get no `--append-system-prompt`;
+  the briefing currently reaches only Claude Code. The seam exists
+  (`mcp_agent_build_arguments`); teach it other agents' flags only from their real
+  documentation, never by guessing.
+
+
 The build order below is **the user's**, given 2026-08-26, and it supersedes the tier
 ordering in `docs/godot-ai-agent-experience-spec.md`. Where the two disagree, this wins.
 

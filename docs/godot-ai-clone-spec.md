@@ -120,7 +120,7 @@ The best implementation plan is not “clone every Unity surface into the fork i
 
 | Feature | Effort | Why it is optional | Key implementation steps | Key tests |
 |---|---|---|---|---|
-| In-editor hosted LLM chat UI | Medium | Nice UX, but not required for MCP parity | Create dock/main screen plugin; route to model backend | Session persistence, cancel/resume, attachment handling |
+| In-editor hosted LLM chat UI | — | **Superseded (DEC-0013, 2026-08-27): built, shipped, then removed.** The Agent Terminal is the one conversation surface; a second one duplicated it while doing less. This row stays so nobody rebuilds it | — | — |
 | Packaged agent backends | Medium | Convenience rather than core capability | Bundle selected agent launchers or adapters | Credential storage, updater behaviour, version pinning |
 | Export-template AI integration | Medium to Large | More packaging complexity than immediate developer value | Decide whether exported games need agent/runtime or editor-only tooling | Export compatibility, platform matrix |
 | Multi-user / remote HTTP MCP deployment | Medium | Powerful, but local stdio is enough initially | Add Streamable HTTP variant only after local design stabilises | Auth, session isolation, concurrent clients |
@@ -447,3 +447,43 @@ If I had to reduce the whole report to one product recommendation, it would be t
 ### Open questions and limitations
 
 Some details remain incomplete because the reviewed sources did not expose them cleanly enough to verify. In particular, the full built-in Unity tool catalogue was not exhaustively enumerated in the reviewed docs; some Godot hook functions inside `scene_tree_dock.cpp` could not be confirmed precisely from the reviewed sources; and I did not identify a reviewed public source repository for Unity’s relay implementation, only public behaviour and package documentation. None of these gaps changes the high-confidence conclusion that the architecture is cloneable; they mainly affect how exact the emulation can be at the first implementation pass.
+
+
+---
+
+# The experience, revised (2026-08-27, DEC-0013)
+
+This section supersedes any earlier wording that treats surfaces individually. It
+exists because features accrete surfaces, and surfaces accrete duplicates.
+
+## Four planes, one home each
+
+| Plane | The one home | What lives there |
+|---|---|---|
+| Conversation | **Agent Terminal** (bottom panel) | The coding agent: the user's requests, the agent's work, its questions |
+| Control | Dock + dialogs | Approvals, permissions, skills trust, read-only, stop |
+| View | **GodotAI workspace** (main screen) | Embedded running instances, one tile each, take-control/pause/stop |
+| Evidence | **Activity panel** (bottom) | The event stream: intention, tool call, affected objects, result, checkpoint |
+
+A proposed feature that wants a second home in an occupied plane is presumed wrong.
+The AI Chat dock was exactly that — a second conversation surface — and its removal
+deleted 800+ lines whose only distinctive property (no credentials in the editor) the
+terminal already had.
+
+## The loop is the product
+
+The agent can make a change, run the game, interact with it, discover the result is
+wrong, diagnose why, revise, and prove it now works. Every surface exists to make that
+loop visible (workspace, activity), safe (control), or driveable (terminal). Features
+that do not serve the loop are weight.
+
+## Second nature, not documentation
+
+An agent in the terminal is briefed at launch — `mcp_agent_editor_briefing()` — so
+using the editor is its default behaviour, not a discovery. The briefing is injected as
+a system-prompt appendix, is project-neutral, and is deliberately one screenful; it is
+pinned by test to stay under 3 KB and to keep teaching the loop (run, look, iterate)
+rather than merely listing tools. "Change something" must mean: change it, run it,
+watch it, fix it, then report. The long-form production harness
+(`misc/godot_ai/project_template/AGENTS.md`) remains for template projects; the
+briefing is what every agent gets everywhere.

@@ -18,9 +18,11 @@ This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 - a terminal panel running a coding agent against this editor, over the relay
 - benchmark projects with planted defects, and a scorecard that counts collateral damage
   as well as successes
-- an approvals dialog and a chat dock (`mcp_approvals_dialog.*`, `mcp_chat_dock.*`),
-  screenshots, ask-user, and runtime property inspection — all shipped and verified
-  against a live editor; this line used to say "planned" and had been stale for a while
+- an approvals dialog (`mcp_approvals_dialog.*`), screenshots, ask-user, and runtime
+  property inspection — all shipped and verified against a live editor. The former chat
+  dock is deliberately removed (DEC-0013): the Agent Terminal is the one conversation
+  surface, and it briefs its agent at launch (`mcp_agent_editor_briefing()`) so the
+  editor's tools are its default behaviour
 
 The authoritative definition of the product is `docs/godot-ai-clone-spec.md`.
 Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.

@@ -52,9 +52,10 @@ struct MCPSession {
 	String mcp_client_name;
 	String mcp_client_version;
 
-	// The client offered `sampling` at initialize, so the editor may borrow its model
-	// (see mcp_chat.h). Absent capability means absent feature: asking anyway would
-	// hang a chat turn on a client that will never answer.
+	// The client offered `sampling` at initialize. Recorded because the client said it,
+	// not because anything asks: the in-editor chat that consumed it is gone - one
+	// conversation surface, the agent terminal - and this stays only as an honest note
+	// of what the session negotiated.
 	bool supports_sampling = false;
 };
 

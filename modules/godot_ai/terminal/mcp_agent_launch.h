@@ -60,6 +60,13 @@ struct MCPAgentLaunchPlan {
 	String mcp_config_json;
 };
 
+// What every agent is told at launch about the editor it is sitting inside. Injected
+// as a system-prompt appendix for agents whose command line accepts one; the point is
+// that using the editor's tools becomes the default behaviour, not something the user
+// has to ask for. Kept compact on purpose: a screenful the model actually reads beats
+// a manual it skims. Works for any project - it names no project files.
+String mcp_agent_editor_briefing(bool p_read_only);
+
 // Where the relay might be, in the order they are tried. Exposed so the panel can say
 // exactly where it looked when it finds nothing, rather than "not found".
 Vector<String> mcp_agent_relay_search_paths(const String &p_executable_dir, const String &p_env_override);

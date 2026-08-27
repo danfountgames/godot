@@ -198,8 +198,8 @@ def connect(home, expect_approved):
                          home=home)
     relay.send_message({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                         "params": {"protocolVersion": "2025-06-18",
-                                   # Offering sampling is what lets the editor's chat
-                                   # panel borrow this client's model.
+                                   # Offered so the session records it; nothing in the
+                                   # editor consumes sampling any more.
                                    "capabilities": {"sampling": {}},
                                    "clientInfo": {"name": CLIENT_NAME, "version": "1"}}})
     reply = relay.read_message(timeout=25)
@@ -449,113 +449,8 @@ def run(editor_binary, display):
         check(refused(reply), "an unknown key name was accepted")
         print("PASS Godot_SendEditorInput refuses off-window points and unknown keys")
 
-        # --- O1: the chat panel borrows this client's model ---------------------
-        # The editor has no model. It asks whichever client is attached to run one, so
-        # a round trip here is the whole feature: the panel sends, this test answers as
-        # the client would, and the answer has to become part of the conversation.
-        run_palette_command(d, editor_window, "Godot AI: Chat")
-        # The palette window is gone now, and nothing hands its input focus back, so
-        # typing would go to a destroyed window. The panel has Godot focus; the editor
-        # window needs the X focus.
-        focus(d, editor_window)
-        xdotool(d, "type", "--delay", "40", "what scenes are in this project")
-        time.sleep(0.6)
-        xdotool(d, "key", "Return")
-
-        request = relay.read_message(timeout=30)
-        check(request is not None, "the chat panel sent nothing to the client")
-        check(request.get("method") == "sampling/createMessage",
-              "expected a sampling request, got %r" % request.get("method"))
-        conversation = request["params"]["messages"]
-        check(conversation[-1]["content"]["text"] == "what scenes are in this project",
-              "the sampling request does not carry the typed prompt: %r" % conversation[-1])
-        check("systemPrompt" in request["params"], "the sampling request has no system prompt")
-        print("PASS the chat panel asked the client to run a model")
-
-        relay.send_message({"jsonrpc": "2.0", "id": request["id"],
-                            "result": {"role": "assistant", "model": "test-model",
-                                       "content": {"type": "text",
-                                                   "text": "main.tscn, and nothing else"}}})
-        time.sleep(2)
-
-        # The answer is only real if the conversation kept it: send a second turn and
-        # look at what the editor now considers the history.
-        focus(d, editor_window)
-        xdotool(d, "type", "--delay", "40", "and how many nodes")
-        time.sleep(0.6)
-        xdotool(d, "key", "Return")
-
-        second = relay.read_message(timeout=30)
-        check(second is not None and second.get("method") == "sampling/createMessage",
-              "the second chat turn was not sent: %r" % second)
-        texts = [entry["content"]["text"] for entry in second["params"]["messages"]]
-        check("main.tscn, and nothing else" in texts,
-              "the client's answer did not become part of the conversation: %r" % texts)
-        check(texts[-1] == "and how many nodes", "the second prompt is not last: %r" % texts)
-        print("PASS the client's answer became part of the conversation")
-
-        # Leave nothing in flight for the steps below.
-        relay.send_message({"jsonrpc": "2.0", "id": second["id"],
-                            "result": {"role": "assistant", "model": "test-model",
-                                       "content": {"type": "text", "text": "three"}}})
-        time.sleep(1)
-
-        # --- O1 cancellation: the frame, not only the conversation's half -------
-        # The dock's Cancel button has to tell the client to stop. This was recorded for
-        # a long time as needing something the environment could not provide; it did
-        # not. Godot_FindControl locates the button and Godot_SendEditorInput presses it.
-        focus(d, editor_window)
-        xdotool(d, "type", "--delay", "40", "a turn nobody will answer")
-        time.sleep(0.6)
-        xdotool(d, "key", "Return")
-
-        third = relay.read_message(timeout=30)
-        check(third is not None and third.get("method") == "sampling/createMessage",
-              "the third chat turn was not sent: %r" % third)
-
-        reply = call({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
-                      "params": {"name": "Godot_FindControl",
-                                 "arguments": {"text": "Cancel"}}})
-        check(not refused(reply), "finding the Cancel button failed: %s" % refusal_text(reply))
-        # Enabled is the discriminator: the dock's Cancel is only live while a turn is in
-        # flight, so this cannot accidentally pick some other Cancel in the editor.
-        buttons = [match for match in reply["result"]["structuredContent"]["matches"]
-                   if match["kind"] == "control" and not match["disabled"]]
-        check(len(buttons) == 1,
-              "expected exactly one enabled Cancel button while a turn is in flight: %r"
-              % reply["result"]["structuredContent"]["matches"])
-
-        relay.send_message({"jsonrpc": "2.0", "id": 21, "method": "tools/call",
-                            "params": {"name": "Godot_SendEditorInput",
-                                       "arguments": {"action": "click",
-                                                     "x": buttons[0]["center_x"],
-                                                     "y": buttons[0]["center_y"]}}})
-
-        # The tool's own reply and the cancellation can arrive in either order.
-        notice = None
-        clicked = False
-        deadline = time.time() + 25
-        while (notice is None or not clicked) and time.time() < deadline:
-            message = relay.read_message(timeout=20)
-            if message is None:
-                break
-            if message.get("method") == "notifications/cancelled":
-                notice = message
-            elif message.get("id") == 21:
-                check(not refused(message),
-                      "clicking Cancel failed: %s" % refusal_text(message))
-                clicked = True
-        check(clicked, "the click on Cancel was never acknowledged")
-        check(notice is not None,
-              "cancelling the turn told the client nothing; a client left waiting on a "
-              "request the editor has abandoned burns a model call for an answer nobody "
-              "will read")
-        check(str(notice["params"]["requestId"]) == str(third["id"]),
-              "the cancellation names the wrong request: %r, expected %r"
-              % (notice["params"], third["id"]))
-        check(notice["params"].get("reason"),
-              "the cancellation does not say why: %r" % notice["params"])
-        print("PASS cancelling a chat turn sends notifications/cancelled for that request")
+        # The chat panel is gone - one conversation surface, the agent terminal.
+        # Its round trip (send, answer as the client, cancel) went with it.
 
         # --- U1: the other palette commands ------------------------------------
         run_palette_command(d, editor_window, "Show Service Status")

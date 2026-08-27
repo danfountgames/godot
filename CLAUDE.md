@@ -61,9 +61,11 @@ never put task progress, logs, or temporary next actions in `CLAUDE.md`.
 | `tools/tests/` | Tests for the standalone tooling (currently the virtual display) |
 | `.agent/` | Persistent implementation-control workspace |
 
-The editor's chat panel borrows a *connected client's* model through MCP sampling
-(`mcp_chat.h`). The editor holds no credentials and calls no vendor API; if you are
-adding to it, keep it that way.
+The editor's one conversation surface is the **Agent Terminal** (bottom panel), which
+runs a coding agent against this editor over the relay. The editor holds no credentials
+and calls no vendor API; the agent authenticates itself and the editor's approval flow
+decides what it may do. The former AI Chat dock is deliberately gone (DEC-0013) — do
+not reintroduce a second conversation surface.
 
 ## Canonical commands
 

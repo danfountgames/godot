@@ -287,7 +287,11 @@ bool MCPAgentTerminalPanel::launch() {
 	}
 	environment = mcp_agent_build_environment(environment, mcp_config_path);
 
-	const Vector<String> arguments = mcp_agent_build_arguments(command, mcp_config_path, String());
+	// The briefing is what makes the editor's tools the agent's default behaviour
+	// rather than a discovery: without it, a coding agent treats the project as files
+	// and reports edits it never watched run.
+	const Vector<String> arguments = mcp_agent_build_arguments(command, mcp_config_path,
+			mcp_agent_editor_briefing(read_only_check && read_only_check->is_pressed()));
 	const String working_directory = ProjectSettings::get_singleton()->globalize_path("res://");
 
 	String start_error;
