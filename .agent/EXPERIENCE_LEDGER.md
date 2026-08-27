@@ -60,11 +60,11 @@ solves with `tools/virtual_display.py`.
 
 | ID | Requirement | Status | Code | Tests | Evidence | Remaining |
 |---|---|---|---|---|---|---|
-| P1 | `Godot_StartPlaytest` with goal, budget, oracle; returns a handle | NOT_STARTED | — | — | — | everything |
-| P2 | The perceive/decide/act loop runs editor-side over MCP sampling | NOT_STARTED | — | — | — | `mcp_chat.cpp` already does sampling; the loop does not exist |
-| P3 | `Godot_GetPlaytestReport` with crashes, spikes, coverage, verdict | NOT_STARTED | — | — | — | every input exists as a primitive; nothing aggregates |
-| P4 | Stoppable mid-run, reports partial results | NOT_STARTED | — | — | — | cancellation is proven for chat turns; reuse that path |
-| P5 | Playtest input appears in the activity stream and input trace | NOT_STARTED | — | — | — | depends on E1 |
+| P1 | `Godot_StartPlaytest` with goal, budget, oracle; returns a handle | IMPLEMENTED (does not launch) | `mcp_playtest.{h,cpp}`, `tools/mcp_playtest_tools.cpp` | `test_mcp_playtest.h`, `run_editor_e2e.py` | opens a window against a game that is **already running**, one at a time | **Deliberately does not launch the game.** Launching needs `run_project` and playing needs `simulate_input`, and a tool declares one capability - the same reasoning as DEC-0010 for replay. It refuses up front when nothing is running, rather than producing an empty report four minutes later |
+| P2 | The perceive/decide/act loop runs editor-side over MCP sampling | NOT_STARTED | — | — | — | deliberately after P1/P3: it changes *who drives the loop*, not what the report contains, and the report is the product |
+| P3 | `Godot_GetPlaytestReport` with crashes, spikes, coverage, verdict | IMPLEMENTED | `MCPPlaytest::build_report`, `reconcile_verdict` | `test_mcp_playtest.h` (24 cases), `run_editor_e2e.py` | the report carries the goal, every call and every input in the window, the game's own errors and warnings, the agent's observations, and a verdict reconciled against that evidence | **The verdict is checked, not believed.** A success claimed with no input injected, or past a logged error, comes back indeterminate with the reason attached and the original claim kept beside it. Frame-time spikes have detection and tests but no source yet: the profiler recorder is not wired in, so `spikes` is always empty in a live report and the row says so |
+| P4 | Stoppable mid-run, reports partial results | IMPLEMENTED | `MCPPlaytest::abandon`, `Godot_FinishPlaytest` verdict `stop` | `test_mcp_playtest.h` | stopping keeps what was collected, marks the report `partial`, and records the reason as the summary | |
+| P5 | Playtest input appears in the activity stream and input trace | VERIFIED | `MCPPlaytest::input_in_window` over `MCPActivity` | `run_editor_e2e.py` | free, and by construction: a playtest injects input through the same tools everything else does, so the activity stream already has it and the report reads it back from there | the report cannot show input the stream did not record, which is what makes an agent's account of what it pressed checkable rather than trusted |
 
 ## D — Design conversation
 

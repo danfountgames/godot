@@ -1533,6 +1533,108 @@ def run(editor_binary, display):
                 check(refused(reply), "an unknown key name was accepted")
                 print("PASS Godot_SendKeyInput refuses a key name it does not know")
 
+                # --- a whole playtest, start to report --------------------------
+                #
+                # The workflow the primitives above exist for: a stated goal, a window of
+                # play, and a report that is checked against what actually happened rather
+                # than against what the caller says happened.
+                reply = call({"jsonrpc": "2.0", "id": 700, "method": "tools/call",
+                              "params": {"name": "Godot_StartPlaytest",
+                                         "arguments": {"goal": "type a word into the field",
+                                                       "name": "e2e typing",
+                                                       "budget_seconds": 60,
+                                                       "oracle": "the field's text property reads 'played'"}}})
+                check(reply["result"]["isError"] is False,
+                      "starting a playtest failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["playtest"] == "e2e-typing",
+                      "the playtest slug is wrong: %r" % reply["result"]["structuredContent"])
+                print("PASS Godot_StartPlaytest opened a playtest against the running game")
+
+                # A second one must be refused: two overlapping windows would each claim
+                # the same activity and neither report would be true.
+                reply = call({"jsonrpc": "2.0", "id": 701, "method": "tools/call",
+                              "params": {"name": "Godot_StartPlaytest",
+                                         "arguments": {"goal": "something else"}}})
+                check(refused(reply), "a second overlapping playtest was allowed")
+                print("PASS a second playtest is refused while one is open")
+
+                # Play it. This is the same input tool used above; the playtest is only
+                # watching.
+                reply = call({"jsonrpc": "2.0", "id": 702, "method": "tools/call",
+                              "params": {"name": "Godot_SendPointerInput",
+                                         "arguments": {"x": 250, "y": 220}}})
+                check(reply["result"]["isError"] is False,
+                      "clicking during the playtest failed: %s" % refusal_text(reply))
+                reply = call({"jsonrpc": "2.0", "id": 703, "method": "tools/call",
+                              "params": {"name": "Godot_SendKeyInput",
+                                         "arguments": {"action": "type", "text": "played"}}})
+                check(reply["result"]["isError"] is False,
+                      "typing during the playtest failed: %s" % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 704, "method": "tools/call",
+                              "params": {"name": "Godot_NotePlaytestObservation",
+                                         "arguments": {"note": "the field took the characters",
+                                                       "kind": "progress"}}})
+                check(reply["result"]["isError"] is False,
+                      "recording an observation failed: %s" % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 705, "method": "tools/call",
+                              "params": {"name": "Godot_FinishPlaytest",
+                                         "arguments": {"verdict": "reached",
+                                                       "summary": "typed the word and the field took it"}}})
+                check(reply["result"]["isError"] is False,
+                      "finishing the playtest failed: %s" % refusal_text(reply))
+                report = reply["result"]["structuredContent"]["report"]
+                check(report["goal"] == "type a word into the field",
+                      "the report lost its goal: %r" % report)
+                # The claim is only kept if the evidence supports it. Input was injected,
+                # so 'reached' survives - unless the game logged something, in which case
+                # the report says indeterminate and says why, which is also correct.
+                check(report["verdict"] in ("reached", "indeterminate"),
+                      "unexpected verdict: %r" % report.get("verdict"))
+                if report["verdict"] == "indeterminate":
+                    check(bool(report.get("verdict_reason")),
+                          "an indeterminate verdict must say why: %r" % report)
+                check(report["counts"]["inputs"] >= 2,
+                      "the report did not see the input this playtest injected: %r"
+                      % report["counts"])
+                check(report["counts"]["observations"] == 1,
+                      "the observation is missing: %r" % report["counts"])
+                check(report["claimed_verdict"] == "reached",
+                      "the report must keep what was claimed beside what it concluded: %r" % report)
+                print("PASS Godot_FinishPlaytest assembled a report from what actually happened")
+
+                # A claimed success with no input at all is the check that catches a
+                # report written from the source rather than from the game.
+                reply = call({"jsonrpc": "2.0", "id": 706, "method": "tools/call",
+                              "params": {"name": "Godot_StartPlaytest",
+                                         "arguments": {"goal": "claim without playing",
+                                                       "budget_seconds": 30}}})
+                check(reply["result"]["isError"] is False,
+                      "starting the second playtest failed: %s" % refusal_text(reply))
+                reply = call({"jsonrpc": "2.0", "id": 707, "method": "tools/call",
+                              "params": {"name": "Godot_FinishPlaytest",
+                                         "arguments": {"verdict": "reached",
+                                                       "summary": "it worked, honestly"}}})
+                check(reply["result"]["isError"] is False,
+                      "finishing the second playtest failed: %s" % refusal_text(reply))
+                unsupported = reply["result"]["structuredContent"]["report"]
+                check(unsupported["verdict"] == "indeterminate",
+                      "a success claimed with no input was taken at face value: %r" % unsupported)
+                check("no input" in unsupported.get("verdict_reason", ""),
+                      "the reason should name the missing input: %r" % unsupported.get("verdict_reason"))
+                print("PASS a success claimed without playing is reported as indeterminate")
+
+                reply = call({"jsonrpc": "2.0", "id": 708, "method": "tools/call",
+                              "params": {"name": "Godot_GetPlaytestReport",
+                                         "arguments": {"playtest": "e2e-typing"}}})
+                check(reply["result"]["isError"] is False,
+                      "reading the report back failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["report"]["goal"]
+                      == "type a word into the field",
+                      "the report on disk is not the one that was written")
+                print("PASS Godot_GetPlaytestReport reads a finished report back")
+
                 # --- seeing the running game -----------------------------------
                 reply = call({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
                               "params": {"name": "Godot_CaptureGame"}})

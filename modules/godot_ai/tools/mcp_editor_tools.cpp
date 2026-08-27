@@ -628,6 +628,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_activity_tools();
 	mcp_register_session_tools();
 	mcp_register_workspace_tools();
+	mcp_register_playtest_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(CloseSceneTool)));

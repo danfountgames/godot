@@ -84,4 +84,7 @@ void mcp_register_session_tools();
 // Launching and addressing several agent-owned game instances at once.
 void mcp_register_workspace_tools();
 
+// Running a goal-directed playtest and assembling its report.
+void mcp_register_playtest_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H
