@@ -68,6 +68,7 @@ class MCPWorkspaceTile : public PanelContainer {
 	Button *pause_button = nullptr;
 	Button *stop_button = nullptr;
 	EmbeddedProcessBase *embedder = nullptr;
+	bool script_debugger_attached = false;
 
 	bool suspended = false;
 
@@ -88,6 +89,10 @@ public:
 
 	// Hands a launched process to this tile.
 	void embed(ProcessID p_pid);
+
+	// Finds this tile's game among the live debugger sessions and hands it over. Cheap
+	// and idempotent; the workspace poll retries it until the session exists.
+	void attach_script_debugger();
 
 	// Re-reads the instance from the registry and repaints the header.
 	void refresh();

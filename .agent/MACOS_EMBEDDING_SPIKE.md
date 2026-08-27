@@ -7,7 +7,49 @@ result.
 
 Context: `.agent/DECISIONS.md` DEC-0011 and the `W` group in `.agent/EXPERIENCE_LEDGER.md`.
 
-## RUN, 2026-08-27, native arm64 — and the prediction below was wrong
+## FIXED, 2026-08-27, native arm64 — three games embed at once on macOS
+
+`.agent/evidence/spike_macos_embedding.png` shows three agent-launched games rendering
+simultaneously in three workspace tiles on a Mac. The spike that was written to fail now
+passes all eleven of its checks, and no embed is refused. What follows is what was in the
+way, kept because the diagnosis is the useful part.
+
+**Two defects, stacked. The one this document predicted was the second of them.**
+
+*First:* `MCPWorkspaceTile` named `EmbeddedProcess` — the reparenting implementation —
+so on macOS every tile asked `DisplayServer::embed_process()`, which `DisplayServerMacOS`
+does not implement, and the base class warned once per tile. Nothing embedded, not even
+one game. Fixed by giving `EmbeddedProcessBase` a `create()` seam that platforms register
+into (`editor/run/embedded_process.{h,cpp}`), with macOS registering
+`EmbeddedProcessMacOS` from its game-view plugin at static initialization so it cannot
+depend on which editor plugin is constructed first. Without a registration the seam
+returns the reparenting embedder, so X11 and Windows are untouched.
+
+*Second:* the collision described further down, and it is exactly as described.
+`GameViewDebuggerMacOS::capture()` took `p_session`, checked the session existed, and
+dispatched without it, so every game's `set_context_id` reached the one embedder the
+debugger was constructed with. `ParseMessageFunc` now carries the session and every
+handler resolves session → pid → embedder, through a pid-keyed registry on
+`EmbeddedProcessMacOS`. When a session resolves to no registered embedder the handler
+falls back to the plugin's own, which is what every message went to before — so the
+ordinary single-game Game workspace path behaves exactly as it did.
+
+The tile also has to hand its game's `ScriptEditorDebugger` to its embedder, because
+`_try_embed_process()` refuses while it has no debugger, no pid or no context id, and the
+session does not exist yet at launch. The workspace's existing half-second poll retries
+it. On the reparenting platforms `set_script_debugger()` is an empty base method, so this
+is free rather than conditional.
+
+**One thing to know before reading a screenshot.** macOS composites the embedded game as
+a CALayer owned by the window server, so it is *not* in the editor's render target. A
+control-level capture of a tile shows the tile's chrome and a flat rectangle where the
+game is. Only a screen-level capture shows the game. A blank tile capture is not evidence
+that embedding failed — this cost time once already.
+
+Verified: 1693/1693 engine cases (425,056 assertions), 276/276 module cases, 64/64 relay,
+the native end-to-end, and the spike's eleven checks.
+
+## The run that found it, 2026-08-27 — and the prediction below was wrong
 
 Everything from here down was written on Linux and marked "expected". It has now been
 run on a Mac. **Spike A passes and Spike B fails harder than predicted.** Read this

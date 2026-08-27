@@ -451,12 +451,19 @@ order they were hit:
    correct. Both now assert the invariant instead of the environment.
 3. **Baseline is green.** 276 module cases / 3575 assertions, 64/64 relay, 124
    end-to-end checks, two documented `xdotool` skips.
-4. **W7 is located.** Nothing embeds on macOS - not one game, where the written
-   prediction was that one would. `mcp_workspace.cpp:88` hardcodes the reparenting
-   `EmbeddedProcess`; `DisplayServerMacOS` never overrides `embed_process`, so the
-   base class warns and returns `ERR_UNAVAILABLE`. Detail and revised order of work in
-   `.agent/MACOS_EMBEDDING_SPIKE.md`; the red spike is
-   `.agent/evidence/spike_macos_embedding.py` (9 pass, 2 fail, by design).
+4. **W7 is fixed: three games embed and render at once on macOS.**
+   `.agent/evidence/spike_macos_embedding.png`. Two defects were stacked. The workspace
+   named the reparenting `EmbeddedProcess`, which `DisplayServerMacOS` does not
+   implement, so nothing embedded at all - not one game, where the written prediction
+   was that one would. Embedders are now asked for through
+   `EmbeddedProcessBase::create()`. Behind that sat the predicted collision:
+   `GameViewDebuggerMacOS::capture()` dropped the `p_session` it was handed, so every
+   game's context id reached one embedder. Handlers now carry the session and resolve
+   it to an embedder by pid. Detail in `.agent/MACOS_EMBEDDING_SPIKE.md`.
+
+   Worth remembering: an embedded game on macOS is a window-server CALayer and is **not
+   in the editor's render target**, so a tile-level capture shows a flat rectangle where
+   the game is. Only a screen-level capture sees it.
 
 ## Two traps this environment sets
 

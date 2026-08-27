@@ -93,6 +93,15 @@ class EmbeddedProcessMacOS final : public EmbeddedProcessBase {
 	// The last mouse mode sent by the embedded process.
 	DisplayServerEnums::MouseMode mouse_mode = DisplayServerEnums::MOUSE_MODE_VISIBLE;
 
+	// Every embedder that currently holds a process, keyed by that process's id.
+	//
+	// macOS embeds by sharing a CALayer context, and the context id arrives later, over
+	// the game's *debugger session* rather than as part of the embed call. Something has
+	// to turn "this message came from session N" into "this embedder". A single owning
+	// pointer could do it while exactly one game was ever embedded; with a workspace of
+	// them, the join has to be by pid, which is the one identifier both ends share.
+	static HashMap<ProcessID, EmbeddedProcessMacOS *> embedders_by_pid;
+
 	// Helper functions.
 
 	void _try_embed_process();
@@ -108,6 +117,9 @@ public:
 	void mouse_set_mode(DisplayServerEnums::MouseMode p_mode);
 
 	uint32_t get_context_id() const { return context_id; }
+
+	// The embedder holding this process, or nullptr if no tile has claimed it.
+	static EmbeddedProcessMacOS *for_pid(ProcessID p_pid);
 	void set_script_debugger(ScriptEditorDebugger *p_debugger) override;
 
 	bool is_embedding_in_progress() const override {

@@ -80,6 +80,16 @@ void EmbeddedProcessMacOS::set_script_debugger(ScriptEditorDebugger *p_debugger)
 	_try_embed_process();
 }
 
+HashMap<ProcessID, EmbeddedProcessMacOS *> EmbeddedProcessMacOS::embedders_by_pid;
+
+EmbeddedProcessMacOS *EmbeddedProcessMacOS::for_pid(ProcessID p_pid) {
+	if (p_pid == 0) {
+		return nullptr;
+	}
+	EmbeddedProcessMacOS **found = embedders_by_pid.getptr(p_pid);
+	return found ? *found : nullptr;
+}
+
 void EmbeddedProcessMacOS::embed_process(ProcessID p_pid) {
 	if (!window) {
 		return;
@@ -93,6 +103,7 @@ void EmbeddedProcessMacOS::embed_process(ProcessID p_pid) {
 	reset();
 
 	current_process_id = p_pid;
+	embedders_by_pid[p_pid] = this;
 	embedding_state = EmbeddingState::IN_PROGRESS;
 	// Attempt to embed the process, but if it has just started and the window is not ready yet,
 	// we will retry in this case.
@@ -112,6 +123,14 @@ void EmbeddedProcessMacOS::reset() {
 	}
 	if (ds->mouse_get_mode() != DisplayServerEnums::MOUSE_MODE_VISIBLE) {
 		ds->mouse_set_mode(DisplayServerEnums::MOUSE_MODE_VISIBLE);
+	}
+	if (current_process_id != 0) {
+		// Only ever our own entry: another embedder may have claimed this pid since,
+		// and erasing by key alone would unhook a live tile.
+		EmbeddedProcessMacOS **held = embedders_by_pid.getptr(current_process_id);
+		if (held && *held == this) {
+			embedders_by_pid.erase(current_process_id);
+		}
 	}
 	current_process_id = 0;
 	embedding_state = EmbeddingState::IDLE;
@@ -220,6 +239,14 @@ EmbeddedProcessMacOS::~EmbeddedProcessMacOS() {
 		// Stop embedding the last process.
 		OS::get_singleton()->kill(current_process_id);
 		reset();
+	}
+	// reset() covers the ordinary path. This covers every other one: a lookup table of
+	// raw pointers that outlives one of its entries hands the next caller a freed object.
+	for (const KeyValue<ProcessID, EmbeddedProcessMacOS *> &E : embedders_by_pid) {
+		if (E.value == this) {
+			embedders_by_pid.erase(E.key);
+			break;
+		}
 	}
 }
 

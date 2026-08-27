@@ -75,6 +75,19 @@ protected:
 	void _notification(int p_what);
 
 public:
+	// How a host obtains an embedder without naming a platform. `EmbeddedProcess` embeds
+	// by reparenting a native window; macOS cannot reparent another process's NSWindow
+	// and shares a CALayer context instead, which is a different class with a different
+	// handshake. Upstream picks between them at exactly one place - the game view plugin,
+	// where the macOS build constructs `EmbeddedProcessMacOS` - so any *other* host that
+	// wants an embedder has no way to ask for the right one. This is that way.
+	//
+	// Platforms register their implementation during editor start-up; without a
+	// registration this returns the reparenting one, which is correct for X11 and Windows.
+	typedef EmbeddedProcessBase *(*CreateFunction)();
+	static void set_create_function(CreateFunction p_function);
+	static EmbeddedProcessBase *create();
+
 	virtual void set_script_debugger(ScriptEditorDebugger *p_debugger) {}
 
 	virtual bool is_embedding_completed() const = 0;

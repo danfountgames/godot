@@ -262,6 +262,19 @@ void embedded_process_apply_arguments(List<String> &r_arguments, DisplayServerEn
 	r_arguments.insert_after(N, itos(p_rect.size.x) + "x" + itos(p_rect.size.y));
 }
 
+static EmbeddedProcessBase::CreateFunction embedded_process_create_function = nullptr;
+
+void EmbeddedProcessBase::set_create_function(CreateFunction p_function) {
+	embedded_process_create_function = p_function;
+}
+
+EmbeddedProcessBase *EmbeddedProcessBase::create() {
+	if (embedded_process_create_function) {
+		return embedded_process_create_function();
+	}
+	return memnew(EmbeddedProcess);
+}
+
 void EmbeddedProcess::embed_process(ProcessID p_pid) {
 	if (!window) {
 		return;

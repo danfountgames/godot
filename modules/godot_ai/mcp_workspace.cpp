@@ -35,6 +35,7 @@
 #include "core/os/os.h"
 
 #include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/run/editor_run.h"
@@ -85,7 +86,14 @@ MCPWorkspaceTile::MCPWorkspaceTile(const String &p_instance_id) {
 
 	// One embedder per tile. This is the whole point: the platform layer keys embedding
 	// by process id, so N of these means N embedded games.
-	embedder = memnew(EmbeddedProcess);
+	//
+	// Asked for rather than named, because the right class is not the same everywhere.
+	// `EmbeddedProcess` embeds by reparenting a native window; macOS cannot reparent
+	// another process's NSWindow and shares a CALayer context instead, through a
+	// different class. Naming the reparenting one directly is what left every tile blank
+	// on macOS: `DisplayServerMacOS` does not implement the pid-keyed `embed_process()`
+	// at all, so the base class warned once per tile and returned ERR_UNAVAILABLE.
+	embedder = EmbeddedProcessBase::create();
 	embedder->set_h_size_flags(SIZE_EXPAND_FILL);
 	embedder->set_v_size_flags(SIZE_EXPAND_FILL);
 	// Fit the game to this tile rather than leaving it at its launched resolution. An
@@ -118,12 +126,43 @@ Rect2i MCPWorkspaceTile::get_embed_rect() const {
 	return fallback;
 }
 
+void MCPWorkspaceTile::attach_script_debugger() {
+	// macOS needs the game's debugger session before it can embed: the CALayer context
+	// id arrives over that channel, and `EmbeddedProcessMacOS` refuses to embed while it
+	// has no debugger, no pid or no context id. The session does not exist yet when the
+	// process is launched, so this is called again from the workspace poll until it does.
+	//
+	// On the reparenting platforms `set_script_debugger()` is an empty base method, so
+	// this costs a lookup and changes nothing - which is why it is not behind a platform
+	// check. The join is the one `GameView` makes: a session knows its remote pid.
+	if (!embedder || embedder->get_embedded_pid() == 0 || script_debugger_attached) {
+		return;
+	}
+	EditorDebuggerNode *node = EditorDebuggerNode::get_singleton();
+	if (!node) {
+		return;
+	}
+	int i = 0;
+	while (ScriptEditorDebugger *debugger = node->get_debugger(i)) {
+		if (debugger->is_session_active() && debugger->get_remote_pid() == embedder->get_embedded_pid()) {
+			embedder->set_script_debugger(debugger);
+			script_debugger_attached = true;
+			return;
+		}
+		i++;
+	}
+}
+
 void MCPWorkspaceTile::embed(ProcessID p_pid) {
 	if (!embedder || p_pid == 0) {
 		return;
 	}
 	MCPRuntimeInstances::set_lifecycle(instance_id, MCPRuntimeInstances::LIFECYCLE_EMBEDDING);
+	script_debugger_attached = false;
 	embedder->embed_process(p_pid);
+	// Usually too early - the game has not connected yet - but free, and it saves up to
+	// half a second of blank tile when the session is already up.
+	attach_script_debugger();
 	MCPRuntimeInstances::set_lifecycle(instance_id, MCPRuntimeInstances::LIFECYCLE_RUNNING);
 	refresh();
 }
@@ -170,6 +209,9 @@ void MCPWorkspaceTile::refresh() {
 	if (!MCPRuntimeInstances::get(instance_id, instance)) {
 		return;
 	}
+	// The workspace polls this twice a second, which is where a game that has finished
+	// connecting since the last pass gets its debugger handed to its embedder.
+	attach_script_debugger();
 	if (title) {
 		title->set_text(instance.label);
 	}

@@ -251,8 +251,10 @@ def main():
     refused = [line for line in embed_complaints
                if "not supported by this display server" in line]
     check(not refused,
-          "the display server refused to embed %d time(s); the tiles cannot draw a game"
+          "the display server refused to embed, %d time(s), so no tile can draw a game"
           % len(refused))
+    if not refused:
+        print("PASS the display server never refused an embed")
 
     print()
     if FAILURES:

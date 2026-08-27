@@ -37,12 +37,22 @@ class EmbeddedProcessMacOS;
 class GameViewDebuggerMacOS : public GameViewDebugger {
 	GDCLASS(GameViewDebuggerMacOS, GameViewDebugger);
 
+	// The embedder this debugger was constructed with: the Game workspace's single one.
+	// It stays the answer for any session that cannot be resolved to a pid, which keeps
+	// the ordinary one-game path working exactly as it did.
 	EmbeddedProcessMacOS *embedded_process = nullptr;
 
 	/// Message handler function for capture.
 
 	/// @brief A function pointer to the message handler function.
-	typedef bool (GameViewDebuggerMacOS::*ParseMessageFunc)(const Array &p_args);
+	///
+	/// Every handler receives the session the message arrived on. It used to be dropped:
+	/// `capture()` took `p_session`, checked the session existed and then dispatched
+	/// without it, so each handler reached through the one `embedded_process` above. With
+	/// a single embedded game that is invisible. With several, every game's
+	/// `set_context_id` landed on the same embedder and the last one won, so at most one
+	/// game could ever display.
+	typedef bool (GameViewDebuggerMacOS::*ParseMessageFunc)(const Array &p_args, int p_session);
 
 	/// @brief A map of message handlers.
 	static HashMap<String, ParseMessageFunc> parse_message_handlers;
@@ -50,15 +60,18 @@ class GameViewDebuggerMacOS : public GameViewDebugger {
 	/// @brief Initialize the message handlers.
 	static void _init_capture_message_handlers();
 
-	bool _msg_set_context_id(const Array &p_args);
-	bool _msg_cursor_set_shape(const Array &p_args);
-	bool _msg_cursor_set_custom_image(const Array &p_args);
-	bool _msg_mouse_set_mode(const Array &p_args);
-	bool _msg_window_set_ime_active(const Array &p_args);
-	bool _msg_window_set_ime_position(const Array &p_args);
-	bool _msg_joy_start(const Array &p_args);
-	bool _msg_joy_stop(const Array &p_args);
-	bool _msg_warp_mouse(const Array &p_args);
+	/// @brief The embedder that owns a session, by way of the pid they share.
+	EmbeddedProcessMacOS *_process_for_session(int p_session) const;
+
+	bool _msg_set_context_id(const Array &p_args, int p_session);
+	bool _msg_cursor_set_shape(const Array &p_args, int p_session);
+	bool _msg_cursor_set_custom_image(const Array &p_args, int p_session);
+	bool _msg_mouse_set_mode(const Array &p_args, int p_session);
+	bool _msg_window_set_ime_active(const Array &p_args, int p_session);
+	bool _msg_window_set_ime_position(const Array &p_args, int p_session);
+	bool _msg_joy_start(const Array &p_args, int p_session);
+	bool _msg_joy_stop(const Array &p_args, int p_session);
+	bool _msg_warp_mouse(const Array &p_args, int p_session);
 
 public:
 	virtual bool capture(const String &p_message, const Array &p_data, int p_session) override;

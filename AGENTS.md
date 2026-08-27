@@ -130,9 +130,18 @@ editor: the module suite passes 276 cases / 3575 assertions and the relay suite 
 Check what produced a binary before quoting its numbers — a stale `bin/` left over from
 an earlier session reports a much smaller suite (74 / 526 here) and looks like a pass.
 
-macOS-specific open work — game-process embedding, which needs a `CAContext` handshake
-that X11 and Windows do not — has its own briefing in `.agent/MACOS_EMBEDDING_SPIKE.md`.
-Read that before touching `platform/macos/editor/embedded_game_view_plugin.{h,mm}`.
+Game-process embedding works here, but not the way it works on X11, and the difference
+shows up in what you can photograph. macOS shares a **CALayer context** rather than
+reparenting a native window, so an embedded game is composited by the window server and
+is **not part of the editor's own render target**. A control-level capture
+(`Godot_CaptureEditorControl`) of a workspace tile therefore shows the tile's chrome and
+a flat rectangle where the game is; the game's pixels appear only in a screen-level
+capture (`Godot_CaptureEditorWindow`) or from the game itself (`Godot_CaptureGame`). A
+blank rectangle in a tile capture is not evidence that a game failed to embed.
+
+The history of that path, including the two defects that kept it from working at all, is
+in `.agent/MACOS_EMBEDDING_SPIKE.md`. Read it before touching
+`platform/macos/editor/embedded_game_view_plugin.{h,mm}`.
 
 ## Safety rules
 
