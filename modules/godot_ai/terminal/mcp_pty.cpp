@@ -52,6 +52,29 @@
 #include <pty.h>
 #endif
 
+// `execvpe` is a glibc extension: it does not exist on macOS or the BSDs, where the
+// portable spelling is to point the global environment at our block and call `execvp`,
+// which searches PATH and then passes `environ` through itself. Storing a pointer is a
+// plain store and `execvp` is async-signal-safe, so this stays legal in the forked child.
+// Apple reaches the global through `_NSGetEnviron()` rather than a plain `extern`,
+// because a bundled executable's `environ` is not directly linkable.
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#define MCP_PTY_ENVIRON (*_NSGetEnviron())
+#else
+extern char **environ;
+#define MCP_PTY_ENVIRON environ
+#endif
+
+static inline void mcp_pty_exec(const char *p_command, char *const *p_argv, char **p_envp) {
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+	MCP_PTY_ENVIRON = p_envp;
+	execvp(p_command, p_argv);
+#else
+	execvpe(p_command, p_argv, p_envp);
+#endif
+}
+
 #endif // MCP_PTY_POSIX
 
 bool MCPPty::is_supported() {
@@ -181,7 +204,7 @@ bool MCPPty::start(const String &p_command, const Vector<String> &p_args,
 				_exit(127);
 			}
 		}
-		execvpe(command_utf8.get_data(), argv.ptrw(), envp.ptrw());
+		mcp_pty_exec(command_utf8.get_data(), argv.ptrw(), envp.ptrw());
 		_exit(127);
 	}
 

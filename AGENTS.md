@@ -125,8 +125,10 @@ What changes about testing:
   reason to look for a macOS keyboard-automation substitute unless the task is that
   substitute.
 
-Measured on this repository, native arm64, 2026-08-27: the module suite passes 74 cases
-/ 526 assertions and the relay suite 64/64.
+Measured on this repository, native arm64, 2026-08-27, against a **freshly built**
+editor: the module suite passes 276 cases / 3575 assertions and the relay suite 64/64.
+Check what produced a binary before quoting its numbers — a stale `bin/` left over from
+an earlier session reports a much smaller suite (74 / 526 here) and looks like a pass.
 
 macOS-specific open work — game-process embedding, which needs a `CAContext` handshake
 that X11 and Windows do not — has its own briefing in `.agent/MACOS_EMBEDDING_SPIKE.md`.

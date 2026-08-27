@@ -256,7 +256,7 @@ TEST_CASE("[godot_ai] A command that does not exist fails as an exit code, not a
 	MCPPty pty;
 	String error;
 
-	// forkpty() succeeds; the child fails at execvpe and _exit(127)s. Returning from the
+	// forkpty() succeeds; the child fails at the exec and _exit(127)s. Returning from the
 	// child instead would leave a second copy of the editor running its own main loop,
 	// which is why the child path ends in _exit() on every branch.
 	REQUIRE(pty.start("/definitely/not/a/binary", no_args(), Vector<String>(), String(), error));
