@@ -91,6 +91,12 @@ python3 tools/relay/tests/run_tests.py
 # Virtual-display tests (fast loop, no engine build).
 python3 tools/tests/run_tests.py
 
+# Benchmarks: the scoring logic, then whether the planted defects still reproduce.
+# Neither needs an engine build. The self-check matters most - a benchmark whose defect
+# stops reproducing fails in the flattering direction, with every agent passing.
+python3 tools/benchmarks/tests/run_tests.py
+python3 tools/benchmarks/run_selfcheck.py
+
 # Anything that must be seen: run it under a virtual display.
 python3 tools/virtual_display.py --probe
 python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path <project> --editor

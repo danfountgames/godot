@@ -13,6 +13,11 @@ This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 - capability-based permissions, client approval, and an audit trail
 - filesystem-discovered skills, trusted only after the user allows them
 - checkpoints taken before any tool writes to the project
+- goal-directed playtests whose verdict is reconciled against what was actually pressed
+- promoting a value tuned in the running game into the authored scene
+- a terminal panel running a coding agent against this editor, over the relay
+- benchmark projects with planted defects, and a scorecard that counts collateral damage
+  as well as successes
 - an approvals dialog and a chat dock (`mcp_approvals_dialog.*`, `mcp_chat_dock.*`),
   screenshots, ask-user, and runtime property inspection — all shipped and verified
   against a live editor; this line used to say "planned" and had been stale for a while
@@ -50,6 +55,8 @@ libxrandr-dev libasound2-dev`, plus `pip install scons`. Run `apt-get update` fi
 ```sh
 python3 tools/relay/tests/run_tests.py                 # fastest signal, no engine build
 python3 tools/tests/run_tests.py                       # virtual display, no engine build
+python3 tools/benchmarks/tests/run_tests.py            # benchmark scoring, no engine build
+python3 tools/benchmarks/run_selfcheck.py              # the benchmarks still measure something
 bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
 ./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test   # full suite, from the repo root
 python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~40s

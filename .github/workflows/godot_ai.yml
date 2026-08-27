@@ -39,6 +39,15 @@ jobs:
       - name: Run tooling tests
         run: python3 tools/tests/run_tests.py
 
+      # The benchmark suite has no engine dependency either. The self-check is the
+      # important one: a benchmark whose planted defect stops reproducing fails silently
+      # in the flattering direction, so it is checked on every push rather than trusted.
+      - name: Run benchmark scoring tests
+        run: python3 tools/benchmarks/tests/run_tests.py
+
+      - name: Check the benchmarks still measure something
+        run: python3 tools/benchmarks/run_selfcheck.py
+
       # The Windows backend cannot be run here, but keeping it compiling is what
       # stops it rotting between releases.
       - name: Install the Windows cross-compiler
