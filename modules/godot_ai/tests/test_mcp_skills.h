@@ -351,6 +351,52 @@ TEST_CASE("[godot_ai] Skill status decides what the approvals UI offers") {
 	}
 }
 
+TEST_CASE("[godot_ai] Every skill shipped with this repository parses") {
+	// A skill whose frontmatter is malformed is not an error anyone sees: it simply does
+	// not appear, and the workflow it described silently stops being offered. The shipped
+	// examples are the ones a user copies first, so they are the worst place for that.
+	//
+	// The path is relative to the repository root, which is where the full engine suite
+	// is required to run from anyway.
+	const String root = "misc/godot_ai/skills";
+	Ref<DirAccess> dir = DirAccess::open(root);
+	if (dir.is_null()) {
+		MESSAGE("Skipping: the example skills are not reachable from this working directory.");
+		return;
+	}
+
+	int checked = 0;
+	dir->list_dir_begin();
+	String entry = dir->get_next();
+	while (!entry.is_empty()) {
+		if (dir->current_is_dir() && entry != "." && entry != "..") {
+			const String path = root.path_join(entry).path_join("SKILL.md");
+			if (FileAccess::exists(path)) {
+				MCPSkill skill;
+				String body;
+				String error;
+				const bool parsed = MCPSkills::parse(FileAccess::get_file_as_string(path), skill, body, error);
+				CHECK_MESSAGE(parsed, vformat("%s: %s", path, error));
+				if (parsed) {
+					// The directory name is how a user allows it, so the two must agree or
+					// allowing it by the name they can see does nothing.
+					CHECK_MESSAGE(skill.name == entry,
+							vformat("%s declares the name '%s' but lives in '%s'", path, skill.name, entry));
+					CHECK_MESSAGE(!skill.description.strip_edges().is_empty(),
+							vformat("%s has no description, so nothing can say what it is for", path));
+					CHECK_MESSAGE(!body.strip_edges().is_empty(),
+							vformat("%s has frontmatter but no instructions", path));
+					checked++;
+				}
+			}
+		}
+		entry = dir->get_next();
+	}
+	dir->list_dir_end();
+
+	CHECK_MESSAGE(checked >= 4, "the shipped example skills went missing");
+}
+
 } // namespace TestMCPSkills
 
 #endif // TEST_MCP_SKILLS_H
