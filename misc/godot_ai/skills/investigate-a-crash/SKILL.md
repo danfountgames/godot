@@ -5,6 +5,7 @@ enabled: true
 required_editor_version: ">=4.3"
 tools:
   - Godot_ReadOutputLog
+  - Godot_CaptureBugSession
   - Godot_RecordSession
   - Godot_ReplaySession
   - Godot_ListSessions
@@ -28,7 +29,34 @@ sequence that causes it again, not an explanation of why it might happen.
 there, and reading them first often makes the rest of this unnecessary. Quote the actual
 message; do not paraphrase it.
 
+## If it has already crashed, capture it before doing anything else
+
+`Godot_CaptureBugSession` with a name and a `reason`. It writes out the input that led
+here from a buffer that is always being kept, so nothing had to be armed in advance —
+and it works after the game process has gone, which is the usual state of affairs after
+a crash.
+
+Do this **first**, before you press play again or change anything: a new run clears the
+buffer, and the sequence you have is the one that produced the bug you were actually
+looking at. Read the reply's `fidelity` line and repeat what it says rather than
+improving on it. In particular:
+
+- `source: "runtime_trace"` means the game was still alive to be asked, and every frame
+  in the capture is one the game reported.
+- `source: "editor_mirror"` means the game was gone, so this is a record of what was
+  sent, not of what the game did with it.
+- `frames_estimated` above zero means the tail was never acknowledged — which is what a
+  crash looks like from here. Replaying it is a reproduction attempt. A replay that does
+  not crash has not disproved the bug, and saying it has is the one thing that would make
+  this whole exercise worse than useless.
+
+Then replay it, exactly as below. A capture nobody has replayed is a guess with a
+filename.
+
 ## Then reproduce it deliberately
+
+When you have no capture — the crash predates this session, or someone described it to
+you — reproduce it on purpose instead.
 
 1. `Godot_PlayMainScene` to start a clean run.
 2. `Godot_RecordSession` with `action: "start"` and a name that says what it is —

@@ -1062,9 +1062,10 @@ Dictionary MCPRuntimeAgent::_send_pointer(const Dictionary &p_arguments, String 
 		detail["direction"] = p_arguments.get("direction", "down");
 		detail["amount"] = p_arguments.get("amount", 3);
 	}
-	_record("pointer", detail);
+	const int64_t recorded_frame = _record("pointer", detail);
 
 	Dictionary result = detail;
+	result["frame"] = recorded_frame;
 	result["events"] = events;
 	result["window_width"] = window_size.width;
 	result["window_height"] = window_size.height;
@@ -1198,9 +1199,10 @@ Dictionary MCPRuntimeAgent::_send_key(const Dictionary &p_arguments, String &r_e
 	if (p_arguments.has("key")) {
 		detail["key"] = p_arguments["key"];
 	}
-	_record("key", detail);
+	const int64_t recorded_frame = _record("key", detail);
 
 	Dictionary result = detail;
+	result["frame"] = recorded_frame;
 	result["events"] = events;
 	return result;
 }
@@ -1732,15 +1734,17 @@ Dictionary MCPRuntimeAgent::_window_info(const Dictionary &p_arguments, String &
 	return result;
 }
 
-void MCPRuntimeAgent::_record(const String &p_kind, const Dictionary &p_detail) {
+int64_t MCPRuntimeAgent::_record(const String &p_kind, const Dictionary &p_detail) {
+	const int64_t frame = (int64_t)Engine::get_singleton()->get_process_frames();
 	Dictionary entry = p_detail;
 	entry["kind"] = p_kind;
-	entry["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	entry["frame"] = frame;
 	entry["msec"] = (int64_t)OS::get_singleton()->get_ticks_msec();
 	if (g_trace.size() >= MAX_TRACE_ENTRIES) {
 		g_trace.remove_at(0);
 	}
 	g_trace.push_back(entry);
+	return frame;
 }
 
 Dictionary MCPRuntimeAgent::_input_trace(const Dictionary &p_arguments, String &r_error) {
@@ -1919,9 +1923,10 @@ Dictionary MCPRuntimeAgent::_send_touch(const Dictionary &p_arguments, String &r
 		detail["to_y"] = result_to_y;
 		detail["steps"] = result_steps;
 	}
-	_record("touch", detail);
+	const int64_t recorded_frame = _record("touch", detail);
 
 	Dictionary result = detail;
+	result["frame"] = recorded_frame;
 	result["events"] = events;
 	return result;
 }
@@ -1982,9 +1987,10 @@ Dictionary MCPRuntimeAgent::_send_gamepad(const Dictionary &p_arguments, String 
 	Dictionary detail;
 	detail["action"] = action;
 	detail["device"] = device;
-	_record("gamepad", detail);
+	const int64_t recorded_frame = _record("gamepad", detail);
 
 	Dictionary result = detail;
+	result["frame"] = recorded_frame;
 	result["events"] = events;
 	return result;
 }

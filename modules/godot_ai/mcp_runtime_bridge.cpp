@@ -82,7 +82,14 @@ bool MCPRuntimeBridge::capture(const String &p_message, const Array &p_data, int
 		const MCPDeferred::Token token = pending[i].token;
 		const Callable transform = pending[i].transform;
 		const Callable on_reply = pending[i].on_reply;
+		const MCPBugCapture::Id mirror_id = pending[i].mirror_id;
 		pending.remove_at(i);
+		// The frame the game says it processed this input on. Only a successful reply
+		// carries one; a refused event never happened, and stamping it would put an event
+		// in the mirror that the game never saw.
+		if (ok && mirror_id != MCPBugCapture::INVALID_ID) {
+			MCPBugCapture::record_acknowledgement(mirror_id, payload);
+		}
 		if (on_reply.is_valid()) {
 			on_reply.call(ok, payload);
 			return true;
@@ -127,6 +134,8 @@ MCPDeferred::Token MCPRuntimeBridge::send(const String &p_command, const Diction
 	entry.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
 	entry.timeout_seconds = p_timeout_seconds;
 	entry.transform = p_transform;
+	entry.mirror_id = MCPBugCapture::record_dispatch(p_command, p_arguments,
+			(int64_t)OS::get_singleton()->get_ticks_msec());
 	pending.push_back(entry);
 
 	Array message;
@@ -147,6 +156,8 @@ bool MCPRuntimeBridge::request(const String &p_command, const Dictionary &p_argu
 	entry.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
 	entry.timeout_seconds = p_timeout_seconds;
 	entry.on_reply = p_on_reply;
+	entry.mirror_id = MCPBugCapture::record_dispatch(p_command, p_arguments,
+			(int64_t)OS::get_singleton()->get_ticks_msec());
 	pending.push_back(entry);
 
 	Array message;
@@ -170,13 +181,30 @@ void MCPRuntimeBridge::abandon_all(const String &p_reason) {
 }
 
 void MCPRuntimeBridge::poll() {
+	// Before the early return below, because the mirror has to notice a game appearing and
+	// disappearing whether or not anything happened to be in flight at the time.
+	const bool reachable = is_game_reachable();
+	if (reachable != game_was_reachable) {
+		game_was_reachable = reachable;
+		if (reachable) {
+			// A new run. The previous run's input is not part of this run's reproduction,
+			// and keeping it would let a capture splice two games together.
+			MCPBugCapture::note_game_started();
+		} else {
+			// Deliberately does *not* clear: the game has just taken its own trace with it,
+			// which makes the mirror the only surviving copy and this the exact moment
+			// somebody wants to capture from.
+			MCPBugCapture::note_game_stopped();
+		}
+	}
+
 	if (pending.is_empty()) {
 		return;
 	}
 	// A game that stopped mid-request will never reply, and the deferred deadline
 	// alone would make the caller wait for the full timeout to learn something the
 	// editor already knows.
-	if (!is_game_reachable()) {
+	if (!reachable) {
 		abandon_all("the game stopped before it answered");
 		return;
 	}

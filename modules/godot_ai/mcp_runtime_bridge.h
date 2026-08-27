@@ -40,6 +40,7 @@
 #ifndef MCP_RUNTIME_BRIDGE_H
 #define MCP_RUNTIME_BRIDGE_H
 
+#include "mcp_bug_capture.h"
 #include "mcp_deferred.h"
 
 #include "core/object/ref_counted.h"
@@ -66,10 +67,17 @@ class MCPRuntimeBridge : public EditorDebuggerPlugin {
 		// something - must not create a second token the protocol layer would also try
 		// to answer, so its answer comes back as a call instead.
 		Callable on_reply;
+		// The mirror entry this request created, so the game's reply can fill in the frame
+		// it landed on. INVALID_ID for everything that is not input.
+		MCPBugCapture::Id mirror_id = MCPBugCapture::INVALID_ID;
 	};
 
 	Vector<Pending> pending;
 	int64_t next_request = 1;
+	// Edge detection for the mirror: a game appearing clears it, a game disappearing marks
+	// it. Polled rather than signalled because this is the one place that already asks
+	// whether a game is reachable on every service tick.
+	bool game_was_reachable = false;
 
 	static MCPRuntimeBridge *singleton;
 

@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import base64
+import collections
 import json
 import math
 import os
@@ -22,6 +23,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zlib
 
@@ -375,6 +377,34 @@ class Failure(Exception):
     pass
 
 
+class EditorOutput:
+    """Drains the editor's output and keeps the tail of it.
+
+    Two reasons, both learned here. A pipe nobody reads fills at 64 KiB and blocks the
+    editor mid-write, which looks like a hang and is not one. And when the editor dies -
+    which is how a real crash reaches this script, as `editor disconnected` - its own last
+    words are the only evidence of why, and they were being thrown away.
+    """
+
+    KEPT_LINES = 200
+
+    def __init__(self, process):
+        self.lines = collections.deque(maxlen=self.KEPT_LINES)
+        self._thread = threading.Thread(target=self._drain, args=(process,), daemon=True)
+        self._thread.start()
+
+    def _drain(self, process):
+        try:
+            for line in iter(process.stdout.readline, b""):
+                self.lines.append(line.decode("utf-8", "replace").rstrip("\n"))
+        except (ValueError, OSError):
+            # The pipe closed under us while the editor was being torn down.
+            pass
+
+    def tail(self):
+        return "\n".join(self.lines)
+
+
 class NativeMacOSDisplay:
     """The macOS window server is already the display; it does not use DISPLAY/Xvfb."""
 
@@ -668,6 +698,7 @@ def run(editor_binary, display):
         env=environment,
         cwd=workspace,
     )
+    editor_output = EditorOutput(editor)
 
     relay = None
     try:
@@ -1968,6 +1999,46 @@ def run(editor_binary, display):
                 check(refused(reply), "replaying an unknown session was accepted")
                 print("PASS Godot_ReplaySession refuses a session that was never recorded")
 
+                # --- capturing a bug that has already happened -------------------
+                # The other direction: nothing was armed, the input has already been
+                # sent, and the capture reaches backwards for it. Everything injected
+                # earlier in this run is still in the buffer, so this must come back
+                # with events and with the game's own frames on them.
+                reply = call({"jsonrpc": "2.0", "id": 248, "method": "tools/call",
+                              "params": {"name": "Godot_CaptureBugSession",
+                                         "arguments": {"name": "E2E Retroactive Capture",
+                                                       "reason": "the target stopped responding",
+                                                       "last_events": 5}}})
+                check(not refused(reply), "capturing a bug failed: %s" % refusal_text(reply))
+                captured_bug = reply["result"]["structuredContent"]
+                check(captured_bug["source"] == "runtime_trace",
+                      "a live game should have been asked for its own trace: %r" % captured_bug)
+                check(captured_bug["event_count"] >= 1,
+                      "the capture found no input to write: %r" % captured_bug)
+                check(captured_bug["event_count"] <= 5,
+                      "last_events did not bound the window: %r" % captured_bug)
+                # Nothing here crashed, so every event was acknowledged and no frame
+                # should have needed extrapolating.
+                check(captured_bug["frames_estimated"] == 0,
+                      "a capture from a healthy game estimated frames: %r" % captured_bug)
+                check("the game processed it on" in captured_bug.get("fidelity", ""),
+                      "the capture does not say what it can prove: %r" % captured_bug)
+                print("PASS Godot_CaptureBugSession wrote %d past event(s) with no arming"
+                      % captured_bug["event_count"])
+
+                # And what it wrote is an ordinary session, which is the whole claim:
+                # a bug report and a regression test are the same file.
+                reply = call({"jsonrpc": "2.0", "id": 249, "method": "tools/call",
+                              "params": {"name": "Godot_ReplaySession",
+                                         "arguments": {"name": "E2E Retroactive Capture",
+                                                       "timeout_seconds": 60}}})
+                check(not refused(reply),
+                      "a captured session did not replay: %s" % refusal_text(reply))
+                replayed_capture = reply["result"]["structuredContent"]
+                check(replayed_capture["events_injected"] >= 1,
+                      "replaying the capture injected nothing: %r" % replayed_capture)
+                print("PASS a retroactive capture replays like any other session")
+
                 # --- structured errors -------------------------------------------
                 # Make the game report a real error, so this is checked against
                 # something it must find. An assertion over an empty list passes
@@ -2516,6 +2587,28 @@ def run(editor_binary, display):
                 check(reply["result"]["structuredContent"]["was_playing"] is True,
                       "stop did not report that a game had been running")
             print("PASS play reported a running game and stop left nothing running")
+
+            # The case the editor-side mirror exists for. The game is gone and its own
+            # trace went with it, so a capture taken now has to come from the mirror -
+            # and has to say so, because a mirror knows what was sent and not what the
+            # game did with it.
+            if has_display:
+                reply = call({"jsonrpc": "2.0", "id": 250, "method": "tools/call",
+                              "params": {"name": "Godot_CaptureBugSession",
+                                         "arguments": {"name": "E2E Capture After Exit",
+                                                       "reason": "the game died"}}})
+                check(not refused(reply),
+                      "capturing after the game exited was refused: %s" % refusal_text(reply))
+                after_exit = reply["result"]["structuredContent"]
+                check(after_exit["source"] == "editor_mirror",
+                      "a capture with no game did not fall back to the mirror: %r" % after_exit)
+                check(after_exit["event_count"] >= 1,
+                      "the mirror kept nothing from a run that injected input: %r" % after_exit)
+                check("what was sent" in after_exit.get("fidelity", ""),
+                      "the capture claims more than a mirror can know: %r" % after_exit)
+                check("press play" in after_exit.get("fidelity", ""),
+                      "the capture does not say what replaying it needs: %r" % after_exit)
+                print("PASS Godot_CaptureBugSession still has the sequence after the game exits")
 
             # --- scene tests --------------------------------------------------
             # A test here is a scene the engine plays, not a shell command: nothing in
@@ -3251,6 +3344,15 @@ def run(editor_binary, display):
               "one-shot reported the wrong project")
         print("PASS headless one-shot tool call against the live editor")
 
+    except Failure:
+        # The editor's last words, which is the only evidence there is when it died rather
+        # than answered. Printed here rather than at the top level so the tail belongs to
+        # the editor the failure happened in.
+        tail = editor_output.tail()
+        if tail:
+            print("\n--- the editor's last %d line(s) ---\n%s\n--- end ---"
+                  % (len(editor_output.lines), tail), file=sys.stderr)
+        raise
     finally:
         if relay is not None:
             relay.cleanup()

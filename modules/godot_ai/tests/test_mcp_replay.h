@@ -329,6 +329,65 @@ TEST_CASE("[godot_ai] An assertion with no frame is checked at the end of the tr
 	CHECK(due.size() == 1); // Due once the trace has played out.
 }
 
+TEST_CASE("[godot_ai] Loading a second trace forgets the first run entirely") {
+	// The crash this pins down: the same tool object replays one session after another,
+	// and the first run's verdict was surviving load(). A failed run followed by a session
+	// with no assertions left `failed` true and the divergence index at 0, so the next
+	// poll called the new run finished and to_report() reached into an assertion list that
+	// load() had just emptied. That took the whole editor down.
+	Array first_events;
+	first_events.push_back(event_at(0, "key"));
+	Array first_assertions;
+	first_assertions.push_back(assertion_at(0, "press_count", 5));
+
+	MCPReplayPlan plan;
+	String error;
+	REQUIRE(plan.load(first_events, first_assertions, 0, error));
+	plan.start(0);
+	Vector<MCPReplayPlan::DueAssertion> due;
+	plan.observe(0, due);
+	REQUIRE(due.size() == 1);
+	plan.report_assertion(due[0].index, 6); // Diverges: the run fails.
+	REQUIRE(plan.get_verdict() == MCPReplayPlan::VERDICT_FAILED);
+
+	// A second session, with no assertions at all - which is what a retroactive capture
+	// produces, because nobody was there to record one.
+	Array second_events;
+	second_events.push_back(event_at(100, "pointer"));
+	REQUIRE(plan.load(second_events, Array(), 100, error));
+
+	// Before start(), and this is the window the tool actually polls in.
+	CHECK_FALSE(plan.is_finished());
+	CHECK(plan.get_verdict() == MCPReplayPlan::VERDICT_RUNNING);
+	const Dictionary report = plan.to_report();
+	CHECK_FALSE(report.has("first_divergence"));
+	CHECK((int)report["assertions_total"] == 0);
+	CHECK((int)report["events_injected"] == 0);
+
+	// And it then runs to a clean pass, rather than inheriting the failure.
+	plan.start(0);
+	CHECK(plan.observe(0, due).size() == 1);
+	CHECK(plan.is_finished());
+	CHECK(plan.get_verdict() == MCPReplayPlan::VERDICT_PASSED);
+}
+
+TEST_CASE("[godot_ai] A loaded plan is not finished until it has been started") {
+	Array events;
+	events.push_back(event_at(0, "key"));
+
+	MCPReplayPlan plan;
+	String error;
+	REQUIRE(plan.load(events, Array(), 0, error));
+	// Nothing has been injected and nothing can have been: the plan has no live frame to
+	// schedule against yet.
+	CHECK_FALSE(plan.is_finished());
+	plan.start(0);
+	CHECK_FALSE(plan.is_finished());
+	Vector<MCPReplayPlan::DueAssertion> due;
+	plan.observe(0, due);
+	CHECK(plan.is_finished());
+}
+
 } // namespace TestMCPReplay
 
 #endif // TEST_MCP_REPLAY_H

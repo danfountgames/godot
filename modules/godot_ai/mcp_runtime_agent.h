@@ -212,8 +212,11 @@ class MCPRuntimeAgent {
 	static Dictionary _audio_state(const Dictionary &p_arguments, String &r_error);
 
 	// Every injected event is recorded, so "a click was sent" and "a click arrived" can
-	// be told apart after the fact rather than argued about.
-	static void _record(const String &p_kind, const Dictionary &p_detail);
+	// be told apart after the fact rather than argued about. Returns the frame it stamped,
+	// which every input reply echoes back: the editor's own mirror of the trace
+	// (`mcp_bug_capture.h`) has no other way to learn where an event landed, and a mirror
+	// with no frames cannot be replayed after the game process is gone.
+	static int64_t _record(const String &p_kind, const Dictionary &p_detail);
 
 
 

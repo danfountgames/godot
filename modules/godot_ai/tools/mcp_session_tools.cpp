@@ -48,6 +48,7 @@
 
 #include "mcp_builtin_tools.h"
 
+#include "../mcp_bug_capture.h"
 #include "../mcp_deferred.h"
 #include "../mcp_replay.h"
 #include "../mcp_runtime_bridge.h"
@@ -85,6 +86,12 @@ Dictionary event_arguments(const Dictionary &p_event) {
 	arguments.erase("kind");
 	arguments.erase("frame");
 	arguments.erase("msec");
+	// Added by a retroactive capture (`mcp_bug_capture.h`) rather than by the game. They
+	// belong in the file, where somebody reading the trace needs to see them, and not in
+	// the call that replays it.
+	arguments.erase("dispatch_msec");
+	arguments.erase("acknowledged");
+	arguments.erase("frame_estimated");
 	return arguments;
 }
 
@@ -396,6 +403,231 @@ public:
 	}
 };
 
+// ------------------------------------------------------- retroactive capture ---
+
+// Writing out a bug that has already happened.
+//
+// Recording has to be armed first, and you do not know something is a bug until it
+// happens. By then the interesting input is in the past, so this reaches backwards
+// instead: the last N input events are always being kept, at both ends of the channel, and
+// a capture turns a window of them into an ordinary session. Ordinary on purpose -
+// Godot_ReplaySession already knows how to re-run one, so a bug report and a regression
+// test are the same file, produced from opposite directions.
+class CaptureBugSessionTool : public MCPTool {
+	String pending_slug;
+	String pending_name;
+	String pending_reason;
+	int pending_last_events = 0;
+	int64_t pending_since_frame = 0;
+	Array pending_events;
+	bool running = false;
+	// Two round trips, so the tool owns its own token rather than letting each stage's
+	// reply complete one of its own. See Pending::on_reply in mcp_runtime_bridge.h.
+	MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
+
+	// Writes the session and answers. `p_source` is where the events came from, which is
+	// the single most important thing in the reply: a mirror capture cannot say what the
+	// game did with an event, only what was sent.
+	Dictionary _write(const Array &p_events, const String &p_source, bool p_game_running,
+			const Array &p_errors) {
+		running = false;
+		const MCPBugCapture::Window window =
+				MCPBugCapture::select(p_events, pending_last_events, pending_since_frame);
+		const Dictionary context = MCPBugCapture::build_context(window, p_source,
+				p_game_running, pending_reason, p_errors);
+
+		Dictionary answer;
+		answer["session"] = pending_slug;
+		answer["source"] = p_source;
+		answer["event_count"] = window.kept;
+		answer["events_considered"] = window.considered;
+		answer["frames_estimated"] = window.estimated;
+		answer["events_dropped"] = window.dropped;
+		answer["first_frame"] = window.first_frame;
+		answer["last_frame"] = window.last_frame;
+		answer["fidelity"] = context["fidelity"];
+		answer["reading_guide"] = READING_GUIDE;
+		answer["input_source_note"] = INPUT_SOURCE_NOTE;
+
+		const MCPSessions::Result began = MCPSessions::begin(pending_slug, pending_name,
+				window.first_frame, context);
+		if (!began.ok) {
+			answer["error"] = began.error;
+			return answer;
+		}
+		if (window.kept > 0) {
+			const MCPSessions::Result appended =
+					MCPSessions::append_events(pending_slug, window.events);
+			if (!appended.ok) {
+				answer["error"] = appended.error;
+				MCPSessions::finish(pending_slug, window.last_frame, "failed", Dictionary());
+				return answer;
+			}
+		}
+		MCPSessions::finish(pending_slug, window.last_frame, "captured", context);
+
+		const Dictionary meta = MCPSessions::read_meta(pending_slug);
+		answer["directory"] = meta.get("directory",
+				String("user://godot_ai_sessions/") + pending_slug);
+		if (window.kept == 0) {
+			answer["warning"] = "Nothing was captured. Nothing had injected input into this "
+								"run, so there is no sequence to replay - a bug reached by "
+								"other means has to be reproduced by other means.";
+		} else {
+			answer["next_step"] = vformat(
+					"Make your change, press play, then Godot_ReplaySession with name='%s'. "
+					"A replay that still shows the bug means the change did not fix it.",
+					pending_slug);
+		}
+		return answer;
+	}
+
+	void _answer(const Dictionary &p_result) {
+		if (token != MCPDeferred::INVALID_TOKEN) {
+			MCPDeferred::complete(token, p_result);
+			token = MCPDeferred::INVALID_TOKEN;
+		}
+	}
+
+	// Stage two: the game's errors, so the artifact carries what the game said as well as
+	// what was done to it. A failed reply is not fatal - the trace is the point, and a
+	// capture that refused to exist because the error list was unavailable would throw away
+	// the thing worth keeping.
+	void _on_errors(bool p_ok, const Dictionary &p_payload) {
+		if (!running) {
+			return;
+		}
+		const Array errors = p_ok ? Array(p_payload.get("errors", Array())) : Array();
+		_answer(_write(pending_events, "runtime_trace", true, errors));
+	}
+
+	// Stage one: the running game's own trace, which is authoritative while it lives.
+	void _on_trace(bool p_ok, const Dictionary &p_payload) {
+		if (!running) {
+			return;
+		}
+		if (!p_ok) {
+			// The game stopped between the request and the reply, which is precisely the
+			// case the mirror is for. Fall back rather than fail.
+			_answer(_write(MCPBugCapture::snapshot(), "editor_mirror", false, Array()));
+			return;
+		}
+		pending_events = p_payload.get("events", Array());
+		MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
+		if (bridge && bridge->is_game_reachable() &&
+				bridge->request("runtime_errors", Dictionary(), 10.0,
+						callable_mp(this, &CaptureBugSessionTool::_on_errors))) {
+			return;
+		}
+		_answer(_write(pending_events, "runtime_trace", true, Array()));
+	}
+
+public:
+	virtual String get_tool_name() const override { return "Godot_CaptureBugSession"; }
+	virtual String get_description() const override {
+		return "Write out the input that led to what just went wrong, as a replayable session - "
+			   "no arming required. Recording has to be started in advance, which is the wrong "
+			   "shape for a bug, because you do not know it is a bug until it happens. The last "
+			   "few hundred input events are always kept, so this reaches backwards: it captures "
+			   "them under a name, and Godot_ReplaySession then re-runs the sequence after your "
+			   "fix. Works after the game has crashed and exited too - the editor keeps its own "
+			   "mirror of what it sent, and the reply says which of the two it used and what "
+			   "that costs in fidelity.";
+	}
+	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
+
+	virtual Dictionary get_input_schema() const override {
+		Dictionary properties;
+		properties["name"] = MCPSchema::string_property(
+				"What this bug is called. Becomes the session name, so it is what you pass to "
+				"Godot_ReplaySession afterwards.");
+		properties["reason"] = MCPSchema::string_property(
+				"What went wrong, in your words. Stored with the capture: a trace with no "
+				"statement of the bug is a sequence nobody can judge the replay against.");
+		properties["last_events"] = MCPSchema::integer_property(
+				"Keep only the last N input events. 0 keeps everything still buffered. Narrow "
+				"it when you know the bug followed one specific interaction.", 0);
+		properties["since_frame"] = MCPSchema::integer_property(
+				"Keep only events from this game frame onwards. 0 imposes no lower bound. "
+				"Combines with last_events; the narrower of the two wins.", 0);
+		Vector<String> required;
+		required.push_back("name");
+		return MCPSchema::object_schema(properties, required);
+	}
+
+	virtual Dictionary get_output_schema() const override {
+		Dictionary properties;
+		properties["session"] = MCPSchema::string_property("Slug the capture was written under.");
+		properties["source"] = MCPSchema::string_property(
+				"'runtime_trace' when the game was alive to be asked, 'editor_mirror' when it "
+				"was already gone.");
+		properties["event_count"] = MCPSchema::integer_property("Events written.");
+		properties["events_considered"] = MCPSchema::integer_property("Events in the buffer.");
+		properties["frames_estimated"] = MCPSchema::integer_property(
+				"Events whose frame had to be extrapolated because the game never "
+				"acknowledged them. Non-zero means the tail is a reproduction attempt.");
+		properties["events_dropped"] = MCPSchema::integer_property(
+				"Events no frame could be worked out for at all.");
+		properties["first_frame"] = MCPSchema::integer_property("First frame in the capture.");
+		properties["last_frame"] = MCPSchema::integer_property("Last frame in the capture.");
+		properties["fidelity"] = MCPSchema::string_property(
+				"What this capture can and cannot prove.");
+		properties["directory"] = MCPSchema::string_property("Where it was written.");
+		return MCPSchema::object_schema(properties);
+	}
+
+	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (running) {
+			r_error.set(MCPToolError::INVALID_STATE,
+					vformat("already capturing '%s'", pending_slug));
+			return Dictionary();
+		}
+		// get() rather than operator[]: a missing key read through a const Dictionary
+		// inserts a null, which schema validation then rejects as wrongly typed.
+		const String name = p_arguments.get("name", String());
+		String slug_error;
+		const String slug = MCPSessions::slugify(name, slug_error);
+		if (slug.is_empty()) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, slug_error);
+			return Dictionary();
+		}
+		pending_slug = slug;
+		pending_name = name;
+		pending_reason = p_arguments.get("reason", String());
+		pending_last_events = MAX(0, (int)p_arguments.get("last_events", 0));
+		pending_since_frame = MAX((int64_t)0, (int64_t)p_arguments.get("since_frame", 0));
+		pending_events = Array();
+
+		MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
+		if (bridge && bridge->is_game_reachable()) {
+			// Ask the game rather than read the mirror: its trace is stamped with the frame
+			// it actually processed each event on, and it holds nothing the game refused.
+			// `clear` stays false - a capture reads the buffer, it does not consume it, or
+			// a second capture of the same crash would come back empty.
+			Dictionary arguments;
+			arguments["clear"] = false;
+			running = true;
+			token = MCPDeferred::begin(30.0,
+					"the running game did not hand over its input trace in time");
+			if (!bridge->request("input_trace", arguments, 10.0,
+						callable_mp(this, &CaptureBugSessionTool::_on_trace))) {
+				running = false;
+				MCPDeferred::abandon(token);
+				token = MCPDeferred::INVALID_TOKEN;
+				r_error.set(MCPToolError::FAILED, "the running game did not accept the request");
+				return Dictionary();
+			}
+			return MCPDeferred::make_deferred_result(token);
+		}
+
+		// No game. This is the case the editor-side mirror exists for, and refusing here
+		// would refuse exactly when the tool is most useful: the process died, and its own
+		// trace died with it.
+		running = true;
+		return _write(MCPBugCapture::snapshot(), "editor_mirror", false, Array());
+	}
+};
+
 // ------------------------------------------------------------------ listing ---
 
 class ListSessionsTool : public MCPTool {
@@ -663,6 +895,7 @@ void mcp_register_session_tools() {
 	recorder() = Ref<RecordSessionTool>(memnew(RecordSessionTool));
 	registry->register_tool(recorder());
 	registry->register_tool(Ref<MCPTool>(memnew(AssertRuntimeStateTool)));
+	registry->register_tool(Ref<MCPTool>(memnew(CaptureBugSessionTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(ListSessionsTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(ReplaySessionTool)));
 }

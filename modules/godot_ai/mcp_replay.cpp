@@ -50,6 +50,22 @@ bool MCPReplayPlan::load(const Array &p_events, const Array &p_assertions,
 	recorded_start = p_recorded_start;
 	expected_span = 0;
 
+	// Everything the previous run left behind, and not only the two fields this function
+	// used to touch. Resetting the rest in start() was not enough: a plan sits between
+	// load() and start() while the tool waits for the game to say what frame it is on, and
+	// a caller that reads it there sees the *previous* run's verdict. That is not
+	// hypothetical - it crashed the editor. A failed run followed by loading a session with
+	// no assertions left `failed` true and `first_divergence` at 0, so the tool's first
+	// poll declared the new run finished and to_report() indexed an assertion list that
+	// load() had just emptied.
+	started = false;
+	failed = false;
+	first_divergence = -1;
+	max_drift = 0;
+	delivered_late = false;
+	live_start = 0;
+	last_observed = -1;
+
 	if (p_events.is_empty()) {
 		r_error = "this session recorded no input, so there is nothing to replay";
 		return false;
@@ -186,6 +202,12 @@ void MCPReplayPlan::report_assertion(int p_index, const Variant &p_observed) {
 }
 
 bool MCPReplayPlan::is_finished() const {
+	if (!started) {
+		// A plan that has not been bound to a live frame has not finished; it has not
+		// begun. Answering "finished" here is what let a poll that arrives before the
+		// game's first reply declare a run over before it ran.
+		return false;
+	}
 	if (failed) {
 		return true;
 	}
@@ -244,7 +266,9 @@ Dictionary MCPReplayPlan::to_report() const {
 	report["drift_tolerance_frames"] = drift_tolerance;
 	report["last_frame"] = last_observed;
 
-	if (first_divergence >= 0) {
+	// Bounds-checked as well as reset in load(). An index into a list this object no longer
+	// holds must never be able to take the editor down with it, whatever put it there.
+	if (first_divergence >= 0 && first_divergence < assertions.size()) {
 		const ScheduledAssertion &scheduled = assertions[first_divergence];
 		Dictionary divergence;
 		divergence["node_path"] = scheduled.node_path;
