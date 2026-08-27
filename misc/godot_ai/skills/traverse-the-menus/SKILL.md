@@ -39,8 +39,12 @@ so the walk produces a report rather than a conversation.
      `Godot_NotePlaytestObservation` and move on. A button that does nothing is the most
      common thing this finds.
    - If something did change, recurse: walk the new screen the same way.
-   - Then get back. Try the obvious control first, then the `ui_cancel` action, then
-     Escape. **A screen with no way back is a finding**, and an important one.
+   - Then get back. Try the obvious control first, then the `ui_cancel` action with
+     `Godot_SendActionInput`, then Escape with `Godot_SendKeyInput`. In that order, and the
+     order matters: the action is what the game reads, so a menu that answers `ui_cancel`
+     but not Escape is working correctly and a menu that answers Escape but not `ui_cancel`
+     is a menu that will break the moment somebody rebinds it. **A screen with no way back
+     is a finding**, and an important one.
 4. Keep a list of screens visited so you do not loop. Say how you are identifying them —
    usually a root node name.
 
