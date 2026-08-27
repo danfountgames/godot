@@ -56,7 +56,11 @@ S-21 (done): the closed loop, in four slices, all verified against a live editor
   copied from the claim: a success reported with no input injected, or past a logged
   error, comes back indeterminate with the reason, and the original claim is kept beside
   it. P5 came free - a playtest injects through the same input tools as everything else,
-  so the activity stream already had it.
+  so the activity stream already had it. **Frame spikes now have a source**: the game keeps
+  a bounded per-frame cost ring beside its input trace, the playtest clears it at the start
+  and reads it at the end, and every report carries `frame_coverage` saying whether anything
+  measured — because "no spikes" and "nobody was looking" read identically and mean
+  completely different things.
 - **Runtime-value promotion.** `Godot_PromoteRuntimeValue` carries a value tuned in the
   running game into the edited scene, through `EditorUndoRedoManager` and behind a
   checkpoint. Built early at the user's instruction. The runtime-to-scene path rule is

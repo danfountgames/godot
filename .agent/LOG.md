@@ -504,3 +504,30 @@ remains the fastest way to settle a question about the screen.
 
 ### Next
 - P2: the playtest's perceive/decide/act loop, editor-side over MCP sampling.
+
+## 2026-08-27 — Frame spikes get a source (closing P3's honest gap)
+
+- The playtest report has carried a `spikes` field since the workflow landed, with the
+  detection rules written and unit-tested and **nothing feeding them**. Every live report
+  said "no spikes", which reads exactly like "nothing spiked" and meant "nothing was
+  looking". The ledger carried a row admitting it; this closes it.
+- The game now records its own frame time every frame in a bounded ring, beside the input
+  trace and for the same reason: a spike is only visible against the frames around it, so a
+  sample taken when somebody asks is a data point rather than a measurement.
+- `Godot_StartPlaytest` clears the ring, which is also what *creates* the recorder — nothing
+  else in a playtest necessarily schedules frame work. `Godot_FinishPlaytest` fetches it
+  before assembling, which makes finishing a two-stage call. A failed reply is not fatal:
+  the frame times are the least important thing in the report, and refusing to close a
+  playtest over them would throw away everything else it collected.
+- Every report now carries `frame_coverage` — samples, whether that is enough to conclude
+  anything, and when it is not, a sentence saying so. The distinction is in the artifact
+  now rather than only in a ledger row.
+- The threshold is fixed in the assembly rather than made an argument, so two reports of the
+  same run cannot disagree about what a spike is. Three times the median is a frame a player
+  feels; twice is a frame a graph shows.
+- Verified live: 58 measured frames in a real playtest, count agreeing with the list.
+
+### Next
+- P2: the playtest's perceive/decide/act loop, editor-side over MCP sampling. The last item
+  in the user's build order that is not blocked on hardware.
+- S4 (replay across two editor processes) and S5 (replay speed) remain honestly short.
