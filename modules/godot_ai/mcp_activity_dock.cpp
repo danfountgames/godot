@@ -30,6 +30,8 @@
 
 #include "mcp_activity_dock.h"
 
+#include "editor/themes/editor_scale.h"
+
 #include "mcp_activity.h"
 #include "mcp_agent_state.h"
 #include "mcp_checkpoints.h"
@@ -128,6 +130,10 @@ MCPActivityDock::MCPActivityDock() {
 	records->set_column_expand(0, true);
 	records->set_column_expand(1, false);
 	records->set_column_custom_minimum_width(1, 90);
+	// A minimum, or the bottom panel opens at the height of its own chrome and the list
+	// of what the agent did is a 60-pixel slit with every row scrolled out of it. The
+	// detail pane below already declares one; the list that matters most did not.
+	records->set_custom_minimum_size(Size2(0, 180 * EDSCALE));
 	records->create_item();
 	records->connect("item_selected", callable_mp(this, &MCPActivityDock::_selection_changed));
 	add_child(records);

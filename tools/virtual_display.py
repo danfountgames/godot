@@ -31,6 +31,7 @@ a virtual one when it can, and reports plainly when it cannot. It never raises t
 """
 
 import argparse
+import atexit
 import contextlib
 import json
 import os
@@ -366,6 +367,12 @@ def ensure(width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, depth=DEFAULT_DEPTH,
 
     try:
         display = start(width=width, height=height, depth=depth, log_path=log_path)
+        # Stop it when the interpreter exits, even if the caller never does. A script
+        # that simply returns from main() leaves the server running and its number taken
+        # for as long as the machine is up; a handful of runs later there are no numbers
+        # left. `stop()` is idempotent, so a caller that does clean up is unaffected, and
+        # a context manager still works exactly as before.
+        atexit.register(display.stop)
     except VirtualDisplayError as error:
         if required:
             raise

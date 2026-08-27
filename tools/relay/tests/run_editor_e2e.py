@@ -685,7 +685,12 @@ def run(editor_binary, display):
             relay.send_message(message)
             if not expect_reply:
                 return None
-            reply = relay.read_message(timeout=20)
+            # Long enough for the slowest legitimate answer, not for a hang. The capture
+            # tools advance on drawn frames and give themselves 90 seconds on a
+            # software-rendered editor; a client ceiling below that turns patience into a
+            # failure. Only one call is ever outstanding, so a genuine hang still fails -
+            # it just takes longer to say so.
+            reply = relay.read_message(timeout=150)
             check(reply is not None, "no reply to %s" % message.get("method"))
             return reply
 

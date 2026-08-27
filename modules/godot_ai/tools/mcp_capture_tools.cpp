@@ -36,6 +36,7 @@
 #include "../mcp_tool_registry.h"
 
 #include "core/config/engine.h"
+#include "core/os/os.h"
 #include "core/crypto/crypto_core.h"
 #include "core/io/dir_access.h"
 #include "core/io/image.h"
@@ -59,6 +60,18 @@
 #include "servers/display/display_server.h"
 
 namespace {
+
+// How long to wait for a software-rendered editor to draw the handful of frames the
+// capture tools need. Generous on purpose: their pollers answer the moment they are
+// ready, so a long budget costs nothing when the machine is quick, and a short one turns
+// a slow machine into a failed test. Ten seconds was enough on a developer's desktop and
+// not enough on a two-core CI runner under llvmpipe, which is where this was found.
+constexpr uint64_t CAPTURE_BUDGET_MSEC = 90000;
+
+// The deferred layer's own deadline is only a backstop; the budget above fires first, so
+// the caller is told which stage stalled rather than just that something did.
+constexpr double DEFERRED_BACKSTOP_SECONDS = 120.0;
+
 
 // Returning the image inline is what makes this useful to a model, but a screenshot
 // is large; anything bigger than this is saved to disk and referenced by path only.
@@ -270,6 +283,12 @@ class CaptureInspectorPropertyTool : public MCPTool {
 	};
 
 	Stage stage = IDLE;
+	// When the operation started, and how many frames had been drawn then. Every stage
+	// below advances on drawn frames, so a stall is measured in frames, not seconds -
+	// and saying which of the two ran out is the difference between a diagnosis and
+	// "timed out".
+	uint64_t started_msec = 0;
+	uint64_t frames_at_start = 0;
 	MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
 	Ref<Resource> resource;
 	Ref<Resource> original_resource;
@@ -397,8 +416,42 @@ class CaptureInspectorPropertyTool : public MCPTool {
 		return chain;
 	}
 
+	String _stage_name() const {
+		switch (stage) {
+			case WAITING_FOR_INSPECTOR:
+				return "waiting for the Inspector to show the property";
+			case WAITING_FOR_LAYOUT:
+				return "waiting for the Inspector to finish laying out";
+			case WAITING_FOR_RENDER:
+				return "waiting for the editor to draw the scrolled Inspector";
+			default:
+				return "idle";
+		}
+	}
+
+	// True when the budget has run out; fills in a message that says what it was waiting
+	// for and whether the editor drew anything at all while it waited.
+	bool _budget_exhausted() {
+		if (stage == IDLE || started_msec == 0) {
+			return false;
+		}
+		const uint64_t elapsed = OS::get_singleton()->get_ticks_msec() - started_msec;
+		if (elapsed < CAPTURE_BUDGET_MSEC) {
+			return false;
+		}
+		const uint64_t drawn = Engine::get_singleton()->get_frames_drawn() - frames_at_start;
+		_fail(MCPToolError::FAILED,
+				vformat("gave up after %d ms while %s; the editor drew %d frame(s) in that time. "
+						"A software-rendered editor on a slow machine can be this slow legitimately; "
+						"zero frames means it was not drawing at all.",
+						(int)elapsed, _stage_name(), (int)drawn));
+		return true;
+	}
+
 	void _clear_operation() {
 		stage = IDLE;
+		started_msec = 0;
+		frames_at_start = 0;
 		token = MCPDeferred::INVALID_TOKEN;
 		resource.unref();
 		original_resource.unref();
@@ -567,6 +620,9 @@ class CaptureInspectorPropertyTool : public MCPTool {
 	}
 
 	Variant _poll() {
+		if (_budget_exhausted()) {
+			return Variant();
+		}
 		if (stage == WAITING_FOR_INSPECTOR) {
 			if (Engine::get_singleton()->get_frames_drawn() < inspect_after_frame) {
 				return Variant();
@@ -851,7 +907,10 @@ public:
 		inspector->edit(subject);
 		stage = WAITING_FOR_INSPECTOR;
 		inspect_after_frame = Engine::get_singleton()->get_frames_drawn() + 2;
-		token = MCPDeferred::begin_polled(10.0, callable_mp(this, &CaptureInspectorPropertyTool::_poll),
+		started_msec = OS::get_singleton()->get_ticks_msec();
+		frames_at_start = Engine::get_singleton()->get_frames_drawn();
+		token = MCPDeferred::begin_polled(DEFERRED_BACKSTOP_SECONDS,
+				callable_mp(this, &CaptureInspectorPropertyTool::_poll),
 				callable_mp(this, &CaptureInspectorPropertyTool::_cancel));
 		return MCPDeferred::make_deferred_result(token);
 	}
@@ -865,6 +924,8 @@ class CaptureSceneTreeNodeTool : public MCPTool {
 
 	bool active = false;
 	bool prepared = false;
+	uint64_t started_msec = 0;
+	uint64_t frames_at_start = 0;
 	MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
 	MCPPaths::Resolved output_path;
 	String scene_path;
@@ -893,6 +954,8 @@ class CaptureSceneTreeNodeTool : public MCPTool {
 	void _clear_operation() {
 		active = false;
 		prepared = false;
+		started_msec = 0;
+		frames_at_start = 0;
 		token = MCPDeferred::INVALID_TOKEN;
 		output_path = MCPPaths::Resolved();
 		scene_path = String();
@@ -1076,6 +1139,20 @@ class CaptureSceneTreeNodeTool : public MCPTool {
 		if (!active) {
 			return Variant();
 		}
+		// Same budget and the same reasoning as the Inspector capture: this advances on
+		// drawn frames, so on a slow software renderer a short deadline fails a test that
+		// was only being patient.
+		if (started_msec != 0) {
+			const uint64_t elapsed = OS::get_singleton()->get_ticks_msec() - started_msec;
+			if (elapsed >= CAPTURE_BUDGET_MSEC) {
+				const uint64_t drawn = Engine::get_singleton()->get_frames_drawn() - frames_at_start;
+				_fail(MCPToolError::FAILED,
+						vformat("gave up after %d ms while waiting for the editor to draw the Scene "
+								"dock; it drew %d frame(s) in that time.",
+								(int)elapsed, (int)drawn));
+				return Variant();
+			}
+		}
 		if (!prepared) {
 			if (Engine::get_singleton()->get_frames_drawn() < prepare_after_frame) {
 				return Variant();
@@ -1240,7 +1317,10 @@ public:
 		target_node = node->get_instance_id();
 		prepare_after_frame = Engine::get_singleton()->get_frames_drawn() + 2;
 		active = true;
-		token = MCPDeferred::begin_polled(10.0, callable_mp(this, &CaptureSceneTreeNodeTool::_poll),
+		started_msec = OS::get_singleton()->get_ticks_msec();
+		frames_at_start = Engine::get_singleton()->get_frames_drawn();
+		token = MCPDeferred::begin_polled(DEFERRED_BACKSTOP_SECONDS,
+				callable_mp(this, &CaptureSceneTreeNodeTool::_poll),
 				callable_mp(this, &CaptureSceneTreeNodeTool::_cancel));
 		return MCPDeferred::make_deferred_result(token);
 	}
