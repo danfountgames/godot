@@ -23,18 +23,34 @@ document in the repository).
 ## Current milestone
 
 **M3 — Agent experience.** Defined by `docs/godot-ai-agent-experience-spec.md`, tracked
-in `.agent/EXPERIENCE_LEDGER.md`. The problem it addresses is not missing capability —
-72 tools exist and nearly all are verified — but **legibility and composition**: no
-interface shows the agent working, and nothing strings the primitives into a workflow.
-Started. Q1 (build the engine on 4.8) is done and was the gate; E1, E3 and E7 — the
-live activity stream and `Godot_GetActivity` — are IMPLEMENTED, as is Q3.
+in `.agent/EXPERIENCE_LEDGER.md`. The problem it addressed was not missing capability —
+around ninety tools exist and nearly all are verified — but **legibility and composition**:
+no interface showed the agent working, and nothing strung the primitives into a workflow.
+
+**Largely landed.** The user's six-step build order is complete: revalidation, the thin
+Activity dock, the goal-directed playtest, retroactive bug capture, promotion plus the live
+tuning workspace, and the skills library — with benchmarks alongside, and propose-then-apply
+(D1/D2) landed beside them. Every **E**, **C**, **S** and **D** row is VERIFIED.
+
+Rows that are still not, checked against the ledger rather than remembered:
+
+| Row | State | Why |
+|---|---|---|
+| P2 | NOT_STARTED | The editor-side perceive/decide/act loop. The last unblocked item in the build order, and deliberately last: it changes who drives, not what the report contains |
+| P1 | IMPLEMENTED (does not launch) | Deliberate. Launching needs `run_project` and playing needs `simulate_input`, and a tool declares one capability — the same reasoning as DEC-0010 |
+| P4 | IMPLEMENTED | Stop-and-keep-partial works and is unit-tested; not exercised against a live game |
+| E6 | IMPLEMENTED | Activity survives a dock restart and dies with the editor, which *is* the requirement; nothing re-checks it after a restart |
+| S9 | NOT_STARTED | A playtest crash emitting a replay file. The primitive now exists (S10); what is missing is the playtest calling it by itself |
+| W1, W2, W3, W5 | IMPLEMENTED | The workspace embedding seams |
+| W7 | BLOCKED | Needs macOS |
+| Q2, Q4, Q5 | not done | See the ledger |
 
 M1 (foundation and protocol) and M2 (the agent interface) are both complete; see the
 spec ledger and interface ledger for their evidence.
 
 ## Current vertical slice
 
-S-19 (in progress): the agent-experience tranche, opened by
+S-19 (done): the agent-experience tranche, opened by
 `docs/godot-ai-agent-experience-spec.md` and tracked in `.agent/EXPERIENCE_LEDGER.md`.
 Landed so far: the live activity stream (E1/E3/E7, verified end to end), session
 record/assert/list/replay (S1–S4, S7, S8), and both write tools accepting `text` and
