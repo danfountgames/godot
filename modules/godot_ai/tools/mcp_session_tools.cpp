@@ -158,7 +158,6 @@ public:
 
 	Dictionary _on_started(const Dictionary &p_payload) {
 		const int64_t frame = p_payload.get("frame", 0);
-		String error;
 		const MCPSessions::Result result =
 				MCPSessions::begin(active_slug, active_name, frame, Dictionary());
 		if (!result.ok) {

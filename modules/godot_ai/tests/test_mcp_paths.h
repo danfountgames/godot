@@ -151,7 +151,12 @@ TEST_CASE("[godot_ai] Symbolic links cannot escape the project") {
 	const String link = fixture.get_root().path_join("escape_link");
 	if (dir->create_link(outside, link) != OK) {
 		// Filesystems without symlink support cannot exercise this rule.
-		WARN("Skipping symlink escape check: this filesystem does not support links.");
+		//
+		// MESSAGE, not WARN: doctest decomposes WARN's argument as an expression, and a
+		// bare string literal there is an array-to-pointer conversion the compiler knows
+		// can never be null - which is a warning, and an error under the werror build CI
+		// uses. MESSAGE takes a message, which is what this is.
+		MESSAGE("Skipping symlink escape check: this filesystem does not support links.");
 	} else {
 		MCPPaths::Resolved resolved;
 		String error;

@@ -251,6 +251,25 @@ bool MCPPty::poll() {
 	return child_pid > 0;
 }
 
+// Whether the last syscall failed only because it would have blocked, or was
+// interrupted - either way there is nothing wrong and the caller retries.
+//
+// POSIX permits EAGAIN and EWOULDBLOCK to be the same value, and on Linux they are, so
+// the usual `errno == EAGAIN || errno == EWOULDBLOCK` is a "logical or of equal
+// expressions" - a warning, and an error under the werror build CI uses. They are still
+// allowed to differ elsewhere, so both have to be checked where they do.
+static bool errno_is_retryable() {
+	if (errno == EAGAIN || errno == EINTR) {
+		return true;
+	}
+#if EWOULDBLOCK != EAGAIN
+	if (errno == EWOULDBLOCK) {
+		return true;
+	}
+#endif
+	return false;
+}
+
 int MCPPty::read(uint8_t *p_buffer, int p_max_length) {
 	if (master_fd < 0 || !p_buffer || p_max_length <= 0) {
 		return -1;
@@ -263,7 +282,7 @@ int MCPPty::read(uint8_t *p_buffer, int p_max_length) {
 		// The child closed its end.
 		return -1;
 	}
-	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+	if (errno_is_retryable()) {
 		return 0;
 	}
 	// EIO is the ordinary way a pty reports that the child has gone.
@@ -278,7 +297,7 @@ int MCPPty::write(const uint8_t *p_data, int p_length) {
 	if (count >= 0) {
 		return (int)count;
 	}
-	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+	if (errno_is_retryable()) {
 		return 0;
 	}
 	return -1;

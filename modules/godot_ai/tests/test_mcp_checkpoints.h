@@ -200,7 +200,10 @@ TEST_CASE("[godot_ai] Checkpoint edge cases") {
 	SUBCASE("old checkpoints are pruned") {
 		fixture.write("a.txt", "aaa");
 		for (int i = 0; i < 4; i++) {
-			MCPCheckpoints::create("Godot_WriteTextFile", "x", paths_of("res://a.txt"), error);
+			// Checking the id also asserts the thing this subcase silently assumed: that
+			// each checkpoint was actually created before pruning is asked about.
+			const String created = MCPCheckpoints::create("Godot_WriteTextFile", "x", paths_of("res://a.txt"), error);
+			CHECK_MESSAGE(!created.is_empty(), error);
 		}
 		CHECK(MCPCheckpoints::list().size() >= 1);
 		MCPCheckpoints::prune(2);

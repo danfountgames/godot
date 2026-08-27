@@ -595,13 +595,13 @@ void MCPTerminalWidget::update_terminal_size() {
 
 	// The visible area, not this control's size: the control is as tall as all its
 	// scrollback, and a child told it has 2000 rows would draw its status line off-screen.
-	Size2 visible = scroll_container ? scroll_container->get_size() : get_size();
-	if (visible.x <= 0 || visible.y <= 0) {
+	const Size2 viewport = scroll_container ? scroll_container->get_size() : get_size();
+	if (viewport.x <= 0 || viewport.y <= 0) {
 		return;
 	}
 
-	const int rows = MAX(1, (int)(visible.y / cell_height));
-	const int cols = MAX(1, (int)(visible.x / cell_width));
+	const int rows = MAX(1, (int)(viewport.y / cell_height));
+	const int cols = MAX(1, (int)(viewport.x / cell_width));
 	if (rows == emulator.get_rows() && cols == emulator.get_cols()) {
 		return;
 	}

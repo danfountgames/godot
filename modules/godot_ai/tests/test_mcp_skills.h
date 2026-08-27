@@ -336,7 +336,8 @@ TEST_CASE("[godot_ai] Skill status decides what the approvals UI offers") {
 
 	SUBCASE("a self-disabled skill offers no button") {
 		skill.enabled = false;
-		mcp_skill_status_text(skill, can_toggle, needs_decision);
+		const String status = mcp_skill_status_text(skill, can_toggle, needs_decision);
+		CHECK(status == "Disabled by the skill itself");
 		CHECK_FALSE(can_toggle);
 		CHECK_FALSE(needs_decision);
 	}

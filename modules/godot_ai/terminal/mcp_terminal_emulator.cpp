@@ -266,6 +266,10 @@ const VTermScreenCallbacks SCREEN_CALLBACKS = {
 	/* sb_pushline */ sb_pushline_cb,
 	/* sb_popline  */ sb_popline_cb,
 	/* sb_clear    */ nullptr,
+	// Only reached if vterm_screen_callbacks_has_pushline4() is called, which nothing
+	// here does; named anyway so the table stays complete as libvterm grows, and so the
+	// werror build does not fail on a missing initialiser.
+	/* sb_pushline4 */ nullptr,
 };
 
 } // namespace
