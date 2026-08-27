@@ -83,6 +83,55 @@ python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path 
   from the repository root: several in-tree suites resolve their test data relative to
   the working directory and fail with "Invalid test directory" elsewhere.
 
+## Working on macOS
+
+Every command above names `linuxbsd` and assumes X11. On a Mac none of that applies —
+substitute the following. This section is the whole delta; the rules, safety
+constraints and done criteria are unchanged.
+
+```sh
+# Editor. Same flags, different platform; -j comes from sysctl, not nproc.
+scons platform=macos target=editor dev_build=yes debug_symbols=no scu_build=yes tests=yes -j$(sysctl -n hw.ncpu)
+
+# Add the branded bundle. Writes bin/GodotAI.app from misc/dist/macos_tools.app,
+# stamps Info.plist from the template, and ad-hoc signs it (bundle_sign_identity
+# defaults to "-"). It deletes and rebuilds bin/GodotAI.app each time.
+scons platform=macos target=editor dev_build=yes scu_build=yes tests=yes generate_bundle=yes -j$(sysctl -n hw.ncpu)
+
+# The binary is architecture-suffixed. On Apple silicon:
+bin/godot.macos.editor.dev.arm64 --headless --test --test-case="*[godot_ai]*"
+./bin/godot.macos.editor.dev.arm64 --headless --test   # full suite, from the repo root
+```
+
+Toolchain: Xcode command line tools plus `scons` (Homebrew installs it at
+`/opt/homebrew/bin/scons`). The Linux `apt-get` dependency list is not needed and has
+no macOS equivalent to install.
+
+What changes about testing:
+
+- **The relay, skills, benchmark and virtual-display-free suites run unchanged.**
+  `tools/relay/build.sh` compiles with `$CXX -std=c++17` and no Linux-specific flags;
+  the POSIX backend passes all 64 relay cases natively on arm64.
+- **`run_editor_e2e.py` already knows about macOS.** It resolves
+  `bin/godot.macos.editor.dev.<arch>` and uses `NativeMacOSDisplay` — the window server
+  *is* the display, so there is no `DISPLAY`, no Xvfb, and no `--headless` fallback to
+  apologise for. Run it exactly as written.
+- **Do not reach for `tools/virtual_display.py`.** It is X11-only (it manages
+  `/tmp/.X11-unix` sockets) and there is nothing for it to do on a machine that already
+  has a screen. The instruction elsewhere that "a missing screen is not an external
+  blocker" is a Linux-container rule; on macOS the screen is simply present.
+- **`run_editor_ui_e2e.py` skips.** It drives the editor through `xdotool`, which is an
+  X11 tool. The skip is clean and documented — it is not a failure, and it is not a
+  reason to look for a macOS keyboard-automation substitute unless the task is that
+  substitute.
+
+Measured on this repository, native arm64, 2026-08-27: the module suite passes 74 cases
+/ 526 assertions and the relay suite 64/64.
+
+macOS-specific open work — game-process embedding, which needs a `CAContext` handshake
+that X11 and Windows do not — has its own briefing in `.agent/MACOS_EMBEDDING_SPIKE.md`.
+Read that before touching `platform/macos/editor/embedded_game_view_plugin.{h,mm}`.
+
 ## Safety rules
 
 - No tool may execute arbitrary shell commands.

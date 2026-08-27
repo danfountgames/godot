@@ -67,6 +67,11 @@ adding to it, keep it that way.
 
 ## Canonical commands
 
+**On a Mac, read `AGENTS.md` → *Working on macOS* first.** Every command below names
+`linuxbsd` and assumes X11; the macOS section gives the substitutions (`platform=macos`,
+`bin/godot.macos.editor.dev.arm64`, `-j$(sysctl -n hw.ncpu)`, `generate_bundle=yes` for
+`bin/GodotAI.app`) and says which scripts run natively, which skip, and which do not apply.
+
 Build dependencies on a bare Ubuntu container (once; `apt-get update` first, or
 `libasound2-dev` 404s on the stale index):
 `libxcursor-dev libxinerama-dev libxi-dev libxrandr-dev libasound2-dev`, plus
@@ -128,8 +133,9 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
 - **Prefer the fast loop.** Relay/protocol work is verifiable in seconds via
   `tools/relay/tests/run_tests.py`. Only rebuild the engine when editor C++ changed.
 - **A missing screen is not an external blocker.** Screenshots, dialogs and a running
-  game's scene tree all need a display, and this container has none — so the repository
-  starts one: `tools/virtual_display.py`. Reach for it before recording anything as
+  game's scene tree all need a display, and a Linux container has none — so the repository
+  starts one: `tools/virtual_display.py`. (On macOS the screen is already there and
+  `virtual_display.py` is X11-only; do not invoke it.) Reach for it before recording anything as
   environmental. Doing so turned up a real product bug that the refusal paths hid: the
   editor only requests the remote scene tree while its Remote panel is visible, so
   `Godot_GetRuntimeSceneTree` had to ask for it and wait.
