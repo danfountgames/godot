@@ -160,8 +160,11 @@ directory used to be dangerous is fixed at the source — fixtures delete throug
   and preserve node ownership. Never hand-edit `.tscn`/`.tres` as text when a
   structured editor API exists.
 - Keep the relay free of Godot dependencies; it must build standalone with a C++17
-  compiler. **The relay owns stdio, the editor owns the socket** — that is what keeps
-  engine prints out of a client's protocol stream.
+  compiler. **The relay owns stdio, the editor owns its sockets** — engine prints would
+  corrupt a protocol stream on the editor's stdio, which is why the editor must never
+  serve MCP there. The editor *does* serve MCP directly over loopback HTTP
+  (`mcp_http.{h,cpp}`, DEC-0014); that is the terminal agent's path, and the relay is
+  only for stdio-bound external clients until its teardown completes.
 - Clean-room only. Reproduce Unity's *behaviour* from the specification; never copy
   proprietary Unity implementation code, and use `Godot_*` tool names.
 

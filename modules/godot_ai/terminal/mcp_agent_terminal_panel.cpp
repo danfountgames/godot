@@ -238,34 +238,18 @@ bool MCPAgentTerminalPanel::launch() {
 		return false;
 	}
 
-	// Find the relay. Report where we looked rather than only that it is missing: on a
-	// development build the answer is almost always "you have not built it yet".
-	const Vector<String> candidates = mcp_agent_relay_search_paths(
-			OS::get_singleton()->get_executable_path().get_base_dir(),
-			OS::get_singleton()->get_environment("GODOT_AI_RELAY"));
-
-	String relay_path;
-	for (int i = 0; i < candidates.size(); i++) {
-		// The last candidate is the bare name, resolved through PATH by the exec; it has
-		// no directory, so there is nothing to check here.
-		if (!candidates[i].contains("/") && !candidates[i].contains("\\")) {
-			relay_path = candidates[i];
-			break;
-		}
-		if (FileAccess::exists(candidates[i])) {
-			relay_path = candidates[i];
-			break;
-		}
-	}
-	if (relay_path.is_empty()) {
-		last_error = vformat(TTR("Could not find godot-ai-relay. Looked in: %s. Build it with tools/relay/build.sh."), String(", ").join(candidates));
+	// No relay. The editor spawned this agent, so the editor serves it directly over
+	// its own Streamable HTTP endpoint (DEC-0014); the only thing to check is that the
+	// endpoint actually opened.
+	if (service->get_http_port() <= 0) {
+		last_error = TTR("The GodotAI service has no HTTP port, so an agent cannot connect directly. Check the editor log for the port conflict that disabled it.");
 		_set_status(last_error);
 		return false;
 	}
 
 	const String client_name = vformat("Godot Agent Terminal (%s)", command.get_file());
-	const String config_json = mcp_agent_build_mcp_config(
-			relay_path, OS::get_singleton()->get_process_id(), client_name, read_only_check->is_pressed());
+	const String config_json = mcp_agent_build_http_mcp_config(
+			service->get_http_port(), client_name, read_only_check->is_pressed());
 
 	// A previous run's file, if the process died without going through shutdown().
 	_remove_mcp_config();
@@ -286,6 +270,9 @@ bool MCPAgentTerminalPanel::launch() {
 		}
 	}
 	environment = mcp_agent_build_environment(environment, mcp_config_path);
+	// The secret travels here and only here; the configuration file references the
+	// variable by name. A child of this editor is the one process that should have it.
+	environment.push_back("GODOT_AI_MCP_TOKEN=" + service->get_http_token());
 
 	// The briefing is what makes the editor's tools the agent's default behaviour
 	// rather than a discovery: without it, a coding agent treats the project as files
@@ -304,7 +291,8 @@ bool MCPAgentTerminalPanel::launch() {
 	}
 
 	if (mcp_agent_command_is_claude(command)) {
-		_set_status(vformat(TTR("Running %s, connected through %s."), command, relay_path.get_file()));
+		_set_status(vformat(TTR("Running %s, connected directly to this editor on port %d."),
+				command, MCPService::get_singleton()->get_http_port()));
 	} else {
 		// Say so rather than implying a connection this cannot make. The configuration is
 		// there for the command to use; whether it does is up to it.

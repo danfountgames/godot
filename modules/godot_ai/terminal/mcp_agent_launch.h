@@ -67,6 +67,12 @@ struct MCPAgentLaunchPlan {
 // a manual it skims. Works for any project - it names no project files.
 String mcp_agent_editor_briefing(bool p_read_only);
 
+// An MCP configuration pointing the agent straight at the editor's own Streamable HTTP
+// endpoint - the no-relay path (DEC-0014). The bearer token is referenced as
+// ${GODOT_AI_MCP_TOKEN}, never written; the editor puts the value in the child's
+// environment.
+String mcp_agent_build_http_mcp_config(int p_http_port, const String &p_client_name, bool p_read_only);
+
 // Where the relay might be, in the order they are tried. Exposed so the panel can say
 // exactly where it looked when it finds nothing, rather than "not found".
 Vector<String> mcp_agent_relay_search_paths(const String &p_executable_dir, const String &p_env_override);

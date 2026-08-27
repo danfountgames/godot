@@ -30,6 +30,8 @@
 
 #include "mcp_service.h"
 
+#include "mcp_http.h"
+
 #include "mcp_approvals_dialog.h"
 #include "mcp_audit.h"
 #include "mcp_activity_dock.h"
@@ -71,6 +73,7 @@ MCPService::MCPService() {
 	mcp_service_singleton = this;
 	_EDITOR_DEF("network/godot_ai/enabled", true);
 	_EDITOR_DEF("network/godot_ai/port", configured_port);
+	_EDITOR_DEF("network/godot_ai/http_port", 6110);
 	_EDITOR_DEF("network/godot_ai/auto_approve_clients", false);
 	MCPPermissions::register_editor_settings();
 }
@@ -189,13 +192,42 @@ void MCPService::start() {
 		return;
 	}
 
+	// The Streamable HTTP endpoint, on its own port beside the bridge. This is the
+	// transport that needs no relay process: the editor spawned the agent, so the
+	// editor serves the agent (DEC-0014). Failure to open it disables HTTP, not the
+	// service - the bridge above is already listening.
+	const int configured_http_port = (int)_EDITOR_GET("network/godot_ai/http_port");
+	http_server.instantiate();
+	Error http_error = ERR_CANT_CREATE;
+	for (int offset = 0; offset < PORT_PROBE_RANGE; offset++) {
+		http_error = http_server->listen(configured_http_port + offset, IPAddress("127.0.0.1"));
+		if (http_error == OK) {
+			http_port = configured_http_port + offset;
+			break;
+		}
+	}
+	if (http_error == OK) {
+		http_token = OS::get_singleton()->get_environment("GODOT_AI_HTTP_TOKEN");
+		if (http_token.is_empty()) {
+			http_token = mcp_http_random_id();
+		}
+	} else {
+		http_server.unref();
+		http_port = 0;
+		http_token = String();
+		WARN_PRINT(vformat("Godot AI: could not open an HTTP port in the range %d-%d; direct HTTP clients are disabled, the bridge still works.",
+				configured_http_port, configured_http_port + PORT_PROBE_RANGE - 1));
+	}
+
 	started = true;
 	set_process_internal(true);
 	_write_instance_descriptor();
 
 	if (EditorNode::get_log()) {
 		EditorNode::get_log()->add_message(
-				vformat("--- Godot AI service listening on 127.0.0.1:%d ---", port), EditorLog::MSG_TYPE_EDITOR);
+				vformat("--- Godot AI service listening on 127.0.0.1:%d%s ---", port,
+						http_port > 0 ? vformat(" (HTTP %d)", http_port) : String()),
+				EditorLog::MSG_TYPE_EDITOR);
 	}
 }
 
@@ -210,6 +242,13 @@ void MCPService::stop() {
 		server->stop();
 		server.unref();
 	}
+	if (http_server.is_valid()) {
+		http_server->stop();
+		http_server.unref();
+	}
+	http_sessions.clear();
+	http_port = 0;
+	http_token = String();
 	_remove_instance_descriptor();
 	set_process_internal(false);
 
@@ -221,18 +260,30 @@ void MCPService::stop() {
 }
 
 void MCPService::_accept_new_peers() {
-	if (server.is_null()) {
-		return;
-	}
-	while (server->is_connection_available()) {
-		Ref<StreamPeerTCP> connection = server->take_connection();
-		if (connection.is_null()) {
-			break;
+	if (server.is_valid()) {
+		while (server->is_connection_available()) {
+			Ref<StreamPeerTCP> connection = server->take_connection();
+			if (connection.is_null()) {
+				break;
+			}
+			Peer *peer = memnew(Peer);
+			peer->connection = connection;
+			peer->address = String(connection->get_connected_host()) + ":" + itos(connection->get_connected_port());
+			peers.push_back(peer);
 		}
-		Peer *peer = memnew(Peer);
-		peer->connection = connection;
-		peer->address = String(connection->get_connected_host()) + ":" + itos(connection->get_connected_port());
-		peers.push_back(peer);
+	}
+	if (http_server.is_valid()) {
+		while (http_server->is_connection_available()) {
+			Ref<StreamPeerTCP> connection = http_server->take_connection();
+			if (connection.is_null()) {
+				break;
+			}
+			Peer *peer = memnew(Peer);
+			peer->connection = connection;
+			peer->http = true;
+			peer->address = String(connection->get_connected_host()) + ":" + itos(connection->get_connected_port());
+			peers.push_back(peer);
+		}
 	}
 }
 
@@ -242,6 +293,10 @@ void MCPService::_poll_peer(Peer *p_peer) {
 		return;
 	}
 	if (connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
+		return;
+	}
+	if (p_peer->http) {
+		_poll_http_peer(p_peer);
 		return;
 	}
 
@@ -298,6 +353,132 @@ void MCPService::_handle_line(Peer *p_peer, const String &p_line) {
 	}
 }
 
+void MCPService::_poll_http_peer(Peer *p_peer) {
+	Ref<StreamPeerTCP> connection = p_peer->connection;
+	int available = connection->get_available_bytes();
+	while (available > 0) {
+		Vector<uint8_t> chunk;
+		chunk.resize(available);
+		int received = 0;
+		if (connection->get_partial_data(chunk.ptrw(), available, received) != OK || received <= 0) {
+			break;
+		}
+		p_peer->buffer += String::utf8((const char *)chunk.ptr(), received);
+		available = connection->get_available_bytes();
+	}
+
+	// One request at a time per connection. While a deferred tool owes this connection
+	// its response, later requests wait in the buffer rather than interleave.
+	while (!p_peer->http_awaiting_deferred) {
+		MCPHttpRequest request;
+		String parse_error;
+		if (!mcp_http_parse_request(p_peer->buffer, request, parse_error)) {
+			if (!parse_error.is_empty()) {
+				const CharString bad = mcp_http_response_empty(400, "Bad Request").utf8();
+				connection->put_data((const uint8_t *)bad.get_data(), bad.length());
+				connection->disconnect_from_host();
+			}
+			return;
+		}
+		_handle_http_request(p_peer, request);
+	}
+}
+
+void MCPService::_handle_http_request(Peer *p_peer, const MCPHttpRequest &p_request) {
+	Ref<StreamPeerTCP> connection = p_peer->connection;
+	auto respond = [&](const String &p_response) {
+		const CharString utf8 = p_response.utf8();
+		connection->put_data((const uint8_t *)utf8.get_data(), utf8.length());
+	};
+
+	if (!mcp_http_token_matches(p_request.header("authorization"), http_token)) {
+		respond(mcp_http_response_empty(401, "Unauthorized"));
+		return;
+	}
+	if (p_request.path != "/mcp") {
+		respond(mcp_http_response_empty(404, "Not Found"));
+		return;
+	}
+
+	const String session_id = p_request.header("mcp-session-id");
+
+	if (p_request.method == "DELETE") {
+		http_sessions.erase(session_id);
+		respond(mcp_http_response_empty(200, "OK"));
+		return;
+	}
+	if (p_request.method != "POST") {
+		respond(mcp_http_response_empty(405, "Method Not Allowed"));
+		return;
+	}
+
+	const Variant parsed = JSON::parse_string(p_request.body);
+	if (parsed.get_type() != Variant::DICTIONARY) {
+		respond(mcp_http_response_json(400,
+				JSON::stringify(MCPProtocol::make_error(Variant(), MCPProtocol::ERROR_PARSE,
+						"the editor could not parse this body as a JSON-RPC object"))));
+		return;
+	}
+
+	// Sessions live in the store, keyed by header, because one MCP session spans many
+	// HTTP connections. The peer's session is the working copy for this one dispatch.
+	String effective_id = session_id;
+	if (effective_id.is_empty()) {
+		// Only an initialize may open a session; anything else without one is a client
+		// that lost its id, and pretending otherwise would silently reset its approval.
+		effective_id = mcp_http_random_id();
+		MCPSession fresh;
+		// The launch headers carry what the bridge's godot/hello used to: who this is,
+		// and whether the session must refuse writes. Approval is decided here too -
+		// same gate, same dialog, same settings as a bridge client - because the
+		// protocol layer refuses every method on an unapproved session.
+		fresh.client_name = p_request.header("x-godot-ai-client-name", "http-client");
+		fresh.client_id = fresh.client_name;
+		fresh.read_only = p_request.header("x-godot-ai-read-only") == "1";
+		String approval_reason;
+		fresh.client_approved = approve_client(fresh, approval_reason);
+		if (!fresh.client_approved) {
+			respond(mcp_http_response_json(403,
+					JSON::stringify(MCPProtocol::make_error(Variant(), MCPProtocol::ERROR_CLIENT_NOT_APPROVED,
+							approval_reason.is_empty() ? String("this client is not approved to use the editor") : approval_reason))));
+			return;
+		}
+		http_sessions[effective_id] = fresh;
+	} else if (!http_sessions.has(effective_id)) {
+		respond(mcp_http_response_empty(404, "Unknown Session"));
+		return;
+	}
+
+	p_peer->session = http_sessions[effective_id];
+	p_peer->http_session_id = effective_id;
+
+	Dictionary response;
+	current_peer = p_peer;
+	const int deferred_before = p_peer->deferred.size();
+	const bool has_response = MCPProtocol::handle_message(parsed, p_peer->session, this, response);
+	current_peer = nullptr;
+	http_sessions[effective_id] = p_peer->session;
+
+	if (has_response) {
+		respond(mcp_http_response_json(200, JSON::stringify(response), session_id.is_empty() ? effective_id : String()));
+	} else if (p_peer->deferred.size() > deferred_before) {
+		// The tool deferred; the HTTP response is owed when it completes.
+		p_peer->http_awaiting_deferred = true;
+	} else {
+		// A notification: accepted, nothing to say. 202 is Streamable HTTP's word for it.
+		respond(mcp_http_response_empty(202, "Accepted"));
+	}
+}
+
+void MCPService::_send_http_response(Peer *p_peer, const Dictionary &p_message) {
+	if (p_peer->connection.is_null() || p_peer->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
+		return;
+	}
+	const CharString utf8 = mcp_http_response_json(200, JSON::stringify(p_message)).utf8();
+	p_peer->connection->put_data((const uint8_t *)utf8.get_data(), utf8.length());
+	p_peer->http_awaiting_deferred = false;
+}
+
 bool MCPService::defer_response(const Variant &p_id, int64_t p_token, const Ref<MCPTool> &p_tool, const String &p_checkpoint) {
 	if (!current_peer) {
 		return false;
@@ -310,13 +491,6 @@ bool MCPService::defer_response(const Variant &p_id, int64_t p_token, const Ref<
 	current_peer->deferred.push_back(call);
 	return true;
 }
-
-// ---------------------------------------------------------------- sampling ---
-//
-// Everything else in this file answers a client. This is the one direction that runs
-// the other way: the editor's chat panel has no model, so it asks a connected client
-// to run one. MCP calls that sampling, and it is why the relay is a straight pump
-// rather than a request/response proxy - a frame has to be able to originate here.
 
 void MCPService::_poll_deferred() {
 	MCPDeferred::update();
@@ -350,6 +524,15 @@ void MCPService::_poll_deferred() {
 
 void MCPService::_send(Peer *p_peer, const Dictionary &p_message) {
 	if (p_peer->connection.is_null() || p_peer->connection->get_status() != StreamPeerTCP::STATUS_CONNECTED) {
+		return;
+	}
+	if (p_peer->http) {
+		// An HTTP peer is only ever answered - there is no channel for unsolicited
+		// sends (no SSE, by design). The id check keeps a broadcast notification that
+		// fires mid-defer from being written as the response the request is owed.
+		if (p_peer->http_awaiting_deferred && p_message.has("id")) {
+			_send_http_response(p_peer, p_message);
+		}
 		return;
 	}
 	// One JSON object per line; JSON::stringify never emits a raw newline.
@@ -397,6 +580,13 @@ void MCPService::_write_instance_descriptor() {
 	descriptor["project_name"] = get_project_name();
 	descriptor["editor_version"] = get_editor_version();
 	descriptor["protocol_version"] = MCPProtocol::BRIDGE_VERSION;
+	if (http_port > 0) {
+		descriptor["http_port"] = http_port;
+		// In the descriptor and nowhere else: this file is the user's own state dir and
+		// is chmod 600 below, which is the same trust that protects their SSH keys. A
+		// generated client configuration still references the env var, never the value.
+		descriptor["http_token"] = http_token;
+	}
 	descriptor["started_at"] = Time::get_singleton()->get_unix_time_from_system();
 
 	instance_descriptor_path = dir.path_join(itos(OS::get_singleton()->get_process_id()) + ".json");
@@ -407,6 +597,12 @@ void MCPService::_write_instance_descriptor() {
 		return;
 	}
 	file->store_string(JSON::stringify(descriptor));
+	file.unref();
+	// The descriptor now carries the HTTP token, so it is readable by its owner alone.
+	// Platforms without unix permissions ignore this and rely on the user profile's own
+	// isolation, which is what protects every other secret there too.
+	FileAccess::set_unix_permissions(instance_descriptor_path,
+			FileAccess::UNIX_READ_OWNER | FileAccess::UNIX_WRITE_OWNER);
 }
 
 void MCPService::_remove_instance_descriptor() {

@@ -72,13 +72,36 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 		// Requests this client is still waiting on. Dropped if it disconnects, so a
 		// dialog nobody is listening to cannot answer into a dead socket.
 		Vector<DeferredCall> deferred;
+
+		// HTTP peers speak Streamable HTTP MCP straight to the editor - the transport
+		// that makes a relay process unnecessary (DEC-0014). Same session and deferred
+		// machinery, different framing: one request in, one response out.
+		bool http = false;
+		// The session id the in-flight request named, so its session can be stored
+		// back after dispatch and after a deferred completion.
+		String http_session_id;
+		// An HTTP request whose tool deferred: the response is owed and nothing else
+		// may be parsed from this connection until it is written.
+		bool http_awaiting_deferred = false;
 	};
 
 	Ref<TCPServer> server;
+	// Streamable HTTP listener. A separate socket because the two framings share
+	// nothing on the wire; everything behind the socket is shared.
+	Ref<TCPServer> http_server;
 	Vector<Peer *> peers;
+	// MCP sessions by Mcp-Session-Id. A client may carry one session over many HTTP
+	// connections, so the session cannot live on the connection the way bridge
+	// sessions do.
+	HashMap<String, MCPSession> http_sessions;
 
 	int port = 0;
 	int configured_port = 6010;
+	int http_port = 0;
+	// A per-run bearer token: browsers can POST to localhost from any web page, which
+	// the raw TCP bridge never had to care about. GODOT_AI_HTTP_TOKEN overrides it so
+	// automation can know it in advance.
+	String http_token;
 	bool started = false;
 	bool polling = false;
 
@@ -102,6 +125,9 @@ class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	void _notification(int p_what);
 
 	void _accept_new_peers();
+	void _poll_http_peer(Peer *p_peer);
+	void _handle_http_request(Peer *p_peer, const struct MCPHttpRequest &p_request);
+	void _send_http_response(Peer *p_peer, const Dictionary &p_message);
 	void _poll_peer(Peer *p_peer);
 	void _drop_peer(int p_index);
 	void _send(Peer *p_peer, const Dictionary &p_message);
@@ -153,6 +179,9 @@ public:
 	// State directory shared with godot-ai-relay ($GODOT_AI_HOME, else ~/.godot-ai).
 	static String get_state_dir();
 	static String get_instances_dir();
+
+	int get_http_port() const { return http_port; }
+	String get_http_token() const { return http_token; }
 };
 
 #endif // MCP_SERVICE_H

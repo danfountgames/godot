@@ -1656,6 +1656,10 @@ def run(editor_binary, display):
                 # 604x340 where X11 gives 846x475. Require a drag long enough to be a
                 # drag, not a window wide enough for one particular platform.
                 drag_to_x = min(850, int(game_window["width"]) - 8)
+                # The scroll and wheel checks below aim at the same Surface; keep them
+                # inside the same real window instead of at a fixed (700,300).
+                scroll_x = min(700, int(game_window["width"]) - 8)
+                scroll_y = min(300, int(game_window["height"]) - 8)
                 drag_span = drag_to_x - 550
                 check(drag_span >= 40,
                       "the game window leaves no room for a drag across the Surface, "
@@ -1700,7 +1704,7 @@ def run(editor_binary, display):
 
                 reply = call({"jsonrpc": "2.0", "id": 193, "method": "tools/call",
                               "params": {"name": "Godot_SendPointerInput",
-                                         "arguments": {"action": "scroll", "x": 700, "y": 300,
+                                         "arguments": {"action": "scroll", "x": scroll_x, "y": scroll_y,
                                                        "direction": "down", "amount": 4}}})
                 check(not refused(reply), "scrolling failed: %s" % refusal_text(reply))
                 check(surface("scroll_down") == 4,
@@ -1709,14 +1713,14 @@ def run(editor_binary, display):
 
                 call({"jsonrpc": "2.0", "id": 194, "method": "tools/call",
                       "params": {"name": "Godot_SendPointerInput",
-                                 "arguments": {"action": "scroll", "x": 700, "y": 300,
+                                 "arguments": {"action": "scroll", "x": scroll_x, "y": scroll_y,
                                                "direction": "up", "amount": 2}}})
                 check(surface("scroll_up") == 2,
                       "the surface saw %r wheel-up notches, not 2" % surface("scroll_up"))
 
                 reply = call({"jsonrpc": "2.0", "id": 195, "method": "tools/call",
                               "params": {"name": "Godot_SendPointerInput",
-                                         "arguments": {"action": "scroll", "x": 700, "y": 300,
+                                         "arguments": {"action": "scroll", "x": scroll_x, "y": scroll_y,
                                                        "direction": "sideways"}}})
                 check(refused(reply), "an unknown scroll direction was accepted")
                 print("PASS Godot_SendPointerInput scrolls with real wheel events")
@@ -2318,12 +2322,24 @@ def run(editor_binary, display):
                 # cancellation fails.
                 before_released = surface("touch_released")
                 before_canceled = surface("touch_canceled")
+                # On the Surface, inside whatever window the game actually got. The
+                # fixture Surface spans (500,100)-(900,500); a fixed (700,300) is inside
+                # it on the 846x475 window a virtual display grants and outside the
+                # 604x340 a HiDPI macOS editor leaves the embedded game.
+                window_info = call({"jsonrpc": "2.0", "id": 195, "method": "tools/call",
+                                    "params": {"name": "Godot_GetGameWindowInfo",
+                                               "arguments": {}}})
+                touch_geometry = window_info["result"]["structuredContent"]
+                touch_x = min(700, int(touch_geometry["width"]) - 8)
+                touch_y = min(300, int(touch_geometry["height"]) - 8)
+                check(touch_x >= 500 and touch_y >= 100,
+                      "the game window does not reach the Surface fixture: %r" % touch_geometry)
                 call({"jsonrpc": "2.0", "id": 196, "method": "tools/call",
                       "params": {"name": "Godot_SendTouchInput",
-                                 "arguments": {"action": "down", "x": 700, "y": 300}}})
+                                 "arguments": {"action": "down", "x": touch_x, "y": touch_y}}})
                 reply = call({"jsonrpc": "2.0", "id": 197, "method": "tools/call",
                               "params": {"name": "Godot_SendTouchInput",
-                                         "arguments": {"action": "cancel", "x": 700, "y": 300}}})
+                                         "arguments": {"action": "cancel", "x": touch_x, "y": touch_y}}})
                 check(not refused(reply), "cancelling a touch failed: %s" % refusal_text(reply))
                 check(surface("touch_canceled") == before_canceled + 1,
                       "the game did not see a cancelled touch")
@@ -2335,7 +2351,7 @@ def run(editor_binary, display):
                 # everything a cancellation.
                 call({"jsonrpc": "2.0", "id": 198, "method": "tools/call",
                       "params": {"name": "Godot_SendTouchInput",
-                                 "arguments": {"action": "tap", "x": 700, "y": 300}}})
+                                 "arguments": {"action": "tap", "x": touch_x, "y": touch_y}}})
                 check(surface("touch_released") == before_released + 1,
                       "a normal tap did not produce a release")
                 check(surface("touch_canceled") == before_canceled + 1,

@@ -355,3 +355,56 @@ what every agent gets in every project, template or not.
 **Rejected:** keeping the chat dock hidden behind a setting (weight is weight; the code
 path still has to be maintained and tested), and injecting the full template document
 (past a screenful, models skim — compact and always-present beats complete and unread).
+
+## DEC-0014 — The editor serves MCP itself; the relay is no longer in the product path
+
+**Date:** 2026-08-27. **Instruction:** the user, twice and unambiguously: "why can't we
+make it redundant... the editor spawns them", then "I want NO extra relay program and
+this all inside godot."
+
+**What was wrong with the old path.** The terminal panel's chain was: editor spawns
+agent → agent spawns `godot-ai-relay` → relay dials back into the editor that started
+the chain. For an agent the editor itself launches, the middle process earned nothing —
+it existed because the editor only spoke a private bridge protocol on its socket, and
+agents only speak MCP over stdio or HTTP.
+
+**The constraint that shaped the old design does not apply.** "The relay owns stdio,
+the editor owns the socket" exists because engine prints would corrupt a protocol
+stream on the editor's *stdio*. An HTTP listener owns its own socket; nothing the
+engine prints goes near it.
+
+**What was built.** The editor now serves **Streamable HTTP MCP** directly
+(`mcp_http.{h,cpp}` parsing/formatting as pure tested functions; the listener and
+dispatch inside `MCPService` beside the bridge listener). POST /mcp carries one
+JSON-RPC message through the same `MCPProtocol::handle_message`, the same approval
+gate, the same permission layer and the same deferred-tool machinery as the bridge;
+sessions are keyed by `Mcp-Session-Id` because one MCP session spans many HTTP
+connections. No SSE, no server push — an HTTP client is only ever answered, and a
+broadcast notification that fires while a deferred response is owed is filtered by id
+so it cannot be written as somebody's answer.
+
+**Authentication, and why the bridge never needed it.** Browsers can POST to localhost
+from any web page; they cannot speak raw TCP. So the HTTP endpoint requires a bearer
+token (per-run entropy, or `GODOT_AI_HTTP_TOKEN`), compared in constant time. The token
+lives in the instance descriptor, which is now chmod 600; a generated client
+configuration references `${GODOT_AI_MCP_TOKEN}` and never carries the value — the
+editor puts the real token in its child's environment.
+
+**The terminal now needs no relay.** Its MCP config is `type: http` pointing at
+`127.0.0.1:<http_port>/mcp`; client name and read-only travel as headers and are bound
+to the session at creation, where approval is also decided — same gate, same dialog as
+a bridge client. The relay search, and the failure mode "build tools/relay first",
+are gone from the launch path.
+
+**Evidence.** `tools/relay/tests/run_editor_http_e2e.py` drives a live headless editor
+through urllib only: 401 on wrong/missing token, session issued at initialize, 202 for
+notifications, 93 tools listed, a real tool call answered, unknown session 404,
+read-only write refused naming the capability, DELETE ends the session. Doctests cover
+the parser (partial arrival, pipelining, malformed framing, chunked refusal), the
+constant-time token check, and the config builder carrying no secret.
+
+**What remains of the relay.** External stdio-only clients and the existing e2e
+harness still use it; it is no longer required by anything the editor itself does.
+Teardown order recorded in NEXT.md: port the e2e harness to the HTTP endpoint, migrate
+`--install-backend` configs to HTTP, then retire the binary. Do not delete it before
+its tests stop being the harness.

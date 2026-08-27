@@ -9,7 +9,9 @@ continuity protocol.
 This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 
 - an MCP server inside the editor, with a schema-declared tool registry
-- a local relay binary that bridges MCP stdio clients to the running editor
+- the editor serving Streamable HTTP MCP itself (DEC-0014) - the terminal's agent and
+  any local client connect straight to it, no relay process
+- a relay binary for stdio-bound external clients, being retired from the product path
 - capability-based permissions, client approval, and an audit trail
 - filesystem-discovered skills, trusted only after the user allows them
 - checkpoints taken before any tool writes to the project
@@ -157,9 +159,13 @@ in `.agent/MACOS_EMBEDDING_SPIKE.md`. Read it before touching
   tool must never write a file it did not declare.
 - Keep relay stdout free of everything except protocol frames; diagnostics go to
   stderr.
-- The HTTP transport is loopback-and-token by default. Do not add a path that serves
-  MCP without authorisation, and never write a token into a generated client
-  configuration - reference an environment variable instead.
+- HTTP transports - the editor's own (`mcp_http.{h,cpp}`) and the relay's - are
+  loopback-and-token, compared in constant time. Do not add a path that serves MCP
+  without authorisation, and never write a token into a generated client
+  configuration - reference an environment variable instead. The token may live in the
+  instance descriptor because that file is chmod 600 in the user's own state dir.
+- The editor must never serve MCP over its own stdio: engine prints share that stream.
+  HTTP and the bridge socket are the editor's transports; stdio belongs to the relay.
 - Never run a recursive delete rooted at the current working directory. Test
   fixtures delete through `mcp_test_remove_tree()`, which refuses anything outside
   the cache directory. (A fixture that ignored this once erased the whole checkout.)

@@ -169,6 +169,29 @@ TEST_CASE("[godot_ai] Nothing pre-authorises the editor's tools") {
 	}
 }
 
+TEST_CASE("[godot_ai] The HTTP configuration points at the editor and carries no secret") {
+	const String json = mcp_agent_build_http_mcp_config(6110, "Godot Agent Terminal (claude)", false);
+	const Variant parsed = JSON::parse_string(json);
+	REQUIRE(parsed.get_type() == Variant::DICTIONARY);
+	const Dictionary servers = Dictionary(parsed)["mcpServers"];
+	REQUIRE(servers.has("godot-ai"));
+	const Dictionary server = servers["godot-ai"];
+	CHECK(String(server["type"]) == "http");
+	CHECK(String(server["url"]) == "http://127.0.0.1:6110/mcp");
+	const Dictionary headers = server["headers"];
+	// The env-var reference and nothing else: a committed config must leak nothing.
+	CHECK(String(headers["Authorization"]) == "Bearer ${GODOT_AI_MCP_TOKEN}");
+	CHECK(String(headers["X-Godot-AI-Client-Name"]) == "Godot Agent Terminal (claude)");
+	CHECK_FALSE(headers.has("X-Godot-AI-Read-Only"));
+	// No relay anywhere in it.
+	CHECK_FALSE(json.contains("relay"));
+	CHECK_FALSE(server.has("command"));
+
+	const String read_only = mcp_agent_build_http_mcp_config(6110, "x", true);
+	const Dictionary ro_headers = Dictionary(Dictionary(Dictionary(JSON::parse_string(read_only))["mcpServers"])["godot-ai"])["headers"];
+	CHECK(String(ro_headers["X-Godot-AI-Read-Only"]) == "1");
+}
+
 TEST_CASE("[godot_ai] The briefing teaches the loop, not just the tools") {
 	const String briefing = mcp_agent_editor_briefing(false);
 	// The point of injecting anything is that the agent runs and looks at the game

@@ -96,6 +96,35 @@ String mcp_agent_build_mcp_config(const String &p_relay_path, int p_editor_pid, 
 	return JSON::stringify(config, "\t");
 }
 
+String mcp_agent_build_http_mcp_config(int p_http_port, const String &p_client_name, bool p_read_only) {
+	// Straight to the editor: it spawned this agent, so it serves this agent (DEC-0014).
+	// No relay process, no binary to find, no stdio bridge.
+	Dictionary headers;
+	// The value is an env-var reference on purpose. The editor sets GODOT_AI_MCP_TOKEN
+	// in the child's environment; the configuration file never carries the secret, so a
+	// copied or committed config leaks nothing.
+	headers["Authorization"] = "Bearer ${GODOT_AI_MCP_TOKEN}";
+	if (!p_client_name.is_empty()) {
+		headers["X-Godot-AI-Client-Name"] = p_client_name;
+	}
+	if (p_read_only) {
+		headers["X-Godot-AI-Read-Only"] = "1";
+	}
+
+	Dictionary server;
+	server["type"] = "http";
+	server["url"] = vformat("http://127.0.0.1:%d/mcp", p_http_port);
+	server["headers"] = headers;
+
+	Dictionary servers;
+	servers["godot-ai"] = server;
+
+	Dictionary config;
+	config["mcpServers"] = servers;
+
+	return JSON::stringify(config, "\t");
+}
+
 String mcp_agent_editor_briefing(bool p_read_only) {
 	String briefing =
 			"You are running inside the GodotAI editor's terminal, attached to the live editor "
