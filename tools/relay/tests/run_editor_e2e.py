@@ -2476,6 +2476,49 @@ def run(editor_binary, display):
                       "replaying the capture injected nothing: %r" % replayed_capture)
                 print("PASS a retroactive capture replays like any other session")
 
+                # S6, against a live game rather than only in a unit test: a run whose
+                # events arrive later than the caller is willing to accept must come back
+                # indeterminate, never passed. Zero tolerance is the caller saying no
+                # lateness at all is acceptable - and on a software-rendered editor
+                # driving a game over a debugger channel, there is always some.
+                reply = call({"jsonrpc": "2.0", "id": 251, "method": "tools/call",
+                              "params": {"name": "Godot_ReplaySession",
+                                         "arguments": {"name": "E2E Retroactive Capture",
+                                                       "drift_tolerance_frames": 0,
+                                                       "timeout_seconds": 60}}})
+                check(not refused(reply), "the zero-tolerance replay failed: %s"
+                      % refusal_text(reply))
+                strict = reply["result"]["structuredContent"]
+                # This session carries no assertions, so nothing can outrank drift - which
+                # is what makes it the one that can produce an indeterminate verdict live.
+                # Replaying the recorded session here came back `failed` instead, because a
+                # divergence outranks drift and that is correct.
+                check(strict["verdict"] == "indeterminate",
+                      "a replay with no drift allowance did not report indeterminate: %r" % strict)
+                check("must not be counted as a pass" in strict.get("note", ""),
+                      "an indeterminate verdict does not say what it means: %r" % strict)
+                check(strict["max_drift_frames"] > 0,
+                      "indeterminate without any measured drift: %r" % strict)
+                print("PASS a live replay that drifts past its tolerance is indeterminate, "
+                      "not a pass (%d frames of drift)" % strict["max_drift_frames"])
+
+                # S5: the speed multiplier, and the disclaimer it carries.
+                reply = call({"jsonrpc": "2.0", "id": 252, "method": "tools/call",
+                              "params": {"name": "Godot_ReplaySession",
+                                         "arguments": {"name": "E2E Retroactive Capture",
+                                                       "speed": 4,
+                                                       "timeout_seconds": 60}}})
+                check(not refused(reply), "the sped-up replay failed: %s" % refusal_text(reply))
+                fast = reply["result"]["structuredContent"]
+                check(abs(fast["speed"] - 4.0) < 0.01,
+                      "the replay did not report the speed it ran at: %r" % fast)
+                check("nobody performed" in fast.get("speed_note", ""),
+                      "a sped-up replay does not say what it fails to prove: %r" % fast)
+                check(fast["events_injected"] >= 1,
+                      "the sped-up replay injected nothing: %r" % fast)
+                print("PASS Godot_ReplaySession replays faster and says what that costs")
+
+
                 # --- structured errors -------------------------------------------
                 # Make the game report a real error, so this is checked against
                 # something it must find. An assertion over an empty list passes

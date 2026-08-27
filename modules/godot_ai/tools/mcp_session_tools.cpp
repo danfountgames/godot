@@ -818,6 +818,13 @@ public:
 				"How many frames the game may fall behind the recording before the run is "
 				"called indeterminate. Raising this does not make a drifting run trustworthy.",
 				MCPReplayPlan::DEFAULT_DRIFT_TOLERANCE);
+		properties["speed"] = MCPSchema::number_property(
+				"Replay faster or slower by compressing the recorded frame spacing. 2 replays "
+				"in half the frames. A sped-up replay is a *different* input sequence, not a "
+				"faster one - the gaps between events are part of the sequence - so a pass at "
+				"anything but 1 is a smoke check and the report says so. Use it to get through "
+				"a long trace, then confirm at 1.",
+				1.0);
 		properties["timeout_seconds"] = MCPSchema::integer_property(
 				"How long to allow the whole replay.", 120);
 		Vector<String> required;
@@ -835,6 +842,9 @@ public:
 		properties["assertions_matched"] = MCPSchema::integer_property("Assertions that matched.");
 		properties["max_drift_frames"] = MCPSchema::integer_property(
 				"Worst lateness of any injected event, in frames.");
+		properties["speed"] = MCPSchema::number_property("The speed it was replayed at.");
+		properties["speed_note"] = MCPSchema::string_property(
+				"Present when the speed was not 1: what a result at that speed does not prove.");
 		properties["first_divergence"] = MCPSchema::object_schema(
 				Dictionary(), Vector<String>(), true);
 		return MCPSchema::object_schema(properties);
@@ -867,6 +877,9 @@ public:
 					vformat("no recorded session '%s'; Godot_ListSessions shows what there is", slug));
 			return Dictionary();
 		}
+
+		// Set before load(), which is where the schedule is built from it.
+		plan.set_speed(p_arguments.get("speed", 1.0));
 
 		const Dictionary meta = MCPSessions::read_meta(slug);
 		String load_error;

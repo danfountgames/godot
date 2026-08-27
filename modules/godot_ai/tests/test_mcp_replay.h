@@ -388,6 +388,99 @@ TEST_CASE("[godot_ai] A loaded plan is not finished until it has been started") 
 	CHECK(plan.is_finished());
 }
 
+TEST_CASE("[godot_ai] A speed multiplier compresses the schedule and says what it costs") {
+	Array events;
+	events.push_back(event_at(0, "key"));
+	events.push_back(event_at(60, "key"));
+	events.push_back(event_at(120, "key"));
+
+	MCPReplayPlan plan;
+	plan.set_speed(2.0);
+	String error;
+	REQUIRE(plan.load(events, Array(), 0, error));
+	CHECK(plan.get_expected_span() == 60);
+
+	plan.start(0);
+	Vector<MCPReplayPlan::DueAssertion> due;
+	CHECK(plan.observe(0, due).size() == 1);
+	CHECK(plan.observe(29, due).is_empty());
+	CHECK(plan.observe(30, due).size() == 1);
+	CHECK(plan.observe(60, due).size() == 1);
+	CHECK(plan.is_finished());
+
+	const Dictionary report = plan.to_report();
+	CHECK(double(report["speed"]) == doctest::Approx(2.0));
+	// The honesty is in the artifact, not only in the tool's description. A pass at 2x is
+	// a pass over a sequence nobody performed.
+	CHECK(String(report["speed_note"]).contains("nobody performed"));
+	CHECK(String(report["speed_note"]).contains("1x"));
+}
+
+TEST_CASE("[godot_ai] A replay at 1x says nothing about speed at all") {
+	Array events;
+	events.push_back(event_at(0, "key"));
+	events.push_back(event_at(30, "key"));
+
+	MCPReplayPlan plan;
+	String error;
+	REQUIRE(plan.load(events, Array(), 0, error));
+	plan.start(0);
+	Vector<MCPReplayPlan::DueAssertion> due;
+	plan.observe(0, due);
+	plan.observe(30, due);
+
+	const Dictionary report = plan.to_report();
+	CHECK(double(report["speed"]) == doctest::Approx(1.0));
+	// No note, because there is nothing to disclaim. A caveat attached to every run is a
+	// caveat nobody reads on the run that needed it.
+	CHECK_FALSE(report.has("speed_note"));
+}
+
+TEST_CASE("[godot_ai] Compressing a schedule never puts two moments on one frame") {
+	// Rounding down is what turns a press-then-release into a press-and-release: no
+	// hardware produces that, and a game polling once per frame cannot see it at all.
+	Array events;
+	events.push_back(event_at(0, "key"));
+	events.push_back(event_at(1, "key"));
+	events.push_back(event_at(2, "key"));
+
+	MCPReplayPlan plan;
+	plan.set_speed(8.0);
+	String error;
+	REQUIRE(plan.load(events, Array(), 0, error));
+	plan.start(0);
+
+	Vector<MCPReplayPlan::DueAssertion> due;
+	CHECK(plan.observe(0, due).size() == 1);
+	// Both remaining events are one frame apart at minimum, not collapsed onto frame 0.
+	CHECK(plan.observe(1, due).size() == 2);
+}
+
+TEST_CASE("[godot_ai] An absurd speed is clamped rather than obeyed") {
+	MCPReplayPlan plan;
+	plan.set_speed(1000.0);
+	CHECK(plan.get_speed() == doctest::Approx(8.0));
+	plan.set_speed(0.0);
+	CHECK(plan.get_speed() == doctest::Approx(0.1));
+	plan.set_speed(-3.0);
+	CHECK(plan.get_speed() == doctest::Approx(0.1));
+}
+
+TEST_CASE("[godot_ai] A slowed replay stretches the schedule") {
+	// The other direction is the useful one for a game that is genuinely too slow to keep
+	// up: giving it twice as many frames between events is not cheating, because the
+	// recording's own spacing was never a requirement on the game's frame rate.
+	Array events;
+	events.push_back(event_at(0, "key"));
+	events.push_back(event_at(30, "key"));
+
+	MCPReplayPlan plan;
+	plan.set_speed(0.5);
+	String error;
+	REQUIRE(plan.load(events, Array(), 0, error));
+	CHECK(plan.get_expected_span() == 60);
+}
+
 } // namespace TestMCPReplay
 
 #endif // TEST_MCP_REPLAY_H

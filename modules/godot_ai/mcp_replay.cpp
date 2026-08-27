@@ -43,6 +43,16 @@ String MCPReplayPlan::verdict_to_string(Verdict p_verdict) {
 	}
 }
 
+int64_t MCPReplayPlan::_scaled(int64_t p_offset) const {
+	if (speed == 1.0 || p_offset <= 0) {
+		return p_offset;
+	}
+	// Never collapses two distinct moments onto the same frame while there is a frame to
+	// separate them with: rounding down is what turns a press-then-release into a
+	// press-and-release, which no hardware can produce and many games cannot see.
+	return MAX((int64_t)1, (int64_t)Math::round((double)p_offset / speed));
+}
+
 bool MCPReplayPlan::load(const Array &p_events, const Array &p_assertions,
 		int64_t p_recorded_start, String &r_error) {
 	events.clear();
@@ -85,7 +95,7 @@ bool MCPReplayPlan::load(const Array &p_events, const Array &p_assertions,
 			return false;
 		}
 		ScheduledEvent scheduled;
-		scheduled.offset = (int64_t)frame - recorded_start;
+		scheduled.offset = _scaled((int64_t)frame - recorded_start);
 		if (scheduled.offset < 0) {
 			// A record from before the session started. Clamp rather than refuse: the
 			// recorder clears the trace at start, so this only happens for an event that
@@ -106,7 +116,7 @@ bool MCPReplayPlan::load(const Array &p_events, const Array &p_assertions,
 		ScheduledAssertion scheduled;
 		const Variant frame = record.get("frame", Variant());
 		scheduled.offset = frame.get_type() == Variant::INT || frame.get_type() == Variant::FLOAT
-				? MAX((int64_t)0, (int64_t)frame - recorded_start)
+				? MAX((int64_t)0, _scaled((int64_t)frame - recorded_start))
 				: expected_span;
 		scheduled.node_path = record.get("node_path", String());
 		scheduled.property = record.get("property", String());
@@ -265,6 +275,18 @@ Dictionary MCPReplayPlan::to_report() const {
 	report["max_drift_frames"] = max_drift;
 	report["drift_tolerance_frames"] = drift_tolerance;
 	report["last_frame"] = last_observed;
+	report["speed"] = speed;
+	if (speed != 1.0) {
+		// Said in the report rather than left to the caller to remember. A sped-up replay
+		// is a *different* input sequence: the gaps between events are part of the
+		// sequence, and halving one is a thing no hand did.
+		report["speed_note"] = vformat(
+				"Replayed at %.2fx, so the gaps between events are not the recorded ones. A "
+				"pass here means the game survived a sequence nobody performed; it is a smoke "
+				"check, not evidence about timing, cooldowns, or anything a game reads once "
+				"per frame. Replay at 1x before believing a result about those.",
+				speed);
+	}
 
 	// Bounds-checked as well as reset in load(). An index into a list this object no longer
 	// holds must never be able to take the editor down with it, whatever put it there.
@@ -297,4 +319,11 @@ Dictionary MCPReplayPlan::to_report() const {
 
 void MCPReplayPlan::set_drift_tolerance(int64_t p_frames) {
 	drift_tolerance = MAX((int64_t)0, p_frames);
+}
+
+void MCPReplayPlan::set_speed(double p_speed) {
+	// Clamped rather than refused, and the ceiling is low on purpose. Past about eight
+	// times, every gap in an ordinary trace collapses to the same frame and the "replay"
+	// is one burst of input that resembles nothing.
+	speed = CLAMP(p_speed, 0.1, 8.0);
 }

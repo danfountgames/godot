@@ -108,6 +108,18 @@ public:
 
 	void set_drift_tolerance(int64_t p_frames);
 
+	// Compresses the schedule: 2.0 replays the trace in half the frames.
+	//
+	// **A sped-up replay is a different input sequence, not a faster one.** Halving the
+	// gap between two presses is a thing no hand did and no hardware produced, and a game
+	// polling `is_action_just_pressed` in `_process`, or measuring a gesture per frame, or
+	// running a cooldown, can legitimately behave differently. That is not a defect in the
+	// game and must never be reported as one, so a run at any speed but 1 carries the
+	// multiplier in its report and says what it does not prove. Set before `load()`, which
+	// is where the schedule is built.
+	void set_speed(double p_speed);
+	double get_speed() const { return speed; }
+
 	int64_t get_expected_span() const { return expected_span; }
 
 private:
@@ -125,6 +137,9 @@ private:
 		bool matched = false;
 		Variant observed;
 	};
+
+	// A recorded frame offset, compressed by the speed multiplier.
+	int64_t _scaled(int64_t p_offset) const;
 
 	// Oldest first. observe() walks both in order and relies on it.
 	struct ScheduledEventSorter {
@@ -146,6 +161,7 @@ private:
 	int64_t expected_span = 0;
 	int64_t max_drift = 0;
 	int64_t drift_tolerance = DEFAULT_DRIFT_TOLERANCE;
+	double speed = 1.0;
 	int64_t last_observed = -1;
 
 	bool started = false;
