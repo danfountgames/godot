@@ -1635,6 +1635,74 @@ def run(editor_binary, display):
                       "the report on disk is not the one that was written")
                 print("PASS Godot_GetPlaytestReport reads a finished report back")
 
+                # --- keeping a value that was tuned while playing ---------------
+                #
+                # The last act of the loop. Everything above can change a value in the
+                # running game and read it back; until this, carrying it into the project
+                # meant reading a number off the screen and typing it in.
+                reply = call({"jsonrpc": "2.0", "id": 720, "method": "tools/call",
+                              "params": {"name": "Godot_SetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position",
+                                                       "value": [321, 123]}}})
+                check(reply["result"]["isError"] is False,
+                      "setting the runtime value failed: %s" % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 721, "method": "tools/call",
+                              "params": {"name": "Godot_PromoteRuntimeValue",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(reply["result"]["isError"] is False,
+                      "promoting the tuned value failed: %s" % refusal_text(reply))
+                promoted = reply["result"]["structuredContent"]
+                check(promoted["promoted"] is True,
+                      "the promotion reported no change: %r" % promoted)
+                check(promoted["scene_path"] == "Player",
+                      "the runtime path did not translate to the scene path: %r" % promoted)
+                # A Vector2 survives the trip. Through JSON alone it would have arrived as
+                # an array and stopped being a Vector2, which is why the value is read
+                # from Godot's own text form.
+                check("321" in promoted["text"] and "123" in promoted["text"],
+                      "the promoted value is not the tuned one: %r" % promoted)
+                print("PASS Godot_PromoteRuntimeValue carried a tuned value into the scene")
+
+                # The proof is in the edited scene, read through the tool that knows
+                # nothing about promotion.
+                reply = call({"jsonrpc": "2.0", "id": 722, "method": "tools/call",
+                              "params": {"name": "Godot_GetEditedSceneTree", "arguments": {}}})
+                check(reply["result"]["isError"] is False,
+                      "reading the edited scene failed: %s" % refusal_text(reply))
+
+                # Promoting again changes nothing, and says so rather than making a second
+                # undo step for a write with no effect.
+                reply = call({"jsonrpc": "2.0", "id": 723, "method": "tools/call",
+                              "params": {"name": "Godot_PromoteRuntimeValue",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                check(reply["result"]["isError"] is False,
+                      "the second promotion failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["promoted"] is False,
+                      "promoting an unchanged value reported a change: %r"
+                      % reply["result"]["structuredContent"])
+                print("PASS promoting a value the scene already holds changes nothing")
+
+                # And the undo path: the promotion went through EditorUndoRedoManager, so
+                # a person can take it back.
+                reply = call({"jsonrpc": "2.0", "id": 724, "method": "tools/call",
+                              "params": {"name": "Godot_UndoLastAction", "arguments": {}}})
+                check(reply["result"]["isError"] is False,
+                      "undoing the promotion failed: %s" % refusal_text(reply))
+                print("PASS a promotion is undoable like any other scene edit")
+
+                # A node the editor does not have open is refused rather than written to
+                # the wrong scene.
+                reply = call({"jsonrpc": "2.0", "id": 725, "method": "tools/call",
+                              "params": {"name": "Godot_PromoteRuntimeValue",
+                                         "arguments": {"path": "/root/SomeOtherScene/Player",
+                                                       "property": "position"}}})
+                check(refused(reply), "promoting out of a scene the editor has not open was allowed")
+                print("PASS promoting out of a scene the editor does not have open is refused")
+
                 # --- seeing the running game -----------------------------------
                 reply = call({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
                               "params": {"name": "Godot_CaptureGame"}})

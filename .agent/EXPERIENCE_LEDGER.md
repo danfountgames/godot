@@ -73,7 +73,7 @@ solves with `tools/virtual_display.py`.
 | D1 | `Godot_ProposeChange` renders a per-item Apply/Reject checklist | NOT_STARTED | — | — | — | everything |
 | D2 | Apply goes through `EditorUndoRedoManager`, one transaction per item | NOT_STARTED | — | — | — | everything |
 | D3 | `Godot_OfferVariants`, each behind a checkpoint, switchable live | NOT_STARTED | — | — | — | everything |
-| D4 | Promote a variant to the scene, or discard all, in one call | NOT_STARTED | — | — | — | overlaps the `Godot_PromoteRuntimeValue` quick win |
+| D4 | A variant may be promoted to the persistent scene, or all discarded, in one call | PARTLY (promotion done, variants not) | `tools/mcp_promote_tools.cpp`, `mcp_runtime_paths.{h,cpp}` | `test_mcp_runtime_paths.h`, `run_editor_e2e.py` | `Godot_PromoteRuntimeValue` reads a property from the running game and writes it into the same node in the edited scene, through `EditorUndoRedoManager` and behind a checkpoint | **Built early, at the user's instruction**: "without it, live tuning is theatre because the last act is manual". The join is the interesting part and it is where a promotion could write the right value onto the wrong node, so the runtime-to-scene path rule is its own tested file and refuses when the running scene is not the open one. The value is read from Godot's text form rather than the JSON, because JSON has no Vector2. Variants themselves (D3) are not built |
 
 ---
 
