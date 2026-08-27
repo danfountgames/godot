@@ -23,7 +23,7 @@ partly revalidated** — see below.
 | # | Job | State |
 |---|---|---|
 | 1 | Rebuild on Godot 4.8 and run the full module suite | **Done.** Builds clean; module suite 106 cases / 698 assertions; full engine suite 1523 cases over several runs. Found and fixed a dangling `EditorFileSystem` singleton that crashed the suite roughly one run in four. |
-| 2 | Observe `.github/workflows/godot_ai.yml` succeeding on Actions | **Not done — but unblocked.** `run_editor_e2e.py` had never been able to pass on Linux: a hardcoded drag coordinate exceeded the 846px window a virtual display gives, so the suite failed on an unrelated check. Fixed; it now passes on Linux with a display and headless. That was very likely the blocker. Someone still has to push and watch a run. |
+| 2 | Observe `.github/workflows/godot_ai.yml` succeeding on Actions | **Watched, diagnosed, fixed — awaiting a green run.** The claim that it had "never been observed running" was simply wrong: it had run 62 times and the editor job failed every time, in 70 seconds, at `Build the editor with tests`. Nobody had looked. CI builds with `warnings=extra werror=yes` and the local default does not, so five diagnostics that are warnings here were errors there: two discarded `[[nodiscard]]` results in this module's tests, a doctest `WARN()` on a bare string literal, `errno == EAGAIN \|\| errno == EWOULDBLOCK` (equal values on Linux), a missing `sb_pushline4` initialiser, and a shadowed member. All fixed, and CI's exact command line now builds clean here with every subsequent step passing on that binary. **Lesson: "not observed" is a thing to check, not to record.** |
 | 3 | Run the Windows relay against a Godot editor | **Not done.** Needs a Windows host. Unchanged. |
 
 ## Build order

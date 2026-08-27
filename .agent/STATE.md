@@ -201,8 +201,10 @@ With the S-19 slice, earlier the same day:
   script has ever passed on Linux.
 - `python3 tools/relay/tests/run_editor_e2e.py --headless` → all checks pass.
 - 77 tools are advertised over `tools/list`, up from 73.
-- Not re-run: `run_editor_ui_e2e.py` (needs `xdotool`, which is not installed here; the
-  e2e reports the one dialog-clicking check it skips for the same reason).
+- `python3 tools/relay/tests/run_editor_ui_e2e.py` → **all 14 checks pass**, driving the
+  real editor by keyboard and pointer. `xdotool` and `x11-utils` are installed here now
+  (`apt-get install -y xdotool x11-utils`); they were the only reason this suite and the
+  X-geometry measurements used to be recorded as unavailable.
 
 On the working tree with the S-18 profiler slice (2026-08-13, native macOS
 arm64), at the pre-merge 4.3 baseline:
@@ -259,7 +261,10 @@ until you make them. `tools/relay/build.sh` takes seconds; the editor takes ~8 m
 
 ## Active failures
 
-None.
+None known. The GitHub Actions workflow had been red on every one of its 62 runs and
+nobody had looked; the cause was five `werror` diagnostics that are only warnings in the
+default local build, all now fixed and verified by running CI's own command line here.
+A green run still has to be observed - see `.agent/NEXT.md` item 2.
 
 The intermittent full-suite SIGSEGV that Q1 turned up is **fixed**: `EditorFileSystem`'s
 destructor never cleared its own singleton, so after any test that created and destroyed
