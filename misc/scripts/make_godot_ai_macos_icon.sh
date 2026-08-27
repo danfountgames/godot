@@ -28,7 +28,10 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repository_root="$(cd "$script_dir/../.." && pwd)"
-source_icon="$repository_root/misc/dist/macos_tools.app/Contents/Resources/Godot.icns"
+# The AI-skewed mark, not the stock Godot icns: the brand is the skew, and the badge
+# on top keeps GodotAI tellable from stock Godot at Dock sizes where the circuitry
+# vanishes. NSImage loads SVG natively, so the badge compositor needs no change.
+source_icon="$repository_root/misc/logo/icon.svg"
 output_icon="$repository_root/misc/dist/macos_tools.app/Contents/Resources/GodotAI.icns"
 icon_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/godotai-icon.XXXXXX")"
 
