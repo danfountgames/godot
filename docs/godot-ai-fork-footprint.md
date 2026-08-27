@@ -44,20 +44,25 @@ reads and writes, because none of that code differs by a single line.
 
 ## Will my exports still work?
 
-**Not yet measured on this branch.** By construction it should: the AI stack is compiled
-under `TOOLS_ENABLED` and `modules/godot_ai/config.py` reports `can_build` only for editor
-builds, so none of it exists in a template. But "by construction" is what every leak was
-before it was found, so there is a check:
+**Measured**, on this branch, at commit `ac65b36f12`. A release template built here
+contains none of the tooling:
 
 ```sh
-scons platform=linuxbsd target=template_release
-python3 tools/tests/run_tests.py -k export_template
+$ scons platform=linuxbsd target=template_release   # 14m20s on 4 cores
+$ python3 tools/tests/run_tests.py -k export_template
+PASS an_export_template_contains_none_of_the_tooling
 ```
 
-It scans every `bin/*template*` binary for `Godot_ManageNode`, `Godot_CaptureViewport`,
-`MCPService` and `godot_ai`, and fails on any of them. It is part of the standard tooling
-suite, so it runs in CI — but CI does not build a template, so **it skips there**, and a
-skipped check is not a result. Run it locally after a template build until that changes.
+The check scans every `bin/*template*` binary for `Godot_ManageNode`,
+`Godot_CaptureViewport`, `MCPService` and `godot_ai`. Scanning the 88 MB binary directly for
+those, plus `Godot_OfferVariants`, `Godot_ProposeChange` and `MCPRuntimeAgent`, finds zero
+occurrences of any of them. The AI stack is compiled under `TOOLS_ENABLED` and
+`modules/godot_ai/config.py` reports `can_build` only for editor builds, so none of it is
+even offered to the linker.
+
+One caveat about where this runs. The check is part of the standard tooling suite, so CI
+executes it — but CI does not build a template, so **it skips there**, and a skipped check
+is not a result. Until CI builds one, this has to be run by hand after a template build.
 
 ## Can I remove the module later?
 
