@@ -49,7 +49,29 @@ to end but inside one editor process, and this tranche's own rule 2 requires two
 (replay speed multiplier) was not built at all. **S6** (indeterminate verdicts) is
 unit-tested hard but has not been produced against a live game.
 
-S-20 (in progress): the terminal, ported from `origin/GodotBeamDev` at the user's
+S-21 (done): the closed loop, in four slices, all verified against a live editor.
+
+- **A goal-directed playtest that produces a checkable report.** `mcp_playtest.{h,cpp}`
+  plus four tools. The report's verdict is reconciled against the evidence rather than
+  copied from the claim: a success reported with no input injected, or past a logged
+  error, comes back indeterminate with the reason, and the original claim is kept beside
+  it. P5 came free - a playtest injects through the same input tools as everything else,
+  so the activity stream already had it.
+- **Runtime-value promotion.** `Godot_PromoteRuntimeValue` carries a value tuned in the
+  running game into the edited scene, through `EditorUndoRedoManager` and behind a
+  checkpoint. Built early at the user's instruction. The runtime-to-scene path rule is
+  its own tested file, because that join is where a promotion writes the right value
+  onto the wrong node.
+- **Four skills** for the jobs the tools were built for: `playtest-a-goal`,
+  `investigate-a-crash`, `traverse-the-menus`, `tune-and-keep`. This is the answer to the
+  tool-surface risk the user named; a test now checks every shipped skill parses, since a
+  malformed one silently stops being offered.
+- **Benchmarks** (`tools/benchmarks/`): three projects with planted defects, four tasks
+  with model-free oracles, and a scorecard that counts collateral damage beside
+  successes. `run_selfcheck.py` proves the benchmark measures something by building each
+  project broken and fixed and requiring every oracle to tell them apart.
+
+S-20 (done): the terminal, ported from `origin/GodotBeamDev` at the user's
 request — "a full agent ai terminal built into the editor via a terminal emulator …
 pay very very careful attention to how that branch opens and closes the instances of
 the windows since it was very very prone to crashing." Four layers, each landed with
@@ -86,9 +108,11 @@ Both done since: **E2/E4/E5 are VERIFIED**, every dock control pressed and its e
 asserted (`.agent/evidence/spike_activity_dock_controls.py`), and **W8 does not
 reproduce** (`.agent/evidence/spike_workspace_overdraw.py`).
 
-Next in order, from `.agent/NEXT.md`: a green CI run (item 2 of revalidation - the
-werror failures are fixed and the run now reaches the end-to-end step for the first
-time), then one constrained goal-directed playtest workflow.
+Next in order, from `.agent/NEXT.md`: reproducible bug-session capture as a product
+feature rather than only a skill (build-order item 4 - capture-on-crash is what is
+missing; record and replay already exist), then the live-tuning *workspace* around the
+promotion that now works (D3 variants), then P2 - moving the playtest's perceive/decide/
+act loop into the editor over sampling.
 
 S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
 `Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
@@ -173,8 +197,10 @@ virtual display and the editor's render-capability reporting.
 On this Linux container at 4.8-dev (2026-08-26), with the S-20 terminal slice:
 
 - Editor builds clean, SCU, 4 cores, 0 errors.
-- Module suite (`--test-case="*[godot_ai]*"`, from `/tmp`) → **175 cases, 3074
-  assertions**, all pass (106 before this slice).
+- Module suite → **204 cases from the repository root**, 203 / 3213 assertions from
+  elsewhere; the difference is the shipped-skills test skipping when it cannot reach
+  `misc/godot_ai/skills`, which it says rather than passing by being absent.
+- 88 tools are advertised over `tools/list`.
 - `python3 tools/relay/tests/run_tests.py` → **64/64 pass**.
 - `python3 tools/relay/tests/run_editor_e2e.py` → all checks pass on a real virtual
   display.
@@ -182,6 +208,14 @@ On this Linux container at 4.8-dev (2026-08-26), with the S-20 terminal slice:
   failure is `[IP] resolve_hostname`, which asks for `localhost` over IPv6; this
   container's `/etc/hosts` has no `::1` entry, so it fails identically on the
   unmodified tree.
+- `python3 tools/benchmarks/tests/run_tests.py` → 14 passed.
+- `python3 tools/benchmarks/run_selfcheck.py` → 28 checks, all passing.
+- **GitHub Actions run 64 is green** (`33028524808`) - the first successful run of the
+  workflow, after 63 failures.
+- `python3 .agent/evidence/spike_activity_dock_controls.py` → all checks pass, every
+  Activity dock control pressed with a real pointer under a window manager.
+- `python3 .agent/evidence/spike_workspace_overdraw.py` → all checks pass, both with the
+  user's run embedded and without.
 - `python3 .agent/evidence/spike_agent_terminal_panel.py` → all checks pass: the panel
   is in the tree, its tab opens it, the command field takes a new command, Start runs a
   real process under a pty, typing into the widget reaches the child and its output is
