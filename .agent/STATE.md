@@ -50,9 +50,13 @@ divergence with the value the other process recorded. That is the only check of 
 *format* — a round trip inside one process cannot notice an absolute path or a value still
 sitting in a singleton.
 
-Two rows remain deliberately short of VERIFIED and say so: **S5** (replay speed multiplier)
-was not built at all, and **S6** (indeterminate verdicts) is unit-tested hard but has not
-been produced against a live game.
+**S5 and S6 are now VERIFIED too.** `Godot_ReplaySession` takes a `speed` that compresses
+the recorded frame spacing, and says in the report that a pass at anything but 1 is a smoke
+check over a sequence nobody performed. And a replay with zero drift tolerance now produces
+a real `indeterminate` from a real game — using the retroactively captured session, because
+the recorded one carries an assertion and a divergence correctly outranks drift.
+
+Every S row is verified. The session tranche is done.
 
 S-21 (done): the closed loop, in four slices, all verified against a live editor.
 

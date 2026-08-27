@@ -550,3 +550,28 @@ remains the fastest way to settle a question about the screen.
 ### Next
 - P2, the last unblocked item in the user's build order.
 - S5 (replay speed) is still NOT_STARTED; S6 has never been produced against a live game.
+
+## 2026-08-27 — S5 and S6: the last two session rows
+
+- **S5, replay speed.** `speed` compresses the recorded frame spacing. The honesty is the
+  feature: a sped-up replay is a *different* input sequence, not a faster one, because the
+  gaps between events are part of the sequence. A game polling once per frame, or running a
+  cooldown, can legitimately behave differently, and that is not a defect to report. So any
+  speed but 1 carries a note saying a pass there is a smoke check over a sequence nobody
+  performed; at 1 there is no note, because a caveat on every run is one nobody reads on the
+  run that needed it.
+- Compression never collapses two moments onto one frame while there is a frame to separate
+  them with. Rounding down turns a press-then-release into a press-and-release, which no
+  hardware produces and a game polling once per frame cannot see. Clamped to 0.1-8.
+- **S6, live.** A replay with `drift_tolerance_frames: 0` produces a real `indeterminate`
+  from a real game: 2 frames of measured drift, with the note that it must not be counted as
+  a pass.
+- **A correction worth keeping.** The first attempt replayed the *recorded* session and got
+  `failed` — it carries an assertion, and a divergence outranks drift, which is correct. The
+  check now uses the retroactively captured session, which has no assertions and therefore
+  nothing that can outrank drift. A check that accepted either verdict would have passed
+  while proving nothing, which is the failure mode this whole ledger exists to prevent.
+- Every S row is now VERIFIED.
+
+### Next
+- P2 is the last unblocked item in the user's build order.
