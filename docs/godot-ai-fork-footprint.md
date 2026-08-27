@@ -7,9 +7,9 @@ person maintaining it stops. Those are the questions this document answers, with
 that can be re-derived from the repository rather than with reassurance.
 
 Every figure below is a `git diff` against the upstream commit this fork merged from —
-`457470a8d0`, "Merge pull request #120607". Claims are labelled **measured** only where
-something was actually run, and **not yet measured** where it has not been. The commands
-are given either way, so you can check any of it yourself.
+`457470a8d0`, "Merge pull request #120607". Claims labelled **measured** were checked by
+running something on this branch, with the output quoted. The commands are given so you can
+re-run any of it yourself.
 
 ## The short version
 
@@ -66,16 +66,27 @@ is not a result. Until CI builds one, this has to be run by hand after a templat
 
 ## Can I remove the module later?
 
-**Not yet measured on this branch.** `scons module_godot_ai_enabled=no` is Godot's own
-per-module switch and nothing here opts out of it; the module lives entirely under
-`modules/godot_ai/` and registers itself through the ordinary
-`EditorNode::add_init_callback` path, so there is no reason it should not simply be absent.
-That reasoning is not a measurement, and the way to settle it is:
+**Measured**, on this branch, at commit `ac65b36f12`. `scons module_godot_ai_enabled=no`
+is Godot's own per-module switch and nothing here opts out of it, and the resulting editor
+builds clean and passes the engine's own test suite:
 
 ```sh
-scons platform=linuxbsd target=editor module_godot_ai_enabled=no tests=yes
-./bin/godot.linuxbsd.editor.x86_64 --headless --test
+$ scons platform=linuxbsd target=editor dev_build=yes scu_build=yes tests=yes \
+        module_godot_ai_enabled=no                          # 9m29s on 4 cores
+$ ./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test
+[doctest] test cases: 1417 | 1416 passed | 1 failed | 3 skipped
 ```
+
+The module is genuinely gone rather than merely inert: not one of its source files is
+compiled, `--test-case="*[godot_ai]*"` selects zero cases, and the binary contains no
+occurrence of `Godot_ManageNode`, `MCPService`, `godot_ai` or `MCPRuntimeAgent`.
+
+**About that one failure**, because a document that quietly rounded it to "passes" would be
+worth nothing: it is `[IP] resolve_hostname`, an upstream test that expects `localhost` to
+resolve to an IPv6 loopback. This container provides no IPv6 loopback, so it fails here —
+and it fails identically with the module *enabled*. It is a property of the machine, not of
+removing the module. Anywhere with working IPv6 it should pass; the honest claim is
+"1416 of 1417, with the one failure reproduced on the unmodified configuration too".
 
 What does *not* disappear with the module is the sixteen editor seams — they are compiled
 into the editor either way. They are listed below precisely so you can see how little

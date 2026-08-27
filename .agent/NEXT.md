@@ -116,10 +116,11 @@ to build the general level on.
   *(Started: `docs/godot-ai-fork-footprint.md` measures it.* **Nothing in the engine runtime
   is touched** — not `core/`, `scene/`, `servers/`, `drivers/`, `main/`, or any platform
   backend. Outside its own module the fork is 22 files: 16 in `editor/` at +285/−76, and 6
-  of macOS branding, with 14 of the 16 purely additive. Two claims in that document are
-  still labelled **not yet measured** and must be run before they are believed: that an
-  export template carries none of the tooling, and that `module_godot_ai_enabled=no` gives a
-  working stock editor.*)
+  of macOS branding, with 14 of the 16 purely additive. Both of the document's harder claims
+  are now measured: a release template contains none of the tooling, and
+  `module_godot_ai_enabled=no` builds an editor that passes the engine's own suite — 1416 of
+  1417, the one failure being an upstream IPv6 test that fails identically with the module
+  enabled.*)
 - **No evaluation.** *(Started: `tools/benchmarks/` exists.)* Counts of tools, tests and
   verified requirements measure engineering coverage, not agent effectiveness. Build benchmark Godot projects and measure: how often
   the agent reaches a stated condition; how often it correctly identifies a regression;

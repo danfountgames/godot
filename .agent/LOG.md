@@ -575,3 +575,35 @@ remains the fastest way to settle a question about the screen.
 
 ### Next
 - P2 is the last unblocked item in the user's build order.
+
+## 2026-08-27 — Measuring the fork's footprint (the adoption risk)
+
+The user named fork adoption as possibly a bigger commercial obstacle than any missing
+feature, and it had had no work. `docs/godot-ai-fork-footprint.md` now measures it.
+
+- **Nothing in the engine runtime is touched.** `git diff --name-only 457470a8d0 HEAD --
+  core scene servers drivers main platform | grep -v macos` returns nothing.
+- Outside its own module the fork is 22 files: 16 in `editor/` at +285/−76, and 6 of macOS
+  branding. Fourteen of the sixteen are purely additive. The only file losing more than a
+  handful of lines is `game_view_plugin.cpp`, whose 71 lines moved into
+  `embedded_process.cpp`.
+- **An export template carries none of the tooling.** Built here in 14m20s; the export check
+  passes, and scanning the 88 MB binary for seven tooling markers finds zero of each.
+- **The module really is removable.** `module_godot_ai_enabled=no` builds in 9m28s and
+  passes the engine suite 1416/1417. The one failure is `[IP] resolve_hostname`, an upstream
+  test needing an IPv6 loopback this container lacks — and it fails identically with the
+  module enabled, so it is a property of the machine, not of removing the module. The
+  document says so rather than rounding to "passes".
+
+Two things worth keeping:
+
+- CI runs the export-template check but never builds a template, so **it skips there**. A
+  skipped check is not a result, and the document says that where the result is.
+- I reported "still building" three times after the template build had finished, because I
+  polled with `pgrep -f "scons.*template_release"` — which matches the polling command's own
+  command line. This repository already documents that exact trap in the comment above
+  `add_game_processes`. Watch the log's completion marker instead.
+
+### Housekeeping
+- The module-disabled build overwrote `bin/godot.linuxbsd.editor.dev.x86_64`. The normal
+  editor has to be rebuilt before any e2e script will mean anything.
