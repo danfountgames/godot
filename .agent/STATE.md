@@ -82,9 +82,13 @@ Still to do on this slice: nothing blocking. `claude` is not installed in this
 container, so the one thing not exercised is Claude Code itself accepting the generated
 configuration — a string in a text field and a file whose shape is unit-tested.
 
-Next in order: the Activity dock's remaining rows (E2/E4/E5 controls verified by
-pressing them, which needs `xdotool`), then W8 (embedded native windows draw over tile
-chrome).
+Both done since: **E2/E4/E5 are VERIFIED**, every dock control pressed and its effect
+asserted (`.agent/evidence/spike_activity_dock_controls.py`), and **W8 does not
+reproduce** (`.agent/evidence/spike_workspace_overdraw.py`).
+
+Next in order, from `.agent/NEXT.md`: a green CI run (item 2 of revalidation - the
+werror failures are fixed and the run now reaches the end-to-end step for the first
+time), then one constrained goal-directed playtest workflow.
 
 S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
 `Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
@@ -281,6 +285,24 @@ nothing here. It fails identically on the unmodified tree.
 ## In-flight operation
 
 None.
+
+## Two traps this environment sets
+
+Both cost real time here, and both look like product bugs until measured properly.
+
+- **A bare Xvfb has no window manager, so "maximised" is a fiction.** The X window keeps
+  its original size while the DisplayServer reports the maximised size it asked for -
+  measured here as Godot saying 1600x1000 while X said 1152x648. Every rectangle the
+  editor reports is then off by the difference, and injected input is wrong in exactly
+  the same way, so the tools agree with each other and disagree with reality. Start
+  `openbox` (`apt-get install -y --no-install-recommends openbox`) before pressing
+  anything with a real pointer. Do not pass `--resolution` to the editor on a bare
+  display: it sizes the X window without moving the internal viewport, which produces
+  the same mismatch deliberately.
+- **`xwininfo -root -tree` lists unmapped windows exactly like mapped ones.** A window
+  the editor correctly hid still appears, which is how a hidden game read as drawing
+  over the workspace. The map state has to be asked for per window with
+  `xwininfo -id <id>`.
 
 ## Risks
 
