@@ -1,7 +1,8 @@
 # Agent experience ledger
 
 Derived from `docs/godot-ai-agent-experience-spec.md`: the tranche that makes the
-agent's work visible, and composes the 72 existing primitives into workflows.
+agent's work visible, and composes the primitives into workflows. (It said "the 72
+existing primitives" for a long time; there are now around ninety.)
 
 Statuses: `NOT_STARTED`, `IN_PROGRESS`, `IMPLEMENTED`, `VERIFIED`, `BLOCKED`.
 `IMPLEMENTED` never means complete. `BLOCKED` is only for a genuinely external
@@ -106,10 +107,10 @@ Derived from the user's *GodotAI Agent Workspace* specification. Phase Zero is D
 | ID | Item | Status | Notes |
 |---|---|---|---|
 | Q1 | Build the engine on 4.8 and re-establish the editor-side baseline | VERIFIED | Builds clean (9m46s, SCU, 4 cores, 0 errors). Module suite **74 cases / 526 assertions** on the merged code — identical to the 4.3 numbers, so the merge caused no module regression. Relay 64/64. Full engine suite **1491 cases**, one failure (`[IP] resolve_hostname`, no DNS in this container). It also turned up the intermittent SIGSEGV below, which is the whole reason this row existed. |
-| Q2 | Observe `.github/workflows/godot_ai.yml` green on Actions (spec C1) | UNBLOCKED, not done | **The likely reason it never went green is now fixed.** `run_editor_e2e.py` had never passed on Linux: its drag test sent a fixed 550→850 while a game under a virtual display gets an 846-wide window, so the drag was refused for ending one pixel outside it and the run failed for a reason unrelated to dragging. CI runs exactly that script on exactly that kind of display. The ends are now clamped to the window the game actually got. Still needs someone to push and watch a run. |
+| Q2 | Observe `.github/workflows/godot_ai.yml` green on Actions (spec C1) | VERIFIED | `.github/workflows/godot_ai.yml` | the runs themselves | run 64 was the first green one after 63 consecutive failures, and runs 69-75 are seven consecutive green. The workflow now also carries the benchmark self-check, the skills check and the two-editor replay | none |
 | Q3 | Accept both `text` and `content` on the two write tools | IMPLEMENTED | `MCPSchema::read_aliased_string`; 7 doctest subcases. Two spellings that *disagree* are refused rather than silently resolved. Not VERIFIED until the end-to-end script calls each tool with the other tool's spelling. |
-| Q4 | `Godot_PromoteRuntimeValue` — write a live-tuned value back to the scene | NOT_STARTED | Small; overlaps D4. |
-| Q5 | Grow the skill library past two skills | NOT_STARTED | Machinery outruns content: only `performance-profiling` and `scene-cleanup` ship. |
+| Q4 | `Godot_PromoteRuntimeValue` — write a live-tuned value back to the scene | VERIFIED | `tools/mcp_promote_tools.cpp`, `mcp_runtime_paths.{h,cpp}` | `test_mcp_runtime_paths.h`, `run_editor_e2e.py` | see D4 and D4b; built early at the user's instruction | none |
+| Q5 | Grow the skill library past two skills | VERIFIED | `misc/godot_ai/skills/` | `tools/skills/check_skills.py`, `test_mcp_skills.h` | eight skills covering all five jobs the user named, and a check that fails on any skill naming a tool nothing answers to | none |
 
 ## Bugs this tranche has found
 
