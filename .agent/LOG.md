@@ -401,3 +401,60 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - D1/D2: propose-then-apply with risk-based grouping. The user's words: "not 40 separate
   approvals".
 - P2: moving the playtest's perceive/decide/act loop into the editor over MCP sampling.
+
+## 2026-08-27 — S-21 continued: propose-then-apply (D1/D2)
+
+### Godot_ProposeChange
+
+- An ordered list of changes, each with a description and the exact call that would make
+  it. Every one checked against the real tool and its real schema, then grouped by risk
+  and shown in the editor for a decision.
+- **Risk is computed, not declared.** A tool author who has to remember to mark something
+  dangerous will one day forget, and the capability class plus the checkpoint declaration
+  already say most of it. Three levels: mechanical (reversible and narrow), substantial
+  (reversible but broad or destructive), irreversible (nothing puts it back).
+- The nuance the whole feature rests on: a scene edit declares no checkpoint files because
+  it lives in the undo history until the scene is saved. Reading "no files" as "nothing
+  can put it back" would have misclassified the most ordinary edit there is and put forty
+  renames behind forty approvals — the exact thing the user said not to build.
+- Grouping: mechanical items share one key whatever they touch; substantial items are
+  keyed by subject so two scenes are two decisions; irreversible items are keyed by their
+  own index and can never share a checkbox.
+- **It applies nothing.** The hold, the permission decision, the checkpoint and the audit
+  record all live in the protocol's call path, and a tool that ran other tools would
+  bypass all four. The approved calls go back to the agent and are made normally.
+- Validation is schema-level and the description says so, rather than letting a green plan
+  imply more than it checked: a rule a tool only applies when it runs is not in the schema.
+- Evidence: 18 doctest cases, 4 live e2e checks including declining a plan and applying its
+  defaults — which is the check that a default Apply cannot delete anything, since only the
+  reversible group starts ticked.
+
+### Two dialog defects, both found by trying to press the thing
+
+The e2e could not press the dialog's buttons. Three wrong diagnoses before the right one,
+so both findings are written into the code where the next person will meet them.
+
+1. **The dialog was 1698 pixels tall on an 800-pixel screen**, with its buttons a thousand
+   pixels below the bottom of the display. A `Label` with autowrap reports its minimum
+   *width* as its longest word and then its minimum *height* as what the text needs at that
+   width — which for a paragraph is enormous. Every wrapping label now carries an explicit
+   width, and the window carries a maximum size as well as a minimum.
+2. **A click on `AcceptDialog`'s own button bar never arrives** under a bare Xvfb. The
+   window is where X says it is, the button is where Godot says it is, the two coordinate
+   spaces agree to the pixel, and the press does not land. Buttons in the dialog *body* -
+   the shape `Godot_AskUser` already uses - work. `Godot_SendEditorInput` does not reach a
+   separate native window either; it is fine for the editor's main window, which is what
+   the Activity dock checks use it for.
+
+The e2e now asks the editor where its own button is with `Godot_FindControl` and clicks
+there with a real pointer: coordinates from the editor, click from X. A keystroke is no
+good — with no window manager, X input focus is PointerRoot and `xdotool key` follows the
+pointer.
+
+Both were diagnosed with a throwaway probe that opens the dialog and prints what X and
+Godot each think is where, rather than by another guess inside a sixty-second run. That
+remains the fastest way to settle a question about the screen.
+
+### Next
+- P2: moving the playtest's perceive/decide/act loop into the editor over MCP sampling.
+- Then whatever the benchmarks say is weakest, which is the point of having them.

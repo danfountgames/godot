@@ -71,6 +71,14 @@ partly revalidated** — see below.
 
 Alongside all of it: **benchmark projects and real success rates**.
 
+Not in the user's six, but landed because the design conversation needed it before the
+skills library could lean on it: **propose-then-apply (D1/D2)**. `Godot_ProposeChange`
+puts a validated, risk-grouped plan to the user before any of it happens, and applies
+none of it — the approved calls are handed back and made the ordinary way, so each keeps
+its own permission check, checkpoint and audit record. The grouping honours "not 40
+separate approvals": mechanical changes share one tick however many there are, and an
+irreversible one never shares.
+
 ## Two replay levels
 
 Do not promise "deterministic replay". Raw input is one source of state among many —

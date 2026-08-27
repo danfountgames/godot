@@ -129,10 +129,20 @@ reproduce** (`.agent/evidence/spike_workspace_overdraw.py`).
   variant, deliberately — a runtime property change writes no file, so the checkpoint
   belongs at promotion, where there already is one.
 
-Next in order, from `.agent/NEXT.md`: D1/D2 propose-then-apply with risk-based grouping,
-then P2 — moving the playtest's perceive/decide/act loop into the editor over sampling.
-Build-order items 4 (bug capture) and 5 (promotion and the tuning workspace) are both
-done and listed above.
+- **Propose-then-apply.** `Godot_ProposeChange` takes an ordered list of changes, each with
+  a description and the exact call that would perform it, checks every one against the real
+  tool and its real schema, groups them by risk, and shows them for a decision. The grouping
+  is the requirement — "not 40 separate approvals" — so risk is computed from what a call
+  can actually do rather than declared per tool, and the mechanical ones share a single tick
+  however many there are while an irreversible one is keyed by its own index and can never
+  share. It applies nothing: the approved calls go back to the agent and are made the
+  ordinary way, because the hold, the permission check, the checkpoint and the audit record
+  all live in the protocol's call path.
+
+Next in order, from `.agent/NEXT.md`: P2 — moving the playtest's perceive/decide/act loop
+into the editor over MCP sampling — and then whatever the benchmarks say is weakest.
+Build-order items 4 (bug capture), 5 (promotion and the tuning workspace) and the D1/D2
+half of the design conversation are all done and listed above.
 
 ## A silent failure that predated everything
 
