@@ -93,4 +93,7 @@ void mcp_register_promote_tools();
 // Trying several values for one property against the running game.
 void mcp_register_variant_tools();
 
+// Putting a plan to the user before any of it happens.
+void mcp_register_proposal_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

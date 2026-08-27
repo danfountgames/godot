@@ -1068,6 +1068,178 @@ def run(editor_binary, display):
         elif has_display:
             print("SKIP clicking the dialog: xdotool is not installed")
 
+        # --- proposing a plan before doing any of it ---------------------------
+        #
+        # The claim worth checking is the grouping. "Not 40 separate approvals" is the
+        # requirement; a plan that turned every change into its own tick would satisfy
+        # the letter of it and miss the point entirely.
+        plan_changes = [
+            {"description": "rename the player node", "tool": "Godot_ManageNode",
+             "arguments": {"action": "rename", "path": "Player", "name": "Hero"}},
+            {"description": "rename the enemy node", "tool": "Godot_ManageNode",
+             "arguments": {"action": "rename", "path": "Enemy", "name": "Foe"}},
+            {"description": "drop the unused spawner", "tool": "Godot_ManageNode",
+             "arguments": {"action": "delete", "path": "OldSpawner"}},
+            {"description": "throw away the old save", "tool": "Godot_DeleteUserFile",
+             "arguments": {"path": "user://saves/slot1.json", "confirm": True}},
+        ]
+
+        reply = call({"jsonrpc": "2.0", "id": 760, "method": "tools/call",
+                      "params": {"name": "Godot_ProposeChange",
+                                 "arguments": {"title": "tidy the scene",
+                                               "changes": plan_changes,
+                                               "dry_run": True}}})
+        check(not refused(reply), "building a plan failed: %s" % refusal_text(reply))
+        plan = reply["result"]["structuredContent"]
+        check(plan["item_count"] == 4, "the plan lost changes: %r" % plan)
+        check(plan["decided"] is False, "a dry run reported a decision nobody made: %r" % plan)
+
+        risks = {item["index"]: item["risk"] for item in plan["items"]}
+        # Two renames: scene edits, held in the undo history, so reversible and narrow.
+        check(risks[0] == "mechanical" and risks[1] == "mechanical",
+              "a rename was not treated as reversible: %r" % risks)
+        # Deleting a node is undoable but worth seeing on its own.
+        check(risks[2] == "substantial", "a node delete was mis-ranked: %r" % risks)
+        # Deleting a user file is not undoable by anything here.
+        check(risks[3] == "irreversible", "a file delete was mis-ranked: %r" % risks)
+
+        groups = plan["groups"]
+        check(len(groups) == 3,
+              "four changes should be three decisions, not %d: %r"
+              % (len(groups), [g["key"] for g in groups]))
+        batched = [g for g in groups if g["risk"] == "mechanical"]
+        check(len(batched) == 1 and len(batched[0]["items"]) == 2,
+              "the two reversible changes were not offered as one decision: %r" % groups)
+        print("PASS Godot_ProposeChange turned 4 changes into 3 decisions, ranked by risk")
+
+        # A plan naming a tool that does not exist is refused now, not discovered after
+        # three of its changes have already happened.
+        reply = call({"jsonrpc": "2.0", "id": 761, "method": "tools/call",
+                      "params": {"name": "Godot_ProposeChange",
+                                 "arguments": {"title": "bad plan", "dry_run": True,
+                                               "changes": [{"description": "do a thing",
+                                                            "tool": "Godot_NoSuchTool"}]}}})
+        check(refused(reply), "a plan naming an unknown tool was accepted")
+        check("not a tool" in refusal_text(reply),
+              "the refusal does not say what was wrong: %r" % refusal_text(reply))
+
+        # And one whose arguments the tool's own schema would reject is rejected while it
+        # is still a plan, by that same schema. Schema-level only, and the tool says so:
+        # a rule a tool enforces when it runs - Godot_ManageNode wanting a `path` for a
+        # rename but not for every action - is not in the schema and cannot be caught here.
+        reply = call({"jsonrpc": "2.0", "id": 762, "method": "tools/call",
+                      "params": {"name": "Godot_ProposeChange",
+                                 "arguments": {"title": "bad arguments", "dry_run": True,
+                                               "changes": [{"description": "do something vague",
+                                                            "tool": "Godot_ManageNode",
+                                                            "arguments": {"name": "Hero"}}]}}})
+        check(refused(reply), "a plan missing a required argument was accepted")
+        check("action" in refusal_text(reply),
+              "the refusal does not name the missing argument: %r" % refusal_text(reply))
+
+        # A call nobody described is not a proposal.
+        reply = call({"jsonrpc": "2.0", "id": 763, "method": "tools/call",
+                      "params": {"name": "Godot_ProposeChange",
+                                 "arguments": {"title": "unlabelled", "dry_run": True,
+                                               "changes": [{"tool": "Godot_ListScenes"}]}}})
+        check(refused(reply), "a change with no description was accepted")
+        check("description" in refusal_text(reply),
+              "the refusal does not name the missing field: %r" % refusal_text(reply))
+        print("PASS a plan that could not be carried out is refused while it is still a plan")
+
+        if has_display and shutil.which("xdotool"):
+            # Now the decision itself: ask the editor where its own button is, then click
+            # there with a real pointer.
+            #
+            # Both halves are needed, and finding that out cost two diagnoses. A key press
+            # is no good: there is no window manager on a bare Xvfb, so X input focus is
+            # PointerRoot and `xdotool key` goes wherever the pointer happens to be, which
+            # meant Escape landing in the editor behind the dialog while the test waited
+            # out the whole deferred timeout. And Godot_SendEditorInput is no good either -
+            # it reaches controls in the editor's main window, which is what the Activity
+            # dock checks use it for, but this dialog is a separate native window and the
+            # injected event never arrives. Godot_FindControl still reports the button's
+            # screen rectangle correctly, so the coordinates come from the editor and the
+            # click comes from X.
+            def read_for(identifier, timeout=90):
+                """Reads until the reply to `identifier`, ignoring anything else."""
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    message = relay.read_message(timeout=5)
+                    if message is not None and float(message.get("id", -1)) == float(identifier):
+                        return message
+                return None
+
+            def propose(identifier, arguments):
+                relay.send_message({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                                    "params": {"name": "Godot_ProposeChange",
+                                               "arguments": arguments}})
+                # Wait for the dialog to exist before looking for anything inside it.
+                deadline = time.time() + 20
+                while time.time() < deadline:
+                    relay.send_message({"jsonrpc": "2.0", "id": 900, "method": "tools/call",
+                                        "params": {"name": "Godot_ListWindows",
+                                                   "arguments": {}}})
+                    listed = read_for(900, timeout=20)
+                    titles = [w["title"] for w
+                              in listed["result"]["structuredContent"]["windows"]]
+                    if "Godot AI proposes a change" in titles:
+                        return
+                    time.sleep(0.5)
+                raise Failure("no dialog appeared for the proposal: %r" % titles)
+
+            def press(identifier, label):
+                relay.send_message({"jsonrpc": "2.0", "id": identifier, "method": "tools/call",
+                                    "params": {"name": "Godot_FindControl",
+                                               "arguments": {"text": label, "class": "Button",
+                                                             "window": "Godot AI proposes a change"}}})
+                found = read_for(identifier, timeout=30)
+                check(found is not None, "looking for the %r button produced no reply" % label)
+                matches = found["result"]["structuredContent"]["matches"]
+                check(matches, "the plan dialog has no %r button" % label)
+                check(matches[0]["window"] == "Godot AI proposes a change",
+                      "the %r button found is not the plan dialog's: %r" % (label, matches[0]))
+                xdotool(display.display, "mousemove", str(matches[0]["center_x"]),
+                        str(matches[0]["center_y"]), "click", "1")
+
+            propose(764, {"title": "tidy the scene", "changes": plan_changes,
+                          "timeout_seconds": 90})
+            press(770, "Leave It")
+            reply = read_for(764)
+            check(reply is not None, "declining the plan produced no response")
+            check(not refused(reply), "declining the plan errored: %s" % refusal_text(reply))
+            dismissed = reply["result"]["structuredContent"]
+            check(dismissed["cancelled"] is True,
+                  "declining the plan was not reported as a cancellation: %r" % dismissed)
+            check(dismissed["approved_items"] == [],
+                  "a declined plan approved something: %r" % dismissed)
+            check(dismissed["calls"] == [],
+                  "a declined plan handed back calls to make: %r" % dismissed)
+            print("PASS declining a plan approves nothing and hands back no calls")
+
+            propose(780, {"title": "tidy the scene", "changes": plan_changes,
+                          "timeout_seconds": 90})
+            # Only the reversible group starts ticked, so pressing Apply straight away is
+            # the check that a default Apply cannot delete anything.
+            press(790, "Apply Ticked")
+            reply = read_for(780)
+            check(reply is not None, "accepting the plan produced no response")
+            check(not refused(reply), "accepting the plan errored: %s" % refusal_text(reply))
+            decided = reply["result"]["structuredContent"]
+            check(decided["decided"] is True, "the plan was not decided: %r" % decided)
+            check(sorted(decided["approved_items"]) == [0, 1],
+                  "accepting the default ticks approved the wrong changes: %r" % decided)
+            check(3 in decided["rejected_items"],
+                  "the irreversible change was approved by default: %r" % decided)
+            check([c["index"] for c in decided["calls"]] == [0, 1],
+                  "the calls handed back are not the approved ones: %r" % decided["calls"])
+            # And they carry the real arguments, because that is what was agreed to.
+            check(decided["calls"][0]["arguments"]["name"] == "Hero",
+                  "the approved call lost its arguments: %r" % decided["calls"][0])
+            print("PASS applying a plan's defaults approves the reversible changes and no others")
+        elif has_display:
+            print("SKIP deciding a plan: xdotool is not installed")
+
         # --- screenshots ------------------------------------------------------
         inspector_resource_args = {
             "resource": "res://docs/inspector_fixture.tres",
