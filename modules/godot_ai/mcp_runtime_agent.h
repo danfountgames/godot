@@ -205,6 +205,7 @@ class MCPRuntimeAgent {
 	static Dictionary _window_info(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _send_touch(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _send_gamepad(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _send_action(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _input_trace(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _runtime_errors(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _resize_window(const Dictionary &p_arguments, String &r_error);

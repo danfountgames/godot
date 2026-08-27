@@ -91,6 +91,9 @@ python3 tools/relay/tests/run_tests.py
 # Virtual-display tests (fast loop, no engine build).
 python3 tools/tests/run_tests.py
 
+# Do the shipped skills name tools that exist? (fast loop, no engine build)
+python3 tools/skills/check_skills.py
+
 # Benchmarks: the scoring logic, then whether the planted defects still reproduce.
 # Neither needs an engine build. The self-check matters most - a benchmark whose defect
 # stops reproducing fails in the flattering direction, with every agent passing.

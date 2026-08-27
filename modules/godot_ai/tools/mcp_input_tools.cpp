@@ -648,6 +648,26 @@ Dictionary gamepad_schema() {
 	return MCPSchema::object_schema(properties);
 }
 
+Dictionary action_schema() {
+	Dictionary properties;
+	properties["action"] = MCPSchema::string_property(
+			"The InputMap action's name, such as 'jump' or 'ui_accept'. Required. An action "
+			"the project does not define is refused rather than sent into the void.");
+	Vector<String> modes;
+	modes.push_back("tap");
+	modes.push_back("press");
+	modes.push_back("release");
+	properties["press"] = MCPSchema::enum_property(
+			"'tap' presses and releases; 'press' holds it down until you release it.", modes,
+			"tap");
+	properties["strength"] = MCPSchema::number_property(
+			"How hard, from 0 to 1. Matters for anything reading get_action_strength - an "
+			"analogue stick half over is not the same input as a key.", 1.0);
+	Vector<String> required;
+	required.push_back("action");
+	return MCPSchema::object_schema(properties, required);
+}
+
 Dictionary clearable_schema(const String &p_what) {
 	Dictionary properties;
 	properties["clear"] = MCPSchema::bool_property(
@@ -720,6 +740,17 @@ void mcp_register_input_tools() {
 			"away. The last one matters more than it sounds - a controller unplugged mid-game "
 			"must not strand the player in a menu they can no longer move through.",
 			MCP_CAP_SIMULATE_INPUT, gamepad_schema()))));
+
+	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+			"Godot_SendActionInput", "send_action",
+			"Trigger an InputMap action in the running game by name - 'jump', 'ui_accept' - "
+			"rather than whatever key happens to be bound to it. This is the right tool for "
+			"testing that an input *path* works: the game reads the action, so a test written "
+			"against the key passes until somebody rebinds it and then fails for a reason that "
+			"has nothing to do with jumping. It exercises the same route the player's key takes. "
+			"An action the project does not define is refused, with the actions it does define "
+			"named, because input the game never saw must not be reported as input it received.",
+			MCP_CAP_SIMULATE_INPUT, action_schema()))));
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_GetInputTrace", "input_trace",

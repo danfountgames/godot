@@ -77,6 +77,9 @@ String command_for_kind(const String &p_kind) {
 	if (p_kind == "gamepad") {
 		return "send_gamepad";
 	}
+	if (p_kind == "action") {
+		return "send_action";
+	}
 	return String();
 }
 

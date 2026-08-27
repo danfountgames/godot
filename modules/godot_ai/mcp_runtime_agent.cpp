@@ -36,6 +36,7 @@
 #include "core/debugger/engine_debugger.h"
 #include "core/input/input.h"
 #include "core/input/input_event.h"
+#include "core/input/input_map.h"
 #include "core/io/dir_access.h"
 #include "core/templates/local_vector.h"
 #include "core/io/image.h"
@@ -835,6 +836,9 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "send_gamepad") {
 		return _send_gamepad(p_arguments, r_error);
+	}
+	if (p_command == "send_action") {
+		return _send_action(p_arguments, r_error);
 	}
 	if (p_command == "input_trace") {
 		return _input_trace(p_arguments, r_error);
@@ -2013,6 +2017,109 @@ Dictionary MCPRuntimeAgent::_send_gamepad(const Dictionary &p_arguments, String 
 	Dictionary result = detail;
 	result["frame"] = recorded_frame;
 	result["events"] = events;
+	return result;
+}
+
+// An InputMap action, by name, rather than whatever key happens to be bound to it.
+//
+// This is the primitive for testing that an input *path* works: a game reads "jump", not
+// "Space", and a test written against Space passes until somebody rebinds it and then
+// fails for a reason that has nothing to do with jumping. Sending the action exercises
+// the same route the player's key takes - Input::action_press feeds the same
+// `Input::is_action_pressed` state and reaches the game's `_input` - without pinning the
+// test to a binding.
+Dictionary MCPRuntimeAgent::_send_action(const Dictionary &p_arguments, String &r_error) {
+	Input *input = Input::get_singleton();
+	if (!input) {
+		r_error = "the running game cannot receive input";
+		return Dictionary();
+	}
+
+	// has() rather than operator[]: reading a missing key through a const Dictionary
+	// inserts a null, and these arguments are echoed back in the result.
+	const String name = p_arguments.has("action") ? String(p_arguments["action"]).strip_edges() : String();
+	if (name.is_empty()) {
+		r_error = "sending an action needs its name, such as 'ui_accept' or 'jump'";
+		return Dictionary();
+	}
+	if (!InputMap::get_singleton()->has_action(name)) {
+		// Refused rather than sent into the void. An action nobody defined does nothing at
+		// all, and a test that "pressed jump" against a project with no `jump` action would
+		// otherwise report success for input the game never saw - which is the exact class
+		// of silent lie this interface exists to avoid.
+		String known;
+		int listed = 0;
+		// By value: get_actions() hands back a List<StringName> whose iteration yields a
+		// Variant, so a reference here would bind to a temporary.
+		for (const StringName candidate : InputMap::get_singleton()->get_actions()) {
+			// The project's own actions first; the engine's `ui_*` set is long, familiar,
+			// and not usually what a caller meant to name.
+			if (String(candidate).begins_with("ui_")) {
+				continue;
+			}
+			if (listed++ >= 12) {
+				known += ", …";
+				break;
+			}
+			known += (listed > 1 ? ", " : "") + String(candidate);
+		}
+		r_error = vformat("this project has no input action called '%s'%s", name,
+				known.is_empty() ? String() : vformat("; it defines %s", known));
+		return Dictionary();
+	}
+
+	const String how = p_arguments.has("press") ? String(p_arguments["press"]) : String("tap");
+	const float strength = p_arguments.has("strength") ? CLAMP((float)p_arguments["strength"], 0.0f, 1.0f) : 1.0f;
+
+	// An InputEventAction through the ordinary pipeline, not Input::action_press.
+	//
+	// `action_press` only sets the singleton's internal state: `Input.is_action_pressed`
+	// becomes true and `_input` is never called, so a game that reads the event - which is
+	// most games, and every menu - sees nothing at all. Parsing an event does both, because
+	// Input's own handling of an InputEventAction updates the same action state. The first
+	// version of this used action_press and the end-to-end check caught it immediately,
+	// which is the whole argument for having one.
+	auto send = [&](bool p_pressed) {
+		Ref<InputEventAction> event;
+		event.instantiate();
+		event->set_action(name);
+		event->set_pressed(p_pressed);
+		event->set_strength(p_pressed ? strength : 0.0f);
+		inject(event);
+	};
+
+	int events = 0;
+	if (how == "press") {
+		send(true);
+		events = 1;
+	} else if (how == "release") {
+		send(false);
+		events = 1;
+	} else if (how == "tap") {
+		send(true);
+		send(false);
+		events = 2;
+	} else {
+		r_error = vformat("unknown action mode '%s'; expected tap, press or release", how);
+		return Dictionary();
+	}
+
+	Dictionary detail;
+	detail["action"] = name;
+	detail["press"] = how;
+	detail["strength"] = strength;
+	const int64_t recorded_frame = _record("action", detail);
+
+	Dictionary result = detail;
+	result["frame"] = recorded_frame;
+	result["events"] = events;
+	// A press with no release stays down until something releases it, which is the point
+	// of having the mode - and also the way a run ends up walking into a wall for the rest
+	// of the session.
+	if (how == "press") {
+		result["note"] = "this action is now held down; send it again with press='release' "
+						 "when the hold is over";
+	}
 	return result;
 }
 

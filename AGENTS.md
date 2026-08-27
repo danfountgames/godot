@@ -55,6 +55,7 @@ libxrandr-dev libasound2-dev`, plus `pip install scons`. Run `apt-get update` fi
 ```sh
 python3 tools/relay/tests/run_tests.py                 # fastest signal, no engine build
 python3 tools/tests/run_tests.py                       # virtual display, no engine build
+python3 tools/skills/check_skills.py                   # shipped skills name tools that exist
 python3 tools/benchmarks/tests/run_tests.py            # benchmark scoring, no engine build
 python3 tools/benchmarks/run_selfcheck.py              # the benchmarks still measure something
 bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"

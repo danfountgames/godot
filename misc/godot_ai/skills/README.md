@@ -2,7 +2,7 @@
 
 Skills are reusable workflow instructions the editor discovers from the filesystem.
 
-They exist because the tool surface is large. There are more than eighty `Godot_*`
+They exist because the tool surface is large. There are more than ninety `Godot_*`
 tools, and a model choosing among eighty similar names picks the wrong one, or builds a
 sequence that never made sense, more often than one following a named workflow. A skill
 is that named workflow: "run a playtest", "investigate a crash", "tune this and keep
@@ -17,7 +17,9 @@ work here, not an advanced option.
 | `traverse-the-menus` | Walk every reachable screen and report what is unreachable, what has no way back, and what does nothing |
 | `tune-and-keep` | Adjust a value in play, judge it, and promote the one that felt right into the scene |
 | `performance-profiling` | Capture a profiler window and read it |
-| `scene-cleanup` | Tidy an edited scene's names and structure |
+| `find-a-performance-regression` | It used to be fast: measure the same sequence twice and attribute the difference |
+| `test-an-input-path` | Prove an input reaches what it drives, on every device the game claims to support |
+| `scene-cleanup` | Tidy a scene by proposing the whole plan first, so the renames are one decision and a delete is its own |
 
 Copy a folder from here into one of the discovery roots to use it:
 

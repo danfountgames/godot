@@ -48,6 +48,13 @@ jobs:
       - name: Check the benchmarks still measure something
         run: python3 tools/benchmarks/run_selfcheck.py
 
+      # A skill naming a tool that does not exist is worse than an omission: the model
+      # reaches for it, gets "unknown tool", and either abandons the skill or improvises
+      # around it, and nobody sees that until it happens in front of a user. Needs no
+      # build, so it runs here rather than in the editor job.
+      - name: Check the shipped skills name tools that exist
+        run: python3 tools/skills/check_skills.py
+
       # The Windows backend cannot be run here, but keeping it compiling is what
       # stops it rotting between releases.
       - name: Install the Windows cross-compiler

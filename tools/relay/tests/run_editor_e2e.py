@@ -55,6 +55,17 @@ config/name="AI E2E Project"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3")
 
+[input]
+
+; A project-defined action, so Godot_SendActionInput can be tested against the thing it
+; is actually for: a game reads the action, not the key, and a test bound to the key
+; passes until somebody rebinds it.
+e2e_fire={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":70,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+
 [rendering]
 
 ; The *game* process inherits the project's renderer, not the editor's command line.
@@ -76,6 +87,11 @@ var drag_events := 0
 var drag_had_button := false
 var scroll_up := 0
 var scroll_down := 0
+
+var action_pressed := 0
+var action_released := 0
+var action_is_held := false
+var action_strength := 0.0
 
 # A cancelled touch is not a release. The engine models it as pressed = false *and*
 # canceled = true, so `is_released()` is false for it - a game that collapses the two
@@ -107,6 +123,19 @@ func _input(event: InputEvent) -> void:
 			touch_canceled += 1
 		else:
 			touch_released += 1
+	# Read as an *action*, which is what a game does, so a test of Godot_SendActionInput
+	# proves the input reached the path the player's key would take rather than proving
+	# that some event arrived.
+	if event.is_action_pressed("e2e_fire"):
+		action_pressed += 1
+		action_strength = event.get_action_strength("e2e_fire")
+	elif event.is_action_released("e2e_fire"):
+		action_released += 1
+
+func _process(_delta: float) -> void:
+	# The held state, not the event. A press with no release has to be visible as a
+	# *state*, or "held" and "tapped" are indistinguishable from the outside.
+	action_is_held = Input.is_action_pressed("e2e_fire")
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
@@ -927,8 +956,15 @@ def run(editor_binary, display):
         check(reply["result"]["isError"] is False,
               "reading the skill failed: %s" % refusal_text(reply))
         text = reply["result"]["structuredContent"]["text"]
-        check(text.startswith("You are a Godot scene-maintenance specialist."),
+        # What matters is that the front matter is gone and the instructions are there -
+        # not the skill's opening sentence, which is prose and is rewritten whenever the
+        # workflow improves. Pinning the sentence made editing a skill fail this check.
+        check(not text.lstrip().startswith("---"),
               "skill instructions were not returned with the frontmatter stripped")
+        check("name: scene-cleanup" not in text,
+              "the skill's front matter leaked into its instructions")
+        check("Godot_ManageNode" in text,
+              "the skill instructions do not mention the tool they are about")
         print("PASS Godot_ReadSkill returned the instructions")
 
         reply = call({"jsonrpc": "2.0", "id": 42, "method": "tools/call",
@@ -2191,6 +2227,62 @@ def run(editor_binary, display):
                                          "arguments": {"action": "nonsense"}}})
                 check(refused(reply), "an unknown gamepad action was accepted")
                 print("PASS Godot_SendTouchInput and Godot_SendGamepadInput deliver events")
+
+                # --- input by action, not by key ---------------------------------
+                #
+                # The game reads an action; a test bound to the key passes until somebody
+                # rebinds it. The fixture counts `is_action_pressed`, so this proves the
+                # input took the same route the player's key takes rather than proving
+                # that some event arrived.
+                before_pressed = surface("action_pressed")
+                reply = call({"jsonrpc": "2.0", "id": 110, "method": "tools/call",
+                              "params": {"name": "Godot_SendActionInput",
+                                         "arguments": {"action": "e2e_fire"}}})
+                check(not refused(reply),
+                      "sending an action failed: %s" % refusal_text(reply))
+                check(reply["result"]["structuredContent"]["events"] == 2,
+                      "a tap should be a press and a release: %r"
+                      % reply["result"]["structuredContent"])
+                check(surface("action_pressed") == before_pressed + 1,
+                      "the game did not see the action as pressed")
+                check(surface("action_released") >= 1,
+                      "the game did not see the action released")
+                check(surface("action_is_held") is False,
+                      "a tapped action was left held down")
+
+                # Held is a different test from tapped, and the reply says so rather than
+                # leaving a run to walk into a wall for the rest of the session.
+                reply = call({"jsonrpc": "2.0", "id": 111, "method": "tools/call",
+                              "params": {"name": "Godot_SendActionInput",
+                                         "arguments": {"action": "e2e_fire",
+                                                       "press": "press", "strength": 0.5}}})
+                check(not refused(reply), "holding an action failed: %s" % refusal_text(reply))
+                check("held down" in reply["result"]["structuredContent"].get("note", ""),
+                      "holding an action does not say it is still held: %r"
+                      % reply["result"]["structuredContent"])
+                check(surface("action_is_held") is True,
+                      "the game does not report the action as held")
+                check(abs(surface("action_strength") - 0.5) < 0.01,
+                      "the strength did not reach the game: %r" % surface("action_strength"))
+
+                reply = call({"jsonrpc": "2.0", "id": 112, "method": "tools/call",
+                              "params": {"name": "Godot_SendActionInput",
+                                         "arguments": {"action": "e2e_fire",
+                                                       "press": "release"}}})
+                check(not refused(reply), "releasing an action failed: %s" % refusal_text(reply))
+                check(surface("action_is_held") is False, "the action stayed held after release")
+
+                # An action nobody defined is refused, and the refusal names what the
+                # project does define. Input the game never saw must not be reported as
+                # input it received.
+                reply = call({"jsonrpc": "2.0", "id": 113, "method": "tools/call",
+                              "params": {"name": "Godot_SendActionInput",
+                                         "arguments": {"action": "no_such_action"}}})
+                check(refused(reply), "an action the project does not define was accepted")
+                check("e2e_fire" in refusal_text(reply),
+                      "the refusal does not name the actions that do exist: %r"
+                      % refusal_text(reply))
+                print("PASS Godot_SendActionInput drives the action path, held and tapped")
 
                 # A cancelled touch is not a release, and the difference is the whole
                 # reason this exists: a game that collapses the two fires the button the

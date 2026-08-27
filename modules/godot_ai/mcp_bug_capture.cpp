@@ -73,6 +73,9 @@ String MCPBugCapture::kind_for_command(const String &p_command) {
 	if (p_command == "send_gamepad") {
 		return "gamepad";
 	}
+	if (p_command == "send_action") {
+		return "action";
+	}
 	return String();
 }
 
