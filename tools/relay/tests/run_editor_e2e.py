@@ -1098,12 +1098,18 @@ def run(editor_binary, display):
             (83, "Godot_CaptureInspectorProperty", inspector_node_args),
             (84, "Godot_CaptureSceneTreeNode", scene_tree_args),
         ]
+        # Timed, and the timing printed whether or not it passes. These advance on drawn
+        # frames against a 90-second budget, and the failure mode is not a wrong image -
+        # it is creeping back up towards that ceiling until CI goes red intermittently. A
+        # number in the log makes the drift visible while it is still only drift.
         semantic_replies = []
         for identifier, tool_name, arguments in semantic_captures:
+            began = time.monotonic()
             semantic_replies.append((tool_name, arguments, call({
                 "jsonrpc": "2.0", "id": identifier, "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             })))
+            print("      %s answered in %.1fs" % (tool_name, time.monotonic() - began))
 
         # This editor is headless, so the honest answer is a refusal that names the
         # reason - not a blank image presented as if it were the editor.

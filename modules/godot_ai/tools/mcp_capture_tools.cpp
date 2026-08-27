@@ -53,6 +53,7 @@
 #include "editor/scene/editor_scene_tabs.h"
 #include "editor/scene/scene_tree_editor.h"
 #include "editor/docks/inspector_dock.h"
+#include "main/main.h"
 #include "editor/docks/scene_tree_dock.h"
 #include "scene/gui/scroll_container.h"
 #include "scene/gui/tab_container.h"
@@ -71,6 +72,20 @@ constexpr uint64_t CAPTURE_BUDGET_MSEC = 90000;
 // The deferred layer's own deadline is only a backstop; the budget above fires first, so
 // the caller is told which stage stalled rather than just that something did.
 constexpr double DEFERRED_BACKSTOP_SECONDS = 120.0;
+
+// Asks the editor to draw the next iteration.
+//
+// The stages below advance on `Engine::get_frames_drawn()`, and the editor does not draw
+// on a timer: `Main::iteration()` skips its draw step entirely when nothing has marked
+// anything dirty. On a developer's machine something always has - a cursor blink, a
+// hovered control, a compositor - so the counter creeps up and the wait ends. On a bare
+// Xvfb runner with no pointer and no window manager, nothing does, and the tool waited
+// ninety seconds for five frames that were never going to come. The diagnosis that took
+// two red CI runs: the editor was not slow, it was idle, and asking politely is the whole
+// fix. A one-shot flag, so this has to be called on every poll.
+void mcp_request_editor_frame() {
+	Main::force_redraw();
+}
 
 
 // Returning the image inline is what makes this useful to a model, but a screenshot
@@ -416,6 +431,12 @@ class CaptureInspectorPropertyTool : public MCPTool {
 		return chain;
 	}
 
+	void _ask_for_a_frame() {
+		if (stage != IDLE) {
+			mcp_request_editor_frame();
+		}
+	}
+
 	String _stage_name() const {
 		switch (stage) {
 			case WAITING_FOR_INSPECTOR:
@@ -623,6 +644,7 @@ class CaptureInspectorPropertyTool : public MCPTool {
 		if (_budget_exhausted()) {
 			return Variant();
 		}
+		_ask_for_a_frame();
 		if (stage == WAITING_FOR_INSPECTOR) {
 			if (Engine::get_singleton()->get_frames_drawn() < inspect_after_frame) {
 				return Variant();
@@ -1139,6 +1161,7 @@ class CaptureSceneTreeNodeTool : public MCPTool {
 		if (!active) {
 			return Variant();
 		}
+		mcp_request_editor_frame();
 		// Same budget and the same reasoning as the Inspector capture: this advances on
 		// drawn frames, so on a slow software renderer a short deadline fails a test that
 		// was only being patient.
