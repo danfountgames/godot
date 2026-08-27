@@ -345,3 +345,59 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 ### Next
 - Build-order item 5's second half: the live-tuning workspace and variants (D3) around
   the promotion that works. Then D1/D2 propose-then-apply, then P2.
+
+## 2026-08-27 — S-21 continued: the live tuning workspace
+
+### Godot_OfferVariants (build-order item 5's second half, D3/D4)
+
+- One tool with actions - offer, switch, note, keep, discard, status - rather than five
+  tools. The tool surface is itself a reliability risk, and these are six moments in one
+  gesture rather than six capabilities.
+- Framed as the user asked: a live tuning workspace, one node and one property and a
+  handful of named candidates, not general AI-generated alternatives.
+- The original is captured before anything changes and is always a candidate. Comparing
+  against what the game already had is the comparison that gets forgotten.
+- A candidate that was never live cannot be kept, and the refusal names the tool to use
+  instead. Keeping a value nobody played is editing the scene by a longer route.
+- Discard restores the original *in the running game*, or says plainly it could not.
+- The set holds the clock, so it measures how long each value was live. Under 500 ms is
+  flagged per candidate and summarised as "a choice rather than a comparison". Reported,
+  never enforced - overruling the person tuning is not the tool's job.
+- `keep` writes nothing. It hands off to `Godot_PromoteRuntimeValue`, because this tool is
+  `read_runtime` and promotion is `edit_scene`; one tool holding both would hold more
+  authority than it declares. It warns when the game is not currently holding the value
+  being kept, so promoting afterwards cannot quietly write the last thing tried.
+- No checkpoint per variant, against the spec's wording. A checkpoint snapshots project
+  files and a runtime property change writes none; the checkpoint belongs at promotion,
+  which already takes one. The spec assumed variants were scene edits. Live tuning is not.
+- Evidence: 17 doctest cases on the pure core, 8 live e2e checks driving the whole loop,
+  including promoting after a keep and checking the *kept* value is what reached the scene.
+
+### A round trip that never worked
+
+- Building discard found a defect older than this whole tranche. `get_property` sends the
+  value twice, as JSON and as Godot's text. `coerce()` took **neither** form of a
+  structured type back: JSON turns a Vector2 into the string `(128, 64)`, and
+  `can_convert` says - correctly, for a general string - that a String is not a Vector2.
+- So the two halves of the interface disagreed. You could read a position out of a running
+  game and not write the same string back in, and every round trip of a structured
+  property failed silently while reporting success.
+- `coerce()` now tries Godot's own parser for a string whose target is not a string type.
+  `test_mcp_runtime_coerce.h` asserts the invariant over eight types: whatever the runtime
+  prints, the runtime accepts back.
+- Recorded rather than hidden while in there: Godot's String-to-Color conversion accepts
+  anything and answers black, so a typo in a colour name sets black and reports success.
+  That is the engine's behaviour and not this module's to override - refusing it would
+  refuse "red" - but there is now a test that says so out loud.
+
+### CI
+
+- Run 69 (bug capture) and run 70 (the redraw fix) are both fully green. On run 70 the
+  end-to-end step took 69 seconds on the same runner where `Godot_CaptureInspectorProperty`
+  had been hitting a 90-second timeout, which confirms the diagnosis on the machine that
+  produced it rather than only on this one.
+
+### Next
+- D1/D2: propose-then-apply with risk-based grouping. The user's words: "not 40 separate
+  approvals".
+- P2: moving the playtest's perceive/decide/act loop into the editor over MCP sampling.

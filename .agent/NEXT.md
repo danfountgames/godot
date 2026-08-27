@@ -59,6 +59,13 @@ partly revalidated** — see below.
    right, the temporary value becomes the authored value. Without it, live tuning is
    theatre because the last act is manual. Frame variants as a **live tuning workspace**,
    not as general AI-generated alternatives.
+   **Done, both halves.** `Godot_PromoteRuntimeValue` is the last act;
+   `Godot_OfferVariants` is the workspace around it — one node, one property, named
+   candidates, the original always among them, and the whole thing framed as tuning rather
+   than as alternatives, exactly as instructed. It refuses to keep a value that was never
+   live and reports how long each one was, so a set that was flipped through says it
+   recorded a choice rather than a comparison. `keep` deliberately does not write: it hands
+   off to promotion, because the two hold different authority.
 6. **Grow the skills library around concrete jobs**: crash investigation, performance
    regression, menu traversal, input-path testing, scene cleanup.
 

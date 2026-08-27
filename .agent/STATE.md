@@ -120,10 +120,31 @@ Both done since: **E2/E4/E5 are VERIFIED**, every dock control pressed and its e
 asserted (`.agent/evidence/spike_activity_dock_controls.py`), and **W8 does not
 reproduce** (`.agent/evidence/spike_workspace_overdraw.py`).
 
-Next in order, from `.agent/NEXT.md`: the live-tuning *workspace* around the promotion
-that now works (D3 variants), then D1/D2 propose-then-apply with risk-based grouping,
+- **The live tuning workspace.** `Godot_OfferVariants` — one tool with actions, not five,
+  because the tool surface is itself a reliability risk. `offer` captures the original and
+  takes candidates, `switch` puts one into the running game, `note` records what was seen,
+  `keep` names the winner, `discard` puts the original back. It refuses to keep a value
+  that was never live, and it measures how long each one *was* live: flipping through four
+  numbers in a second is reported as "a choice rather than a comparison". No checkpoint per
+  variant, deliberately — a runtime property change writes no file, so the checkpoint
+  belongs at promotion, where there already is one.
+
+Next in order, from `.agent/NEXT.md`: D1/D2 propose-then-apply with risk-based grouping,
 then P2 — moving the playtest's perceive/decide/act loop into the editor over sampling.
-Build-order item 4 (bug capture) is done and listed above.
+Build-order items 4 (bug capture) and 5 (promotion and the tuning workspace) are both
+done and listed above.
+
+## A silent failure that predated everything
+
+Building the tuning workspace's discard path turned up a defect older than any of this
+tranche. `get_property` returns a value twice — as JSON and as Godot's own text — and
+`MCPRuntimeAgent::coerce` accepted **neither** form of a structured type back: JSON turns
+a Vector2 into the string `(128, 64)`, and `Variant::can_convert` says, correctly for a
+general string, that a String is not a Vector2. So the two halves of the interface
+disagreed. A caller could read a position out and not write the same string back in, and
+every round trip of a structured property failed while reporting success. `coerce` now
+tries Godot's own parser when the target is not a string type, and a test asserts the
+invariant over eight types: whatever the runtime prints, the runtime accepts back.
 
 ## Two defects the new work found, both fixed
 
