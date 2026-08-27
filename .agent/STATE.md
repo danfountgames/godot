@@ -44,10 +44,15 @@ turned up and fixed a real engine bug (the `EditorFileSystem` singleton), and ru
 hardcoded drag coordinate that made the suite unpassable under a virtual display, which
 is very likely why C1 has never gone green.
 
-Two rows are deliberately short of VERIFIED and say so: **S4** (replay) is exercised end
-to end but inside one editor process, and this tranche's own rule 2 requires two; **S5**
-(replay speed multiplier) was not built at all. **S6** (indeterminate verdicts) is
-unit-tested hard but has not been produced against a live game.
+**S4 is now VERIFIED across two editor processes** (`run_replay_two_editors.py`): editor A
+records and exits, editor B finds the session on disk and replays it, reporting the
+divergence with the value the other process recorded. That is the only check of the trace
+*format* — a round trip inside one process cannot notice an absolute path or a value still
+sitting in a singleton.
+
+Two rows remain deliberately short of VERIFIED and say so: **S5** (replay speed multiplier)
+was not built at all, and **S6** (indeterminate verdicts) is unit-tested hard but has not
+been produced against a live game.
 
 S-21 (done): the closed loop, in four slices, all verified against a live editor.
 

@@ -531,3 +531,22 @@ remains the fastest way to settle a question about the screen.
 - P2: the playtest's perceive/decide/act loop, editor-side over MCP sampling. The last item
   in the user's build order that is not blocked on hardware.
 - S4 (replay across two editor processes) and S5 (replay speed) remain honestly short.
+
+## 2026-08-27 — S4 verified across two editor processes
+
+- `tools/relay/tests/run_replay_two_editors.py`. Editor A records three clicks and an
+  assertion against a running game and exits; editor B starts on the same project, finds
+  the session on disk with its trace and assertion intact, and replays it.
+- This is the only thing that tests the trace *format*. A round trip inside one process
+  cannot notice an absolute path, or a field still sitting in a singleton, or anything else
+  that never had to survive being written down. The ledger's rule 2 has said so since the
+  tranche opened, and S4 sat at IMPLEMENTED for exactly that reason.
+- The replay comes back `failed`, and that is asserted rather than tolerated: the fixture's
+  counter only goes up and the second game started from zero, so the assertion recorded in
+  the other process cannot match — and a divergence naming the property with both values is
+  precisely the regression report the feature exists to produce.
+- 45 seconds, so it runs in CI beside the other three end-to-end scripts.
+
+### Next
+- P2, the last unblocked item in the user's build order.
+- S5 (replay speed) is still NOT_STARTED; S6 has never been produced against a live game.

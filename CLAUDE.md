@@ -110,6 +110,10 @@ python3 tools/relay/tests/run_editor_e2e.py
 
 # The editor's own UI, driven by keyboard and pointer (needs xdotool; skips without).
 python3 tools/relay/tests/run_editor_ui_e2e.py
+
+# Record in one editor, exit, replay in another. The only thing that tests the trace
+# *format*: a single-process round trip never leaves the singletons that hold it.
+python3 tools/relay/tests/run_replay_two_editors.py
 ```
 
 Run the module's own suite from any directory; **run the full engine suite from the

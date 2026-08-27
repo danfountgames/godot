@@ -63,6 +63,7 @@ bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*
 python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~40s
 python3 tools/relay/tests/run_editor_e2e.py --headless # the same, forced without a display
 python3 tools/relay/tests/run_editor_ui_e2e.py         # the editor's own UI, by keyboard and pointer
+python3 tools/relay/tests/run_replay_two_editors.py    # record in one editor, replay in another
 ```
 
 The end-to-end run starts a virtual display (`tools/virtual_display.py`) when the

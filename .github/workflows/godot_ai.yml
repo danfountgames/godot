@@ -137,3 +137,10 @@ jobs:
       # approvals dialog that is the only way a client or a skill gets allowed.
       - name: Run editor UI end-to-end test
         run: python3 tools/relay/tests/run_editor_ui_e2e.py
+
+      # Recording and replaying inside one process proves nothing about the trace
+      # format: every absolute path and every in-memory assumption survives a round
+      # trip that never leaves the process. This one records in one editor, exits,
+      # and replays in another. About 45 seconds.
+      - name: Replay a session recorded by a different editor
+        run: python3 tools/relay/tests/run_replay_two_editors.py
