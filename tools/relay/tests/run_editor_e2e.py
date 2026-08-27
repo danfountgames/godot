@@ -1646,10 +1646,20 @@ def run(editor_binary, display):
                 check(not refused(window),
                       "reading the game window failed: %s" % refusal_text(window))
                 game_window = window["result"]["structuredContent"]
+                # The Surface starts at x=500, so the drag begins at 550 and runs as far
+                # right as the window allows. The far end was clamped for the virtual
+                # display's 846x475 and then still asserted to clear a fixed 600, which
+                # is the clamp and the assertion disagreeing: any window narrower than
+                # 608 failed here for a reason that has nothing to do with dragging.
+                # Native macOS is exactly that case - the game is embedded in the Game
+                # panel, whose size is in editor points, so a HiDPI editor leaves it
+                # 604x340 where X11 gives 846x475. Require a drag long enough to be a
+                # drag, not a window wide enough for one particular platform.
                 drag_to_x = min(850, int(game_window["width"]) - 8)
-                check(drag_to_x > 600,
-                      "the game window is too narrow to drag across the Surface: %r"
-                      % game_window)
+                drag_span = drag_to_x - 550
+                check(drag_span >= 40,
+                      "the game window leaves no room for a drag across the Surface, "
+                      "which starts at x=500: %r" % game_window)
                 reply = call({"jsonrpc": "2.0", "id": 191, "method": "tools/call",
                               "params": {"name": "Godot_SendPointerInput",
                                          "arguments": {"action": "drag",
@@ -2493,14 +2503,30 @@ def run(editor_binary, display):
                 # is what makes it the one that can produce an indeterminate verdict live.
                 # Replaying the recorded session here came back `failed` instead, because a
                 # divergence outranks drift and that is correct.
-                check(strict["verdict"] == "indeterminate",
-                      "a replay with no drift allowance did not report indeterminate: %r" % strict)
-                check("must not be counted as a pass" in strict.get("note", ""),
-                      "an indeterminate verdict does not say what it means: %r" % strict)
-                check(strict["max_drift_frames"] > 0,
-                      "indeterminate without any measured drift: %r" % strict)
-                print("PASS a live replay that drifts past its tolerance is indeterminate, "
-                      "not a pass (%d frames of drift)" % strict["max_drift_frames"])
+                #
+                # What is asserted is the invariant, not a particular verdict: lateness
+                # beyond tolerance is never reported as a pass. Demanding `indeterminate`
+                # outright assumed the host was slow enough to always drift - true on a
+                # software-rendered Xvfb box, false on native macOS, where this replay
+                # measures zero drift and `passed` under zero tolerance is the right
+                # answer. That assertion was testing the environment, not the product.
+                strictly_late = strict["max_drift_frames"] > strict["drift_tolerance_frames"]
+                if strictly_late:
+                    check(strict["verdict"] == "indeterminate",
+                          "a replay whose events arrived late reported %r rather than "
+                          "indeterminate: %r" % (strict["verdict"], strict))
+                    check("must not be counted as a pass" in strict.get("note", ""),
+                          "an indeterminate verdict does not say what it means: %r" % strict)
+                    print("PASS a live replay that drifts past its tolerance is "
+                          "indeterminate, not a pass (%d frames of drift)"
+                          % strict["max_drift_frames"])
+                else:
+                    check(strict["verdict"] != "indeterminate",
+                          "a replay that measured no lateness at all still refused to "
+                          "commit to a verdict: %r" % strict)
+                    print("PASS a live replay delivered every event on time under zero "
+                          "tolerance, so the verdict is %r rather than indeterminate"
+                          % strict["verdict"])
 
                 # S5: the speed multiplier, and the disclaimer it carries.
                 reply = call({"jsonrpc": "2.0", "id": 252, "method": "tools/call",
