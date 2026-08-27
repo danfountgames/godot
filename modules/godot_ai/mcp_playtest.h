@@ -124,11 +124,17 @@ public:
 
 	// Closes the playtest and writes the report. `p_verdict` and `p_summary` are the
 	// caller's conclusion; everything else is assembled from what was recorded.
-	static Result finish(Verdict p_verdict, const String &p_summary, Dictionary &r_report);
+	// `p_frame_times` is the game's own per-frame cost over the window, as
+	// `{frame, milliseconds}`; spikes are detected from it. Defaulted so a caller with no
+	// running game to ask still gets a report - one that honestly reports no spikes
+	// because nothing measured any, rather than because none happened.
+	static Result finish(Verdict p_verdict, const String &p_summary, Dictionary &r_report,
+			const Array &p_frame_times = Array());
 
 	// Abandons the playtest without a conclusion, keeping what was collected. This is
 	// what a stop looks like: partial results, said to be partial (requirement P4).
-	static Result abandon(const String &p_reason, Dictionary &r_report);
+	static Result abandon(const String &p_reason, Dictionary &r_report,
+			const Array &p_frame_times = Array());
 
 	// The report as it stands, live or finished.
 	static Dictionary get_report(const String &p_slug, String &r_error);

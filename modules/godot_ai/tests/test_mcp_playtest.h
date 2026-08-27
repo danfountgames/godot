@@ -337,6 +337,49 @@ TEST_CASE("[godot_ai] Two playtests cannot be open at once") {
 
 }
 
+TEST_CASE("[godot_ai] A report says whether anything measured the frame times") {
+	// "No spikes" and "nobody was looking" read identically in a report and mean
+	// completely different things. The first is a finding; the second is a gap. Until the
+	// frame-time recorder was wired in, every live report said the first while meaning the
+	// second, and the ledger had to carry a row admitting it.
+	PlaytestFixture fixture("coverage");
+	REQUIRE(MCPPlaytest::begin("unmeasured", "reach the room", 60, "", Dictionary()).ok);
+
+	Dictionary unmeasured;
+	REQUIRE(MCPPlaytest::finish(MCPPlaytest::VERDICT_NOT_REACHED, "nothing happened",
+			unmeasured).ok);
+	const Dictionary no_coverage = unmeasured["frame_coverage"];
+	CHECK(bool(no_coverage["measured"]) == false);
+	CHECK((int)no_coverage["samples"] == 0);
+	CHECK(String(no_coverage["note"]).contains("nothing was looking"));
+	CHECK(Array(unmeasured["spikes"]).is_empty());
+}
+
+TEST_CASE("[godot_ai] Frame times from the game reach the report as spikes") {
+	PlaytestFixture fixture("spikey");
+	REQUIRE(MCPPlaytest::begin("measured", "reach the room", 60, "", Dictionary()).ok);
+
+	Array frames;
+	for (int i = 0; i < 30; i++) {
+		frames.push_back(frame_sample(i, 16.0));
+	}
+	frames.push_back(frame_sample(30, 120.0));
+
+	Dictionary report;
+	REQUIRE(MCPPlaytest::finish(MCPPlaytest::VERDICT_NOT_REACHED, "it stuttered", report,
+			frames).ok);
+
+	const Dictionary coverage = report["frame_coverage"];
+	CHECK(bool(coverage["measured"]));
+	CHECK((int)coverage["samples"] == 31);
+	CHECK_FALSE(coverage.has("note"));
+
+	const Array spikes = report["spikes"];
+	REQUIRE(spikes.size() == 1);
+	CHECK((int64_t)Dictionary(spikes[0])["frame"] == 30);
+	CHECK((int)Dictionary(report["counts"])["spikes"] == 1);
+}
+
 TEST_CASE("[godot_ai] A playtest refuses to open without a goal") {
 	PlaytestFixture fixture("nogoal");
 	const MCPPlaytest::Result result = MCPPlaytest::begin("nameless", "   ", 60, "", Dictionary());

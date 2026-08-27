@@ -1847,7 +1847,24 @@ def run(editor_binary, display):
                       "the observation is missing: %r" % report["counts"])
                 check(report["claimed_verdict"] == "reached",
                       "the report must keep what was claimed beside what it concluded: %r" % report)
-                print("PASS Godot_FinishPlaytest assembled a report from what actually happened")
+
+                # The frame times came from the game, over this window. Until they were
+                # wired in, every report said "no spikes" because nothing was measuring -
+                # which reads exactly like "nothing spiked", and is the reason the report
+                # now says which of the two it means.
+                coverage = report["frame_coverage"]
+                check(coverage["measured"] is True,
+                      "the playtest did not measure the game's frame times: %r" % coverage)
+                check(coverage["samples"] >= 3,
+                      "too few frame samples to conclude anything: %r" % coverage)
+                check("note" not in coverage,
+                      "a measured window should not carry the not-measured note: %r" % coverage)
+                # Whether this run spiked is the game's business; that the list is a list
+                # and the count agrees with it is this report's.
+                check(report["counts"]["spikes"] == len(report["spikes"]),
+                      "the spike count disagrees with the spike list: %r" % report["counts"])
+                print("PASS Godot_FinishPlaytest assembled a report from what actually happened, "
+                      "over %d measured frames" % coverage["samples"])
 
                 # A claimed success with no input at all is the check that catches a
                 # report written from the source rather than from the game.

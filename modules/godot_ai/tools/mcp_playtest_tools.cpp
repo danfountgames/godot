@@ -49,7 +49,10 @@
 #include "../mcp_schema.h"
 #include "../mcp_tool_registry.h"
 
+#include "core/object/callable_mp.h"
 #include "core/variant/array.h"
+
+#include "../mcp_deferred.h"
 
 #ifdef TOOLS_ENABLED
 #include "editor/debugger/editor_debugger_node.h"
@@ -185,6 +188,21 @@ public:
 			return Dictionary();
 		}
 
+		// Start the game recording its own frame times, and throw away anything from
+		// before this moment. Fire and forget: the reply carries nothing this call needs,
+		// and a playtest that refused to open because a frame-time recorder did not answer
+		// would be refusing over the least important thing in the report.
+		//
+		// The recorder does not exist until something asks for it, so this call is what
+		// creates it. Without it every report would say "no spikes" because nothing was
+		// looking, which reads exactly like "nothing spiked".
+		MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
+		if (bridge && bridge->is_game_reachable()) {
+			Dictionary arguments;
+			arguments["clear"] = true;
+			bridge->request("frame_times", arguments, 10.0, Callable());
+		}
+
 		Dictionary answer;
 		answer["playtest"] = slug;
 		answer["goal"] = goal;
@@ -250,6 +268,50 @@ public:
 };
 
 class FinishPlaytestTool : public MCPTool {
+	// Two stages: ask the game for the frame times it recorded over the window, then
+	// assemble. The samples are the only thing in the report the editor cannot see for
+	// itself, and a spike is what makes the difference between "the goal was reached" and
+	// "the goal was reached and the game stuttered doing it".
+	MCPDeferred::Token token = MCPDeferred::INVALID_TOKEN;
+	String pending_verdict;
+	String pending_summary;
+	bool running = false;
+
+	void _answer(const Dictionary &p_result) {
+		running = false;
+		if (token != MCPDeferred::INVALID_TOKEN) {
+			MCPDeferred::complete(token, p_result);
+			token = MCPDeferred::INVALID_TOKEN;
+		}
+	}
+
+	void _fail(MCPToolError::Kind p_kind, const String &p_message) {
+		running = false;
+		if (token != MCPDeferred::INVALID_TOKEN) {
+			MCPDeferred::fail(token, p_kind, p_message);
+			token = MCPDeferred::INVALID_TOKEN;
+		}
+	}
+
+	void _on_frame_times(bool p_ok, const Dictionary &p_payload) {
+		if (!running) {
+			return;
+		}
+		// A failed reply is not fatal. The frame times are the least important thing in
+		// the report, and refusing to close a playtest because the game stopped answering
+		// would throw away everything else it collected.
+		const Array samples = p_ok ? Array(p_payload.get("samples", Array())) : Array();
+		MCPToolError error;
+		const Dictionary answer = _assemble(samples, error);
+		if (error.has_error()) {
+			_fail(error.kind, error.message);
+			return;
+		}
+		_answer(answer);
+	}
+
+	Dictionary _assemble(const Array &p_frame_times, MCPToolError &r_error);
+
 public:
 	virtual String get_tool_name() const override { return "Godot_FinishPlaytest"; }
 	virtual String get_description() const override {
@@ -291,13 +353,41 @@ public:
 	}
 
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
+		if (running) {
+			r_error.set(MCPToolError::INVALID_STATE, "this playtest is already being closed");
+			return Dictionary();
+		}
 		if (!MCPPlaytest::is_running()) {
 			r_error.set(MCPToolError::FAILED, "no playtest is running");
 			return Dictionary();
 		}
+		pending_verdict = String(p_arguments.get("verdict", String())).strip_edges().to_lower();
+		pending_summary = p_arguments.get("summary", String());
 
-		const String requested = String(p_arguments.get("verdict", String())).strip_edges().to_lower();
-		const String summary = p_arguments.get("summary", String());
+		MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
+		if (bridge && bridge->is_game_reachable()) {
+			running = true;
+			token = MCPDeferred::begin(20.0,
+					"the running game did not hand over its frame times in time");
+			if (bridge->request("frame_times", Dictionary(), 12.0,
+						callable_mp(this, &FinishPlaytestTool::_on_frame_times))) {
+				return MCPDeferred::make_deferred_result(token);
+			}
+			running = false;
+			MCPDeferred::abandon(token);
+			token = MCPDeferred::INVALID_TOKEN;
+		}
+
+		// No game left to ask. The report still gets written, and says that nothing
+		// measured the frame times rather than that nothing spiked.
+		return _assemble(Array(), r_error);
+	}
+};
+
+Dictionary FinishPlaytestTool::_assemble(const Array &p_frame_times, MCPToolError &r_error) {
+	{
+		const String requested = pending_verdict;
+		const String summary = pending_summary;
 		const String slug = MCPPlaytest::get_active_slug();
 
 		// Read the game's own errors before closing, so they land in the report rather
@@ -308,7 +398,7 @@ public:
 		MCPPlaytest::Result result;
 		if (requested == "stop") {
 			result = MCPPlaytest::abandon(summary.is_empty() ? String("stopped by the caller") : summary,
-					report);
+					report, p_frame_times);
 		} else {
 			bool known = false;
 			const MCPPlaytest::Verdict verdict = MCPPlaytest::verdict_from_string(requested, known);
@@ -319,7 +409,7 @@ public:
 								requested));
 				return Dictionary();
 			}
-			result = MCPPlaytest::finish(verdict, summary, report);
+			result = MCPPlaytest::finish(verdict, summary, report, p_frame_times);
 		}
 
 		if (!result.ok) {
@@ -345,7 +435,10 @@ public:
 		answer["directory"] = MCPPlaytest::get_playtest_dir(slug);
 		return answer;
 	}
-};
+	// Unreachable: the block above returns on every path. Present because a function that
+	// falls off its end is undefined behaviour and the compiler is right to say so.
+	return Dictionary();
+}
 
 class GetPlaytestReportTool : public MCPTool {
 public:

@@ -152,6 +152,19 @@ class MCPRuntimeWatcher : public Object {
 		Dictionary result;
 	};
 
+	// Frame time, every frame, for as long as this watcher exists.
+	//
+	// A playtest reports frame spikes, and a spike is only visible against the frames
+	// around it - a single sample taken when somebody asks is a data point, not a
+	// measurement. Bounded because a session-long list would be a leak: at 60 fps this is
+	// the last minute, which is longer than any window worth calling a playtest.
+	struct FrameSample {
+		int64_t frame = 0;
+		double milliseconds = 0.0;
+	};
+	static constexpr int MAX_FRAME_SAMPLES = 3600;
+	Vector<FrameSample> frame_samples;
+
 	Vector<Watch> watches;
 	Vector<Sequence> sequences;
 	Vector<Profile> profiles;
@@ -163,6 +176,10 @@ class MCPRuntimeWatcher : public Object {
 
 public:
 	static MCPRuntimeWatcher *get_singleton() { return singleton; }
+
+	// The frame times recorded so far, oldest first, as `{frame, milliseconds}`.
+	Array get_frame_times() const;
+	void clear_frame_times() { frame_samples.clear(); }
 	static void create();
 	static void destroy();
 
@@ -207,6 +224,7 @@ class MCPRuntimeAgent {
 	static Dictionary _send_gamepad(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _send_action(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _input_trace(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _frame_times(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _runtime_errors(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _resize_window(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _time_scale(const Dictionary &p_arguments, String &r_error);

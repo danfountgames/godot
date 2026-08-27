@@ -342,7 +342,34 @@ bool MCPRuntimeWatcher::read_scene_test(bool &r_finished, Array &r_cases) {
 // needs it, and at file scope because that is where the definition lives.
 void collect_audio_players(Node *p_node, Array &r_players);
 
+Array MCPRuntimeWatcher::get_frame_times() const {
+	Array out;
+	for (int i = 0; i < frame_samples.size(); i++) {
+		Dictionary sample;
+		sample["frame"] = frame_samples[i].frame;
+		sample["milliseconds"] = frame_samples[i].milliseconds;
+		out.push_back(sample);
+	}
+	return out;
+}
+
 void MCPRuntimeWatcher::on_frame() {
+	// The frame's own cost, before anything below spends any of it. Recorded
+	// unconditionally: a spike is only visible against the frames around it, so there is
+	// nothing to arm and nothing to remember to arm.
+	{
+		Performance *performance = Performance::get_singleton();
+		FrameSample sample;
+		sample.frame = (int64_t)Engine::get_singleton()->get_process_frames();
+		sample.milliseconds = performance
+				? performance->get_monitor(Performance::TIME_PROCESS) * 1000.0
+				: 0.0;
+		if (frame_samples.size() >= MAX_FRAME_SAMPLES) {
+			frame_samples.remove_at(0);
+		}
+		frame_samples.push_back(sample);
+	}
+
 	// Gestures first: an event delivered this frame should be seen by the same frame's
 	// _process, and by anything else in this loop that is watching for its effect.
 	Input *input = Input::get_singleton();
@@ -842,6 +869,9 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "input_trace") {
 		return _input_trace(p_arguments, r_error);
+	}
+	if (p_command == "frame_times") {
+		return _frame_times(p_arguments, r_error);
 	}
 	if (p_command == "runtime_errors") {
 		return _runtime_errors(p_arguments, r_error);
@@ -1783,6 +1813,37 @@ Dictionary MCPRuntimeAgent::_input_trace(const Dictionary &p_arguments, String &
 	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
 	if (clear) {
 		g_trace.clear();
+	}
+	return result;
+}
+
+// Frame times over the window, for the spike detection in a playtest report.
+//
+// Creating the watcher here is the point of the `clear` argument as much as the clearing
+// is: nothing else in a playtest necessarily schedules frame work, so without this the
+// recorder would not exist and every report would say "no spikes" because nothing was
+// looking.
+Dictionary MCPRuntimeAgent::_frame_times(const Dictionary &p_arguments, String &r_error) {
+	MCPRuntimeWatcher::create();
+	MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+	if (!watcher) {
+		r_error = "the running game cannot record frame times";
+		return Dictionary();
+	}
+
+	Dictionary result;
+	const Array samples = watcher->get_frame_times();
+	result["samples"] = samples;
+	result["count"] = samples.size();
+	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	// Recording starts when this is first called, so a caller that clears at the start of
+	// a window knows how much of it the samples actually cover.
+	if (samples.size() > 0) {
+		result["first_frame"] = Dictionary(samples[0]).get("frame", 0);
+		result["last_frame"] = Dictionary(samples[samples.size() - 1]).get("frame", 0);
+	}
+	if (p_arguments.has("clear") && (bool)p_arguments["clear"]) {
+		watcher->clear_frame_times();
 	}
 	return result;
 }

@@ -459,7 +459,7 @@ bool MCPPlaytest::is_over_budget() {
 }
 
 MCPPlaytest::Result MCPPlaytest::finish(Verdict p_verdict, const String &p_summary,
-		Dictionary &r_report) {
+		Dictionary &r_report, const Array &p_frame_times) {
 	if (!session().running) {
 		return Result::bad("no playtest is running");
 	}
@@ -504,15 +504,32 @@ MCPPlaytest::Result MCPPlaytest::finish(Verdict p_verdict, const String &p_summa
 	meta["context"] = live.context.duplicate(true);
 	meta["claimed_verdict"] = verdict_to_string(p_verdict);
 
-	r_report = build_report(meta, activity, inputs, problems, Array(), live.observations,
+	// The multiplier is a judgement about what counts as a stutter rather than slowness.
+	// Three times the median frame is a frame a player feels; twice is a frame a graph
+	// shows. Kept here rather than made an argument, so two reports of the same run cannot
+	// disagree about what a spike is.
+	const Array spikes = spikes_from_frame_times(p_frame_times, 3.0);
+	r_report = build_report(meta, activity, inputs, problems, spikes, live.observations,
 			verdict, reason, p_summary);
+	Dictionary frame_coverage;
+	frame_coverage["samples"] = p_frame_times.size();
+	// Said out loud, because "no spikes" and "nobody was measuring" look identical in a
+	// report and mean completely different things.
+	frame_coverage["measured"] = p_frame_times.size() >= 3;
+	if (p_frame_times.size() < 3) {
+		frame_coverage["note"] = "frame times were not measured over this window, so an empty "
+								 "spike list means nothing was looking rather than that nothing "
+								 "spiked";
+	}
+	r_report["frame_coverage"] = frame_coverage;
 
 	const Result written = _write(live.slug, r_report, activity);
 	live.running = false;
 	return written;
 }
 
-MCPPlaytest::Result MCPPlaytest::abandon(const String &p_reason, Dictionary &r_report) {
+MCPPlaytest::Result MCPPlaytest::abandon(const String &p_reason, Dictionary &r_report,
+		const Array &p_frame_times) {
 	if (!session().running) {
 		return Result::bad("no playtest is running");
 	}
@@ -520,7 +537,7 @@ MCPPlaytest::Result MCPPlaytest::abandon(const String &p_reason, Dictionary &r_r
 			vformat("Stopped before finishing: %s", p_reason.strip_edges().is_empty()
 							? String("no reason given")
 							: p_reason),
-			r_report);
+			r_report, p_frame_times);
 	if (result.ok) {
 		r_report["partial"] = true;
 	}
