@@ -23,7 +23,7 @@ partly revalidated** — see below.
 | # | Job | State |
 |---|---|---|
 | 1 | Rebuild on Godot 4.8 and run the full module suite | **Done.** Builds clean; module suite 106 cases / 698 assertions; full engine suite 1523 cases over several runs. Found and fixed a dangling `EditorFileSystem` singleton that crashed the suite roughly one run in four. |
-| 2 | Observe `.github/workflows/godot_ai.yml` succeeding on Actions | **DONE. Run 64 is green** (`33028524808`, 2026-08-27), after 63 consecutive failures nobody had looked at. The claim that it had "never been observed running" was wrong: it had run 62 times and the editor job failed every time in about seventy seconds. CI builds with `warnings=extra werror=yes` and the local default does not, so five diagnostics that are warnings here were errors there. With those fixed the run reached the end-to-end step for the first time and failed again, on a `Godot_CaptureInspectorProperty` timeout - its poller advances on drawn frames and a software-rendered editor on two cores draws them slowly. Budgets raised and made stage-aware. **Lesson: "not observed" is a thing to check, not to record.** |
+| 2 | Observe `.github/workflows/godot_ai.yml` succeeding on Actions | **DONE. Run 64 is green** (`33028524808`, 2026-08-27), after 63 consecutive failures nobody had looked at. The claim that it had "never been observed running" was wrong: it had run 62 times and the editor job failed every time in about seventy seconds. CI builds with `warnings=extra werror=yes` and the local default does not, so five diagnostics that are warnings here were errors there. With those fixed the run reached the end-to-end step for the first time and failed again, on a `Godot_CaptureInspectorProperty` timeout. **That second diagnosis was also wrong, and cost two more red runs (66, 68) before it was chased down.** The editor is not slow; `Main::iteration()` skips its draw step when nothing is dirty, and on a bare Xvfb runner with no pointer and no compositor nothing ever is, so a poller waiting on drawn frames waits forever while the editor sits correctly idle. Raising the budget from 10s to 90s treated the symptom. The capture pollers now call `Main::force_redraw()`; under four pinned cores locally the three semantic captures answer in 0.7s, 1.7s and 0.4s. **Two lessons: "not observed" is a thing to check, not to record — and a timeout is a question about what the thing was waiting for, not a number to raise.** |
 | 3 | Run the Windows relay against a Godot editor | **Not done.** Needs a Windows host. Unchanged. |
 
 ## Build order
@@ -47,6 +47,13 @@ partly revalidated** — see below.
 4. **Reproducible bug-session capture.** Start as bug reproduction — "capture the sequence
    that caused this crash and replay it" — not as a comprehensive regression suite.
    Strict deterministic replay is an *optional stronger mode*, never the minimum promise.
+   **Done.** `Godot_CaptureBugSession` reaches backwards into a buffer that is always
+   being kept, at both ends of the channel, so nothing has to be armed in advance and a
+   capture still works after the game process has gone. What it writes is an ordinary
+   session, which is the point: replay runs it unchanged. Each capture records its own
+   `replay_level` — `general` when every frame came from the game, `attempt` when the
+   unacknowledged tail had to be extrapolated — so the artifact itself never claims the
+   stronger mode.
 5. **Promote runtime values, and a focused live-tuning workspace.** Promotion is small and
    closes the loop: the agent adjusts a value in the running game, you decide it feels
    right, the temporary value becomes the authored value. Without it, live tuning is

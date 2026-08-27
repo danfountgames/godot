@@ -284,3 +284,64 @@ Append-only. Concise entries; large output goes to `.agent/evidence/`.
 - Evidence: macOS relay suite 64/64; bundle plist, arm64 Mach-O, icon checksum and
   ad-hoc signature verified; bundled GodotAI suite 69 cases / 433 assertions; bundle
   smoke launch reports `4.3.dev.custom_build.5e0a468c3`.
+
+## 2026-08-27 — S-21 continued: bug capture, and two defects it uncovered
+
+### Retroactive bug capture (build-order item 4)
+
+- `Godot_CaptureBugSession` writes out the input that led to what just went wrong, with
+  nothing armed in advance. Recording has to be started first, and you do not know
+  something is a bug until it happens — by which time an unarmed recorder has nothing.
+- What it writes is an ordinary session, so `Godot_ReplaySession` runs it unchanged. A
+  bug report and a regression test are the same file, produced from opposite ends.
+- Two buffers, because a crash destroys one of them. The game's own trace is
+  authoritative while it lives (real frames, and nothing the game refused). The editor
+  now also mirrors every input it dispatches, hooked into the single choke point in
+  `MCPRuntimeBridge`, and that survives the process. Cleared when a game *starts*, not
+  when one stops — the stop is exactly when the mirror is the only copy left.
+- The four `_send_*` handlers now echo the frame they recorded, which is how the mirror
+  learns where an event landed. A mirror with no frames cannot be replayed.
+- The event a game died on is never acknowledged, and it is also the one that caused the
+  bug. It is placed by extrapolating from the frame rate the buffer actually observed and
+  marked estimated in the record, the metadata and the reply; `replay_level` then reads
+  `attempt`, and the fidelity line says a replay of that tail is a reproduction attempt.
+- Evidence: 18 doctest cases; three live e2e checks including one taken after the game
+  exited. Module suite 225 cases / 3337 assertions. 89 tools advertised.
+
+### The e2e run was throwing away the evidence it needed
+
+- The editor's stdout went to a pipe nobody read and nobody printed, so a crash arrived
+  as "editor disconnected" and nothing else. An unread pipe also blocks the writer at
+  64 KiB, so this was a latent hang as well as a blind spot.
+- It is now drained on a thread and the tail printed on failure. It paid for itself in
+  the same run.
+
+### A crash in the replay plan, found by being the first to replay twice
+
+- `MCPReplayPlan::load()` reset two fields and left the rest to `start()`. A plan read
+  between the two carried the previous run's verdict. A failed run followed by a session
+  with **no assertions** — which is precisely what a retroactive capture produces — left
+  `first_divergence` at 0, so the tool's first poll called the new run finished and
+  `to_report()` indexed an assertion list `load()` had just emptied. Editor down.
+- `load()` now forgets the whole of the previous run; a plan that has not started is not
+  finished; the index is bounds-checked as well. Two regression cases pin it.
+
+### The intermittent CI failure, and a diagnosis that was wrong twice
+
+- `Godot_CaptureInspectorProperty` had been failing on runs 66 and 68 with "gave up after
+  90005 ms; the editor drew 5 frame(s) in that time". The first diagnosis — a slow
+  software renderer — had already bought the budget a rise from 10s to 90s. It was wrong.
+- `Main::iteration()` skips its draw step entirely when nothing is dirty. On a developer's
+  machine a cursor blink or a compositor keeps the counter moving; on a bare Xvfb runner
+  with no pointer and no window manager, nothing does. The editor was not behind, it was
+  idle, and the poller was watching a counter that would never move.
+- The capture pollers now call `Main::force_redraw()` on every tick while an operation is
+  in flight. Measured with all four cores pinned by busy loops — the condition that
+  reproduced the timeout locally — the three semantic captures answer in 0.7s, 1.7s and
+  0.4s. The e2e run prints those timings pass or fail, so drift is visible as drift.
+- **Lesson worth keeping: a timeout is a question about what the thing was waiting for,
+  not a number to raise.**
+
+### Next
+- Build-order item 5's second half: the live-tuning workspace and variants (D3) around
+  the promotion that works. Then D1/D2 propose-then-apply, then P2.

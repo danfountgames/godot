@@ -70,6 +70,18 @@ S-21 (done): the closed loop, in four slices, all verified against a live editor
   with model-free oracles, and a scorecard that counts collateral damage beside
   successes. `run_selfcheck.py` proves the benchmark measures something by building each
   project broken and fixed and requiring every oracle to tell them apart.
+- **Retroactive bug capture.** `Godot_CaptureBugSession` writes out the input that led to
+  what just went wrong, with nothing armed in advance — because you do not know something
+  is a bug until it happens, by which time an unarmed recorder has nothing. What it writes
+  is an ordinary session, so `Godot_ReplaySession` re-runs it unchanged: a bug report and a
+  regression test are the same file from opposite ends. Two buffers, because a crash
+  destroys one of them — the game's own trace while it lives, and an editor-side mirror
+  (`mcp_bug_capture.{h,cpp}`, hooked into the one choke point in `MCPRuntimeBridge`) for
+  after the process is gone. The event a game died on is never acknowledged and is also
+  the one that caused the bug, so it is placed by extrapolating from the frame rate the
+  buffer observed, and marked estimated in the record, the metadata and the reply; the
+  session's `replay_level` then reads `attempt` rather than `general`. Verified in
+  `run_editor_e2e.py` on both paths, including a capture taken after the game exited.
 
 S-20 (done): the terminal, ported from `origin/GodotBeamDev` at the user's
 request — "a full agent ai terminal built into the editor via a terminal emulator …
@@ -108,11 +120,42 @@ Both done since: **E2/E4/E5 are VERIFIED**, every dock control pressed and its e
 asserted (`.agent/evidence/spike_activity_dock_controls.py`), and **W8 does not
 reproduce** (`.agent/evidence/spike_workspace_overdraw.py`).
 
-Next in order, from `.agent/NEXT.md`: reproducible bug-session capture as a product
-feature rather than only a skill (build-order item 4 - capture-on-crash is what is
-missing; record and replay already exist), then the live-tuning *workspace* around the
-promotion that now works (D3 variants), then P2 - moving the playtest's perceive/decide/
-act loop into the editor over sampling.
+Next in order, from `.agent/NEXT.md`: the live-tuning *workspace* around the promotion
+that now works (D3 variants), then D1/D2 propose-then-apply with risk-based grouping,
+then P2 — moving the playtest's perceive/decide/act loop into the editor over sampling.
+Build-order item 4 (bug capture) is done and listed above.
+
+## Two defects the new work found, both fixed
+
+Wiring `Godot_CaptureBugSession` into the end-to-end run made it the first thing ever to
+replay two sessions in one editor, and that **crashed the editor**. `MCPReplayPlan::load()`
+reset two fields and left the rest to `start()`, so a plan read between the two carried the
+previous run's verdict; a failed run followed by a session with no assertions — which is
+exactly what a retroactive capture produces — left `first_divergence` at 0, the tool's
+first poll called the new run finished, and `to_report()` indexed an assertion list
+`load()` had just emptied. `load()` now forgets the whole of the previous run, a plan that
+has not started is not finished, and the index is bounds-checked as well.
+
+The end-to-end script had been capturing the editor's stdout to a pipe it never read and
+never printed, so that crash arrived as "editor disconnected" with no evidence at all. It
+now drains the pipe on a thread and prints the tail on failure, which is how the above was
+diagnosed in one run. An unread pipe also blocks the writer at 64 KiB, so this was a latent
+hang as well as a blind spot.
+
+## The intermittent CI failure is fixed, and the diagnosis was wrong twice
+
+`Godot_CaptureInspectorProperty` had been failing on roughly half of recent runs with
+"gave up after 90005 ms; the editor drew 5 frame(s) in that time". The budget had already
+been raised from 10s to 90s on the theory that a two-core llvmpipe runner is simply slow.
+It is not slow: `Main::iteration()` skips its draw step entirely when nothing has marked
+anything dirty, and on a bare Xvfb runner with no pointer, no compositor and no window
+manager, nothing ever does. The editor had nothing to draw and was correctly not drawing,
+while a poller watched a counter that was never going to move. The capture pollers now
+call `Main::force_redraw()` on every tick while an operation is in flight. Measured on
+this machine with all four cores pinned by busy loops — the condition that reproduced the
+timeout locally — the three semantic captures answer in 0.7s, 1.7s and 0.4s. The e2e run
+now prints those timings pass or fail, so drift back towards the ceiling is visible before
+it becomes a red run.
 
 S-18 (done): the full profiler as a windowed capture — interface-ledger row D4.
 `Godot_StartProfiler` / `Godot_StopProfiler` / `Godot_GetProfilerStatus` harvest the
