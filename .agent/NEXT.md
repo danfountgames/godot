@@ -86,8 +86,8 @@ to build the general level on.
   missing feature. Keep changes to core Godot limited, documented and ideally
   upstreamable; keep as much as possible in the module. The `EditorFileSystem` destructor
   fix is exactly the kind of change that should go upstream.
-- **No evaluation.** Counts of tools, tests and verified requirements measure engineering
-  coverage, not agent effectiveness. Build benchmark Godot projects and measure: how often
+- **No evaluation.** *(Started: `tools/benchmarks/` exists.)* Counts of tools, tests and
+  verified requirements measure engineering coverage, not agent effectiveness. Build benchmark Godot projects and measure: how often
   the agent reaches a stated condition; how often it correctly identifies a regression;
   how reliably it reproduces a crash; how often it modifies the wrong node or property;
   how long a playtest takes; how much model usage it costs; how many false alarms appear
