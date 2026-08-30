@@ -32,6 +32,7 @@
 
 #include "../mcp_deferred.h"
 #include "../mcp_tool_registry.h"
+#include "../mcp_unattended.h"
 
 #include "core/object/callable_mp.h"
 #include "core/variant/array.h"
@@ -199,6 +200,17 @@ public:
 		if (!EditorNode::get_singleton()) {
 			r_error.set(MCPToolError::UNSUPPORTED,
 					"there is no editor here to ask; run without --headless to use this tool");
+			return Dictionary();
+		}
+		// An editor is not a person. `--headless --editor` has a complete EditorNode
+		// and nobody looking at it, so without this the dialog opened on the dummy
+		// display server and the caller waited out the full timeout - five minutes of
+		// a CI job spent asking a question no one could see.
+		if (MCPUnattended::is_unattended()) {
+			r_error.set(MCPToolError::UNSUPPORTED,
+					MCPUnattended::no_user_reason("answer a question",
+							"Decide it yourself from what you can observe, or leave the decision "
+							"to whoever reads the report."));
 			return Dictionary();
 		}
 		const String question = String(p_arguments["question"]).strip_edges();

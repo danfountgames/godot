@@ -45,6 +45,7 @@
 #include "../mcp_proposals.h"
 #include "../mcp_schema.h"
 #include "../mcp_tool_registry.h"
+#include "../mcp_unattended.h"
 
 #include "core/object/callable_mp.h"
 
@@ -473,6 +474,21 @@ public:
 					"there is no editor here to show the plan in; run without --headless, or "
 					"pass dry_run to build and check the plan without asking anybody");
 			return Dictionary();
+		}
+
+		// Same trap as Godot_AskUser: an EditorNode is not a person, and a plan put to
+		// the dummy display server is a plan nobody will ever tick. dry_run is the
+		// honest answer here - the plan is still built, validated and grouped, and the
+		// caller is told plainly that nothing was approved.
+		if (MCPUnattended::is_unattended()) {
+			plan["decided"] = false;
+			plan["dry_run"] = true;
+			plan["unattended"] = true;
+			plan["next"] = "This editor is running unattended, so nobody was asked and nothing "
+						   "was applied. The plan above is validated and grouped; either run the "
+						   "calls whose risk your instructions already cover, or hand this plan "
+						   "to whoever reads the report.";
+			return plan;
 		}
 
 		const int timeout = MAX(1, (int)p_arguments.get("timeout_seconds", 300));

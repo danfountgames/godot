@@ -41,6 +41,7 @@
 #include "mcp_runtime_bridge.h"
 #include "mcp_deferred.h"
 #include "mcp_tool_registry.h"
+#include "mcp_unattended.h"
 
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
@@ -196,9 +197,21 @@ void MCPService::start() {
 	set_process_internal(true);
 	_write_instance_descriptor();
 
+	const String listening = vformat("--- Godot AI service listening on 127.0.0.1:%d ---", port);
 	if (EditorNode::get_log()) {
-		EditorNode::get_log()->add_message(
-				vformat("--- Godot AI service listening on 127.0.0.1:%d ---", port), EditorLog::MSG_TYPE_EDITOR);
+		EditorNode::get_log()->add_message(listening, EditorLog::MSG_TYPE_EDITOR);
+	}
+
+	const String unattended = MCPUnattended::describe();
+	if (!unattended.is_empty()) {
+		// Printed rather than only logged: the editor log is a panel, and in the run
+		// this line describes there is nobody to look at a panel. A CI job's stdout is
+		// the record of what the agent was permitted to do.
+		print_line(listening);
+		print_line("Godot AI: " + unattended);
+		if (EditorNode::get_log()) {
+			EditorNode::get_log()->add_message("Godot AI: " + unattended, EditorLog::MSG_TYPE_WARNING);
+		}
 	}
 }
 
@@ -666,8 +679,10 @@ static String approved_clients_setting() {
 
 bool MCPService::is_client_approved(const String &p_client_name) {
 	// An explicit opt-in for automation. Documented as CI/headless only: it bypasses
-	// the first-connection approval that otherwise gates every client.
-	if (OS::get_singleton()->get_environment("GODOT_AI_AUTO_APPROVE") == "1") {
+	// the first-connection approval that otherwise gates every client. There is nobody
+	// to tick a box in an unattended run, so an operator declares the decision when
+	// they start the process instead.
+	if (MCPUnattended::clients_pre_approved()) {
 		return true;
 	}
 	if (!EditorSettings::get_singleton()) {

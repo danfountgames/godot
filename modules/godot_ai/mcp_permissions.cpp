@@ -30,6 +30,8 @@
 
 #include "mcp_permissions.h"
 
+#include "mcp_unattended.h"
+
 #ifdef TOOLS_ENABLED
 #include "editor/settings/editor_settings.h"
 #endif
@@ -91,6 +93,14 @@ MCPPolicy MCPPermissions::get_policy(MCPCapability p_capability) {
 	}
 	if (p_capability == MCP_CAP_DANGEROUS_EXEC) {
 		return MCP_POLICY_DENY;
+	}
+	// An unattended run has no settings dialog to state a policy in, so it states one
+	// in the environment instead. It sits above editor settings deliberately: the
+	// operator who launched this process is more authoritative about what this run may
+	// do than whatever the last interactive session happened to leave behind.
+	MCPPolicy declared = MCP_POLICY_DENY;
+	if (MCPUnattended::policy_override(p_capability, declared)) {
+		return declared;
 	}
 #ifdef TOOLS_ENABLED
 	if (EditorSettings::get_singleton()) {
