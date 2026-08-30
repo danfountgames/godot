@@ -171,6 +171,38 @@ TEST_CASE("[godot_ai] Skill editor-version gating") {
 	CHECK_FALSE(MCPSkills::version_satisfied("banana", 4, 3));
 }
 
+TEST_CASE("[godot_ai] The shipped skills are discovered with no project set up") {
+	// The reason this exists: skill discovery reads a project's ai_skills/, an addon's,
+	// and the editor's user data directory - and a project that has just been made has
+	// none of them. So the way in that the initialize instructions and the relay's help
+	// both advertise listed nothing at all, on every real project, while the end-to-end
+	// suite passed because it copies a skill into its own test project first. Two agents
+	// handed this interface for the first time both reported the front door opening onto
+	// an empty room.
+	MCPSkills::clear_roots_override();
+	const Vector<MCPSkill> skills = MCPSkills::discover();
+	CHECK_MESSAGE(skills.size() > 0,
+			"no skills are discoverable at all, so the advertised way in offers nothing");
+
+	bool found_builtin = false;
+	for (const MCPSkill &skill : skills) {
+		if (skill.root_kind != "builtin") {
+			continue;
+		}
+		found_builtin = true;
+		CHECK_MESSAGE(skill.problem.is_empty(),
+				vformat("shipped skill '%s' does not parse: %s", skill.name, skill.problem));
+		CHECK_MESSAGE(!skill.description.is_empty(),
+				vformat("shipped skill '%s' has no description, so a prompt listing says "
+						"nothing about it", skill.name));
+		// Trusted by default, unlike a skill that turned up in a project. Requiring
+		// consent for these is what left the front door locked.
+		CHECK_MESSAGE(skill.allowed,
+				vformat("shipped skill '%s' is not allowed, so it will not be offered", skill.name));
+	}
+	CHECK_MESSAGE(found_builtin, "no skill ships with the editor, so a fresh project has none");
+}
+
 TEST_CASE("[godot_ai] Skill discovery") {
 	SkillFixture fixture("discover");
 	fixture.add("cleanup", VALID_SKILL);

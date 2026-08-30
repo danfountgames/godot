@@ -163,6 +163,14 @@ func _begin_run() -> void:
 		_rings.remove_child(child)
 		child.queue_free()
 	_serial = 0
+	# Cleared, because a restart while a shot is in flight left it set: the freshly
+	# spawned striker then "came to rest" a fifth of a second later, consumed the turn
+	# nobody had taken, and handed _active to a second striker. Every measurement taken
+	# after that restart was of a ring that was no longer the active one. Found by an
+	# agent driving this game through the tools, which is exactly the class of bug that
+	# is invisible until something plays it.
+	_shot_live = false
+	_tracing = false
 	likes = 0.0
 	multiplier = 1.0
 	chain = 0

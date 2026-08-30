@@ -42,6 +42,7 @@
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_node.h"
+#include "editor/run/editor_run_bar.h"
 
 // Matches Godot_CaptureViewport: an image bigger than this is referenced by path only,
 // because a client's context is not the place for a multi-megabyte frame.
@@ -144,9 +145,19 @@ static bool require_running_game(MCPToolError &r_error, MCPRuntimeBridge **r_bri
 	}
 	MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
 	if (!bridge || !bridge->is_game_reachable()) {
+		// "No game is running" is false, and misleading, when a game *is* running and its
+		// debugger connection simply has not come up yet - it sends the reader looking
+		// for a crash that did not happen. The two states are told apart by asking the
+		// editor whether it launched anything.
+		const bool launched = EditorRunBar::get_singleton() &&
+				!EditorRunBar::get_singleton()->get_editor_run().pids.is_empty();
 		r_error.set(MCPToolError::INVALID_STATE,
-				"no game is running; start one with Godot_PlayCurrentScene or "
-				"Godot_PlayMainScene first");
+				launched ? "a game is running but the runtime tools cannot reach it yet: its "
+						   "debugger connection has not come up. Wait a moment and retry - "
+						   "Godot_PlayMainScene now waits for this, so a game started that way "
+						   "is reachable when it answers."
+						 : "no game is running; start one with Godot_PlayCurrentScene or "
+						   "Godot_PlayMainScene first");
 		return false;
 	}
 	*r_bridge = bridge;
@@ -348,10 +359,16 @@ class WaitForRuntimeConditionTool : public MCPTool {
 public:
 	virtual String get_tool_name() const override { return "Godot_WaitForRuntimeCondition"; }
 	virtual String get_description() const override {
-		return "Wait until a property of a node in the running game equals a value, or fail after "
-			   "a timeout. Use this instead of waiting a fixed time: 'wait two seconds and hope' "
-			   "is the usual reason a test passes on a fast machine and fails on a loaded one, "
-			   "and it hides the difference between slow and broken.";
+		return "Wait until a property of a node in the running game reaches a value, or fail "
+			   "after a timeout. Use this instead of waiting a fixed time: 'wait two seconds and "
+			   "hope' is the usual reason a test passes on a fast machine and fails on a loaded "
+			   "one, and it hides the difference between slow and broken.\n\n"
+			   "A condition that is already true is satisfied immediately, which is right for "
+			   "'wait until it is 10' and wrong for 'wait until this restarts'. Use comparison "
+			   "'changes_from' for the second: waiting for equality on a value that already "
+			   "holds returns at once, and the caller then proceeds on the assumption that the "
+			   "thing it was waiting for has happened. That has produced a plausible wrong "
+			   "measurement with no error anywhere.";
 	}
 	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
 
@@ -360,14 +377,24 @@ public:
 		properties["path"] = MCPSchema::string_property("Node path, such as /root/Main/Player.");
 		properties["property"] = MCPSchema::string_property("Property to watch.");
 		properties["equals"] = MCPSchema::any_property(
-				"The value to wait for. Converted to the property's real type, so [64, 32] "
-				"matches a Vector2.");
+				"The value to compare against. Converted to the property's real type, so "
+				"[64, 32] matches a Vector2. Not needed with comparison 'changes_from'.");
+		Vector<String> comparisons;
+		comparisons.push_back("equals");
+		comparisons.push_back("not_equals");
+		comparisons.push_back("greater_than");
+		comparisons.push_back("less_than");
+		comparisons.push_back("changes_from");
+		properties["comparison"] = MCPSchema::enum_property(
+				"How to compare. 'changes_from' takes no value: it samples the property now "
+				"and waits for it to become anything else, which is how you wait for something "
+				"to happen rather than for it to be true.",
+				comparisons, "equals");
 		properties["timeout_seconds"] = MCPSchema::integer_property(
 				"How long to wait before failing.", 10);
 		Vector<String> required;
 		required.push_back("path");
 		required.push_back("property");
-		required.push_back("equals");
 		return MCPSchema::object_schema(properties, required);
 	}
 
@@ -882,9 +909,15 @@ void mcp_register_input_tools() {
 				"the only thing running at frame rate, so the game does the sampling.\n\n"
 				"The reply carries the values as a packed array with the first and last frame and "
 				"the interval, so the timeline is reconstructable. Numbers stay numbers; one "
-				"non-numeric sample makes the whole window text. Frames where the node or "
-				"property could not be read are counted in `missing` rather than dropped, "
-				"because a hole in a series is invisible and a count is not.",
+				"non-numeric sample makes the whole window text. A node or property that is "
+				"not there when the recording starts is refused; frames where it stops being "
+				"readable part way through are counted in `missing` rather than dropped, "
+				"because a hole in a series is invisible and a count is not.\n\n"
+				"It records the window that starts when the call is made, so from a single "
+				"client the action being watched has to be driven from somewhere else - "
+				"another connection, or the game's own input - or the first frames of it are "
+				"missed. `Godot_WaitForRuntimeCondition` with comparison 'changes_from' is "
+				"the usual way to line the two up.",
 				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties, required), 90.0))));
 	}
 

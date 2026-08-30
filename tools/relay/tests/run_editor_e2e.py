@@ -2956,21 +2956,36 @@ def run(editor_binary, display):
                       "10 samples every 3rd frame did not span 28 frames: %r" % spaced)
                 check(spaced["clock"] == "process", "the process clock was not honoured: %r" % spaced)
 
+                # A node or property that is not there when the recording starts is a
+                # refusal, not a window of zeros. It used to answer numeric:true,
+                # samples:5, values:[0,0,0,0,0] with `missing:5` the only tell among nine
+                # fields - and a zero-filled velocity series is a completely believable
+                # "it never moved". Godot_GetRuntimeProperty refuses the same name
+                # cleanly; so does this now.
                 reply = call({"jsonrpc": "2.0", "id": 1252, "method": "tools/call",
                               "params": {"name": "Godot_RecordRuntimeSeries",
                                          "arguments": {"path": "/root/Main/NoSuchNode",
                                                        "property": "process_priority",
                                                        "frames": 5}}})
-                absent = reply["result"]["structuredContent"]
-                check(absent["missing"] == 5,
-                      "a node that does not exist did not report missing samples: %r" % absent)
-                print("PASS Godot_RecordRuntimeSeries honours the interval and counts what it could not read")
+                check(refused(reply),
+                      "recording a node that does not exist returned data instead of refusing")
+                reply = call({"jsonrpc": "2.0", "id": 1253, "method": "tools/call",
+                              "params": {"name": "Godot_RecordRuntimeSeries",
+                                         "arguments": {"path": "/root/Main",
+                                                       "property": "no_such_property_at_all",
+                                                       "frames": 5}}})
+                check(refused(reply),
+                      "recording a property that does not exist returned zeros instead of refusing")
+                check("no_such_property_at_all" in refusal_text(reply),
+                      "the refusal does not name the property: %s" % refusal_text(reply))
+                print("PASS Godot_RecordRuntimeSeries honours the interval, and refuses rather "
+                      "than recording a window of zeros")
 
                 # --- finding a node nothing named ---------------------------------
                 # A node a script created comes back from the tree as "@RigidBody2D@270",
                 # and that number is an instance counter: it addresses the node now and
                 # not after a restart. Class, name and position all survive one.
-                reply = call({"jsonrpc": "2.0", "id": 1253, "method": "tools/call",
+                reply = call({"jsonrpc": "2.0", "id": 1260, "method": "tools/call",
                               "params": {"name": "Godot_FindRuntimeNodes",
                                          "arguments": {"class_name": "Node", "limit": 5}}})
                 check(reply["result"]["isError"] is False,

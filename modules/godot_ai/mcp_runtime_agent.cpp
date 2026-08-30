@@ -248,12 +248,28 @@ void MCPRuntimeWatcher::destroy() {
 	singleton = nullptr;
 }
 
-void MCPRuntimeWatcher::add(const String &p_request_id, const String &p_path, const String &p_property, const Variant &p_expected, double p_timeout_seconds) {
+void MCPRuntimeWatcher::add(const String &p_request_id, const String &p_path, const String &p_property,
+		const Variant &p_expected, double p_timeout_seconds, const String &p_comparison) {
 	Watch watch;
 	watch.request_id = p_request_id;
 	watch.path = p_path;
 	watch.property = p_property;
 	watch.expected = p_expected;
+	watch.comparison = p_comparison;
+	if (p_comparison == "changes_from") {
+		// Sampled now, when the wait is armed, rather than on the first frame it runs -
+		// otherwise "changed" would be measured from a value that had already moved.
+		SceneTree *tree = SceneTree::get_singleton();
+		Node *node = tree && tree->get_root() ? tree->get_root()->get_node_or_null(NodePath(p_path)) : nullptr;
+		if (node) {
+			bool valid = false;
+			const Variant current = node->get(p_property, &valid);
+			if (valid) {
+				watch.baseline = current;
+				watch.has_baseline = true;
+			}
+		}
+	}
 	watch.deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_timeout_seconds;
 	watches.push_back(watch);
 	// Check immediately: a condition that is already true should not cost a frame, and
@@ -770,14 +786,32 @@ void MCPRuntimeWatcher::on_frame() {
 				if (!MCPRuntimeAgent::coerce(watch.expected, current.get_type(), expected, ignored)) {
 					expected = watch.expected;
 				}
-				if (current == expected) {
+				bool satisfied = false;
+				if (watch.comparison == "changes_from") {
+					satisfied = watch.has_baseline && current != watch.baseline;
+				} else if (watch.comparison == "not_equals") {
+					satisfied = current != expected;
+				} else if (watch.comparison == "greater_than") {
+					satisfied = Variant::evaluate(Variant::OP_GREATER, current, expected);
+				} else if (watch.comparison == "less_than") {
+					satisfied = Variant::evaluate(Variant::OP_LESS, current, expected);
+				} else {
+					satisfied = current == expected;
+				}
+				if (satisfied) {
 					Dictionary result;
 					result["path"] = watch.path;
 					result["property"] = watch.property;
 					result["satisfied"] = true;
+					result["comparison"] = watch.comparison;
 					String text;
 					VariantWriter::write_to_string(current, text);
 					result["text"] = text;
+					if (watch.has_baseline) {
+						String baseline_text;
+						VariantWriter::write_to_string(watch.baseline, baseline_text);
+						result["was"] = baseline_text;
+					}
 					watches.remove_at(i);
 					MCPRuntimeAgent::reply(watch.request_id, result);
 					continue;
@@ -905,6 +939,30 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 			_fail(request_id, "clock is 'physics' or 'process'");
 			return OK;
 		}
+		// Refuse a property that is not there, rather than recording a window of zeros.
+		//
+		// Asked for a misspelt property this used to answer numeric:true, samples:5,
+		// values:[0,0,0,0,0], with `missing:5` the only tell among nine fields - and a
+		// zero-filled velocity series is a completely believable "it never moved".
+		// Godot_GetRuntimeProperty refuses the same name cleanly; so should this.
+		// `missing` still exists, and still means what it says: a node that goes away
+		// part way through a window is a fact about the run, not a caller mistake.
+		{
+			SceneTree *tree = SceneTree::get_singleton();
+			Node *subject = tree && tree->get_root()
+					? tree->get_root()->get_node_or_null(NodePath(path))
+					: nullptr;
+			if (!subject) {
+				_fail(request_id, vformat("no node at '%s' in the running game", path));
+				return OK;
+			}
+			bool valid = false;
+			subject->get(property, &valid);
+			if (!valid) {
+				_fail(request_id, vformat("'%s' has no property '%s'", path, property));
+				return OK;
+			}
+		}
 		const String component = arguments.has("component") ? String(arguments["component"]) : String();
 		if (!component.is_empty() && component != "x" && component != "y" && component != "z" &&
 				component != "length") {
@@ -950,12 +1008,26 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
 		const String path = arguments.has("path") ? String(arguments["path"]) : String();
 		const String property = arguments.has("property") ? String(arguments["property"]) : String();
-		if (!watcher || path.is_empty() || property.is_empty() || !arguments.has("equals")) {
-			_fail(request_id, "waiting needs a node path, a property name and a value to wait for");
+		if (!watcher || path.is_empty() || property.is_empty()) {
+			_fail(request_id, "waiting needs a node path and a property name");
+			return OK;
+		}
+		const bool needs_value = !arguments.has("comparison") ||
+				String(arguments["comparison"]) != "changes_from";
+		if (needs_value && !arguments.has("equals")) {
+			_fail(request_id, "waiting needs a value to compare against; use comparison "
+							  "'changes_from' to wait for it to become anything else");
+			return OK;
+		}
+		const String comparison = arguments.has("comparison") ? String(arguments["comparison"]) : String("equals");
+		if (comparison != "equals" && comparison != "not_equals" && comparison != "greater_than" &&
+				comparison != "less_than" && comparison != "changes_from") {
+			_fail(request_id, "comparison is one of equals, not_equals, greater_than, less_than, changes_from");
 			return OK;
 		}
 		const double timeout = arguments.has("timeout_seconds") ? (double)arguments["timeout_seconds"] : 10.0;
-		watcher->add(request_id, path, property, arguments["equals"], timeout);
+		watcher->add(request_id, path, property,
+				arguments.has("equals") ? arguments["equals"] : Variant(), timeout, comparison);
 		return OK;
 	}
 
@@ -1699,6 +1771,98 @@ Dictionary MCPRuntimeAgent::_audio_state(const Dictionary &p_arguments, String &
 	return result;
 }
 
+// Vectors, colours and rectangles as numbers, with the name of each one.
+//
+// `components` is not decoration: it is the difference between an array a caller can use
+// and an array a caller has to guess the order of. Returns false for anything that is
+// not a fixed-size numeric aggregate, which then falls back to text.
+static bool unpack_numeric(const Variant &p_value, PackedFloat64Array &r_numbers,
+		PackedStringArray &r_components) {
+	const char *xy[] = { "x", "y" };
+	const char *xyz[] = { "x", "y", "z" };
+	const char *xyzw[] = { "x", "y", "z", "w" };
+	const char *rgba[] = { "r", "g", "b", "a" };
+	const char *rect[] = { "x", "y", "width", "height" };
+
+	auto emit = [&](const double *p_values, const char **p_names, int p_count) {
+		for (int i = 0; i < p_count; i++) {
+			r_numbers.push_back(p_values[i]);
+			r_components.push_back(p_names[i]);
+		}
+		return true;
+	};
+
+	switch (p_value.get_type()) {
+		case Variant::VECTOR2: {
+			const Vector2 v = p_value;
+			const double values[] = { v.x, v.y };
+			return emit(values, xy, 2);
+		}
+		case Variant::VECTOR2I: {
+			const Vector2i v = p_value;
+			const double values[] = { (double)v.x, (double)v.y };
+			return emit(values, xy, 2);
+		}
+		case Variant::VECTOR3: {
+			const Vector3 v = p_value;
+			const double values[] = { v.x, v.y, v.z };
+			return emit(values, xyz, 3);
+		}
+		case Variant::VECTOR3I: {
+			const Vector3i v = p_value;
+			const double values[] = { (double)v.x, (double)v.y, (double)v.z };
+			return emit(values, xyz, 3);
+		}
+		case Variant::VECTOR4: {
+			const Vector4 v = p_value;
+			const double values[] = { v.x, v.y, v.z, v.w };
+			return emit(values, xyzw, 4);
+		}
+		case Variant::COLOR: {
+			const Color c = p_value;
+			const double values[] = { c.r, c.g, c.b, c.a };
+			return emit(values, rgba, 4);
+		}
+		case Variant::RECT2: {
+			const Rect2 r = p_value;
+			const double values[] = { r.position.x, r.position.y, r.size.x, r.size.y };
+			return emit(values, rect, 4);
+		}
+		case Variant::RECT2I: {
+			const Rect2i r = p_value;
+			const double values[] = { (double)r.position.x, (double)r.position.y,
+				(double)r.size.x, (double)r.size.y };
+			return emit(values, rect, 4);
+		}
+		case Variant::PACKED_VECTOR2_ARRAY: {
+			// Flat, in pairs, which is how Godot prints it too - and the reason a caller
+			// that parsed it like a Vector2 read an empty board. `components` says so.
+			const PackedVector2Array points = p_value;
+			for (const Vector2 &point : points) {
+				r_numbers.push_back(point.x);
+				r_numbers.push_back(point.y);
+			}
+			r_components.push_back("x");
+			r_components.push_back("y");
+			return true;
+		}
+		case Variant::PACKED_VECTOR3_ARRAY: {
+			const PackedVector3Array points = p_value;
+			for (const Vector3 &point : points) {
+				r_numbers.push_back(point.x);
+				r_numbers.push_back(point.y);
+				r_numbers.push_back(point.z);
+			}
+			r_components.push_back("x");
+			r_components.push_back("y");
+			r_components.push_back("z");
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
 Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String &r_error) {
 	SceneTree *tree = SceneTree::get_singleton();
 	if (!tree || !tree->get_root()) {
@@ -1762,9 +1926,23 @@ Dictionary MCPRuntimeAgent::_get_property(const Dictionary &p_arguments, String 
 			result["value"] = round_tripped.get_type() == Variant::NIL ? Variant(String(value))
 																	  : round_tripped;
 		} break;
-		default:
-			result["value"] = String(value);
-			break;
+		default: {
+			// Vectors and colours are numbers, and used to come back only as text. Two
+			// different texts, in fact - `text` as "Vector2(143.84, 132.88)" and `value`
+			// as "(143.84, 132.88)" - so a caller pulling numbers out with a regex could
+			// eat the 2 out of "Vector2" and build a complete, plausible, wrong table.
+			// That happened, with no error anywhere: positions six hundred pixels out and
+			// a set of derived speeds to match. Numbers a caller has to parse out of prose
+			// are numbers a caller will eventually parse wrongly.
+			PackedFloat64Array numbers;
+			PackedStringArray components;
+			if (unpack_numeric(value, numbers, components)) {
+				result["value"] = numbers;
+				result["components"] = components;
+			} else {
+				result["value"] = String(value);
+			}
+		} break;
 	}
 	String text;
 	VariantWriter::write_to_string(value, text);
