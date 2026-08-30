@@ -3869,6 +3869,66 @@ def run(editor_binary, display):
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
 
+        # --- comparing two captures --------------------------------------------
+        #
+        # Evidence about a visual medium should be something you look at. Screenshots
+        # existed and were treated as attachments; nothing could answer "did this
+        # change what the player sees, and where?" without a person opening two files.
+        #
+        # Deliberately in the part of the run that happens with or without a display:
+        # the comparison is arithmetic on two files and must not need a screen, which
+        # matters because the thing it supports is the part that otherwise does.
+        write_png(os.path.join(project, "shot_before.png"), width=40, height=40)
+        write_png(os.path.join(project, "shot_after.png"), width=40, height=40, gradient=True)
+        write_png(os.path.join(project, "shot_wide.png"), width=80, height=40)
+
+        reply = call({"jsonrpc": "2.0", "id": 850, "method": "tools/call",
+                      "params": {"name": "Godot_CompareCaptures",
+                                 "arguments": {"before": "res://shot_before.png",
+                                               "after": "res://shot_before.png"}}})
+        check(not refused(reply), "comparing a file with itself failed: %s" % refusal_text(reply))
+        same = reply["result"]["structuredContent"]
+        check(same["verdict"] == "identical",
+              "a file compared with itself is not identical: %r" % same)
+        check(same["changed_pixels"] == 0, "identical images reported changes: %r" % same)
+        check("changed_bounds" not in same,
+              "an unchanged comparison reported a changed area: %r" % same)
+
+        reply = call({"jsonrpc": "2.0", "id": 851, "method": "tools/call",
+                      "params": {"name": "Godot_CompareCaptures",
+                                 "arguments": {"before": "res://shot_before.png",
+                                               "after": "res://shot_after.png",
+                                               "output": "res://shot_diff.png"}}})
+        check(not refused(reply), "comparing two images failed: %s" % refusal_text(reply))
+        changed = reply["result"]["structuredContent"]
+        check(changed["verdict"] == "substantial",
+              "a flat image against a gradient is not substantial: %r" % changed)
+        check(changed["changed_pixels"] > 0, "no pixels differ: %r" % changed)
+        check(changed["width"] == 40 and changed["height"] == 40,
+              "the comparison reports the wrong size: %r" % changed)
+        # The box is what makes the answer actionable rather than a number.
+        bounds = changed["changed_bounds"]
+        check(bounds["width"] > 0 and bounds["height"] > 0,
+              "the changed area has no extent: %r" % bounds)
+        check(changed["summary"], "the comparison produced no readable summary")
+
+        # And it writes a picture, because somebody is going to look at it.
+        diff_on_disk = os.path.join(project, "shot_diff.png")
+        check(os.path.exists(diff_on_disk), "the difference image was not written")
+        with open(diff_on_disk, "rb") as handle:
+            check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                  "the difference image is not a PNG")
+
+        # A resized window is a different question from a changed one.
+        reply = call({"jsonrpc": "2.0", "id": 852, "method": "tools/call",
+                      "params": {"name": "Godot_CompareCaptures",
+                                 "arguments": {"before": "res://shot_before.png",
+                                               "after": "res://shot_wide.png"}}})
+        check(refused(reply), "two differently-sized images were compared anyway")
+        check("40x40" in refusal_text(reply) and "80x40" in refusal_text(reply),
+              "the refusal does not name both sizes: %s" % refusal_text(reply))
+        print("PASS Godot_CompareCaptures measures a change, locates it, and draws it")
+
         # --- skills, served as jobs rather than buried under the tools ---------
         #
         # The tool surface is itself a reliability risk: ninety-five similarly-named

@@ -102,4 +102,7 @@ void mcp_register_memory_tools();
 // The editor's class reference, including the project's own script classes.
 void mcp_register_docs_tools();
 
+// Comparing two captures, so evidence about a visual medium can be visual.
+void mcp_register_compare_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H
