@@ -893,6 +893,13 @@ void mcp_register_input_tools() {
 				"is going, which is usually the question. Without this a Vector2 series comes "
 				"back as text and is much harder to read.",
 				components, "");
+		properties["start_on_change"] = MCPSchema::bool_property(
+				"Wait at the property's current value and start recording on the frame it "
+				"changes. Use this when you cannot drive the action yourself while this call "
+				"is blocked: it makes the first sample the first frame of the movement rather "
+				"than whenever the call happened to land.", false);
+		properties["arm_timeout_seconds"] = MCPSchema::integer_property(
+				"With start_on_change, how long to wait for it to move before giving up.", 30);
 		Vector<String> required;
 		required.push_back("path");
 		required.push_back("property");
@@ -913,11 +920,11 @@ void mcp_register_input_tools() {
 				"not there when the recording starts is refused; frames where it stops being "
 				"readable part way through are counted in `missing` rather than dropped, "
 				"because a hole in a series is invisible and a count is not.\n\n"
-				"It records the window that starts when the call is made, so from a single "
-				"client the action being watched has to be driven from somewhere else - "
-				"another connection, or the game's own input - or the first frames of it are "
-				"missed. `Godot_WaitForRuntimeCondition` with comparison 'changes_from' is "
-				"the usual way to line the two up.",
+				"By default it records the window starting when the call is made, so from a "
+				"single client the first frames of the action are missed - the call blocks, so "
+				"nothing can drive the action while it runs. Pass `start_on_change` to arm it "
+				"instead: it waits at the property's current value and begins on the frame it "
+				"moves, which makes the first sample the first frame of the movement.",
 				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties, required), 90.0))));
 	}
 

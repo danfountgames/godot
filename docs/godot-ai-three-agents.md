@@ -118,20 +118,26 @@ distinguishes "nothing was started" from "it started and its connection has not 
 
 Ranked by how often they cost a round trip, not by how hard they are.
 
-1. **No `--describe <tool>`.** All three lost calls to argument-name drift —
+1. ~~**No `--describe <tool>`.**~~ *(fixed)* All three lost calls to argument-name drift —
    `activity` not `now`, `label` not `name`, `limit` not `lines`, `class_name` not `class`,
    `body` not `summary`, `id` not `checkpoint`, `reached` not `pass`. Six to eight round
    trips each. The refusals are good (*"unknown argument 'now' (known arguments: goal,
    activity, clear)"* self-corrects in one retry) but the only way to read a schema is to
-   fetch all ninety-nine and grep.
+   fetch all ninety-nine and grep. `--describe <tool>` now prints one, and suggests near
+   matches so a half-remembered "runtimeseries" finds `Godot_RecordRuntimeSeries`.
 2. **No frame stepping for the game started by `Godot_PlayMainScene`.** Two of them wanted
    "advance N physics frames and return". Both ended up abusing something else as a
    barrier; A abandoned an entire measurement approach over it.
-3. **No way to arm a recording before the action it records.** `Godot_RecordRuntimeSeries`
-   blocks for its window, so from one client it can only be placed *after* the thing —
-   and misses the first two frames, measured as 12.55 px of an 868 px shot. Its own
-   description says *"start it, then do the thing you want to watch"*, which is precisely
-   what a single client cannot do.
+3. ~~**No way to arm a recording before the action it records.**~~ *(fixed)*
+   `Godot_RecordRuntimeSeries` blocks for its window, so from one client it could only be
+   placed *after* the thing — and missed the first two frames, measured as 12.55 px of an
+   868 px shot. Its own description said *"start it, then do the thing you want to
+   watch"*, which is precisely what a single client could not do. It now takes
+   `start_on_change`: it waits at the property's current value and begins on the frame it
+   moves, so the first sample is the first frame of the movement. Verified by arming it
+   three seconds before a shot and getting back `378 376 373 371 …` — the launch, not a
+   run of zeros. Giving up waiting is a refusal naming what it waited on, because "it
+   never moved" and "I stopped waiting" are different answers.
 4. **No way to call a method on a running node.** `apply_water_to_existing()` existed and
    was exactly what A wanted; it set four properties on each ring instead.
 5. **No structured patch write.** `Godot_WriteTextFile` is whole-file, so a one-character
@@ -155,16 +161,22 @@ C ran its whole proof inside `Godot_StartPlaytest` and got back:
 > injected no input at all, so nothing it did can account for reaching it" (calls: 391,
 > inputs: 0)
 
-The reconciler's model of "did something" is input events only. But this project's README
+The reconciler's model of "did something" was input events only. But this project's README
 and `main.gd`'s own docstring both say, in as many words, that every verb is reachable as a
 *property* because a drag is a bad unit of intent — and the tooling recommends that route.
-So the intended way to drive a game scores zero with the tool built to check that the
-driving happened. That is a false negative aimed at the workflow the product recommends,
-and it is not yet fixed.
+So the intended way to drive a game scored zero with the tool built to check that the
+driving happened.
 
-C also found that its own malformed tool call is recorded permanently in the playtest
+**Fixed:** a write to the running game counts as acting on it. A *read* still does not, and
+that distinction is the whole point — a report assembled from `Godot_GetRuntimeProperty`
+alone still cannot account for anything.
+
+C also found that its own malformed tool call was recorded permanently in the playtest
 report's `problems` list, pooling "the agent typed the wrong enum" with "the game did
-something bad" into one count a human reads as evidence about the build.
+something bad" into one count a human reads as evidence about the build. A schema rejection
+says nothing about the game and can flip a reached goal to indeterminate on the strength of
+a misspelt argument name; those are now reported separately as `caller_mistakes`, still
+shown, because hiding them would let an agent quietly fail half its calls.
 
 ## One report that did not survive checking
 

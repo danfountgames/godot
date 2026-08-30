@@ -166,6 +166,19 @@ class MCPRuntimeWatcher : public Object {
 		// series comes back as a hundred and fifty strings, and the commonest question
 		// asked of a moving body - how fast is it - needs a number.
 		String component;
+		// Arm now, record when it moves.
+		//
+		// The recorder blocks for its window, so from one client it can only be placed
+		// *after* the thing it is meant to watch - and then it misses the beginning.
+		// Measured on a real shot: two frames, 12.55px of 868px. Its own description
+		// says "start it, then do the thing you want to watch", which is precisely what
+		// a single client cannot do. With this it waits at the value it was armed at and
+		// starts on the frame that value changes, so the first sample is the first frame
+		// of the movement.
+		bool start_on_change = false;
+		bool started = false;
+		Variant armed_value;
+		double arm_deadline = 0.0;
 		int first_frame = 0;
 		int last_frame = 0;
 		int missing = 0;
@@ -245,7 +258,8 @@ public:
 	// Records one property every p_interval_frames for p_frames samples, then answers
 	// once with the whole window. See Series for why this belongs in the game.
 	void add_series(const String &p_request_id, const String &p_path, const String &p_property,
-			int p_frames, int p_interval_frames, bool p_physics, const String &p_component);
+			int p_frames, int p_interval_frames, bool p_physics, const String &p_component,
+			bool p_start_on_change, double p_arm_timeout_seconds);
 	// Queues a gesture for frame-paced delivery. `p_result` is echoed back when the last
 	// event has been delivered, with the frames it spanned added.
 	void add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,

@@ -303,7 +303,7 @@ void MCPRuntimeWatcher::add_audio_window(const String &p_request_id, int p_frame
 
 void MCPRuntimeWatcher::add_series(const String &p_request_id, const String &p_path,
 		const String &p_property, int p_frames, int p_interval_frames, bool p_physics,
-		const String &p_component) {
+		const String &p_component, bool p_start_on_change, double p_arm_timeout_seconds) {
 	Series recording;
 	recording.request_id = p_request_id;
 	recording.path = p_path;
@@ -312,6 +312,20 @@ void MCPRuntimeWatcher::add_series(const String &p_request_id, const String &p_p
 	recording.interval_frames = MAX(1, p_interval_frames);
 	recording.physics = p_physics;
 	recording.component = p_component;
+	recording.start_on_change = p_start_on_change;
+	recording.started = !p_start_on_change;
+	recording.arm_deadline = OS::get_singleton()->get_ticks_msec() / 1000.0 + p_arm_timeout_seconds;
+	if (p_start_on_change) {
+		SceneTree *tree = SceneTree::get_singleton();
+		Node *node = tree && tree->get_root() ? tree->get_root()->get_node_or_null(NodePath(p_path)) : nullptr;
+		if (node) {
+			bool valid = false;
+			const Variant current = node->get(p_property, &valid);
+			if (valid) {
+				recording.armed_value = current;
+			}
+		}
+	}
 	recording.first_frame = -1;
 	series.push_back(recording);
 }
@@ -333,13 +347,41 @@ void MCPRuntimeWatcher::_advance_series(bool p_physics) {
 		if (recording.physics != p_physics) {
 			continue;
 		}
+		Node *node = root ? root->get_node_or_null(NodePath(recording.path)) : nullptr;
+
+		if (!recording.started) {
+			// Armed, waiting for the thing to start. Nothing is sampled yet, so the
+			// window is not spent sitting still.
+			bool armed_valid = false;
+			const Variant now = node ? node->get(recording.property, &armed_valid) : Variant();
+			if (armed_valid && now != recording.armed_value) {
+				recording.started = true;
+			} else if (OS::get_singleton()->get_ticks_msec() / 1000.0 >= recording.arm_deadline) {
+				// Said, not recorded as an empty window: "it never moved" and "I gave up
+				// waiting for it to move" are different answers.
+				// Everything read out of the entry *before* it is removed. Reading
+				// `recording` afterwards is a dangling reference into the vector, and
+				// the first version of this reported "armed on '.'" because of it.
+				const String request_id = recording.request_id;
+				const String subject = vformat("%s.%s", recording.path, recording.property);
+				series.remove_at(i);
+				MCPRuntimeAgent::fail(request_id,
+						vformat("armed on '%s' and it did not change within the arm timeout, so "
+								"there was nothing to record. Drive the action from another "
+								"connection while this call is blocked, or drop start_on_change "
+								"and record the window from now.",
+								subject));
+				continue;
+			} else {
+				continue;
+			}
+		}
+
 		if (recording.countdown > 0) {
 			recording.countdown--;
 			continue;
 		}
 		recording.countdown = recording.interval_frames - 1;
-
-		Node *node = root ? root->get_node_or_null(NodePath(recording.path)) : nullptr;
 		bool valid = false;
 		Variant value;
 		if (node) {
@@ -419,6 +461,7 @@ void MCPRuntimeWatcher::_advance_series(bool p_physics) {
 		result["first_frame"] = recording.first_frame;
 		result["last_frame"] = recording.last_frame;
 		result["interval_frames"] = recording.interval_frames;
+		result["start_on_change"] = recording.start_on_change;
 		if (!recording.component.is_empty()) {
 			result["component"] = recording.component;
 		}
@@ -969,7 +1012,14 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 			_fail(request_id, "component is 'x', 'y', 'z' or 'length'");
 			return OK;
 		}
-		watcher->add_series(request_id, path, property, frames, interval, clock == "physics", component);
+		const bool start_on_change = arguments.has("start_on_change")
+				? (bool)arguments["start_on_change"]
+				: false;
+		const double arm_timeout = arguments.has("arm_timeout_seconds")
+				? (double)arguments["arm_timeout_seconds"]
+				: 30.0;
+		watcher->add_series(request_id, path, property, frames, interval, clock == "physics",
+				component, start_on_change, arm_timeout);
 		return OK;
 	}
 
