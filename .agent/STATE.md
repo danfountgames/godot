@@ -67,6 +67,15 @@ What landed:
 | **Task-level undo** | Checkpoints carry the goal that was current; `Godot_RestoreCheckpoint` takes a `task` and rolls the whole thing back, newest first. |
 | **Terminal activity strip** | The Agent Terminal shows the latest operation and a button to bring the Activity stream forward, because both are bottom-panel items and Godot shows one at a time. |
 
+**Headless is no longer a degraded mode.** The end-to-end suite covers **125 of its 135
+checks with no display** — clicks, drags, scrolls, taps, gamepad, node geometry, live
+state, sessions, profiling. It covered 64 before. Two fixes did it: a headless editor now
+passes `--display-driver headless` to the game it launches (without which the game
+crashed on X11 and vanished), and the runtime agent sets the project's configured
+viewport on a headless game (without which the interface laid out in a 100x100 stub and
+every real coordinate addressed nothing). The remaining ten checks are the one thing that
+genuinely cannot work: nothing draws, so the capture tools refuse.
+
 Three things worth not relearning:
 
 - **`--headless --editor` has a complete `EditorNode` and no human.** Checking for an
