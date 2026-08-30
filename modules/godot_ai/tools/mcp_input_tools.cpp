@@ -955,6 +955,28 @@ void mcp_register_input_tools() {
 				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties)))));
 	}
 
+	{
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property(
+				"Node path in the running game, such as /root/Main.");
+		properties["method"] = MCPSchema::string_property("Method to call.");
+		properties["arguments"] = MCPSchema::array_property(
+				"Arguments, in order. A structured type may be given as an array.",
+				MCPSchema::any_property("One argument."));
+		Vector<String> required;
+		required.push_back("path");
+		required.push_back("method");
+		registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+				"Godot_CallRuntimeMethod", "call_method",
+				"Call a method on a node in the running game, and get back what it returned.\n\n"
+				"For the things a game already knows how to do to itself. Setting four "
+				"properties in a loop is the long way round a method that is sitting right "
+				"there, and the loop is not the same thing either - it skips whatever the "
+				"method does around them. Affects the running game only and is discarded when "
+				"it stops; use the scene tools for a change that must survive.",
+				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties, required)))));
+	}
+
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetTimeScale", "time_scale",
 			"Speed up or slow down the running game, for walking a long route without waiting "

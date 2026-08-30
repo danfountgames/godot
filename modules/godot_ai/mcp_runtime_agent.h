@@ -295,6 +295,7 @@ class MCPRuntimeAgent {
 	static Dictionary _set_property(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _node_info(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _find_nodes(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _call_method(const Dictionary &p_arguments, String &r_error);
 	static bool _closer_first(const Variant &p_a, const Variant &p_b);
 	static Dictionary _performance(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _window_info(const Dictionary &p_arguments, String &r_error);

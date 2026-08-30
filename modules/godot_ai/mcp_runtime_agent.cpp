@@ -1212,6 +1212,9 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	if (p_command == "set_property") {
 		return _set_property(p_arguments, r_error);
 	}
+	if (p_command == "call_method") {
+		return _call_method(p_arguments, r_error);
+	}
 	if (p_command == "find_nodes") {
 		return _find_nodes(p_arguments, r_error);
 	}
@@ -2250,6 +2253,92 @@ bool MCPRuntimeAgent::_closer_first(const Variant &p_a, const Variant &p_b) {
 	const Dictionary a = p_a;
 	const Dictionary b = p_b;
 	return (double)a.get("distance", 0.0) < (double)b.get("distance", 0.0);
+}
+
+// Calling a method on a node in the running game.
+//
+// Wanted because setting four properties in a loop is the long way round a method the
+// game already has: an agent driving POOL found `apply_water_to_existing()` sitting there
+// and had to reimplement it one property at a time across every ring.
+//
+// The reach of this is the same as Godot_SetRuntimeProperty's, which has always been able
+// to write any property on any node in the game process. It is the project's own code
+// either way, and no engine singleton is addressable by node path.
+Dictionary MCPRuntimeAgent::_call_method(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no scene tree";
+		return Dictionary();
+	}
+	const String path = p_arguments.has("path") ? String(p_arguments["path"]) : String();
+	Node *node = path.is_empty() ? nullptr : tree->get_root()->get_node_or_null(NodePath(path));
+	if (!node) {
+		r_error = vformat("no node at '%s' in the running game", path);
+		return Dictionary();
+	}
+	const String method = p_arguments.has("method") ? String(p_arguments["method"]) : String();
+	if (method.is_empty()) {
+		r_error = "a method name is required";
+		return Dictionary();
+	}
+	if (!node->has_method(method)) {
+		// Named rather than a bare failure, and the near ones offered: a method that does
+		// not exist and a method that failed are different problems.
+		List<MethodInfo> methods;
+		node->get_method_list(&methods);
+		String close;
+		int listed = 0;
+		for (const MethodInfo &info : methods) {
+			if (String(info.name).findn(method) < 0 || String(info.name).begins_with("_")) {
+				continue;
+			}
+			if (listed++ >= 6) {
+				break;
+			}
+			close += (close.is_empty() ? "" : ", ") + String(info.name);
+		}
+		r_error = vformat("'%s' has no method '%s'%s", node->get_class(), method,
+				close.is_empty() ? String() : vformat(". Did you mean: %s", close));
+		return Dictionary();
+	}
+
+	Array arguments;
+	if (p_arguments.has("arguments")) {
+		arguments = p_arguments["arguments"];
+	}
+	// callp wants a non-const array of const pointers, and the storage has to outlive the
+	// call, so both are built here rather than inline.
+	LocalVector<Variant> storage;
+	LocalVector<const Variant *> pointers;
+	storage.resize(arguments.size());
+	pointers.resize(arguments.size());
+	for (int i = 0; i < arguments.size(); i++) {
+		storage[i] = arguments[i];
+	}
+	for (uint32_t i = 0; i < storage.size(); i++) {
+		pointers[i] = &storage[i];
+	}
+	const Variant **argv = pointers.is_empty() ? nullptr : pointers.ptr();
+	const int argc = (int)pointers.size();
+
+	Callable::CallError call_error;
+	const Variant returned = node->callp(StringName(method), argv, argc, call_error);
+	if (call_error.error != Callable::CallError::CALL_OK) {
+		r_error = vformat("calling '%s' on '%s' failed: %s", method, path,
+				Variant::get_call_error_text(node, StringName(method), argv, argc, call_error));
+		return Dictionary();
+	}
+
+	Dictionary result;
+	result["path"] = path;
+	result["method"] = method;
+	result["persistent"] = false;
+	result["returned_type"] = Variant::get_type_name(returned.get_type());
+	String text;
+	VariantWriter::write_to_string(returned, text);
+	result["returned_text"] = text;
+	result["frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	return result;
 }
 
 Dictionary MCPRuntimeAgent::_node_info(const Dictionary &p_arguments, String &r_error) {

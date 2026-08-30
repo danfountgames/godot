@@ -3059,6 +3059,31 @@ def run(editor_binary, display):
                       "the refusal does not explain itself: %s" % refusal_text(reply))
                 print("PASS Godot_FindRuntimeNodes addresses nodes by class and refuses a misspelt one")
 
+                # --- calling a method the game already has ------------------------
+                # Setting four properties in a loop is the long way round a method that
+                # is sitting there, and it is not the same thing either: it skips
+                # whatever the method does around them.
+                reply = call({"jsonrpc": "2.0", "id": 1261, "method": "tools/call",
+                              "params": {"name": "Godot_CallRuntimeMethod",
+                                         "arguments": {"path": "/root/Main",
+                                                       "method": "get_class"}}})
+                check(reply["result"]["isError"] is False,
+                      "calling a method failed: %s" % refusal_text(reply))
+                called = reply["result"]["structuredContent"]
+                check(called["returned_type"] == "String",
+                      "the return value was not reported: %r" % called)
+                check(called["persistent"] is False,
+                      "a runtime call claimed to be persistent: %r" % called)
+
+                reply = call({"jsonrpc": "2.0", "id": 1262, "method": "tools/call",
+                              "params": {"name": "Godot_CallRuntimeMethod",
+                                         "arguments": {"path": "/root/Main",
+                                                       "method": "get_clas"}}})
+                check(refused(reply), "a misspelt method was not refused")
+                check("get_class" in refusal_text(reply),
+                      "the refusal does not suggest the real method: %s" % refusal_text(reply))
+                print("PASS Godot_CallRuntimeMethod calls a method and suggests a misspelt one")
+
                 # The tree itself now carries the paths, so nothing has to rebuild them
                 # from an indented list to use the rest of the interface.
                 reply = call({"jsonrpc": "2.0", "id": 1257, "method": "tools/call",
