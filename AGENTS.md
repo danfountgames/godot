@@ -28,6 +28,11 @@ Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
 first-class mode and not a degraded one; `docs/godot-ai-user-journey.md` is the
 standing critique of what using this is actually like.
 
+Two documents carry outside evidence rather than our own claims, and they are the ones to
+read before believing anything else here: `docs/godot-ai-building-a-game.md`, a whole game
+built through this interface and what that cost, and `docs/godot-ai-three-agents.md`, what
+happened when three agents that did not build it were each handed an editor.
+
 ## Priority directories
 
 - `modules/godot_ai/` — editor-side service, registry, protocol, permissions, tools
