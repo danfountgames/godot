@@ -48,6 +48,46 @@ Rows that are still not, checked against the ledger rather than remembered:
 M1 (foundation and protocol) and M2 (the agent interface) are both complete; see the
 spec ledger and interface ledger for their evidence.
 
+## S-20: the user-journey tranche (done)
+
+Opened by the user asking for a deep dive on the journey and a critique of the whole
+branch, then "Make it", then "make sure the stem is powerful for headless agents too
+via CLI or whatever". The standing critique lives in `docs/godot-ai-user-journey.md`
+and marks which of its seven criticisms have been answered; the headless story is
+`docs/godot-ai-headless.md`, with every command in it run against a real editor.
+
+What landed:
+
+| | |
+|---|---|
+| **Project memory** | `res://.godot_ai/memory/*.md`. Recall returns an index with clipped summaries, not every body; the store is bounded and refuses rather than evicting; a name is slugified before it is ever a path, so traversal is unrepresentable. Two tools, split on capability: `Godot_RecallProjectMemory` (read) and `Godot_UpdateProjectMemory` (edit, checkpointed). |
+| **Class reference** | `Godot_LookupClass`. Search classes, summarise one, find members within it, or read one member in full. Answers for the project's own script classes too, headless included — see the trap below. |
+| **Selection as context** | `Godot_GetEditorStatus` also reports the selection (top-level only, scene-relative paths), the current workspace and the open script. Extended rather than added, so a caller already asking gets it without knowing to ask twice. |
+| **Unattended runs** | `GODOT_AI_POLICY` states per-capability policy in the environment; `MCPUnattended` answers "is anyone here". `Godot_AskUser` and `Godot_ProposeChange` no longer wait out a 120s timeout for a dialog nobody can see. |
+| **Task-level undo** | Checkpoints carry the goal that was current; `Godot_RestoreCheckpoint` takes a `task` and rolls the whole thing back, newest first. |
+| **Terminal activity strip** | The Agent Terminal shows the latest operation and a button to bring the Activity stream forward, because both are bottom-panel items and Godot shows one at a time. |
+
+Three things worth not relearning:
+
+- **`--headless --editor` has a complete `EditorNode` and no human.** Checking for an
+  editor before opening a dialog is the wrong question; the display server is the right
+  one. Two tools waited out their full timeout in CI because of this.
+- **Script documentation is gated twice in command-line mode** — in `EditorFileSystem`
+  *and* again in `EditorHelp::_load_script_doc_cache`, so docs added on top of the second
+  gate queue behind a flag nobody sets. A public seam onto the first one changed nothing
+  and was reverted. `Godot_LookupClass` reads `ScriptServer` and the script itself
+  instead, which needs no engine change: **the fork's editor footprint is unchanged at
+  sixteen files.**
+- **Appending a UTF-8 literal to a `String` treats its bytes as Latin-1.** A bare `"…"`
+  arrives as three mojibake characters; it needs `String::utf8()`.
+
+Two e2e checks were passing because nothing happened, and were fixed with the above: every
+dialog test sat behind `has_display`, so the unattended paths had never run. A third, the
+live S6 replay check, asserted that drift *must* occur — true only if the machine is slow
+enough — and duly failed on a run that was merely fast. It now asserts the invariant (the
+verdict is consistent with the drift measured) and the rule it was reaching for stays
+pinned deterministically in `test_mcp_replay.h`.
+
 ## Current vertical slice
 
 S-19 (done): the agent-experience tranche, opened by

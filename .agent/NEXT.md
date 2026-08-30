@@ -76,6 +76,36 @@ partly revalidated** — see below.
 
 Alongside all of it: **benchmark projects and real success rates**.
 
+## The user's user-journey pass, 2026-08-30
+
+The user asked for a deep dive on the journey and a critique of the whole branch, then
+said "Make it", then added "make sure the stem is powerful for headless agents too via
+CLI or whatever". The critique is `docs/godot-ai-user-journey.md` and it is a standing
+document: it lists seven criticisms and marks which have been answered.
+
+Answered: project memory, the class reference (criticism 6), selection as context, the
+panel collision, task-level undo, and headless (`docs/godot-ai-headless.md`).
+
+**Still open, in the order they matter:**
+
+1. **Nobody has made a game with this.** Every verification is a script we wrote, and
+   the benchmarks in `tools/benchmarks/` have never been run against a real model. This
+   is the biggest hole in the project and no amount of further building closes it. It
+   needs an API key and a session, not a feature.
+2. **Tools are engine operations, not design intentions** (criticism 3). Skills-first
+   discovery is the concrete next step: make the higher-level jobs the prominent surface
+   and the 95 primitives the thing they compose. This is the same note `NEXT.md` already
+   carries about the tool surface being a reliability risk, and it is still true.
+3. **Vision is an afterthought** (criticism 5). Visual diff, before-and-after, a
+   filmstrip of a playtest. The user's "fill out the visuals" means *this* - making the
+   tool visual - and explicitly not generating game art, which needs credentials this
+   editor deliberately does not hold.
+4. **The loop is single-player** (criticism 7). Two games embed simultaneously and only
+   variant comparison uses more than one. Parallel exploration is unbuilt.
+5. **Propose-and-diff as the default mode**, with the plan drawn in the scene rather
+   than listed in a modal.
+6. **Ambient findings**: read-only observations volunteered without being asked.
+
 Not in the user's six, but landed because the design conversation needed it before the
 skills library could lean on it: **propose-then-apply (D1/D2)**. `Godot_ProposeChange`
 puts a validated, risk-grouped plan to the user before any of it happens, and applies
