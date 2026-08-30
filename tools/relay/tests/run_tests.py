@@ -625,6 +625,25 @@ def _responding_editor(result_payload=None, refuse_tool=None):
         if message.get("method") == "tools/list":
             return {"jsonrpc": "2.0", "id": message["id"],
                     "result": {"tools": [{"name": "Godot_GetEditorStatus"}]}}
+        if message.get("method") == "prompts/list":
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"prompts": [{"name": "tidy-the-scene",
+                                            "description": "Remove what the scene does not use.",
+                                            "arguments": [{"name": "context",
+                                                           "required": False}]}]}}
+        if message.get("method") == "prompts/get":
+            params = message.get("params") or {}
+            if params.get("name") != "tidy-the-scene":
+                return {"jsonrpc": "2.0", "id": message["id"],
+                        "error": {"code": -32602,
+                                  "message": "no skill named %r" % params.get("name")}}
+            body = "Look for orphaned nodes."
+            context = (params.get("arguments") or {}).get("context")
+            if context:
+                body += "\n\nApply this to: " + context
+            return {"jsonrpc": "2.0", "id": message["id"],
+                    "result": {"messages": [{"role": "user",
+                                             "content": {"type": "text", "text": body}}]}}
         if message.get("method") == "tools/call":
             called = (message.get("params") or {}).get("name")
             if refuse_tool is not None and called == refuse_tool:
@@ -754,6 +773,63 @@ def test_list_tools_names_the_available_tools():
         assert_eq(result.returncode, 0, "--list-tools failed: %s" % result.stderr.decode())
         listed = json.loads(result.stdout.decode())
         assert_eq(len(listed["tools"]) > 0, True, "tools were listed")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_list_prompts_offers_the_skills_from_the_command_line():
+    """The skills are the intended way in, and --call never sees the initialize
+    instructions that say so. Without this the recommended path is the one a scripted
+    agent cannot take."""
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(["--list-prompts"], home)
+        assert_eq(result.returncode, 0, "--list-prompts failed: %s" % result.stderr.decode())
+        listed = json.loads(result.stdout.decode())
+        assert_eq([p["name"] for p in listed["prompts"]], ["tidy-the-scene"],
+                  "the skill is offered")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_one_shot_prompt_returns_the_instructions_and_takes_a_context():
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(["--prompt", "tidy-the-scene"], home)
+        assert_eq(result.returncode, 0, "--prompt failed: %s" % result.stderr.decode())
+        fetched = json.loads(result.stdout.decode())
+        assert_eq("orphaned nodes" in fetched["messages"][0]["content"]["text"], True,
+                  "the instructions came back")
+
+        result = run_relay_one_shot(
+            ["--prompt", "tidy-the-scene", "--context", "the boss arena"], home)
+        assert_eq(result.returncode, 0, "--prompt with context failed")
+        aimed = json.loads(result.stdout.decode())
+        assert_eq("the boss arena" in aimed["messages"][0]["content"]["text"], True,
+                  "the context reached the prompt")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_an_unknown_prompt_exits_non_zero():
+    """A script has to be able to tell a missing skill from a delivered one, and the
+    only thing it can check without parsing is the exit status."""
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(["--prompt", "no-such-skill"], home)
+        assert_eq(result.returncode, 1,
+                  "an unknown prompt exited %d" % result.returncode)
+        assert_eq("error" in json.loads(result.stdout.decode()), True,
+                  "the error is still printed as JSON")
     finally:
         editor.close()
         shutil.rmtree(home, ignore_errors=True)

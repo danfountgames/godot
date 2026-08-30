@@ -32,14 +32,32 @@ only logged to the editor's Output panel, because in the run it describes there 
 nobody to look at a panel — a CI job's stdout is the record of what the agent was
 permitted to do.
 
-## The four ways in
+## The ways in
+
+Start with the skills. They are the intended entry point for the same reason they are
+served as MCP prompts — a named job with the primitives composed underneath is more
+reliable than assembling the same sequence out of ninety-six of them — and `--call`
+never sees the `initialize` instructions that say so.
+
+```sh
+bin/godot-ai-relay --list-prompts --project <project>
+bin/godot-ai-relay --prompt investigate-a-crash --context "the boss arena" --project <project>
+```
+
+Only skills the user has allowed are listed; the trust decision gates the CLI exactly as
+it gates everything else. `--prompt` exits 1 for a skill that does not exist, so a script
+can tell a missing one from a delivered one without parsing.
 
 | Command | For |
 |---|---|
+| `--list-prompts` / `--prompt <name>` | The skills: named jobs, and their instructions. Start here. |
 | `--call <tool> --arguments <json>` | One tool, one result on stdout as JSON, exit. |
 | `--batch` | A JSON array of calls on stdin, run over **one** connection. |
-| `--list-tools` | Every tool with its schema, as JSON. 95 on this branch. |
+| `--list-tools` | Every tool with its schema, as JSON. 96 on this branch. |
 | `--mcp` (default) | Serve MCP over stdio to a client. `--http-port` for HTTP instead. |
+
+Exit status is the thing to check: 0 for success, 1 when the editor answered with an
+error, 2 when the relay could not reach an editor at all.
 
 Use `--batch` rather than a loop of `--call`. Each `--call` pays a process launch, a
 connect and a handshake — about half a second — which is fine for three calls and

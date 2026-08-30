@@ -120,7 +120,8 @@ static int run(godot_ai::RelayOptions &p_options, std::string &r_error) {
 	}
 
 	godot_ai::Relay relay(options);
-	if (!options.call_tool.empty() || options.list_tools || options.batch) {
+	if (!options.call_tool.empty() || options.list_tools || options.batch ||
+			options.list_prompts || !options.prompt_name.empty()) {
 		return relay.run_one_shot();
 	}
 	return relay.run();

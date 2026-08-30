@@ -71,6 +71,13 @@ static const char *USAGE =
 		"  --handshake-timeout <ms>   Editor handshake timeout in milliseconds (default: 5000).\n"
 		"  --call <tool>              Run one tool and print its result as JSON, then exit.\n"
 		"  --list-tools               Print every available tool as JSON, then exit.\n"
+		"  --list-prompts             Print the skills the editor offers as prompts, then\n"
+		"                             exit. These are the intended way in: a named job\n"
+		"                             such as 'run a performance investigation', with the\n"
+		"                             primitives composed underneath. Only skills the user\n"
+		"                             has allowed are listed.\n"
+		"  --prompt <name>            Print one skill's instructions as JSON, then exit.\n"
+		"  --context <text>           Optional subject for --prompt: what to apply it to.\n"
 		"  --batch                    Read a JSON array of tool calls on stdin and run\n"
 		"  --continue-on-error        With --batch, keep going after a failed entry.\n"
 		"                             The default stops, because a batch is a sequence and\n"
@@ -201,6 +208,16 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			}
 		} else if (arg == "--list-tools") {
 			r_options.list_tools = true;
+		} else if (arg == "--list-prompts") {
+			r_options.list_prompts = true;
+		} else if (arg == "--prompt") {
+			if (!next(r_options.prompt_name)) {
+				return false;
+			}
+		} else if (arg == "--context") {
+			if (!next(r_options.prompt_context)) {
+				return false;
+			}
 		} else if (arg == "--batch") {
 			r_options.batch = true;
 		} else if (arg == "--continue-on-error") {
@@ -879,6 +896,35 @@ int Relay::run_one_shot() {
 		JSONValueRef list_result = listed->get("result");
 		write_stdout_line(list_result ? list_result->to_string() : listed->to_string());
 		return list_result ? 0 : 1;
+	}
+
+	if (options.list_prompts) {
+		JSONValueRef listed;
+		if (!request("prompts/list", "one-shot-prompts", JSONValue::make_object(), listed, error)) {
+			log(LOG_ERROR, error);
+			return 2;
+		}
+		JSONValueRef list_result = listed->get("result");
+		write_stdout_line(list_result ? list_result->to_string() : listed->to_string());
+		return list_result ? 0 : 1;
+	}
+
+	if (!options.prompt_name.empty()) {
+		JSONValueRef params = JSONValue::make_object();
+		params->set("name", JSONValue::make_string(options.prompt_name));
+		if (!options.prompt_context.empty()) {
+			JSONValueRef arguments = JSONValue::make_object();
+			arguments->set("context", JSONValue::make_string(options.prompt_context));
+			params->set("arguments", arguments);
+		}
+		JSONValueRef fetched;
+		if (!request("prompts/get", "one-shot-prompt", params, fetched, error)) {
+			log(LOG_ERROR, error);
+			return 2;
+		}
+		JSONValueRef prompt_result = fetched->get("result");
+		write_stdout_line(prompt_result ? prompt_result->to_string() : fetched->to_string());
+		return prompt_result ? 0 : 1;
 	}
 
 	if (options.batch) {

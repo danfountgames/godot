@@ -81,6 +81,14 @@ struct RelayOptions {
 	std::string call_tool;
 	std::string call_arguments; // JSON object, defaults to {}.
 	bool list_tools = false;
+	// The skills, as MCP prompts. Reachable from the CLI for the same reason they are
+	// served at all: they are the intended way in, and a scripted agent that can only
+	// see ninety-six primitives is the failure mode skills exist to avoid. `--call` never
+	// sees the initialize instructions that say so, so without these the recommended
+	// path is the one the CLI cannot take.
+	bool list_prompts = false;
+	std::string prompt_name;
+	std::string prompt_context; // Optional free text the prompt is aimed at.
 	// Reads a JSON array of {"name":…, "arguments":…} from stdin and runs all of them
 	// over one connection. --call pays a process launch, a connect and a handshake per
 	// tool - about half a second - which is invisible for three calls and ruinous for a
