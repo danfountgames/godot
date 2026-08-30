@@ -1,116 +1,94 @@
-# POOL — first playable
+# POOL
 
-Top-down billiards in heavy water, where the ring you shot merges with everything it
-hits hard enough, and every impact is a musical event.
+A breakout game played with rubber rings, where you control the pool's current to bend
+shots, vacuum up Likes, launch floating targets into one another and thread impossible
+gaps through giant inflatables.
 
-The rule the whole thing hangs on: the ring you shot is **active** until it comes to
-rest, and while it is active any contact above `merge_speed` **absorbs** what it hit.
-Everything else **bounces**. Merges conserve area and momentum, so a chain makes you
-bigger, heavier and slower — the shot paces itself and there is no timer anywhere.
+Move the inflatable lounger along the near edge. Rebound the striker into the rings.
+Hold **pull** to curve it back towards you, hoover up Likes and drag the loose floats
+down at yourself; hold **push** to bend it away, open a formation and keep the dangerous
+ones off. Clear every target before you run out of strikers. The meter you fill from
+Likes buys either a splash barrier or a Party Wave, and it will not buy both.
 
-This is the first playable from section 8 of the brief: one rectangular pool, striker
-plus twelve field rings, bounce-or-merge on a speed threshold, chain multiplier and
-likes, one jet, three shots.
+## The two rules that carry it
 
-## Why it is in this repository
+**The striker does not obey the water.** Everything else in this pool drifts, slows and
+settles, because a pool full of clutter is the pleasure of the setting. The ball holds
+its speed exactly; the current only *steers* it. A breakout ball with drag is a ball that
+stops halfway up the board, and the game dies with it.
 
-It is not a sample. It is the test: **the whole game was built through the MCP tooling
-this fork adds**, against a headless editor with no screen, driven from a shell over the
-relay. Nothing in `scripts/` or `scenes/` was written by touching a file directly —
-every one went through `Godot_WriteTextFile`, `Godot_CreateScene`, `Godot_ManageNode`,
-`Godot_SetSceneProperty`, `Godot_ManageConnection` and `Godot_SaveScene`, and every
-behavioural claim below was measured by running it and reading it back.
+**The rings have real holes, and you can shoot through them.** A small striker passing
+clean through the middle of a big ring is a **thread**: no damage, no bounce, and the
+multiplier goes up. Clip the rim instead and you bounce off it and break it. Threading is
+the only purely skilful thing in the game, so it is the only thing that builds the
+multiplier.
 
-What that exposed, in the tooling and in the game, is written up in
-`docs/godot-ai-building-a-game.md`.
+Getting that second rule right in two dimensions needed a rebuild, and the reason is the
+most interesting thing in the code. The first version built each rim from twelve circle
+colliders with a genuinely empty middle and expected threading to fall out of ordinary
+physics. It cannot: **a 2D annulus encloses its own hole**, so there is no direction a
+ball can arrive from that reaches the middle without crossing the rim. A full board
+produced twenty-eight rim hits and zero threads, and it would never have produced one.
 
-## Measured, not asserted
+What the picture actually means is depth. The rings are inflatables floating on the
+surface and the striker is small and rides low, so a shot through the middle passes
+*under* the rim. The rim is therefore not a collider against the striker at all: the ring
+is a sensor, and the pass is judged on the striker's line — miss the centre by less than
+the hole and you are through it. Loose rings still collide with each other and the walls
+as ordinary bodies, which was never the part that was broken.
 
-One aimed shot on a settled board, read off the running game:
+## The pull/push trade
 
-```
-flick    380 378 376 ... 310 308        the glide: clean exponential decay at 0.35/s
-merge    107 -> 205                     chain 1  (momentum conserved across the merge)
-         205 204 ... 180
-merge    113 -> 142 -> 133 -> 100       chains 2, 3, 4
-wallow   100  99  98 ...  81            big, heavy, slow
-grab      72  67  62  57  53 ... 5      the water takes it, at 4.8/s
-phrase   55, 52, 48, 48                 a descending run - the chain as a phrase
-```
+Neither is the safe choice, which is the point:
 
-Chain of 4, multiplier 2.4, everything at rest 0.80s after the last event. The brief
-asks for 5 to 6 seconds.
+| | gets you | costs you |
+|---|---|---|
+| **pull** | curves the ball home, vacuums Likes into the meter | drags the loose rings down at the edge you are defending |
+| **push** | bends the ball away, opens formations, shoves loose rings into anchored ones | sends your uncollected Likes off the board |
+
+The shield closes the triangle: pull a dangerous pile towards yourself, raise the barrier
+at the last moment, and turn the risk into a payout. But the barrier and the Party Wave
+draw on the same meter, so staying alive and hitting hard compete.
 
 ## Driving it without hands
 
-Every verb is reachable as a **property**, not only as input, because a drag is a bad
-unit of intent to assert about:
+Every verb is a property as well as an input, because a drag is a bad unit of intent to
+assert about:
 
 | Property | Effect |
 |---|---|
-| `queued_shot` | A non-zero `Vector2` launches the active ring along it, length as a fraction of `max_shot_speed`, then clears itself. |
-| `jet_held` | Runs the wall jet while true. |
-| `restart_requested` | Rebuilds the board on the next frame, picking up any exported value changed since. |
+| `paddle_x` | Where the lounger is going. It moves at a speed, so it cannot outrun the ball. |
+| `current` | −1 full pull … +1 full push, held. |
+| `launch_requested` | Let the waiting striker go. |
+| `shield_requested` / `party_wave_requested` | Spend the meter. |
+| `restart_requested` | Rebuild the board. |
 
-And the board reads back in one call rather than twenty: `active_position`,
-`lit_positions`, `ring_positions`, `chain`, `likes`, `lit_left`, `set_cleared`.
+And the board reads back in one call: `score`, `multiplier`, `meter`, `strikers_left`,
+`targets_left`, `anchored_left`, `loose_left`, `threads`, `rim_hits`, `targets_destroyed`,
+`likes_collected`, `board_seconds`, `striker_position`, `target_positions`,
+`loose_positions`, `like_positions`, `last_event`.
 
-The game also measures **itself**, at physics rate: `shot_trace` is the active ring's
-speed per frame since the launch, and `settle_time`, `shot_end_area`,
-`first_impact_speed` and `last_phrase` are the rest of the shot. It has to, because three
-property reads from outside arrive after a two-second shot is already over — and this
-game hitting that wall is why `Godot_RecordRuntimeSeries` now exists, which does the same
-job for any game without it having to write a line:
+By hand: mouse moves the lounger, left button pulls, right button pushes, space launches,
+shift raises the barrier, enter releases the wave.
 
-```sh
-bin/godot-ai-relay --call Godot_RecordRuntimeSeries --project demos/pool --arguments \
-  '{"path":"/root/Main/Rings/Ring13","property":"linear_velocity","component":"length",
-    "frames":160,"clock":"physics"}'
-```
+## What is not here yet
 
-`shot_trace` stays because the HUD and the acceptance test read it, and because it is the
-worked example the tool came from.
+Bosses, worlds, the six-board structure, power-ups, multiball, and the between-run
+progression — the cocktails and Followers that turn a board into a run. The brief is
+explicit that the plainest possible formation has to be enjoyable for several minutes
+before any of that is worth building, and that is the thing currently under test.
+
+There is deliberately **no passive income on the board**. Nothing pays out for sitting
+there; the level is a score-driven test of control, and the idle half of the design lives
+outside it.
 
 ## Running it
 
 ```sh
-# With a screen, or a virtual one:
 python3 tools/virtual_display.py -- bin/godot.linuxbsd.editor.dev.x86_64 --path demos/pool --editor
 
-# Headless, driven from a shell:
-GODOT_AI_APPROVE_CLIENTS=1 GODOT_AI_POLICY="read_project=allow,read_runtime=allow,edit_files=allow,edit_scene=allow,run_project=allow" \
+# or headless, driven from a shell:
+GODOT_AI_APPROVE_CLIENTS=1 GODOT_AI_POLICY="read_project=allow,read_runtime=allow,run_project=allow" \
   bin/godot.linuxbsd.editor.dev.x86_64 --headless --path demos/pool --editor &
 bin/godot-ai-relay --call Godot_PlayMainScene --project demos/pool
 ```
-
-By hand: drag back from the striker and release, billiards style; hold space for the jet.
-
-## Checking it still works
-
-```sh
-python3 demos/pool/verify_first_playable.py
-```
-
-Every assertion in it is about behaviour that only exists while the game is running: that
-the jet moves rings that were not going to move and drains pressure doing it, that three
-idle seconds pay nothing (section 5 has no passive income, and a game that quietly grew
-one would look fine on screen), that every scheduled note lands on the grid, and that each
-merge chain plays a **descending** run — grouped by chain, because a new shot starts a new
-phrase at the striker's base size and read straight through the pitches look like they go
-back up.
-
-```
-at least one chain was long enough to be a phrase: [[52, 50, 48, 48], [52, 50, 48], [52, 50]]
-every merge run descends as the ring grows
-no note was deferred past one sixteenth: worst 0.246 beats
-```
-
-## What is not here
-
-The brief's sections 4, 6 and 7 beyond the first playable: prestige and the Chlorine
-meta, whirlpools, ring types that always bounce, the burst at maximum size, and the
-living music bed. The music **system** is here — quantization to the grid, ring size to
-pitch, chain milestones bringing layers in — but the bed it should sit under is not, and
-this container has no audio device, so what is verified is the note schedule rather than
-the sound. `music.gd` logs every scheduled note with the beat it lands on for exactly
-that reason.

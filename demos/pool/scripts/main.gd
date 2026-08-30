@@ -1,508 +1,543 @@
 class_name PoolGame
 extends Node2D
 
-## POOL, first playable: the brief's section 8.
+## POOL — a breakout game played with rubber rings, where you control the pool's current.
 ##
-## One rectangular pool, striker plus a field of rings, bounce-or-merge decided by
-## impact speed, a chain multiplier, likes, one jet, three shots.
+## The loop: move the lounger along the near edge, rebound the striker into the rings,
+## and hold pull or push to bend it, vacuum up Likes, and shove the loose floats about.
+## Clear every target before you run out of strikers. The meter you fill from Likes buys
+## either a splash barrier or a Party Wave, and it will not buy both.
 ##
-## The rule the whole thing hangs on: the ring you shot is *active* until it comes to
-## rest, and while it is active any hard enough contact absorbs what it hit. Everything
-## else bounces. Merges conserve area and momentum, so a chain makes you bigger, heavier
-## and slower - the shot paces itself and there is no timer anywhere in this file.
+## What this deliberately is **not** any more: the shot-based settling game. There are no
+## turns, nothing waits for the water to still, and nothing on the board pays out for
+## sitting there. Those belong outside a level, if anywhere.
 ##
-## One design decision is aimed squarely at being drivable by an agent rather than only
-## by a person: every verb is reachable as a *property*, not only as input. Setting
-## `queued_shot` fires the striker; setting `jet_held` runs the jet; setting
-## `restart_requested` rebuilds the board. A person drags and holds a key, and both
-## routes end in the same call. Without that, driving this game from a tool means
-## simulating a drag, and a drag is a bad unit of intent to assert about.
-
-@export var shots_per_set: int = 3
-@export var field_rings: int = 12
-@export var lit_rings: int = 5
-@export var striker_area: float = 2400.0
-@export var field_area_min: float = 700.0
-@export var field_area_max: float = 1900.0
-## Centre to centre in the rack. A ring of the largest field area is about 73px
-## across, so this is a gap of about a ring's width - loose enough to travel through
-## and tight enough that a merge leaves you touching the next one.
-@export var rack_spacing: float = 78.0
-@export var max_shot_speed: float = 380.0
-
-## --- The water --------------------------------------------------------------------
-## These live here rather than on each ring: how the water behaves is a property of the
-## pool, and a value on a ring spawned at runtime has no counterpart in the scene, so it
-## could be tuned in the running game and never promoted.
+## Two rules carry the identity, and both are geometry rather than special cases:
 ##
-## The numbers come from measuring. Under linear damping g a ring launched at v0 covers
-## (v0/g)(1-e^-gt), so 320 px/s against g=0.35 puts 565px at 2.74s over this pool. The
-## glide threshold then has to sit low enough that the ring is still gliding when it
-## gets there - at 220 the water grabbed after 300px and nothing could cross at all.
-@export var glide_speed: float = 80.0
-@export var glide_damp: float = 0.35
-@export var grab_damp: float = 4.5
-## A graze is a bounce. Only a hit with momentum behind it merges, which is what stops
-## aiming becoming irrelevant as the active ring grows, and what gives the jets a job.
-## Found by trying four settings against the running game, not by taste. Four things
-## have to hold at once and they pull against each other: momentum is conserved on a
-## merge, so absorbing a ring of your own size halves your speed and the next merge
-## has to still clear this threshold. A field lighter than the striker is what buys
-## the chain its length.
+##   * **The striker does not obey the water.** Everything else drifts and settles; the
+##     ball holds its speed and the current only steers it. A breakout ball with drag is
+##     a ball that stops halfway up the board.
+##   * **The rings have real holes.** The rim is a ring of colliders and the middle is
+##     empty, so a small enough striker threads a big enough ring under ordinary physics.
+##     Threading is not a feature; it is what honest geometry does.
 ##
-## Lowering it further makes chains *worse*, which was the surprise. At 35 a slow
-## graze merges, so the ring is heavy before it is through the rack and stops early:
-## chains went 4,3,3 at fifty and 1,3,2 at thirty-five. The threshold is what makes
-## merging a skill rather than a certainty, which is the brief's own open question
-## answered by measurement.
-@export var merge_speed: float = 50.0
+## Every verb is reachable as a property as well as by input, because a drag is a bad unit
+## of intent to assert about:
+##
+##   paddle_x            where the lounger is going
+##   current             -1 full pull .. +1 full push, held
+##   shield_requested    spend meter on the barrier
+##   party_wave_requested spend meter on the wave
+##   launch_requested    let the waiting striker go
+##   restart_requested   rebuild the board
 
-## --- Likes ---------------------------------------------------------------------------
-## Event-driven only. Nothing generates while idle, which is also what keeps the music
-## honest: silence when nothing is happening.
-@export var like_per_bounce: float = 1.0
-@export var like_per_merge: float = 12.0
-@export var chain_gain: float = 0.35
-@export var on_beat_bonus: float = 1.5
+@export var strikers_per_board: int = 3
+@export var anchored_count: int = 16
+@export var loose_count: int = 6
+@export var heavy_count: int = 2
+@export var armoured_count: int = 2
+@export var popper_count: int = 1
+@export var collector_count: int = 1
 
-## --- Upgrade state ------------------------------------------------------------------
-var water_slickness: float = 1.0
-var striker_mass_scale: float = 1.0
+## The meter, and the two things that empty it.
+@export var meter_max: float = 100.0
+@export var like_charge: float = 4.0
+@export var shield_cost: float = 35.0
+@export var shield_seconds: float = 2.5
+@export var party_wave_cost: float = 100.0
+@export var party_wave_speed: float = 900.0
 
-var likes: float = 0.0
-var multiplier: float = 1.0
-var chain: int = 0
-var best_chain: int = 0
-var best_multiplier: float = 1.0
-var shots_left: int = 0
-var sets_played: int = 0
-var lit_left: int = 0
-var rings_in_play: int = 0
-var set_cleared: bool = false
-var last_shot_speed: float = 0.0
-var bounces: int = 0
-var merges: int = 0
-var on_beat_hits: int = 0
+@export var thread_bonus: int = 25
+@export var multiplier_per_thread: float = 0.25
+@export var multiplier_decay: float = 0.35
 
-## --- The agent-facing verbs ---------------------------------------------------------
-var queued_shot: Vector2 = Vector2.ZERO
-var jet_held: bool = false
+## --- The verbs -----------------------------------------------------------------------
+var paddle_x: float = 0.0
+var current: float = 0.0
+var shield_requested: bool = false
+var party_wave_requested: bool = false
+var launch_requested: bool = false
 var restart_requested: bool = false
 
-## --- Measurements the brief asks for -------------------------------------------------
-## Section 2 states one number as a feel target: everything at rest within about 5 to 6
-## seconds of the last event. Neither that nor the shape of a chain is checkable by
-## looking at a file, so the game measures itself and leaves the answers where a tool
-## can read them in one call.
-var everything_at_rest: bool = true
-var settle_time: float = 0.0
-var crossing_time: float = 0.0
-var shot_distance: float = 0.0
-var shot_duration: float = 0.0
-var shot_peak_speed: float = 0.0
-var first_impact_time: float = -1.0
-var first_impact_speed: float = 0.0
-var chain_this_shot: int = 0
-## As the shot ended, not as the board stands. Reading the active ring afterwards
-## reports the next striker, so a three-merge chain came back as a ring that had
-## never grown.
-var shot_end_area: float = 0.0
-var shot_end_distance: float = 0.0
-## Active-ring speed per physics frame since launch, so one read gets the whole flight
-## rather than three samples of a shot that is already over.
-var shot_trace: PackedFloat32Array = PackedFloat32Array()
-## The pitches the last chain played, in order. A descending run here is the brief's
-## central audio claim, checkable without a speaker.
-var last_phrase: PackedInt32Array = PackedInt32Array()
-
-## The board, as one read. A player looks at the pool; anything driving this game from
-## outside has to be able to as well, and asking twenty nodes for their position one
-## round trip at a time is not looking at a board.
-var active_position: Vector2 = Vector2.ZERO
-var active_area: float = 0.0
-var lit_positions: PackedVector2Array = PackedVector2Array()
-var ring_positions: PackedVector2Array = PackedVector2Array()
+## --- What a playtester reads ------------------------------------------------------
+var score: int = 0
+var multiplier: float = 1.0
+var meter: float = 0.0
+var strikers_left: int = 0
+var targets_left: int = 0
+var anchored_left: int = 0
+var loose_left: int = 0
+var likes_loose: int = 0
+var likes_collected: int = 0
+var threads: int = 0
+var rim_hits: int = 0
+var targets_destroyed: int = 0
+var board_cleared: bool = false
+var board_failed: bool = false
+var boards_played: int = 0
+var shield_active: bool = false
+var shield_left: float = 0.0
+var party_waves: int = 0
+var striker_in_play: bool = false
+var striker_position: Vector2 = Vector2.ZERO
+var striker_speed_now: float = 0.0
+var paddle_position: Vector2 = Vector2.ZERO
+var target_positions: PackedVector2Array = PackedVector2Array()
+var loose_positions: PackedVector2Array = PackedVector2Array()
+var like_positions: PackedVector2Array = PackedVector2Array()
+## Seconds since the board started. A breakout level is meant to last one to three
+## minutes; nothing else here would tell you whether it does.
+var board_seconds: float = 0.0
+var last_event: String = ""
 
 var _pool: Pool
-var _jet: Jet
+var _paddle: Paddle
+var _current: PoolCurrent
 var _music: PoolMusic
-var _rings: Node2D
-var _active: Ring
-var _aim_from: Vector2 = Vector2.ZERO
-var _aiming: bool = false
-var _motion_for: float = 0.0
-var _tracing: bool = false
-## A striker that has not been shot yet must not resolve the shot. It spawns at
-## rest, and a ring at rest reports itself so a fifth of a second later - which
-## resolved the shot, spawned the next striker, and did it again for ever.
-var _shot_live: bool = false
-## When something last happened, in seconds. The brief measures settling from the
-## last event rather than from the launch, and the two differ by a whole chain.
-var _last_event_at: float = -1.0
-var _crossing_pending: bool = false
-var _last_active_at: Vector2 = Vector2.ZERO
+var _targets: Node2D
+var _strikers: Node2D
+var _likes: Node2D
+var _striker: Striker
 var _serial: int = 0
 
-const TRACE_LIMIT := 1200
-const RING_SCRIPT := preload("res://scripts/ring.gd")
+const TARGET_SCRIPT := preload("res://scripts/target.gd")
+const STRIKER_SCRIPT := preload("res://scripts/striker.gd")
+const LIKE_SCRIPT := preload("res://scripts/like.gd")
 
 
 func _ready() -> void:
 	_pool = $Pool
-	_jet = $Jet
+	_paddle = $Paddle
+	_current = $Current
 	_music = $Music
-	_rings = $Rings
+	_targets = $Targets
+	_strikers = $Strikers
+	_likes = $Likes
 	randomize()
-	_begin_run()
+	_paddle.position = Vector2(_pool.size.x * 0.5, _pool.size.y - 34.0)
+	_paddle.set_limits(0.0, _pool.size.x)
+	paddle_x = _paddle.position.x
+	_begin_board(true)
 
 
-## --- Building the board ---------------------------------------------------------------
+## --- Building a board ---------------------------------------------------------------
 
-func _begin_run() -> void:
-	for child in _rings.get_children():
-		_rings.remove_child(child)
-		child.queue_free()
-	_serial = 0
-	# Cleared, because a restart while a shot is in flight left it set: the freshly
-	# spawned striker then "came to rest" a fifth of a second later, consumed the turn
-	# nobody had taken, and handed _active to a second striker. Every measurement taken
-	# after that restart was of a ring that was no longer the active one. Found by an
-	# agent driving this game through the tools, which is exactly the class of bug that
-	# is invisible until something plays it.
-	_shot_live = false
-	_tracing = false
-	likes = 0.0
-	multiplier = 1.0
-	chain = 0
-	best_chain = 0
-	best_multiplier = 1.0
-	sets_played = 0
-	bounces = 0
-	merges = 0
-	on_beat_hits = 0
-	if _music != null:
-		_music.reset_log()
-	_begin_set(true)
-
-
-## Survivors carry into the next set as obstacles and ammunition, so this only adds. A
-## hard reset is `restart_requested`, and it is a different thing on purpose: a set that
-## silently cleared the table would hide whether the player left themselves a good board.
-func _begin_set(fresh: bool) -> void:
-	if fresh:
-		for child in _rings.get_children():
-			_rings.remove_child(child)
+func _begin_board(p_fresh: bool) -> void:
+	for group in [_targets, _strikers, _likes]:
+		for child in group.get_children():
+			group.remove_child(child)
 			child.queue_free()
-	sets_played += 1
-	shots_left = shots_per_set
-	set_cleared = false
-	multiplier = 1.0
-	_spawn_field()
-	_spawn_striker()
+	_serial = 0
+	_striker = null
+	striker_in_play = false
+	board_cleared = false
+	board_failed = false
+	board_seconds = 0.0
+	strikers_left = strikers_per_board
+	shield_active = false
+	shield_left = 0.0
+	if p_fresh:
+		score = 0
+		meter = 0.0
+		multiplier = 1.0
+		threads = 0
+		rim_hits = 0
+		targets_destroyed = 0
+		likes_collected = 0
+		party_waves = 0
+		boards_played = 0
+		if _music != null:
+			_music.reset_log()
+	boards_played += 1
+	_lay_out_board()
+	_serve()
 	_recount()
 
 
-## Tops the board up to field_rings and the targets up to lit_rings, in slots nothing
-## is sitting in. Laying out a whole new field each set was the reason lit_left went up
-## over a set instead of down: the survivors are meant to be most of the next board, and
-## adding twelve more on top of them buries the thing the player just built.
-func _spawn_field() -> void:
-	_recount()
-	var free := _free_slots(52.0)
-	free.shuffle()
-	var want := maxi(0, field_rings - _field_count())
-	var want_lit := maxi(0, lit_rings - lit_left)
-	for i in mini(want, free.size()):
-		var ring := _add_ring(free[i], randf_range(field_area_min, field_area_max))
-		ring.lit = i < want_lit
-	_recount()
+## Roughly two thirds anchored, a fifth loose, the rest special.
+##
+## The mix is the readability rule. A board where everything drifts has no state a player
+## can read - the remaining targets *are* the level - so the structure has to be mostly
+## fixed, with enough loose objects to make the current worth holding.
+func _lay_out_board() -> void:
+	# Spacing first, count second. The slots have to be further apart than the biggest
+	# ring is wide or the board is born overlapping - which does not look like a layout
+	# mistake, it looks like the physics exploding, because that is what happens next.
+	var columns := 7
+	var rows := 4
+	var spacing := Vector2(104.0, 94.0)
+	var span := Vector2(spacing.x * float(columns - 1), spacing.y * float(rows - 1))
+	var margin := Vector2((_pool.size.x - span.x) * 0.5, 70.0)
+
+	var slots: Array[Vector2] = []
+	for row in rows:
+		for column in columns:
+			slots.append(margin + Vector2(
+					span.x * float(column) / float(columns - 1),
+					span.y * float(row) / float(rows - 1)))
+	slots.shuffle()
+
+	var plan: Array[Target.Kind] = []
+	for i in anchored_count:
+		plan.append(Target.Kind.ANCHORED)
+	for i in loose_count:
+		plan.append(Target.Kind.LOOSE)
+	for i in heavy_count:
+		plan.append(Target.Kind.HEAVY)
+	for i in armoured_count:
+		plan.append(Target.Kind.ARMOURED)
+	for i in popper_count:
+		plan.append(Target.Kind.POPPER)
+	for i in collector_count:
+		plan.append(Target.Kind.COLLECTOR)
+
+	for i in mini(plan.size(), slots.size()):
+		_add_target(plan[i], slots[i])
 
 
-func _field_count() -> int:
-	var count := 0
-	for child in _rings.get_children():
-		var ring := child as Ring
-		if ring != null and ring != _active and not ring.is_queued_for_deletion():
-			count += 1
-	return count
-
-
-## The candidate lattice, minus anything already occupied. Returning the free ones
-## rather than a "is this clear" predicate keeps the caller from spawning two rings into
-## the same gap in one pass.
-func _free_slots(clearance: float) -> Array[Vector2]:
-	var out: Array[Vector2] = []
-	var centre := Vector2(_pool.size.x * 0.5, _pool.size.y * 0.32)
-	# Rows of 3, 4, 5, racked. Close enough that absorbing one leaves you inside the
-	# next, which is the only way a chain happens at all. Spread over the whole pool the
-	# rings sat 246px apart and a ring is 60px across, so every shot chained exactly
-	# once and then sailed through the gaps for two seconds.
-	var row_counts := [3, 4, 5]
-	for row in row_counts.size():
-		var count: int = row_counts[row]
-		for column in count:
-			var at := centre + Vector2(
-				(float(column) - float(count - 1) * 0.5) * rack_spacing,
-				(float(row) - 1.0) * rack_spacing * 0.92)
-			if _is_clear(at, clearance):
-				out.append(at)
-	return out
-
-
-func _is_clear(at: Vector2, clearance: float) -> bool:
-	for child in _rings.get_children():
-		var ring := child as Ring
-		if ring == null or ring.is_queued_for_deletion():
-			continue
-		if at.distance_to(ring.position) < clearance + ring.outer_radius():
-			return false
-	return true
-
-
-## Along the shooting edge, in the first place with room for it. Spawning at a fixed
-## point regardless of what was already parked there gave a first impact one frame after
-## the launch, which is not a shot.
-func _spawn_striker() -> void:
-	var edge := _pool.size.y - 70.0
-	var at := Vector2(_pool.size.x * 0.5, edge)
-	var clearance := sqrt(striker_area / PI) + 12.0
-	for step in 12:
-		# 0, +86, -86, +172, -172 ... so the striker walks outward from the middle.
-		var offset := float(floori(float(step + 1) / 2.0)) * 86.0 * (1.0 if step % 2 == 0 else -1.0)
-		var candidate := Vector2(clampf(_pool.size.x * 0.5 + offset, 60.0, _pool.size.x - 60.0), edge)
-		if _is_clear(candidate, clearance):
-			at = candidate
-			break
-	_active = _add_ring(at, striker_area)
-	_active.mass *= striker_mass_scale
-	_active.active = true
-	_active.queue_redraw()
-
-
-func _add_ring(at: Vector2, a: float) -> Ring:
+func _add_target(p_kind: Target.Kind, p_at: Vector2) -> Target:
 	var node := RigidBody2D.new() as Node
-	node.set_script(RING_SCRIPT)
-	var ring := node as Ring
-	ring.area = a
-	ring.position = at
-	ring.water_scale = water_slickness
-	ring.glide_speed = glide_speed
-	ring.glide_damp = glide_damp
-	ring.grab_damp = grab_damp
-	ring.merge_speed = merge_speed
-	# Named, because an unnamed RigidBody2D comes back from the running game as
-	# "@RigidBody2D@270" and nothing outside can address it twice running.
+	node.set_script(TARGET_SCRIPT)
+	var target := node as Target
+	target.kind = p_kind
+	# A spread of sizes, because threading is only interesting when some rings are big
+	# enough to go through and some are not.
+	target.outer_radius = randf_range(28.0, 46.0)
+	target.position = p_at
 	_serial += 1
-	ring.name = "Ring%d" % _serial
-	ring.came_to_rest.connect(_on_came_to_rest)
-	ring.bounced.connect(_on_bounced)
-	ring.absorbed.connect(_on_absorbed)
-	_rings.add_child(ring)
-	return ring
+	target.name = "%s%d" % [Target.Kind.keys()[p_kind].capitalize(), _serial]
+	target.destroyed.connect(_on_target_destroyed)
+	target.struck.connect(_on_struck)
+	target.rim_hit.connect(_on_rim_hit)
+	target.threaded.connect(_on_threaded)
+	_targets.add_child(target)
+	return target
 
 
-func apply_water_to_existing() -> void:
-	for child in _rings.get_children():
-		var ring := child as Ring
-		if ring != null:
-			ring.water_scale = water_slickness
-			ring.glide_speed = glide_speed
-			ring.glide_damp = glide_damp
-			ring.grab_damp = grab_damp
-			ring.merge_speed = merge_speed
+## A striker waiting on the lounger. It does not move until it is launched, so a board
+## always opens with the player deciding when to start.
+func _serve() -> void:
+	if strikers_left <= 0:
+		board_failed = true
+		last_event = "out of strikers"
+		return
+	var node := RigidBody2D.new() as Node
+	node.set_script(STRIKER_SCRIPT)
+	_striker = node as Striker
+	_striker.name = "Striker%d" % strikers_left
+	_striker.position = _paddle.position + Vector2(0, -26)
+	_strikers.add_child(_striker)
+	striker_in_play = false
 
 
-func _recount() -> void:
-	rings_in_play = 0
-	lit_left = 0
-	lit_positions = PackedVector2Array()
-	ring_positions = PackedVector2Array()
-	for child in _rings.get_children():
-		var ring := child as Ring
-		if ring == null or ring.is_queued_for_deletion():
-			continue
-		rings_in_play += 1
-		ring_positions.append(ring.position)
-		if ring.lit:
-			lit_left += 1
-			lit_positions.append(ring.position)
-	if _active != null and is_instance_valid(_active):
-		active_position = _active.position
-		active_area = _active.area
+func _launch() -> void:
+	if _striker == null or not is_instance_valid(_striker) or _striker.launched:
+		return
+	_striker.launch(Vector2.UP.rotated(randf_range(-0.35, 0.35)))
+	striker_in_play = true
+	last_event = "launched"
 
 
-## --- The loop -------------------------------------------------------------------------
+## --- The loop --------------------------------------------------------------------------
 
 func _physics_process(delta: float) -> void:
 	if restart_requested:
 		restart_requested = false
-		_begin_run()
+		_begin_board(true)
 		return
 
-	_jet.firing = jet_held and _jet.pressure > 0.0
+	_paddle.wanted_x = paddle_x
+	_current.strength = clampf(current, -1.0, 1.0)
+	_current.origin = _paddle.global_position
+	_current.queue_redraw()
 
-	if queued_shot != Vector2.ZERO:
-		_launch(queued_shot)
-		queued_shot = Vector2.ZERO
+	if launch_requested:
+		launch_requested = false
+		_launch()
 
-	var moving := 0
-	for child in _rings.get_children():
-		var ring := child as Ring
-		if ring != null and not ring.at_rest and not ring.is_queued_for_deletion():
-			moving += 1
-	everything_at_rest = moving == 0
+	if shield_requested:
+		shield_requested = false
+		_raise_shield()
+	if party_wave_requested:
+		party_wave_requested = false
+		_release_party_wave()
 
-	if moving > 0:
-		_motion_for += delta
-	elif _motion_for > 0.0:
-		_motion_for = 0.0
-		# Cleared when the active ring rests, which is normally the same instant the
-		# board does - so measuring this off _tracing recorded nothing at all.
-		if _last_event_at >= 0.0:
-			settle_time = Time.get_ticks_msec() / 1000.0 - _last_event_at
-			_last_event_at = -1.0
+	if shield_active:
+		shield_left = maxf(0.0, shield_left - delta)
+		shield_active = shield_left > 0.0
 
-	_trace(delta)
+	if striker_in_play:
+		board_seconds += delta
+
+	_apply_current(delta)
+	_sweep_lost_targets()
+	_watch_striker()
+	_collect_likes()
+	# The multiplier is a thing you are holding, not a thing you have. It bleeds back to
+	# one whenever you are not threading, so a streak has to be maintained.
+	multiplier = maxf(1.0, multiplier - multiplier_decay * delta)
 	_recount()
 
 
-## Everything about the shot the brief states a number for, measured while it happens.
-## Crossing is counted along the path travelled rather than as a position reached: a
-## shot that hits a ring forty pixels in never reaches the far end, and reporting 0.0
-## for that would read as "instant" rather than "never got there".
-func _trace(delta: float) -> void:
-	if not _tracing:
+func _apply_current(delta: float) -> void:
+	if is_zero_approx(_current.strength):
 		return
-	if _active == null or not is_instance_valid(_active):
-		_tracing = false
-		return
-	var speed := _active.linear_velocity.length()
-	shot_distance += _active.position.distance_to(_last_active_at)
-	_last_active_at = _active.position
-	shot_duration += delta
-	shot_peak_speed = maxf(shot_peak_speed, speed)
-	if shot_trace.size() < TRACE_LIMIT:
-		shot_trace.append(speed)
-	if _crossing_pending and shot_distance >= _pool.size.y:
-		crossing_time = shot_duration
-		_crossing_pending = false
+	if _striker != null and is_instance_valid(_striker):
+		_current.steer_striker(_striker, delta)
+	for child in _targets.get_children():
+		var target := child as Target
+		if target != null and target.alive:
+			target.apply_current(_current.impulse_for(target.global_position, 1.0, delta))
+	for child in _likes.get_children():
+		var like := child as Like
+		if like != null:
+			like.apply_current(_current.impulse_for(like.global_position, 1.0, delta))
 
 
-func _launch(shot: Vector2) -> void:
-	if _active == null or not is_instance_valid(_active) or shots_left <= 0:
-		return
-	if not _active.active:
-		return
-	var power := clampf(shot.length(), 0.0, 1.0)
-	var velocity := shot.normalized() * max_shot_speed * power
-	_active.at_rest = false
-	_active.linear_velocity = velocity
-	_active.sleeping = false
-	last_shot_speed = velocity.length()
-	shots_left -= 1
-	chain = 0
-	chain_this_shot = 0
-	last_phrase = PackedInt32Array()
-	crossing_time = 0.0
-	shot_distance = 0.0
-	shot_duration = 0.0
-	shot_peak_speed = 0.0
-	first_impact_time = -1.0
-	first_impact_speed = 0.0
-	shot_trace = PackedFloat32Array()
-	_last_active_at = _active.position
-	_crossing_pending = true
-	_tracing = true
-	_shot_live = true
-	# The release itself is playable: land it on a downbeat and the whole shot starts
-	# with the bonus already banked.
-	if _music != null and _music.on_beat():
-		likes += on_beat_bonus * multiplier
-		on_beat_hits += 1
+## The striker's relationship with the bottom edge, which is the only way to lose.
+## A loose ring pulled out of the open edge is out of the game. Removed rather than left
+## drifting below the pool, where it would keep counting towards "targets left" and make
+## the board unclearable - the failure this most resembles is a level that cannot be
+## finished for reasons off screen.
+func _sweep_lost_targets() -> void:
+	for child in _targets.get_children():
+		var target := child as Target
+		if target == null or not target.alive or target.freeze:
+			continue
+		if target.position.y > _pool.size.y + 60.0:
+			target.alive = false
+			target.queue_free()
+			last_event = "%s drifted out" % target.name
+			call_deferred("_check_cleared")
 
 
-## --- What the rings report --------------------------------------------------------------
-
-func _on_bounced(ring: Ring, _other: Node, speed: float) -> void:
-	if speed < 8.0:
-		# Resting contact, not an event. Paying for it would turn a settled pile into
-		# the passive income this game does not have.
+func _watch_striker() -> void:
+	if _striker == null or not is_instance_valid(_striker):
 		return
-	bounces += 1
-	_last_event_at = Time.get_ticks_msec() / 1000.0
-	likes += like_per_bounce * multiplier
+	striker_position = _striker.global_position
+	striker_speed_now = _striker.linear_velocity.length()
+	paddle_position = _paddle.global_position
+	if not _striker.launched:
+		# Riding the lounger until it is let go.
+		_striker.position = _paddle.position + Vector2(0, -26)
+		return
+
+	var paddle_top := _paddle.position.y - _paddle.thickness
+	if _striker.position.y >= paddle_top - _striker.radius and _striker.linear_velocity.y > 0.0:
+		var across := absf(_striker.position.x - _paddle.position.x)
+		if across <= _paddle.width * 0.5 + _striker.radius:
+			# The rebound is aimed by where it lands on the lounger, and the incoming
+			# angle is thrown away. That is what makes the paddle a thing you aim with.
+			_striker.linear_velocity = _paddle.rebound_direction(_striker.global_position) * _striker.speed
+			_striker.position.y = paddle_top - _striker.radius - 1.0
+			if _music != null:
+				_music.play("bounce", 2400.0, int(multiplier))
+			last_event = "rebound"
+			return
+		if shield_active:
+			# The barrier is a second paddle across the whole edge, and it is why pulling
+			# a dangerous pile towards yourself can be the right play.
+			_striker.linear_velocity = Vector2(_striker.linear_velocity.x, -absf(_striker.linear_velocity.y)).normalized() * _striker.speed
+			last_event = "shielded"
+			return
+
+	if _striker.position.y > _pool.size.y + 40.0:
+		strikers_left -= 1
+		last_event = "striker lost"
+		multiplier = 1.0
+		_striker.queue_free()
+		_striker = null
+		striker_in_play = false
+		if strikers_left <= 0:
+			board_failed = true
+		else:
+			_serve()
+
+
+func _collect_likes() -> void:
+	for child in _likes.get_children():
+		var like := child as Like
+		if like == null:
+			continue
+		if like.global_position.distance_to(_paddle.global_position) <= _paddle.width * 0.5 + 18.0:
+			likes_collected += like.worth
+			score += int(round(like.worth * multiplier))
+			meter = minf(meter_max, meter + like_charge)
+			like.queue_free()
+		elif like.global_position.y > _pool.size.y + 30.0:
+			# Reward that reached the edge is gone. Pull is how you stop that happening,
+			# and pull is what brings the floats down at you.
+			like.queue_free()
+
+
+## --- What the board reports -------------------------------------------------------------
+
+func _on_struck(target: Target, striker: Striker) -> void:
+	# Counted here rather than in _on_rim_hit, which only fires for a hit the ring
+	# survived - so a board of one-hit rings reported that nothing had ever been hit.
+	rim_hits += 1
+	score += int(round(2 * multiplier))
 	if _music != null:
-		_music.play("bounce", ring.area, chain)
-	# Only the shot's own first contact. Two field rings knocking together across the
-	# pool used to set this, which reported an impact of 48 px/s while the striker was
-	# still travelling at 275.
-	if _tracing and first_impact_time < 0.0 and ring == _active:
-		first_impact_time = shot_duration
-		first_impact_speed = speed
+		_music.play("bounce", 2400.0, int(multiplier))
+	striker.deflect_from(target.global_position)
+	if not target.freeze:
+		# A loose ring takes the shot as well as the damage, which is how the striker
+		# rearranges the board rather than just clearing it.
+		target.apply_current((target.global_position - striker.global_position).normalized() * 260.0)
+	target.take_rim_hit(striker.global_position)
 
 
-func _on_absorbed(eater: Ring, eaten: Ring, speed: float) -> void:
-	merges += 1
-	_last_event_at = Time.get_ticks_msec() / 1000.0
-	chain += 1
-	chain_this_shot = chain
-	best_chain = maxi(best_chain, chain)
-	multiplier = 1.0 + float(chain) * chain_gain
-	best_multiplier = maxf(best_multiplier, multiplier)
-	likes += like_per_merge * float(chain) * multiplier
-	if eaten.lit:
-		lit_left = maxi(0, lit_left - 1)
-	rings_in_play = maxi(0, rings_in_play - 1)
-	if _tracing and first_impact_time < 0.0:
-		first_impact_time = shot_duration
-		first_impact_speed = speed
+func _on_rim_hit(_target: Target, _at: Vector2, _remaining: int) -> void:
+	# An armoured ring surviving a hit. Scored by _on_rim_struck already; this exists so
+	# the survivor can be told apart from the kill in a trace.
+	pass
+
+
+func _on_threaded(target: Target) -> void:
+	# Through the middle without touching the rim. The one thing in this game that is
+	# purely skill, so it is the one thing that builds the multiplier.
+	threads += 1
+	if _striker != null and is_instance_valid(_striker):
+		_striker.threads_this_life += 1
+	multiplier += multiplier_per_thread
+	score += int(round(thread_bonus * multiplier))
+	meter = minf(meter_max, meter + like_charge)
+	last_event = "threaded %s" % target.name
 	if _music != null:
-		# Pitch comes from the ring's new area, so a chain plays a descending run as the
-		# active ring grows. That is the multiplier made audible.
-		var midi := _music.midi_for_area(eater.area)
-		_music.play("merge", eater.area, chain)
-		_music.set_chain(chain)
-		last_phrase.append(midi)
-		if _music.on_beat():
-			likes += on_beat_bonus * multiplier
-			on_beat_hits += 1
-	if lit_left == 0:
-		set_cleared = true
+		_music.play("merge", target.outer_radius * target.outer_radius * PI, threads)
 
 
-func _on_came_to_rest(ring: Ring) -> void:
-	if ring != _active or not _shot_live:
-		return
-	_shot_live = false
-	shot_end_area = ring.area
-	shot_end_distance = shot_distance
-	# The shot has resolved: the active ring locks in as a passive one and bounces from
-	# here on. Chain state stays readable until the next launch overwrites it.
-	ring.active = false
-	ring.queue_redraw()
-	_tracing = false
+func _on_target_destroyed(target: Target, at: Vector2, worth: int) -> void:
+	targets_destroyed += 1
+	score += int(round(worth * multiplier))
+	if _music != null:
+		_music.play("merge", target.outer_radius * target.outer_radius * PI, int(multiplier))
+	if target.kind == Target.Kind.POPPER:
+		_pop_neighbours(at, target)
+	_scatter_likes(at, 2 + int(target.outer_radius / 12.0))
+	target.queue_free()
+	last_event = "destroyed %s" % target.name
+	call_deferred("_check_cleared")
+
+
+func _pop_neighbours(p_at: Vector2, p_source: Target) -> void:
+	for child in _targets.get_children():
+		var other := child as Target
+		if other == null or other == p_source or not other.alive:
+			continue
+		if other.global_position.distance_to(p_at) <= 96.0:
+			other.take_rim_hit(other.global_position)
+
+
+func _scatter_likes(p_at: Vector2, p_count: int) -> void:
+	for i in p_count:
+		var node := RigidBody2D.new() as Node
+		node.set_script(LIKE_SCRIPT)
+		var like := node as Like
+		like.position = p_at + Vector2(randf_range(-14, 14), randf_range(-14, 14))
+		_likes.add_child(like)
+		like.linear_velocity = Vector2(randf_range(-110, 110), randf_range(-110, 110))
+
+
+func _check_cleared() -> void:
 	_recount()
-	if set_cleared or shots_left <= 0:
-		# Soft fail, as the brief asks. No lives, no restart: the survivors stay on the
-		# table and the next set is laid out around them.
-		_begin_set(false)
-	else:
-		_spawn_striker()
+	if targets_left == 0 and not board_cleared:
+		board_cleared = true
+		last_event = "board cleared"
+
+
+## --- The meter ---------------------------------------------------------------------------
+## One meter, two ways to spend it, and they compete. Save for the wave or stay alive; the
+## game is not interesting if you can do both.
+
+func _raise_shield() -> void:
+	if meter < shield_cost or shield_active:
+		last_event = "shield refused"
+		return
+	meter -= shield_cost
+	shield_active = true
+	shield_left = shield_seconds
+	last_event = "shield up"
+
+
+func _release_party_wave() -> void:
+	if meter < party_wave_cost:
+		last_event = "party wave refused"
+		return
+	meter -= party_wave_cost
+	party_waves += 1
+	last_event = "party wave"
+	if _music != null:
+		_music.play("layer", 40000.0, int(multiplier))
+	# A wall of water up the pool: everything loose is thrown at the far end and every
+	# target in its path takes a hit. It is the offensive half of the meter, and the
+	# reason not to spend it on a barrier.
+	for child in _targets.get_children():
+		var target := child as Target
+		if target == null or not target.alive:
+			continue
+		target.apply_current(Vector2.UP * party_wave_speed)
+		target.take_rim_hit(target.global_position)
+	for child in _likes.get_children():
+		var like := child as Like
+		if like != null:
+			# Likes come *to* you on a wave rather than away, or the wave would throw its
+			# own reward off the board.
+			like.apply_central_impulse((_paddle.global_position - like.global_position).normalized() * 260.0)
+
+
+func _recount() -> void:
+	targets_left = 0
+	anchored_left = 0
+	loose_left = 0
+	target_positions = PackedVector2Array()
+	loose_positions = PackedVector2Array()
+	for child in _targets.get_children():
+		var target := child as Target
+		if target == null or not target.alive or target.is_queued_for_deletion():
+			continue
+		targets_left += 1
+		target_positions.append(target.position)
+		if target.freeze:
+			anchored_left += 1
+		else:
+			loose_left += 1
+			loose_positions.append(target.position)
+	likes_loose = 0
+	like_positions = PackedVector2Array()
+	for child in _likes.get_children():
+		if child is Like:
+			likes_loose += 1
+			like_positions.append((child as Like).position)
+	if _paddle != null:
+		paddle_position = _paddle.global_position
 
 
 ## --- Human input --------------------------------------------------------------------
-## Drag back from the striker and release, billiards style. Both this and the property
-## route above end in _launch, so what an agent asserts about is what a person does.
+## Left and right move the lounger, the mouse aims it, holding the two triggers works the
+## current, space launches. All of it lands on the same properties an agent sets.
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			_aim_from = get_global_mouse_position()
-			_aiming = true
-		elif _aiming:
-			_aiming = false
-			var drag := _aim_from - get_global_mouse_position()
-			if drag.length() > 12.0:
-				_launch(drag.normalized() * clampf(drag.length() / 260.0, 0.0, 1.0))
-	elif event is InputEventKey and event.keycode == KEY_SPACE:
-		jet_held = event.pressed
+	if event is InputEventMouseMotion:
+		paddle_x = get_global_mouse_position().x
+	elif event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			current = -1.0 if event.pressed else 0.0
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			current = 1.0 if event.pressed else 0.0
+	elif event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_SPACE:
+				launch_requested = true
+			KEY_SHIFT:
+				shield_requested = true
+			KEY_ENTER:
+				party_wave_requested = true
+
+
+func _process(delta: float) -> void:
+	# Held keys, read rather than evented, because moving the paddle is continuous.
+	if Input.is_key_pressed(KEY_LEFT):
+		paddle_x -= 620.0 * delta
+	if Input.is_key_pressed(KEY_RIGHT):
+		paddle_x += 620.0 * delta

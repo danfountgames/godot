@@ -1,23 +1,16 @@
 class_name Pool
 extends Node2D
 
-## The rectangular pool: four walls and the water.
+## The pool: three walls and the water. The bottom edge is open, because the bottom edge
+## is the thing you are defending.
 ##
-## Built in code rather than authored as nodes so the arena is one number. The brief's
-## later pools are kidney-shaped, lane-shaped and infinity-edged; keeping the geometry
-## here makes those a subclass rather than a rebuild.
+## Built in code rather than authored as nodes so the arena is one number. Later pools in
+## the brief are kidney-shaped, lane-shaped and infinity-edged; keeping the geometry here
+## makes those a subclass rather than a rebuild.
 
-@export var size: Vector2 = Vector2(1024, 560)
+@export var size: Vector2 = Vector2(840, 560)
 @export var wall_thickness: float = 24.0
-@export var wall_bounce: float = 0.72
-## Closed on all four sides. Rings are never lost: survivors carry into the next set as
-## obstacles and ammunition, so a ring leaving the table would be losing the board state
-## the player just built.
-@export var lane_spacing: float = 128.0
-
-var bounds: Rect2:
-	get:
-		return Rect2(Vector2.ZERO, size)
+@export var lane_spacing: float = 120.0
 
 
 func _ready() -> void:
@@ -25,16 +18,19 @@ func _ready() -> void:
 
 
 func _build_walls() -> void:
+	# No bottom. A striker that gets past the lounger is lost, and that is the only way
+	# to lose, so the edge has to be genuinely open rather than a wall that forgives.
 	var edges := {
 		"Top": [Vector2(size.x * 0.5, -wall_thickness * 0.5), Vector2(size.x, wall_thickness)],
-		"Bottom": [Vector2(size.x * 0.5, size.y + wall_thickness * 0.5), Vector2(size.x, wall_thickness)],
 		"Left": [Vector2(-wall_thickness * 0.5, size.y * 0.5), Vector2(wall_thickness, size.y)],
 		"Right": [Vector2(size.x + wall_thickness * 0.5, size.y * 0.5), Vector2(wall_thickness, size.y)],
 	}
 
 	var surface := PhysicsMaterial.new()
-	surface.bounce = wall_bounce
-	surface.friction = 0.1
+	# Perfectly elastic, like the striker. A wall that takes 5% off is drag wearing a
+	# different hat, and after a dozen rebounds the ball is limping.
+	surface.bounce = 1.0
+	surface.friction = 0.0
 
 	for wall_name in edges:
 		var body := StaticBody2D.new()
@@ -51,11 +47,10 @@ func _build_walls() -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.09, 0.42, 0.58))
-	# Lap lanes. Decoration, and a coarse ruler for judging a shot by eye.
-	var lane := Color(1, 1, 1, 0.06)
+	var lane := Color(1, 1, 1, 0.05)
 	var x := lane_spacing
 	while x < size.x:
 		draw_line(Vector2(x, 0), Vector2(x, size.y), lane, 2.0)
 		x += lane_spacing
-	# The shooting edge.
-	draw_line(Vector2(0, size.y - 8.0), Vector2(size.x, size.y - 8.0), Color(1, 1, 1, 0.18), 2.0)
+	# The open edge, marked so it reads as a drop rather than as a wall.
+	draw_line(Vector2(0, size.y), Vector2(size.x, size.y), Color(1, 0.32, 0.35, 0.65), 4.0)

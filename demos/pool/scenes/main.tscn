@@ -2,77 +2,54 @@
 
 [ext_resource type="Script" uid="uid://do6qfkvg45um4" path="res://scripts/main.gd" id="1_sugp2"]
 [ext_resource type="Script" uid="uid://yhtmfcgdyptb" path="res://scripts/pool.gd" id="2_jyhfs"]
-[ext_resource type="Script" uid="uid://cgc7pqtudn1nx" path="res://scripts/jet.gd" id="3_tbgi4"]
+[ext_resource type="Script" uid="uid://daigtjhwk2xvh" path="res://scripts/paddle.gd" id="3_tefeu"]
 [ext_resource type="Script" uid="uid://cx7b3eo52hhvc" path="res://scripts/hud.gd" id="4_jyhfs"]
+[ext_resource type="Script" uid="uid://fcgtx4eno6j4" path="res://scripts/current.gd" id="4_o6xl0"]
 [ext_resource type="Script" uid="uid://ctdfyr8w73iql" path="res://scripts/music.gd" id="5_tbgi4"]
 
-[node name="Main" type="Node2D" unique_id=1729352607]
+[node name="Main" type="Node2D" unique_id=713432587]
 script = ExtResource("1_sugp2")
-max_shot_speed = 380.0
 
-[node name="Pool" type="Node2D" parent="." unique_id=334657138]
+[node name="Pool" type="Node2D" parent="." unique_id=118586100]
 script = ExtResource("2_jyhfs")
 
-[node name="Rings" type="Node2D" parent="." unique_id=548975606]
+[node name="Targets" type="Node2D" parent="." unique_id=1890309860]
 
-[node name="Jet" type="Area2D" parent="." unique_id=754176169]
-position = Vector2(24, 300)
-script = ExtResource("3_tbgi4")
-direction = Vector2(1, 0)
-reach = 360.0
-half_width = 150.0
+[node name="Strikers" type="Node2D" parent="." unique_id=287392014]
 
-[node name="HUD" type="CanvasLayer" parent="." unique_id=507718605]
-script = ExtResource("4_jyhfs")
+[node name="Likes" type="Node2D" parent="." unique_id=1625706568]
 
-[node name="Stats" type="VBoxContainer" parent="HUD" unique_id=1282775058]
-offset_left = 16.0
-offset_top = 12.0
-offset_right = 17.0
-offset_bottom = 116.0
+[node name="Paddle" type="StaticBody2D" parent="." unique_id=437976490]
+script = ExtResource("3_tefeu")
 
-[node name="Points" type="Label" parent="HUD/Stats" unique_id=1755751783]
-layout_mode = 2
+[node name="Current" type="Node2D" parent="." unique_id=843255802]
+script = ExtResource("4_o6xl0")
 
-[node name="Shots" type="Label" parent="HUD/Stats" unique_id=1046468963]
-layout_mode = 2
-
-[node name="Settled" type="Label" parent="HUD/Stats" unique_id=1995601854]
-layout_mode = 2
-
-[node name="Feel" type="Label" parent="HUD/Stats" unique_id=1656165592]
-layout_mode = 2
-
-[node name="Upgrades" type="VBoxContainer" parent="HUD" unique_id=1139124265]
-offset_left = 880.0
-offset_top = 12.0
-offset_right = 888.0
-offset_bottom = 83.0
-
-[node name="UpgradeTitle" type="Label" parent="HUD/Upgrades" unique_id=605370101]
-layout_mode = 2
-text = "UPGRADES"
-
-[node name="SlickerWater" type="Button" parent="HUD/Upgrades" unique_id=406704694]
-layout_mode = 2
-text = "Slicker Water"
-
-[node name="HeavierStriker" type="Button" parent="HUD/Upgrades" unique_id=1541255812]
-layout_mode = 2
-text = "Heavier Striker"
-
-[node name="ExtraShot" type="Button" parent="HUD/Upgrades" unique_id=1407290077]
-layout_mode = 2
-text = "Extra Shot"
-
-[node name="JetPressure" type="Button" parent="HUD/Upgrades" unique_id=1989799497]
-layout_mode = 2
-text = "Jet Pressure"
-
-[node name="Music" type="Node" parent="." unique_id=835099217]
+[node name="Music" type="Node" parent="." unique_id=305868957]
 script = ExtResource("5_tbgi4")
 
-[connection signal="pressed" from="HUD/Upgrades/SlickerWater" to="HUD" method="_on_slicker_water_pressed"]
-[connection signal="pressed" from="HUD/Upgrades/HeavierStriker" to="HUD" method="_on_heavier_striker_pressed"]
-[connection signal="pressed" from="HUD/Upgrades/ExtraShot" to="HUD" method="_on_extra_shot_pressed"]
-[connection signal="pressed" from="HUD/Upgrades/JetPressure" to="HUD" method="_on_jet_pressure_pressed"]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=2035799420]
+script = ExtResource("4_jyhfs")
+
+[node name="Stats" type="VBoxContainer" parent="HUD" unique_id=1935833022]
+offset_left = 16.0
+offset_top = 12.0
+
+[node name="Points" type="Label" parent="HUD/Stats" unique_id=1001973925]
+layout_mode = 2
+
+[node name="Shots" type="Label" parent="HUD/Stats" unique_id=269171853]
+layout_mode = 2
+
+[node name="Settled" type="Label" parent="HUD/Stats" unique_id=1595199333]
+layout_mode = 2
+
+[node name="Feel" type="Label" parent="HUD/Stats" unique_id=1336724825]
+layout_mode = 2
+
+[node name="Upgrades" type="VBoxContainer" parent="HUD" unique_id=2080260508]
+offset_left = 700.0
+offset_top = 12.0
+
+[node name="UpgradeTitle" type="Label" parent="HUD/Upgrades" unique_id=141365467]
+layout_mode = 2
