@@ -77,9 +77,18 @@ TASKS = [
         identifier="renamed-method/repair",
         project="renamed-method",
         category="repair a stale connection",
+        # The prompt used to say the game "logs an error about a missing method as soon
+        # as it starts". Running this task for real showed that it does not: Godot 4.8
+        # drops a scene connection to a method that is not there without printing
+        # anything, so an agent that did as it was told - run the game, read the output
+        # log - found an empty log and had to fall back to reading files. The prompt was
+        # describing a symptom that never happened.
+        #
+        # It now describes the symptom that does. That also makes it a better task for
+        # this product, because the only way to see it is to run the game and look.
         prompt=(
-            "The game logs an error about a missing method as soon as it starts. Find "
-            "out what is wrong and fix it."
+            "The wave counter never goes up: Main.waves stays at 0 even though the wave "
+            "starts. Find out why and fix it."
         ),
         oracle=_connection_points_at_a_real_method,
         licensed_paths=["scenes/main.tscn", "scripts/spawner.gd"],

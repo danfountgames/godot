@@ -88,10 +88,23 @@ panel collision, task-level undo, and headless (`docs/godot-ai-headless.md`).
 
 **Still open, in the order they matter:**
 
-1. **Nobody has made a game with this.** Every verification is a script we wrote, and
-   the benchmarks in `tools/benchmarks/` have never been run against a real model. This
-   is the biggest hole in the project and no amount of further building closes it. It
-   needs an API key and a session, not a feature.
+1. **Nobody has made a game with this.** Still the biggest hole, but no longer untouched:
+   the benchmarks have now been run once against a real model - see
+   `tools/benchmarks/RESULTS.md`. 4/4 solved, 4/4 without collateral, 0 of 4 leaving
+   machine-checkable evidence, and four real defects found that no test had:
+
+   - a headless editor launched a game that crashed instantly, breaking the closed loop
+     entirely for a headless agent, with the end-to-end suite *skipping* the check that
+     would have caught it (fixed);
+   - a benchmark task described a symptom that never happens (fixed);
+   - `run_selfcheck.py` claimed "every planted defect reproduces" when it only compares
+     files, which is how the previous item survived (fixed);
+   - **nothing in ninety-six tools connects a signal** (open, and the largest remaining
+     gap in the tool surface).
+
+   Four tasks is not a benchmark and the driver was the model that built the tools.
+   What is needed next is scale, a task that can only be solved by *playing* the game
+   rather than reading it, and a driver that is not us.
 2. **Tools are engine operations, not design intentions** (criticism 3). Skills-first
    discovery is the concrete next step: make the higher-level jobs the prominent surface
    and the 95 primitives the thing they compose. This is the same note `NEXT.md` already

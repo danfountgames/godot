@@ -102,6 +102,54 @@ def collateral_is_what_the_task_did_not_licence():
 
 
 @test
+def bookkeeping_is_reported_separately_rather_than_counted_or_hidden():
+    # The first real benchmark run reported three collateral changes and every one was
+    # a false positive: two .uid files the importer wrote, and the agent's own project
+    # memory note - which the skills tell it to write. Counting those buries the
+    # measurement in noise; excluding them silently puts a hole in it. So they are
+    # classified and still shown.
+    with Scratch() as root:
+        write(root, "scripts/player.gd", "one")
+        write(root, "scripts/other.gd", "one")
+        before = scoring.file_digests(root)
+
+        write(root, "scripts/player.gd", "two")
+        write(root, "scripts/player.gd.uid", "uid://abc")
+        write(root, ".godot_ai/memory/jump.md", "what I learned")
+        write(root, "scripts/other.gd", "two")
+        after = scoring.file_digests(root)
+
+        licensed = ["scripts/player.gd"]
+        assert_eq(scoring.collateral_changes(before, after, licensed), ["scripts/other.gd"],
+                  "only the unlicensed game file is collateral")
+        assert_eq(scoring.bookkeeping_changes(before, after, licensed),
+                  [".godot_ai/memory/jump.md", "scripts/player.gd.uid"],
+                  "the importer's and the tooling's files are reported, in their own bucket")
+
+        # Nothing is lost by the split: everything still appears in `changed`.
+        for path in (".godot_ai/memory/jump.md", "scripts/player.gd.uid",
+                     "scripts/other.gd", "scripts/player.gd"):
+            assert_true(path in scoring.changed_files(before, after),
+                        "%s is still reported as changed" % path)
+
+
+@test
+def a_deleted_script_is_collateral_even_though_its_uid_is_bookkeeping():
+    # The reason the split loses no signal: a real change always shows up as the real
+    # file, with the bookkeeping merely following it.
+    with Scratch() as root:
+        write(root, "scripts/gone.gd", "one")
+        write(root, "scripts/gone.gd.uid", "uid://abc")
+        before = scoring.file_digests(root)
+        os.remove(os.path.join(root, "scripts/gone.gd"))
+        os.remove(os.path.join(root, "scripts/gone.gd.uid"))
+        after = scoring.file_digests(root)
+
+        assert_eq(scoring.collateral_changes(before, after, []), ["scripts/gone.gd"],
+                  "the deleted script is still collateral")
+
+
+@test
 def a_licence_is_exact_paths_not_a_folder():
     # "It was allowed to touch the scripts folder" is how an agent ends up allowed to
     # touch everything, so a licence names files.

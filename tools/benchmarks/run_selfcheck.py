@@ -109,8 +109,15 @@ def main():
     if FAILURES:
         print("benchmark self-check: %d check(s) failed" % len(FAILURES))
         return 1
-    print("benchmark self-check: every planted defect reproduces and every oracle can "
-          "tell the two apart")
+    # Precisely what this proves, and no more. It compares files: every oracle fails on
+    # the project as shipped and passes on the known fix, and the known fix leaves no
+    # collateral. It does *not* run the game, so it cannot tell whether a defect
+    # produces the symptom its prompt describes - and one of them did not, for as long
+    # as nobody ran the benchmark for real. Claiming "every planted defect reproduces"
+    # was the flattering reading of a textual check.
+    print("benchmark self-check: every oracle fails on the shipped project and passes on "
+          "the known fix. This compares files; whether a defect produces the symptom its "
+          "prompt describes is only shown by running the task.")
     return 0
 
 

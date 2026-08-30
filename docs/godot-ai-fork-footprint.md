@@ -26,13 +26,13 @@ $ git diff --name-only 457470a8d0 HEAD -- core scene servers drivers main platfo
 | Where | Files | Lines added | Lines removed |
 |---|---|---|---|
 | `modules/godot_ai/` — the whole feature | 153 | 46,578 | 0 |
-| `editor/` — the seams it needs | 16 | 285 | 76 |
+| `editor/` — the seams it needs | 16 | 302 | 76 |
 | macOS branding (icons, plists, an icon script) | 6 | 182 | 14 |
 | Everything else outside the module | 0 | 0 | 0 |
 
 Sixty-eight thousand lines sounds like a lot until you notice that 46,578 of them are a
 module you can delete, most of the rest is documentation and tooling that never compiles
-into the engine, and the part that touches Godot itself is **285 added lines across
+into the engine, and the part that touches Godot itself is **302 added lines across
 sixteen editor files**.
 
 ## Will my project open unchanged?
@@ -106,7 +106,7 @@ existing behaviour, and nothing is deleted.
 | `editor/debugger/editor_debugger_inspector.h` | A getter for the stack variables | Trivially |
 | `editor/debugger/script_editor_debugger.{h,cpp}` | Read access to session state | Plausibly |
 | `editor/editor_node.{h,cpp}` | `close_scene_by_path`, which refuses rather than popping a dialog a non-interactive caller cannot answer | Plausibly; it is the non-interactive half of an existing operation |
-| `editor/run/editor_run.{h,cpp}` | Read access to which processes are running | Plausibly. `is_playing()` cannot tell one game from three |
+| `editor/run/editor_run.{h,cpp}` | Read access to which processes are running, and passing `--display-driver headless` to a game launched by a headless editor | **Yes, both.** Without the second, a headless editor launched a game that could not create a DisplayServer and then segfaulted in `XGetSelectionOwner` on the way out - so the game vanished and the editor never knew why. Upstream assumes an editor implies a screen |
 | `editor/run/editor_run_bar.h` | The same, one level up | With the above |
 | `editor/run/embedded_process.{h,cpp}` | Embedding logic **moved out of** `game_view_plugin.cpp` so more than one game can embed | **Yes.** This is a refactor, not a feature: the platform layer was never single-instance, and this is the editor-side seam that assumed it was |
 | `editor/run/game_view_plugin.cpp` | The other side of that move (−71 lines) | With the above |
@@ -122,7 +122,7 @@ logic — only include paths, because 4.8 nests the editor sources (`editor/dock
 `editor/run/`, `editor/file_system/`).
 
 That is one data point, not a track record, and it should be read as one. What makes the
-next merge likely to be similar is structural rather than a promise: 285 lines in sixteen
+next merge likely to be similar is structural rather than a promise: 302 lines in sixteen
 files is a small conflict surface, and the module itself only depends on editor APIs that
 are public and stable.
 

@@ -132,6 +132,32 @@ headless path rather than pretending. Reach for it before recording anything as
 environmental — doing so once turned up a real product bug that the refusal paths had
 been hiding.
 
+## Driving the game itself, headless
+
+The game runs, and the closed loop works: launch it, read its live scene tree, read and
+write properties on running nodes, drive it with actions, stop it. The end-to-end suite
+proves that in the headless configuration.
+
+Two limits are real and neither is a bug in this tooling.
+
+**Do not aim at coordinates.** A headless game's root viewport is a 64x64 stub. The
+dummy display server ignores the project's configured size, and `--resolution` does not
+change it, so the whole interface is laid out in 64x64 and a coordinate taken from the
+real design addresses nothing. `Godot_SendPointerInput` refuses such a coordinate rather
+than delivering a click into the void, which is the right answer and the one you want to
+see. Drive a headless game with `Godot_SendActionInput` and `Godot_SendKeyInput`, which
+go to the input map rather than to a position.
+
+**A headless editor launches a headless game.** It has to: without being told, the child
+went looking for X11, failed to create a DisplayServer, and segfaulted on the way out -
+so from the editor's side the game simply vanished. The fork passes the driver down.
+This is worth knowing because it means a game launched from a headless editor behaves
+like a headless game, stub viewport and all, however the project is configured.
+
+If you need real geometry, use a virtual display rather than headless. That is what
+`tools/virtual_display.py` is for, and the same end-to-end suite covers that path with
+the geometry checks enabled.
+
 ## One headless difference worth knowing about
 
 Godot does not generate documentation for a project's own script classes when the editor
