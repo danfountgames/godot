@@ -92,7 +92,7 @@ both of which made it look like it worked:
   worth remembering from the whole exercise: everything reported success and nothing had
   happened.
 
-A third, smaller: a refusal for a misspelt signal listed `script_changed,
+And a third within that: a refusal for a misspelt signal listed `script_changed,
 property_list_changed, ready, renamed…`, because asking a `Button` for its *own* signals
 returns nothing — `pressed` belongs to `BaseButton`. It now climbs to the class that
 actually declares them.
@@ -100,7 +100,9 @@ actually declares them.
 The task was re-run afterwards and passes through the tool, with no hand-edited scene
 text.
 
-A fifth, smaller one: the collateral measurement reported three changes on the first
+**5. The collateral measurement reported three false positives.** *(fixed)*
+
+The collateral measurement reported three changes on the first
 task and all three were false positives — two `.uid` files the importer wrote and the
 agent's own project-memory note, which the skills tell it to write. Counting those buries
 the measurement in noise; excluding them silently puts a hole in the one number this
