@@ -3869,6 +3869,49 @@ def run(editor_binary, display):
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
 
+        # --- skills, served as jobs rather than buried under the tools ---------
+        #
+        # The tool surface is itself a reliability risk: ninety-five similarly-named
+        # primitives is more chances to pick wrong. Skills were always meant to be the
+        # normal way the model operates, and could not be while one sat two tool calls
+        # deep behind ninety-five equals. MCP prompts are the part of the protocol a
+        # client surfaces as named jobs.
+        reply = call({"jsonrpc": "2.0", "id": 840, "method": "prompts/list"})
+        check("error" not in reply, "prompts/list failed: %r" % reply.get("error"))
+        prompts = reply["result"]["prompts"]
+        names = [p["name"] for p in prompts]
+        check("scene-cleanup" in names,
+              "the shipped skill is not offered as a prompt: %r" % names)
+        offered = [p for p in prompts if p["name"] == "scene-cleanup"][0]
+        check(offered["description"],
+              "the prompt carries no description: %r" % offered)
+        check(any(a["name"] == "context" and a["required"] is False
+                  for a in offered["arguments"]),
+              "the prompt takes no optional context: %r" % offered)
+
+        reply = call({"jsonrpc": "2.0", "id": 841, "method": "prompts/get",
+                      "params": {"name": "scene-cleanup"}})
+        check("error" not in reply, "prompts/get failed: %r" % reply.get("error"))
+        messages = reply["result"]["messages"]
+        check(len(messages) == 1 and messages[0]["role"] == "user",
+              "the prompt did not come back as one user message: %r" % messages)
+        body = messages[0]["content"]["text"]
+        check("Godot_ProposeChange" in body,
+              "the prompt body is not the skill's instructions: %r" % body[:200])
+
+        # The optional context is appended rather than interpolated, so a skill that
+        # never mentions it still gets it.
+        reply = call({"jsonrpc": "2.0", "id": 842, "method": "prompts/get",
+                      "params": {"name": "scene-cleanup",
+                                 "arguments": {"context": "the boss arena"}}})
+        check("the boss arena" in reply["result"]["messages"][0]["content"]["text"],
+              "the context argument did not reach the prompt")
+
+        reply = call({"jsonrpc": "2.0", "id": 843, "method": "prompts/get",
+                      "params": {"name": "no-such-skill"}})
+        check("error" in reply, "prompts/get accepted a skill that does not exist")
+        print("PASS the shipped skills are offered as MCP prompts, with their instructions")
+
         # --- undoing a task, not twelve checkpoints ----------------------------
         #
         # Checkpoints are per-tool-call, which is the right granularity to take them at

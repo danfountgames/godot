@@ -34,6 +34,7 @@
 #include "mcp_agent_state.h"
 #include "mcp_checkpoints.h"
 #include "mcp_deferred.h"
+#include "mcp_skills.h"
 #include "mcp_tool_registry.h"
 
 #include "core/io/json.h"
@@ -222,8 +223,13 @@ bool MCPProtocol::_handle_initialize(const Dictionary &p_params, const Variant &
 
 	Dictionary tools_capability;
 	tools_capability["listChanged"] = true;
+	Dictionary prompts_capability;
+	prompts_capability["listChanged"] = true;
 	Dictionary capabilities;
 	capabilities["tools"] = tools_capability;
+	// The skills, as jobs a person can pick rather than as two tool calls behind
+	// ninety-five primitives. See _handle_prompts_list.
+	capabilities["prompts"] = prompts_capability;
 
 	Dictionary server_info;
 	server_info["name"] = SERVER_NAME;
@@ -238,7 +244,16 @@ bool MCPProtocol::_handle_initialize(const Dictionary &p_params, const Variant &
 			"by default; anything that modifies the project or starts the game is subject "
 			"to the user's permission settings and may be refused. Edits made while the "
 			"game is running are not persistent - use the scene tools for changes that "
-			"must survive stopping the game.";
+			"must survive stopping the game.\n\n"
+			"Start from the prompts, not the tools. Each is a worked procedure for a job "
+			"this editor is good at - investigating a crash, chasing a performance "
+			"regression, walking a game's menus, testing an input path - and following one "
+			"is more reliable than assembling the same sequence out of primitives. The "
+			"tools are there for the cases no prompt covers.\n\n"
+			"Two calls are worth making early in any session: Godot_RecallProjectMemory, "
+			"for what previous sessions learned about this project, and "
+			"Godot_GetEditorStatus, which reports what the user currently has selected and "
+			"is looking at.";
 	if (!requested.is_empty() && requested != negotiated) {
 		// Tell the client its request was not honoured, rather than silently differing.
 		Dictionary meta;
@@ -255,6 +270,89 @@ bool MCPProtocol::_handle_tools_list(const Variant &p_id, Dictionary &r_response
 	MCPToolRegistry *registry = MCPToolRegistry::get_singleton();
 	Dictionary result;
 	result["tools"] = registry ? registry->get_tool_descriptors() : Array();
+	r_response = make_result(p_id, result);
+	return true;
+}
+
+bool MCPProtocol::_handle_prompts_list(const Variant &p_id, Dictionary &r_response) {
+	Array prompts;
+	for (const MCPSkill &skill : MCPSkills::discover()) {
+		// Usable only. A skill is an instruction file anyone could have dropped into a
+		// project or an addon, and listing an untrusted one as a job the user can pick
+		// would route around the decision they have not made yet.
+		if (!skill.is_usable()) {
+			continue;
+		}
+
+		Dictionary argument;
+		argument["name"] = "context";
+		argument["description"] = "What to apply this to: a scene, a node, a symptom. Optional.";
+		argument["required"] = false;
+		Array arguments;
+		arguments.push_back(argument);
+
+		Dictionary prompt;
+		prompt["name"] = skill.name;
+		prompt["description"] = skill.description;
+		prompt["arguments"] = arguments;
+		prompts.push_back(prompt);
+	}
+
+	Dictionary result;
+	result["prompts"] = prompts;
+	r_response = make_result(p_id, result);
+	return true;
+}
+
+bool MCPProtocol::_handle_prompts_get(const Dictionary &p_params, const Variant &p_id, Dictionary &r_response) {
+	const String name = String(p_params.get("name", String())).strip_edges();
+	if (name.is_empty()) {
+		r_response = make_error(p_id, ERROR_INVALID_PARAMS, "prompts/get needs a 'name'");
+		return true;
+	}
+
+	MCPSkill found;
+	bool exists = false;
+	for (const MCPSkill &skill : MCPSkills::discover()) {
+		if (skill.name == name) {
+			found = skill;
+			exists = true;
+			break;
+		}
+	}
+	if (!exists) {
+		r_response = make_error(p_id, ERROR_INVALID_PARAMS, vformat("no skill named '%s'", name));
+		return true;
+	}
+
+	String text;
+	String error;
+	if (!MCPSkills::read_instructions(found, text, error)) {
+		// read_instructions is the same trust gate Godot_ReadSkill goes through, so a
+		// skill the user has not allowed is refused here for the same reason and with
+		// the same wording.
+		r_response = make_error(p_id, ERROR_INVALID_PARAMS, error);
+		return true;
+	}
+
+	const Dictionary arguments = p_params.get("arguments", Dictionary());
+	const String context = String(arguments.get("context", String())).strip_edges();
+	if (!context.is_empty()) {
+		text += "\n\n---\n\nApply this to: " + context + "\n";
+	}
+
+	Dictionary content;
+	content["type"] = "text";
+	content["text"] = text;
+	Dictionary message;
+	message["role"] = "user";
+	message["content"] = content;
+	Array messages;
+	messages.push_back(message);
+
+	Dictionary result;
+	result["description"] = found.description;
+	result["messages"] = messages;
 	r_response = make_result(p_id, result);
 	return true;
 }
@@ -507,6 +605,20 @@ bool MCPProtocol::handle_message(const Dictionary &p_message, MCPSession &r_sess
 			return false;
 		}
 		return _handle_tools_call(params, id, r_session, p_delegate, r_response);
+	}
+
+	if (method == "prompts/list") {
+		if (!is_request) {
+			return false;
+		}
+		return _handle_prompts_list(id, r_response);
+	}
+
+	if (method == "prompts/get") {
+		if (!is_request) {
+			return false;
+		}
+		return _handle_prompts_get(params, id, r_response);
 	}
 
 	if (is_request) {
