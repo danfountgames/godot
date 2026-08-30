@@ -26,14 +26,11 @@ var _limit_low: float = 0.0
 var _limit_high: float = 0.0
 
 
+var _collider: CollisionShape2D
+
+
 func _ready() -> void:
-	var shape := CapsuleShape2D.new()
-	shape.radius = thickness * 0.5
-	shape.height = width
-	var collider := CollisionShape2D.new()
-	collider.shape = shape
-	collider.rotation = PI * 0.5
-	add_child(collider)
+	rebuild()
 	wanted_x = position.x
 	# On its own layer, colliding with nothing. The rebound is resolved in code so that
 	# where the striker lands across the lounger decides where it goes; letting the
@@ -41,6 +38,21 @@ func _ready() -> void:
 	# time, and the player would never learn to aim.
 	collision_layer = 8
 	collision_mask = 0
+
+
+## Rebuilt rather than scaled, because a cocktail that widens the lounger has to widen
+## the thing the ball actually meets as well as the thing on screen. Called on the way in
+## and whenever the width changes.
+func rebuild() -> void:
+	if _collider == null:
+		_collider = CollisionShape2D.new()
+		_collider.rotation = PI * 0.5
+		add_child(_collider)
+	var shape := CapsuleShape2D.new()
+	shape.radius = thickness * 0.5
+	shape.height = width
+	_collider.shape = shape
+	queue_redraw()
 
 
 func set_limits(p_low: float, p_high: float) -> void:

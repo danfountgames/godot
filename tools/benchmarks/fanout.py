@@ -8,8 +8,15 @@ interface to something that has not seen the inside.
 This provisions the isolated worlds. Each agent gets:
 
   * its own copy of the project, so one agent's edits cannot be another's
-  * its own headless editor on its own port
+  * its own headless editor on its own service port
   * its own GODOT_AI_HOME, so instance discovery and checkpoints do not cross
+
+**What it does not isolate: the game's debugger port.** Godot hands each editor the next
+free one - 6007, 6008, 6009 for three workers - and an editor that cannot get one
+launches its game with no `--remote-debug` at all. The game then runs perfectly, the
+editor reports `playing: true`, and every runtime tool says it cannot be reached. Measured
+by starting a fourth editor beside three workers and losing twenty minutes to it. Do not
+run an editor of your own while a fanout is up; `status` will tell you what is running.
 
 and nothing else - no helper script, no worked example. Whether the interface is usable
 is the question, so anything supplied here that is not part of the product is a thumb on
@@ -142,6 +149,22 @@ def status(args):
     if not state["workers"]:
         print("no workers")
         return
+    # Every editor on this machine, not only the ones here. An editor started outside the
+    # fanout competes for the same debugger ports, and the one that loses launches a game
+    # it can never talk to - so knowing that another is up is the first thing to check
+    # when a worker's runtime tools stop answering.
+    others = subprocess.run(["pgrep", "-fa", "godot.linuxbsd.editor"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    # `--editor` as a whole argument. A substring match also catches the `--editor-pid`
+    # that every launched *game* carries, which counted three games as three editors and
+    # made the warning fire on a perfectly healthy fanout.
+    editors = [line for line in others.stdout.decode().splitlines()
+               if " --editor " in line + " " or line.endswith(" --editor")]
+    if len(editors) > len(state["workers"]):
+        print("WARNING: %d editors are running but this fanout owns %d. An editor that "
+              "cannot get a debugger port launches its game without one, and every "
+              "runtime tool then reports it unreachable."
+              % (len(editors), len(state["workers"])))
     for worker in state["workers"]:
         running = alive(worker["pid"])
         print("worker %d  pid %-7d %-10s %s"

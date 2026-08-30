@@ -51,6 +51,21 @@ extends Node2D
 @export var multiplier_per_thread: float = 0.25
 @export var multiplier_decay: float = 0.35
 
+## The cocktails: the run's upgrades, taken one per cleared board.
+##
+## Every one changes something you can watch happen rather than a number on a sheet,
+## which is the same rule the targets follow. Three are offered and one is taken, so a
+## run is a sequence of small refusals as much as of choices.
+const COCKTAILS := {
+	"stronger_current": "Rip Tide: the current pulls and steers half again as hard",
+	"wider_lounger": "Double Lounger: a wider paddle, and a wider angle off the ends",
+	"longer_shield": "Slow Set: the splash barrier lasts twice as long",
+	"sharper_threads": "Needle: threading is worth more and builds the multiplier faster",
+	"extra_striker": "Spare Ring: one more striker every board",
+	"cheap_wave": "Happy Hour: the Party Wave costs a third less",
+	"deep_pockets": "Big Glass: a bigger meter, so a wave can be banked while you defend",
+}
+
 ## --- The verbs -----------------------------------------------------------------------
 var paddle_x: float = 0.0
 var current: float = 0.0
@@ -58,6 +73,9 @@ var shield_requested: bool = false
 var party_wave_requested: bool = false
 var launch_requested: bool = false
 var restart_requested: bool = false
+## Take one of `cocktail_offer` by name. That is also what starts the next board, so the
+## pause between boards ends when the player has decided rather than on a timer.
+var cocktail_choice: String = ""
 
 ## --- What a playtester reads ------------------------------------------------------
 var score: int = 0
@@ -75,6 +93,15 @@ var targets_destroyed: int = 0
 var board_cleared: bool = false
 var board_failed: bool = false
 var boards_played: int = 0
+## --- The run --------------------------------------------------------------------------
+## A board on its own is a test of control with nothing at stake. The run is what makes
+## losing a striker cost something, and it is where the brief's incremental half lives -
+## outside the board, never inside it.
+var boards_cleared: int = 0
+var run_over: bool = false
+var choosing_cocktail: bool = false
+var cocktail_offer: PackedStringArray = PackedStringArray()
+var cocktails_taken: PackedStringArray = PackedStringArray()
 var shield_active: bool = false
 var shield_left: float = 0.0
 var party_waves: int = 0
@@ -137,7 +164,15 @@ func _begin_board(p_fresh: bool) -> void:
 	shield_active = false
 	shield_left = 0.0
 	if p_fresh:
+		# A fresh *run*, not merely a fresh board. Everything the run accumulates resets
+		# here and nowhere else, so clearing a board keeps what it earned.
 		score = 0
+		boards_cleared = 0
+		run_over = false
+		choosing_cocktail = false
+		cocktail_offer = PackedStringArray()
+		cocktails_taken = PackedStringArray()
+		_reset_cocktail_effects()
 		meter = 0.0
 		multiplier = 1.0
 		threads = 0
@@ -159,6 +194,15 @@ func _begin_board(p_fresh: bool) -> void:
 ## The mix is the readability rule. A board where everything drifts has no state a player
 ## can read - the remaining targets *are* the level - so the structure has to be mostly
 ## fixed, with enough loose objects to make the current worth holding.
+## How much harder board N is than board one.
+##
+## Only two things climb: how much there is, and how much of it takes more than one hit.
+## Speeding the ball up or shrinking the lounger would make a later board a *different*
+## game rather than a harder one, and the player has spent the whole run learning this one.
+func _difficulty() -> int:
+	return boards_cleared
+
+
 func _lay_out_board() -> void:
 	# Spacing first, count second. The slots have to be further apart than the biggest
 	# ring is wide or the board is born overlapping - which does not look like a layout
@@ -177,14 +221,15 @@ func _lay_out_board() -> void:
 					span.y * float(row) / float(rows - 1)))
 	slots.shuffle()
 
+	var harder := _difficulty()
 	var plan: Array[Target.Kind] = []
-	for i in anchored_count:
+	for i in anchored_count + harder:
 		plan.append(Target.Kind.ANCHORED)
-	for i in loose_count:
+	for i in loose_count + int(harder / 2.0):
 		plan.append(Target.Kind.LOOSE)
 	for i in heavy_count:
 		plan.append(Target.Kind.HEAVY)
-	for i in armoured_count:
+	for i in armoured_count + harder:
 		plan.append(Target.Kind.ARMOURED)
 	for i in popper_count:
 		plan.append(Target.Kind.POPPER)
@@ -244,6 +289,17 @@ func _physics_process(delta: float) -> void:
 	if restart_requested:
 		restart_requested = false
 		_begin_board(true)
+		return
+
+	if not cocktail_choice.is_empty():
+		var wanted := cocktail_choice
+		cocktail_choice = ""
+		_take_cocktail(wanted)
+		return
+
+	if choosing_cocktail or run_over:
+		# Between boards, or the run is finished. Nothing moves and nothing scores; the
+		# only thing that happens next is a decision.
 		return
 
 	_paddle.wanted_x = paddle_x
@@ -350,6 +406,8 @@ func _watch_striker() -> void:
 		striker_in_play = false
 		if strikers_left <= 0:
 			board_failed = true
+			run_over = true
+			last_event = "run over after %d board(s) cleared" % boards_cleared
 		else:
 			_serve()
 
@@ -443,7 +501,88 @@ func _check_cleared() -> void:
 	_recount()
 	if targets_left == 0 and not board_cleared:
 		board_cleared = true
-		last_event = "board cleared"
+		boards_cleared += 1
+		# A cleared board pays for the strikers you did not spend. Surviving has to be
+		# worth something on its own, or the careful way to play is worth nothing.
+		score += 250 * boards_cleared + 120 * strikers_left
+		last_event = "board %d cleared" % boards_cleared
+		if _music != null:
+			_music.play("layer", 30000.0, boards_cleared)
+		_offer_cocktails()
+
+
+## --- Between boards -----------------------------------------------------------------
+## Three offered, one taken. The board stops while it is being decided: this is the only
+## moment in the game that is not real time, and it is the only one that should be.
+func _offer_cocktails() -> void:
+	var available: Array[String] = []
+	for key in COCKTAILS:
+		if not cocktails_taken.has(key):
+			available.append(key)
+	available.shuffle()
+	cocktail_offer = PackedStringArray()
+	for i in mini(3, available.size()):
+		cocktail_offer.append(available[i])
+	if cocktail_offer.is_empty():
+		# Everything taken already: nothing to decide, so do not stop for it.
+		_next_board()
+		return
+	choosing_cocktail = true
+
+
+func _take_cocktail(p_name: String) -> void:
+	if not choosing_cocktail or not cocktail_offer.has(p_name):
+		last_event = "cocktail '%s' is not on offer" % p_name
+		return
+	cocktails_taken.append(p_name)
+	match p_name:
+		"stronger_current":
+			_current.force *= 1.5
+			_current.steering *= 1.5
+		"wider_lounger":
+			_paddle.width += 34.0
+			_paddle.max_bounce_degrees += 6.0
+			_paddle.rebuild()
+			_paddle.set_limits(0.0, _pool.size.x)
+		"longer_shield":
+			shield_seconds *= 2.0
+		"sharper_threads":
+			thread_bonus += 20
+			multiplier_per_thread += 0.15
+		"extra_striker":
+			strikers_per_board += 1
+		"cheap_wave":
+			party_wave_cost = maxf(20.0, party_wave_cost - 34.0)
+		"deep_pockets":
+			meter_max += 60.0
+	choosing_cocktail = false
+	cocktail_offer = PackedStringArray()
+	last_event = "took %s" % p_name
+	_next_board()
+
+
+## Everything a cocktail moved, put back. A run that quietly inherited the last run's
+## upgrades would look like a difficulty curve and be a bug.
+func _reset_cocktail_effects() -> void:
+	if _current != null:
+		_current.force = 900.0
+		_current.steering = 1.0
+	if _paddle != null:
+		_paddle.width = 132.0
+		_paddle.max_bounce_degrees = 62.0
+		_paddle.rebuild()
+		if _pool != null:
+			_paddle.set_limits(0.0, _pool.size.x)
+	shield_seconds = 2.5
+	thread_bonus = 25
+	multiplier_per_thread = 0.25
+	strikers_per_board = 3
+	party_wave_cost = 100.0
+	meter_max = 100.0
+
+
+func _next_board() -> void:
+	_begin_board(false)
 
 
 ## --- The meter ---------------------------------------------------------------------------
