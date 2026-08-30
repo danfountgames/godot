@@ -11,6 +11,7 @@ is that run.
 ordinary tools, the ordinary permission model. No shortcuts, no direct file edits outside
 the tools, no reading of the oracles before answering.
 **Editor:** `--headless`, no display, `GODOT_AI_POLICY` granting reads, edits and running.
+(Both runs predate the viewport fix below, so they drove the game by action only.)
 **Harness:** `run_task.py setup` / `run_task.py score`, written for this run because the
 harness could set up and grade a task but had nothing to hand one over with — which is a
 large part of why it had never been used.

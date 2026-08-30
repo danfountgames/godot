@@ -1668,10 +1668,26 @@ def run(editor_binary, display):
 
                 print("PASS the closed loop works headless: live tree, live property, "
                       "action input")
-                print("SKIP the geometry-dependent runtime checks: a headless game's root "
-                      "viewport is a 64x64 stub, so window coordinates address nothing")
 
-            if tree is not None and has_display:
+                # The geometry checks below are no longer skipped here. A headless
+                # game's root viewport used to be a 100x100 stub - the dummy display
+                # server never applies the project's configured size - so the interface
+                # laid out inside it and every coordinate from the real design pointed
+                # at nothing. The runtime agent now sets the configured size on its
+                # first request, so the same checks that run under a display should run
+                # here, and if they do not that is a failure rather than a skip.
+                probe = call({"jsonrpc": "2.0", "id": 863, "method": "tools/call",
+                              "params": {"name": "Godot_GetGameWindowInfo"}})
+                check(not refused(probe),
+                      "reading the headless game window failed: %s" % refusal_text(probe))
+                headless_window = probe["result"]["structuredContent"]
+                check(headless_window["width"] >= 640 and headless_window["height"] >= 480,
+                      "the headless game still has a stub viewport: %r" % headless_window)
+                print("PASS a headless game gets the project's viewport (%dx%d), so "
+                      "coordinates mean something" % (headless_window["width"],
+                                                      headless_window["height"]))
+
+            if tree is not None:
                 names = [n["name"] for n in tree["nodes"]]
                 check("Main" in names and "Player" in names,
                       "the runtime tree does not match the scene: %r" % names)
@@ -2250,31 +2266,45 @@ def run(editor_binary, display):
                 print("PASS a tuning set with one value is refused, and says what to use instead")
 
                 # --- seeing the running game -----------------------------------
+                #
+                # The one thing a headless game genuinely cannot do, as opposed to the
+                # several that merely looked that way. Input, geometry and live state
+                # all work with no display now; drawing does not, because there is no
+                # renderer and the game never produces a frame to photograph. The
+                # refusal is the right answer and is checked as such.
                 reply = call({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
                               "params": {"name": "Godot_CaptureGame"}})
-                check(reply["result"]["isError"] is False,
-                      "capturing the game failed: %s" % refusal_text(reply))
-                shot = reply["result"]["structuredContent"]
-                check(shot["width"] > 100 and shot["height"] > 100,
-                      "the game capture is implausibly small: %r" % shot)
-                with open(shot["path"], "rb") as handle:
-                    check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
-                          "the game capture is not a PNG")
-                images = [c for c in reply["result"]["content"] if c["type"] == "image"]
-                check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
-                      "the game capture was not returned inline")
-                check_capture_metadata(shot, "game_window")
-                check(shot["inlined"] is True,
-                      "the default capture did not inline the image: %r" % shot)
-                check(shot["frame"] > 0, "the game capture has no frame number: %r" % shot)
-                check(abs(shot["time_scale"] - 1.0) < 0.001,
-                      "the game is not running at normal speed: %r" % shot["time_scale"])
-                check("note" not in shot or "speed" not in shot["note"],
-                      "a capture at normal speed carries a speed warning: %r" % shot.get("note"))
-                check(shot["window_width"] > 100 and shot["scene"].endswith("main.tscn"),
-                      "the game capture does not describe the window and scene: %r" % shot)
-                print("PASS Godot_CaptureGame photographed the running game (%dx%d) at frame %d"
-                      % (shot["width"], shot["height"], shot["frame"]))
+                if not has_display:
+                    check(refused(reply), "a headless game produced a screenshot")
+                    check("rendered a frame" in refusal_text(reply),
+                          "the refusal does not say why: %s" % refusal_text(reply))
+                    print("PASS capturing a headless game is refused: it has no renderer "
+                          "and never draws a frame")
+                    shot = None
+                else:
+                    check(reply["result"]["isError"] is False,
+                          "capturing the game failed: %s" % refusal_text(reply))
+                    shot = reply["result"]["structuredContent"]
+                    check(shot["width"] > 100 and shot["height"] > 100,
+                          "the game capture is implausibly small: %r" % shot)
+                    with open(shot["path"], "rb") as handle:
+                        check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                              "the game capture is not a PNG")
+                    images = [c for c in reply["result"]["content"] if c["type"] == "image"]
+                    check(images and base64.b64decode(images[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n",
+                          "the game capture was not returned inline")
+                    check_capture_metadata(shot, "game_window")
+                    check(shot["inlined"] is True,
+                          "the default capture did not inline the image: %r" % shot)
+                    check(shot["frame"] > 0, "the game capture has no frame number: %r" % shot)
+                    check(abs(shot["time_scale"] - 1.0) < 0.001,
+                          "the game is not running at normal speed: %r" % shot["time_scale"])
+                    check("note" not in shot or "speed" not in shot["note"],
+                          "a capture at normal speed carries a speed warning: %r" % shot.get("note"))
+                    check(shot["window_width"] > 100 and shot["scene"].endswith("main.tscn"),
+                          "the game capture does not describe the window and scene: %r" % shot)
+                    print("PASS Godot_CaptureGame photographed the running game (%dx%d) at frame %d"
+                          % (shot["width"], shot["height"], shot["frame"]))
 
                 # --- describing a node, and aiming at it by name ----------------
                 reply = call({"jsonrpc": "2.0", "id": 100, "method": "tools/call",
@@ -2344,9 +2374,18 @@ def run(editor_binary, display):
                 check(reply["result"]["isError"] is False,
                       "reading the window failed: %s" % refusal_text(reply))
                 window = reply["result"]["structuredContent"]
-                check(window["width"] == shot["width"] and window["height"] == shot["height"],
-                      "the window and the capture disagree about size: %r vs %r" % (window, shot))
-                print("PASS Godot_GetGameWindowInfo agrees with the capture")
+                if shot is None:
+                    # No capture to agree with headless, but the window is now the
+                    # project's own size rather than a stub, which is the property that
+                    # makes every coordinate above mean something.
+                    check(window["width"] >= 640 and window["height"] >= 480,
+                          "the headless window is still a stub: %r" % window)
+                    print("PASS Godot_GetGameWindowInfo reports the project's viewport "
+                          "(%dx%d) with no display" % (window["width"], window["height"]))
+                else:
+                    check(window["width"] == shot["width"] and window["height"] == shot["height"],
+                          "the window and the capture disagree about size: %r vs %r" % (window, shot))
+                    print("PASS Godot_GetGameWindowInfo agrees with the capture")
 
                 # --- touch and gamepad ------------------------------------------
                 reply = call({"jsonrpc": "2.0", "id": 106, "method": "tools/call",
@@ -2786,20 +2825,30 @@ def run(editor_binary, display):
                 reply = call({"jsonrpc": "2.0", "id": 123, "method": "tools/call",
                               "params": {"name": "Godot_CaptureFrameSequence",
                                          "arguments": {"frames": 4}}})
-                check(reply["result"]["isError"] is False,
-                      "capturing a frame sequence failed: %s" % refusal_text(reply))
-                frames = reply["result"]["structuredContent"]["frames"]
-                check(len(frames) == 4, "wrong number of frames: %r" % frames)
-                numbers = [f["frame"] for f in frames]
-                check(numbers == sorted(numbers) and len(set(numbers)) == 4,
-                      "the frames are not distinct and in order: %r" % numbers)
-                for entry in frames:
-                    with open(entry["path"], "rb") as handle:
-                        check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
-                              "a sequence frame is not a PNG: %r" % entry)
-                sequence = reply["result"]["structuredContent"]
-                check_capture_metadata(sequence, "game_window")
-                print("PASS Godot_CaptureFrameSequence captured %d distinct frames" % len(frames))
+                if not has_display:
+                    # The other half of the one thing a headless game cannot do. It runs,
+                    # it takes input and it holds state; it does not draw, so there are
+                    # no frames to photograph.
+                    check(refused(reply), "a headless game produced a frame sequence")
+                    check("rendered a frame" in refusal_text(reply),
+                          "the refusal does not say why: %s" % refusal_text(reply))
+                    print("PASS capturing a frame sequence headless is refused: no renderer, "
+                          "no frames")
+                else:
+                    check(reply["result"]["isError"] is False,
+                          "capturing a frame sequence failed: %s" % refusal_text(reply))
+                    frames = reply["result"]["structuredContent"]["frames"]
+                    check(len(frames) == 4, "wrong number of frames: %r" % frames)
+                    numbers = [f["frame"] for f in frames]
+                    check(numbers == sorted(numbers) and len(set(numbers)) == 4,
+                          "the frames are not distinct and in order: %r" % numbers)
+                    for entry in frames:
+                        with open(entry["path"], "rb") as handle:
+                            check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                                  "a sequence frame is not a PNG: %r" % entry)
+                    sequence = reply["result"]["structuredContent"]
+                    check_capture_metadata(sequence, "game_window")
+                    print("PASS Godot_CaptureFrameSequence captured %d distinct frames" % len(frames))
 
                 reply = call({"jsonrpc": "2.0", "id": 124, "method": "tools/call",
                               "params": {"name": "Godot_ProfileWindow",
@@ -3181,18 +3230,25 @@ def run(editor_binary, display):
                 reply = call({"jsonrpc": "2.0", "id": 130, "method": "tools/call",
                               "params": {"name": "Godot_CaptureGame",
                                          "arguments": {"inline_image": False}}})
-                fast = reply["result"]["structuredContent"]
-                # The flag used to be declared and ignored, so every capture came back
-                # with megabytes of base64 whether or not the caller wanted it.
-                check(fast["inlined"] is False,
-                      "inline_image: false was ignored and the image came back anyway")
-                check(not [c for c in reply["result"]["content"] if c["type"] == "image"],
-                      "the response carries an image block despite inline_image: false")
-                check(abs(fast["time_scale"] - 2.0) < 0.001,
-                      "the capture did not record the time scale it was taken at: %r" % fast)
-                check("2.00x speed" in fast.get("note", ""),
-                      "a capture taken at 2x speed does not say so: %r" % fast.get("note"))
-                print("PASS a capture taken at 2x speed says so, on the image's own record")
+                if not has_display:
+                    # Nothing to photograph, so the provenance this checks cannot be
+                    # checked. The time scale itself is still exercised above and below.
+                    check(refused(reply), "a headless game produced a 2x capture")
+                    print("SKIP capture provenance at 2x: a headless game draws no frame "
+                          "to carry it")
+                else:
+                    fast = reply["result"]["structuredContent"]
+                    # The flag used to be declared and ignored, so every capture came back
+                    # with megabytes of base64 whether or not the caller wanted it.
+                    check(fast["inlined"] is False,
+                          "inline_image: false was ignored and the image came back anyway")
+                    check(not [c for c in reply["result"]["content"] if c["type"] == "image"],
+                          "the response carries an image block despite inline_image: false")
+                    check(abs(fast["time_scale"] - 2.0) < 0.001,
+                          "the capture did not record the time scale it was taken at: %r" % fast)
+                    check("2.00x speed" in fast.get("note", ""),
+                          "a capture taken at 2x speed does not say so: %r" % fast.get("note"))
+                    print("PASS a capture taken at 2x speed says so, on the image's own record")
 
                 reply = call({"jsonrpc": "2.0", "id": 128, "method": "tools/call",
                               "params": {"name": "Godot_SetTimeScale",

@@ -134,29 +134,45 @@ been hiding.
 
 ## Driving the game itself, headless
 
-The game runs, and the closed loop works: launch it, read its live scene tree, read and
-write properties on running nodes, drive it with actions, stop it. The end-to-end suite
-proves that in the headless configuration.
+The game runs and the closed loop works: launch it, read its live scene tree, read and
+write properties on running nodes, click, drag, scroll, tap, drive it by action and key,
+profile it, record and replay a session, stop it. The end-to-end suite covers **125 of
+its 135 checks in the headless configuration** — near parity, and every difference below
+is a real property of having no renderer rather than a gap in the tooling.
 
-Two limits are real and neither is a bug in this tooling.
+This was not true until the tooling made it true, and both halves are worth knowing
+because they change how a headless game behaves.
 
-**Do not aim at coordinates.** A headless game's root viewport is a 64x64 stub. The
-dummy display server ignores the project's configured size, and `--resolution` does not
-change it, so the whole interface is laid out in 64x64 and a coordinate taken from the
-real design addresses nothing. `Godot_SendPointerInput` refuses such a coordinate rather
-than delivering a click into the void, which is the right answer and the one you want to
-see. Drive a headless game with `Godot_SendActionInput` and `Godot_SendKeyInput`, which
-go to the input map rather than to a position.
+**A headless editor launches a headless game.** It has to. Without being told which
+display driver to use the child went looking for X11, failed to create a DisplayServer,
+and segfaulted on the way out — so from the editor's side the game simply vanished, with
+`playing` back to false and nothing in the log.
 
-**A headless editor launches a headless game.** It has to: without being told, the child
-went looking for X11, failed to create a DisplayServer, and segfaulted on the way out -
-so from the editor's side the game simply vanished. The fork passes the driver down.
-This is worth knowing because it means a game launched from a headless editor behaves
-like a headless game, stub viewport and all, however the project is configured.
+**A headless game is given the project's configured viewport.** The dummy display server
+never applies `display/window/size/viewport_width|height`, so a headless game used to lay
+its entire interface out inside a 100×100 stub. Every control was then somewhere no
+coordinate from the real design pointed at, and `Godot_SendPointerInput` correctly
+refused every click — which left an agent able to read a running game and drive it only
+by action, never by pointer. `Window::set_size()` does work on the root with no display;
+the size was simply never set. The runtime agent now sets it on its first request and
+says so:
 
-If you need real geometry, use a virtual display rather than headless. That is what
-`tools/virtual_display.py` is for, and the same end-to-end suite covers that path with
-the geometry checks enabled.
+```
+Godot AI: this game has no display, so its viewport was 100x100; set to the
+project's configured 1152x648 so laid-out controls are where they belong.
+```
+
+### The one thing that genuinely does not work
+
+**Nothing draws.** There is no renderer, the game never produces a frame, and so
+`Godot_CaptureGame` and `Godot_CaptureFrameSequence` refuse — with *"the running game has
+not rendered a frame yet"*, which is the truth rather than a fudge. Anything downstream
+of a picture goes with them: the provenance a capture carries about time scale has no
+image to be carried on.
+
+Everything else that once looked like a headless limitation was not one. If you need
+pictures, use a virtual display rather than headless — `tools/virtual_display.py` — and
+the same suite covers that path with the capture checks enabled.
 
 ## One headless difference worth knowing about
 
