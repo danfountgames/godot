@@ -134,6 +134,64 @@ its own permission check, checkpoint and audit record. The grouping honours "not
 separate approvals": mechanical changes share one tick however many there are, and an
 irreversible one never shares.
 
+## Building a real game with it, 2026-08-30
+
+The user supplied a brief (POOL: top-down billiards in heavy water, rings that merge on a
+hard contact, every impact a musical event) and the first playable was built against it
+entirely through the tools, headless, from a shell. It lives in `demos/pool/`; the
+write-up is `docs/godot-ai-building-a-game.md`. It is the first time this tooling has been
+pointed at a game somebody else specified.
+
+**The closed loop carried it.** Four defects in the game were found by running it and
+reading it back, and none was visible in the source: rings with no PhysicsMaterial dying
+on contact (534 to 23 px/s in one frame); the merge rule reading a post-solve velocity, so
+the two bodies in one contact disagreed (203.9 vs 66.1 against a threshold of 90) and the
+central rule of the game never fired; a striker that resolved a shot nobody had taken and
+spawned another, for ever, reaching 283 rings in three shots; and a settle timer that
+measured the striker's return to the edge rather than the shot.
+
+**Tuning was done by measuring.** Four candidate settings against the running game, three
+shots each, ninety seconds, and the answer was counter-intuitive: lowering the merge
+threshold makes chains *shorter*, because a slow graze merges and the ring is heavy before
+it is through the rack. The brief lists that as an open question; it is now answered with
+a number.
+
+### What it exposed, in priority order
+
+1. **A running game cannot be sampled from outside.** Each `Godot_GetRuntimeProperty` is a
+   round trip; through `--call` it is half a second. A six-property snapshot spans three
+   seconds and the first shot lasted 0.6. `--batch` gets it to 0.24s and the six replies
+   still came back stamped with frames 18872 to 18887. The game had to instrument itself -
+   a per-physics-frame speed array read in one call - before anything was legible.
+   **`Godot_RecordRuntimeSeries` is the single largest gap in the tool surface**: name a
+   node, a property and a rate, let the game buffer it, collect it later. Every game worth
+   measuring will otherwise reimplement it, as this one did.
+2. **Runtime nodes spawned in code are not addressable.** They come back as
+   `@RigidBody2D@270`, and the number changes every run. Naming them fixed this game;
+   a tool driving someone else's game has no such recourse. Address by class and index,
+   or by position.
+3. **Rewriting an attached script strands the editor's copy.** `Godot_PromoteRuntimeValue`
+   then refuses with "the two have drifted apart", which is accurate and points at the
+   wrong cause. There is no tool to reload a script the editor has open.
+4. A worked example in the skills saying the game must instrument itself.
+
+Fixed in this pass: `Godot_ManageConnection` no longer lists the engine's own bindings (a
+Button in a VBoxContainer answered with five `Container::` connections and one real one);
+`Godot_GetRuntimeProperty` says in its description that reads are not snapshots and what
+to do instead; the relay's `--batch` help text is no longer interleaved with
+`--continue-on-error`'s.
+
+### Three harness mistakes worth more than the fixes
+
+All three imitated a product defect convincingly. Recorded in the write-up in full: the
+relay reports a protocol rejection as a *bare* JSON-RPC object, not nested under "error",
+so a batch of five rejected calls printed five success lines and nothing had happened; a
+tool-level refusal is a *successful* result carrying `isError` with the reason in
+`content[].text` and nothing in `message`, so reaching for `message` reported three
+perfectly good tools as refusing without saying why; and `PackedVector2Array` prints its
+components flat while `Vector2` prints `(x, y)`, so the board read as empty and the empty
+board looked like a spawning bug. Check the exit status and the shape, not one of them.
+
 ## Two replay levels
 
 Do not promise "deterministic replay". Raw input is one source of state among many —

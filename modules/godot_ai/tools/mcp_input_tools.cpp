@@ -303,7 +303,13 @@ public:
 	virtual String get_description() const override {
 		return "Read a property from a node in the running game. This is the other half of "
 			   "Godot_SetRuntimeProperty: without it, a runtime change can be made but never "
-			   "confirmed, which makes every runtime assertion circular.";
+			   "confirmed, which makes every runtime assertion circular. The reply carries "
+			   "the frame it was read on, because these are not snapshots: each call is a "
+			   "round trip, so several reads land on different frames and a sequence of them "
+			   "takes longer than most things worth watching. To follow something that "
+			   "changes at physics rate - a shot, a jump arc, a chain of collisions - have "
+			   "the game record it into an array and read that once, rather than sampling "
+			   "from out here and getting three points of a movement that is already over.";
 	}
 	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
 

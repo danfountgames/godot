@@ -189,8 +189,9 @@ public:
 		properties["to"] = MCPSchema::string_property("The receiving node.");
 		properties["method"] = MCPSchema::string_property("The method.");
 		properties["editor_connections_hidden"] = MCPSchema::integer_property(
-				"How many connections were left out because they belong to the editor watching "
-				"the scene rather than to the scene itself.");
+				"How many connections were left out because they are machinery rather than "
+				"this scene's wiring: the editor watching the scene, and the engine's own "
+				"bindings such as a container laying its children out.");
 		properties["note"] = MCPSchema::string_property("Guidance when the answer needs it.");
 		return MCPSchema::object_schema(properties);
 	}
@@ -225,6 +226,7 @@ public:
 		if (action == "list") {
 			Array listed;
 			int editor_side = 0;
+			int engine_side = 0;
 			List<MethodInfo> signals;
 			from->get_signal_list(&signals);
 			for (const MethodInfo &info : signals) {
@@ -240,16 +242,27 @@ public:
 						editor_side++;
 						continue;
 					}
+					const String method = String(connection.callable.get_method());
+					if (method.contains("::")) {
+						// An engine binding, not the scene's wiring: a Button inside a
+						// VBoxContainer carries five of these
+						// (Container::_child_minsize_changed and friends) against one
+						// line the author wrote, so a listing that includes them buries
+						// the answer. Counted with the editor's own observers, because
+						// both are "the machinery, not your scene".
+						engine_side++;
+						continue;
+					}
 					Dictionary entry;
 					entry["signal"] = String(info.name);
-					entry["method"] = String(connection.callable.get_method());
+					entry["method"] = method;
 					entry["to"] = String(root->get_path_to(target));
 					listed.push_back(entry);
 				}
 			}
 			result["connections"] = listed;
-			if (editor_side > 0) {
-				result["editor_connections_hidden"] = editor_side;
+			if (editor_side + engine_side > 0) {
+				result["editor_connections_hidden"] = editor_side + engine_side;
 			}
 			if (listed.is_empty()) {
 				result["note"] = vformat(

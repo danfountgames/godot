@@ -1,0 +1,154 @@
+# Building a real game with this, and what it cost
+
+Everything else in this repository tests the tooling against tasks the tooling's authors
+chose. This is the first time it was pointed at a game somebody else specified, with no
+screen, from a shell — a brief arrived, and POOL (`demos/pool/`) was built against it
+entirely through the MCP tools. No file in that project was written by touching it
+directly.
+
+The game is described in `demos/pool/README.md`. This document is about the tooling: what
+worked, what did not, and what the exercise changed.
+
+## The short version
+
+The closed loop is real, and it is the only reason the game works.
+
+Four defects in the game were found by running it and reading it back, and **not one of
+them was visible in the source**. Each is a case where every file said the right thing:
+
+| What the code said | What the running game did |
+|---|---|
+| A ring bounces off another ring | 534 px/s in, 23 px/s out, in a single frame — a dead stop |
+| A hard contact merges, a graze bounces | Merging never fired, at any speed |
+| The board holds twelve rings | 283 rings after three shots |
+| `settle_time` is how long the board took to still | A flat 0.13s however violent the shot |
+
+The second is the one worth dwelling on, because it is the sort of bug that survives
+review. The merge rule reads the impact speed inside a `body_entered` callback — which
+is not the approach speed. `body_entered` fires around the solver rather than reliably
+before it, so **the two bodies in one contact disagree about how fast it was**. Measured:
+the target reported 203.9 px/s and the striker 66.1, against a threshold of 90. The
+striker's reading loses, the merge is declined, and the central rule of the game silently
+never happens. Reading the source, it is correct. Reading each ring's own account of its
+last contact, it is obvious in about four seconds.
+
+## What the tooling made easy
+
+**Building a scene without a scene editor.** `Godot_CreateScene`, `Godot_ManageNode`,
+`Godot_SetSceneProperty` and `Godot_SaveScene` built the whole tree headless.
+`Godot_CheckScript` after every write caught every GDScript error before it could become
+a runtime mystery, including two warnings that would have failed a strict build.
+
+**Wiring the upgrade page.** `Godot_ManageConnection` connected four buttons and the
+connections were in the `.tscn` afterwards. That tool exists because the *previous*
+exercise proved it missing; this one used it for real and it held.
+
+**Tuning by measurement instead of by taste.** Four candidate settings were tried against
+the running game with `Godot_SetRuntimeProperty` and a property that rebuilds the board,
+three shots each, and the numbers picked the winner. It took about ninety seconds and
+produced a result nobody would have guessed: **lowering the merge threshold makes chains
+shorter, not longer.** A slow graze merges, so the ring is heavy before it is through the
+rack. Chains went 4,3,3 at a threshold of fifty and 1,3,2 at thirty-five. The brief lists
+"merge-everything might be too easy" as an open question; this is that question answered
+with a measurement rather than an opinion.
+
+**Headless was not a compromise.** No screen, and the only thing missed was looking at
+it. Every claim in the game's README is a number read off a running process.
+
+## What the tooling made hard
+
+### 1. A running game cannot be sampled from outside
+
+This is the big one, and it is not a bug that can be fixed with a patch.
+
+Each `Godot_GetRuntimeProperty` is a round trip. Through `--call` it is also a process
+launch and a handshake: about half a second. A six-property "snapshot" of the running
+game therefore spans **three seconds**, and the first shot in POOL lasted 0.6.
+
+The first attempt to measure that shot produced a table of positions and velocities that
+looked like a physics bug and was actually an artefact of the sampling. Hours could go
+into that. `--batch` collapses six reads to 0.24s, which is a twelvefold improvement and
+still not a snapshot — the six replies came back stamped with frames 18872 through 18887.
+
+The answer is that **the game has to instrument itself**. POOL keeps a
+`PackedFloat32Array` of the active ring's speed per physics frame and the whole flight is
+then one read. Once that existed, everything became legible at once: the glide decay, the
+exact frame of each merge, the wallow, and the grab.
+
+That is a real design constraint of driving a game through a protocol, and nothing in the
+tooling said so. Two things changed as a result: `Godot_GetRuntimeProperty` now says it in
+its own description and returns the frame it read on, and `--batch`'s help text says it is
+the only way to read several properties close enough together to mean anything. Neither
+removes the constraint. A future `Godot_RecordRuntimeSeries` — name the node, the
+property and the rate, let the game buffer it, collect it later — would.
+
+### 2. Nothing in the game was addressable
+
+Rings spawned at runtime came back from `Godot_GetRuntimeSceneTree` as
+`@RigidBody2D@270`. The number is an instance counter: it changes every run, so nothing
+outside can name the same ring twice. Naming them in `_add_ring` fixed it for this game,
+but a tool driving *someone else's* game has no such recourse. Something that addresses a
+runtime node by class and index, or by position, is missing.
+
+### 3. Rewriting an attached script strands the editor's copy
+
+`Godot_WriteTextFile` over a script that the open scene uses leaves the editor's
+in-memory node with the old property set. `Godot_PromoteRuntimeValue` then refuses with
+*"the running node has 'merge_speed' but the edited 'Node2D' does not; the two have
+drifted apart"* — accurate, and pointing at the wrong cause. The scene has not drifted;
+the editor is holding a stale script. There is no tool to reload one.
+
+### 4. A control's wiring was buried in the engine's own
+
+Asking a `Button` inside a `VBoxContainer` what it was connected to returned six
+connections: one the author wrote, and five `Container::_child_minsize_changed` and
+friends. The existing filter drops connections whose far end is outside the scene root,
+and every one of these is inside it. Fixed: connections bound to an engine method
+(`Class::method`) are counted with the editor's own observers rather than listed. The
+same button now answers with one line and `editor_connections_hidden: 16`.
+
+## Three mistakes that were mine, and are worth more than the fixes
+
+The harness driving all of this was forty lines of Python. It got three things wrong, and
+each one imitated a product defect convincingly enough to send me looking in the wrong
+place. They are recorded because an agent writing its own harness will make them too.
+
+**Reading the wrong error shape.** The relay reports a protocol rejection as a bare
+JSON-RPC object — `{"code": -32602, "message": "..."}` at the top level, not nested under
+`"error"`. The harness looked for the nested shape, found none, and returned the error
+object *as the result*. A batch of five rejected calls printed five success lines. The
+scene had no script attached, no connections, and nothing had happened — which is exactly
+the failure this repository's own benchmark write-up calls the one worth remembering.
+
+**Then reading it too eagerly.** The fix checked the exit status first and reached for
+`payload["message"]`. But a *tool-level* refusal is a successful MCP result carrying
+`isError`, with the reason in `content[].text` and nothing in `message` at all. Every one
+of those then printed as an empty refusal. I concluded three tools were refusing without
+saying why, and started reading their C++. They were answering perfectly well.
+
+**Parsing a `PackedVector2Array` as if it printed like a `Vector2`.** It does not:
+`Vector2` prints `(x, y)`, the packed array prints its components flat. The regex found
+nothing, the board read as empty, and the empty board looked like a spawning bug.
+
+The common thread: **every one of them turned a working thing into a broken-looking
+thing, and none of them failed loudly.** Check the exit status, not the shape of what came
+back — this repository learned that once before, in a different place, and it did not
+transfer.
+
+## What changed in the product
+
+- `Godot_ManageConnection` no longer lists the engine's own bindings.
+- `Godot_GetRuntimeProperty` says in its description that reads are not snapshots, and
+  what to do instead.
+- The relay's `--batch` help text is no longer interleaved with `--continue-on-error`'s,
+  and says what batching is actually for.
+
+## What should change next, in order
+
+1. **`Godot_RecordRuntimeSeries`.** Name a node, a property and a rate; the game buffers
+   it; collect the buffer in one call. This is the single largest gap, and every game
+   worth measuring will otherwise reimplement it.
+2. **Address a runtime node without a stable name.** By class and index, or by position.
+3. **Reload a script the editor has open**, so promotion works after a rewrite.
+4. **A worked example in the skills** that says the game must instrument itself, because
+   an agent that has not hit this will spend its first hour sampling from outside.
