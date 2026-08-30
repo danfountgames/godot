@@ -202,6 +202,15 @@ public:
 					"there is no editor here to ask; run without --headless to use this tool");
 			return Dictionary();
 		}
+		// Arguments are checked before anything about the environment: a call with no
+		// question is wrong whoever is watching, and telling the caller that their
+		// call was malformed is more use than telling them nobody was home.
+		const String question = String(p_arguments["question"]).strip_edges();
+		if (question.is_empty()) {
+			r_error.set(MCPToolError::INVALID_ARGUMENTS, "question must not be empty");
+			return Dictionary();
+		}
+
 		// An editor is not a person. `--headless --editor` has a complete EditorNode
 		// and nobody looking at it, so without this the dialog opened on the dummy
 		// display server and the caller waited out the full timeout - five minutes of
@@ -211,11 +220,6 @@ public:
 					MCPUnattended::no_user_reason("answer a question",
 							"Decide it yourself from what you can observe, or leave the decision "
 							"to whoever reads the report."));
-			return Dictionary();
-		}
-		const String question = String(p_arguments["question"]).strip_edges();
-		if (question.is_empty()) {
-			r_error.set(MCPToolError::INVALID_ARGUMENTS, "question must not be empty");
 			return Dictionary();
 		}
 
