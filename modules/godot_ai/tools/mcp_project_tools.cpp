@@ -38,6 +38,7 @@
 
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/io/resource_loader.h"
 #include "core/variant/array.h"
 #include "editor/file_system/editor_file_system.h"
 
@@ -92,6 +93,7 @@ namespace {
 
 // Defined below, with the other script helpers.
 static void register_global_class(const String &p_res_path);
+static bool reload_cached_script(const String &p_res_path);
 
 // Shared plumbing for the tools that take a `folder` and walk it.
 static Dictionary list_folder(const Dictionary &p_arguments, const Vector<String> &p_extensions, const String &p_result_key, MCPToolError &r_error) {
@@ -338,7 +340,18 @@ public:
 		// Doing it directly is what the editor's own scan would eventually do.
 		register_global_class(resolved.res_path);
 
+		// A script the editor already has loaded is held by every node using it, and
+		// writing the file does not touch that copy. So the scene kept the *old*
+		// property set: a value added to a script and set in the running game could not
+		// be promoted back, because the edited node genuinely did not have it, and
+		// Godot_PromoteRuntimeValue said the two had "drifted apart" - true, and
+		// pointing at the wrong cause. Reloading through the cache replaces the contents
+		// of the same Resource, so every holder of the reference sees the new script.
 		Dictionary result;
+		if (reload_cached_script(resolved.res_path)) {
+			result["reloaded_in_editor"] = true;
+		}
+
 		result["path"] = resolved.res_path;
 		result["bytes_written"] = bytes_written;
 		result["created"] = created;
@@ -471,6 +484,48 @@ static void register_global_class(const String &p_res_path) {
 		}
 		return;
 	}
+}
+
+// Refreshes the editor's in-memory copy of a script that was just rewritten.
+//
+// Returns whether there was one to refresh, which is not the same as success: a script
+// nothing had loaded needs no reload, and saying "no" for it is honest. CACHE_MODE_REPLACE
+// is the point - it reloads *into the existing Resource* rather than making a second one,
+// so every node already holding the reference is brought up to date rather than being
+// left pointing at the old copy while a new one sits beside it in the cache.
+static bool reload_cached_script(const String &p_res_path) {
+	if (!ResourceLoader::exists(p_res_path, "Script")) {
+		return false;
+	}
+	const Ref<Resource> cached = ResourceCache::get_ref(p_res_path);
+	if (cached.is_null()) {
+		return false;
+	}
+	const Ref<Script> script = cached;
+	if (script.is_null()) {
+		return false;
+	}
+	ResourceLoader::load(p_res_path, "", ResourceFormatLoader::CACHE_MODE_REPLACE);
+
+	// And then through the language, which is the part that actually works.
+	//
+	// Neither replacing the resource nor Script::reload() is enough on its own: measured
+	// against a real project, a property added to an attached script was still absent
+	// from the edited node afterwards, and stayed absent even after closing and
+	// reopening the scene. GDScript keeps its own parse cache, which only the language
+	// clears. reload_scripts() is the same call the editor makes for "reload scripts",
+	// and it is on ScriptLanguage rather than in the GDScript module, so this stays
+	// language-agnostic.
+	//
+	// Without it, a value tuned in the running game could not be promoted back into a
+	// script the same session had edited, and Godot_PromoteRuntimeValue reported that
+	// the scene and the game had "drifted apart" - true, and pointing at the wrong cause.
+	Array scripts;
+	scripts.push_back(script);
+	if (script->get_language()) {
+		script->get_language()->reload_scripts(scripts);
+	}
+	return true;
 }
 
 // A script's parse errors, which nothing else in this interface could show.

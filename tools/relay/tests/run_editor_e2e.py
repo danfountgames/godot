@@ -1027,6 +1027,52 @@ def run(editor_binary, display):
         write_reply = reply
         print("PASS Godot_WriteTextFile")
 
+        # --- rewriting an attached script updates the editor's copy of it -------
+        # The editor holds a script as a loaded Resource, and every node using it holds
+        # that same reference. Writing the file does not touch it, and GDScript keeps a
+        # parse cache besides - so a property added to an attached script was absent from
+        # the edited node afterwards, and stayed absent through a close and reopen of the
+        # scene. Live tuning then dead-ends: the value cannot be promoted back into a
+        # script this session edited, and the refusal blames scene drift.
+        script_path = "res://reload_probe.gd"
+        node_name = "ReloadProbe"
+        call({"jsonrpc": "2.0", "id": 780, "method": "tools/call",
+              "params": {"name": "Godot_WriteTextFile",
+                         "arguments": {"path": script_path,
+                                       "text": "extends Node\n\n@export var first: int = 1\n"}}})
+        call({"jsonrpc": "2.0", "id": 781, "method": "tools/call",
+              "params": {"name": "Godot_ManageNode",
+                         "arguments": {"action": "create", "parent": ".", "type": "Node",
+                                       "name": node_name}}})
+        reply = call({"jsonrpc": "2.0", "id": 782, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": node_name, "property": "script",
+                                               "value": script_path}}})
+        check(reply["result"]["isError"] is False,
+              "attaching a script failed: %s" % refusal_text(reply))
+        # Now add a property the editor's loaded copy has never seen.
+        reply = call({"jsonrpc": "2.0", "id": 783, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": script_path,
+                                               "text": "extends Node\n\n@export var first: int = 1\n"
+                                                       "@export var second: float = 2.0\n"}}})
+        check(reply["result"]["structuredContent"].get("reloaded_in_editor") is True,
+              "rewriting an attached script did not report reloading it: %r"
+              % reply["result"]["structuredContent"])
+        reply = call({"jsonrpc": "2.0", "id": 784, "method": "tools/call",
+                      "params": {"name": "Godot_SetSceneProperty",
+                                 "arguments": {"path": node_name, "property": "second",
+                                               "value": 9.5}}})
+        check(reply["result"]["isError"] is False,
+              "the edited node did not gain the property the rewritten script declares, so "
+              "the editor is still holding the old copy: %s" % refusal_text(reply))
+        call({"jsonrpc": "2.0", "id": 785, "method": "tools/call",
+              "params": {"name": "Godot_ManageNode",
+                         "arguments": {"action": "delete", "path": node_name}}})
+        call({"jsonrpc": "2.0", "id": 786, "method": "tools/call",
+              "params": {"name": "Godot_DeleteProjectFile", "arguments": {"path": script_path}}})
+        print("PASS rewriting an attached script updates the editor's copy of it")
+
         # --- persistent vs runtime property edits ------------------------------
         reply = call({"jsonrpc": "2.0", "id": 70, "method": "tools/call",
                       "params": {"name": "Godot_SetSceneProperty",

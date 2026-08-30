@@ -140,13 +140,34 @@ other runtime tool. The path in both is absolute, which is a deliberate second p
 first version returned one relative to the scene root, so the field called `path` was the
 one string in the reply that would not work anywhere else.
 
-### 3. Rewriting an attached script strands the editor's copy
+### 3. Rewriting an attached script stranded the editor's copy
 
-`Godot_WriteTextFile` over a script that the open scene uses leaves the editor's
-in-memory node with the old property set. `Godot_PromoteRuntimeValue` then refuses with
-*"the running node has 'merge_speed' but the edited 'Node2D' does not; the two have
-drifted apart"* — accurate, and pointing at the wrong cause. The scene has not drifted;
-the editor is holding a stale script. There is no tool to reload one.
+`Godot_WriteTextFile` over a script the open scene uses left the editor's in-memory node
+with the old property set. `Godot_PromoteRuntimeValue` then refused with *"the running
+node has 'merge_speed' but the edited 'Node2D' does not; the two have drifted apart"* —
+accurate, and pointing at the wrong cause. The scene had not drifted; the editor was
+holding a stale script, and the whole live-tuning loop dead-ended there: a value tuned in
+the running game could not be promoted back into a script the same session had edited.
+
+**Fixed, and it took three attempts, which is the interesting part.** The editor holds a
+script as a loaded `Resource`, and every node using it holds that same reference.
+
+1. Reloading with `CACHE_MODE_REPLACE` swaps the resource's contents in place. Not
+   enough: instances keep the member layout they were compiled with.
+2. Adding `Script::reload(true)` to recompile them. Still not enough.
+3. `ScriptLanguage::reload_scripts()` — GDScript keeps its own parse cache, and only the
+   language clears it. That is also the call the editor makes for "reload scripts", and
+   it lives on `ScriptLanguage` rather than in the GDScript module, so the fix stays
+   language-agnostic.
+
+Attempts one and two are worth recording because both *looked* like they worked: the
+write reported `reloaded_in_editor: true` and the node still did not have the property.
+The measurement that settled it was blunt — write a script with a new export, then ask
+the edited node to set it — and it is now an end-to-end check, because a fix that reports
+success without doing anything is precisely the failure this whole exercise keeps finding.
+
+Closing and reopening the scene did not help either, so there was no workaround to fall
+back on. That is why this was worth chasing past the second dead end.
 
 ### 4. A control's wiring was buried in the engine's own
 
@@ -196,6 +217,9 @@ transfer.
   reason every game driven this way would have had to instrument itself.
 - **`Godot_FindRuntimeNodes` is new**, and `Godot_GetRuntimeSceneTree` now carries paths,
   so a node a script created without naming it can be addressed at all.
+- **`Godot_WriteTextFile` reloads a script the editor has open**, so an export added to
+  an attached script exists on the edited node immediately, and can be tuned live and
+  promoted back.
 
 ## What should change next, in order
 
