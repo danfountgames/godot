@@ -55,10 +55,21 @@ unit of intent to assert about:
 And the board reads back in one call rather than twenty: `active_position`,
 `lit_positions`, `ring_positions`, `chain`, `likes`, `lit_left`, `set_cleared`.
 
-The game also measures **itself**, at physics rate, because nothing outside it can:
-`shot_trace` is the active ring's speed per frame since the launch, and `settle_time`,
-`shot_end_area`, `first_impact_speed` and `last_phrase` are the rest of the shot. Three
-property reads from outside arrive after a two-second shot is already over.
+The game also measures **itself**, at physics rate: `shot_trace` is the active ring's
+speed per frame since the launch, and `settle_time`, `shot_end_area`,
+`first_impact_speed` and `last_phrase` are the rest of the shot. It has to, because three
+property reads from outside arrive after a two-second shot is already over — and this
+game hitting that wall is why `Godot_RecordRuntimeSeries` now exists, which does the same
+job for any game without it having to write a line:
+
+```sh
+bin/godot-ai-relay --call Godot_RecordRuntimeSeries --project demos/pool --arguments \
+  '{"path":"/root/Main/Rings/Ring13","property":"linear_velocity","component":"length",
+    "frames":160,"clock":"physics"}'
+```
+
+`shot_trace` stays because the HUD and the acceptance test read it, and because it is the
+worked example the tool came from.
 
 ## Running it
 
@@ -73,6 +84,26 @@ bin/godot-ai-relay --call Godot_PlayMainScene --project demos/pool
 ```
 
 By hand: drag back from the striker and release, billiards style; hold space for the jet.
+
+## Checking it still works
+
+```sh
+python3 demos/pool/verify_first_playable.py
+```
+
+Every assertion in it is about behaviour that only exists while the game is running: that
+the jet moves rings that were not going to move and drains pressure doing it, that three
+idle seconds pay nothing (section 5 has no passive income, and a game that quietly grew
+one would look fine on screen), that every scheduled note lands on the grid, and that each
+merge chain plays a **descending** run — grouped by chain, because a new shot starts a new
+phrase at the striker's base size and read straight through the pitches look like they go
+back up.
+
+```
+at least one chain was long enough to be a phrase: [[52, 50, 48, 48], [52, 50, 48], [52, 50]]
+every merge run descends as the ring grows
+no note was deferred past one sixteenth: worst 0.246 beats
+```
 
 ## What is not here
 
