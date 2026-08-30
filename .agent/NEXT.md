@@ -181,6 +181,19 @@ Button in a VBoxContainer answered with five `Container::` connections and one r
 to do instead; the relay's `--batch` help text is no longer interleaved with
 `--continue-on-error`'s.
 
+### What the exercise changed in the product
+
+All four findings are fixed and pushed:
+
+| | |
+|---|---|
+| `Godot_RecordRuntimeSeries` | New. Records one property of a running node every frame for a window and returns it in one reply. Clock selectable, physics by default; `component` picks x/y/z/length out of a vector; unreadable frames counted rather than dropped. Removes the reason every game driven this way would instrument itself. |
+| `Godot_FindRuntimeNodes` | New. Addresses a node a script created by class, name fragment or position, since `@RigidBody2D@270` changes every run. Base classes match subclasses; a misspelt class is a refusal, not an empty list. |
+| `Godot_GetRuntimeSceneTree` | Now carries each node's path. It gave a name and a depth, so every caller had to rebuild tree walking before it could use any other runtime tool. |
+| `Godot_WriteTextFile` | Reloads a script the editor has open. Took three attempts - `CACHE_MODE_REPLACE`, then `Script::reload(true)`, then `ScriptLanguage::reload_scripts()`, which is the only one that clears GDScript's parse cache. The first two reported success and did nothing. |
+| `Godot_ManageConnection` | No longer lists the engine's own bindings; a Button in a VBoxContainer answered with five `Container::` connections and one real one. |
+| `measure-a-feel-target` | New skill. The loop for a stated number, as opposed to `tune-and-keep`'s loop for a feeling. |
+
 ### Three harness mistakes worth more than the fixes
 
 All three imitated a product defect convincingly. Recorded in the write-up in full: the
