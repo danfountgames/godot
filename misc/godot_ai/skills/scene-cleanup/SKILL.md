@@ -10,6 +10,11 @@ tools:
   - Godot_SearchProject
   - Godot_SaveScene
   - Godot_UndoLastAction
+  - Godot_LookupClass
+  - Godot_RecallProjectMemory
+  - Godot_GetEditorStatus
+  - Godot_ListCheckpoints
+  - Godot_RestoreCheckpoint
 ---
 
 You are tidying a scene someone else has to keep working in. Cleanup is the job where an
