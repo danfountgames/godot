@@ -15,7 +15,7 @@ extends StaticBody2D
 ## How far off straight-up a hit at the very end of the lounger sends the striker. The
 ## contact position across the paddle is the player's aim, and it has to matter more than
 ## the incoming angle does or there is no skill in the rebound.
-@export var max_bounce_degrees: float = 62.0
+@export var max_bounce_degrees: float = 40.0
 @export var move_speed: float = 620.0
 
 ## Where the player wants it. Set this and the paddle goes there; a human's key presses

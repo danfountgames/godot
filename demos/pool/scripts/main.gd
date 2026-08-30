@@ -47,9 +47,14 @@ extends Node2D
 @export var party_wave_cost: float = 100.0
 @export var party_wave_speed: float = 900.0
 
-@export var thread_bonus: int = 25
+## Threading pays mostly through the multiplier rather than through a flat bonus, so a
+## streak is worth holding and a single thread is not a coin you picked up. Measured
+## against the alternative: at a bonus of 25 and no working multiplier, threads were 31
+## points each and half of every board's score, and the "trade a hit for a multiplier"
+## the design describes was not a trade anybody ever made.
+@export var thread_bonus: int = 10
 @export var multiplier_per_thread: float = 0.25
-@export var multiplier_decay: float = 0.35
+@export var multiplier_max: float = 5.0
 
 ## The cocktails: the run's upgrades, taken one per cleared board.
 ##
@@ -126,6 +131,9 @@ var _strikers: Node2D
 var _likes: Node2D
 var _striker: Striker
 var _serial: int = 0
+## Whether this trip up the pool has threaded anything yet. The multiplier is spent by
+## the *round trip*, not by the clock.
+var _threaded_this_trip: bool = false
 
 const TARGET_SCRIPT := preload("res://scripts/target.gd")
 const STRIKER_SCRIPT := preload("res://scripts/striker.gd")
@@ -213,13 +221,22 @@ func _lay_out_board() -> void:
 	var span := Vector2(spacing.x * float(columns - 1), spacing.y * float(rows - 1))
 	var margin := Vector2((_pool.size.x - span.x) * 0.5, 70.0)
 
+	# Jittered, and not every slot filled.
+	#
+	# A perfect grid has vertical corridors, and a dead-straight rebound returns the ball
+	# to the same x for ever: held in one column the game produced eleven threads every
+	# fifteen seconds, zero rim hits for two solid minutes, and a board frozen at nine
+	# targets - 23 points a second at no risk, which is twice what playing properly pays.
+	# The gaps also open a sightline to the back rows, which were otherwise always behind
+	# a wall of other rings and reachable only by luck.
 	var slots: Array[Vector2] = []
 	for row in rows:
 		for column in columns:
 			slots.append(margin + Vector2(
-					span.x * float(column) / float(columns - 1),
-					span.y * float(row) / float(rows - 1)))
+					span.x * float(column) / float(columns - 1) + randf_range(-22.0, 22.0),
+					span.y * float(row) / float(rows - 1) + randf_range(-18.0, 18.0)))
 	slots.shuffle()
+	slots.resize(maxi(8, slots.size() - 6))
 
 	var harder := _difficulty()
 	var plan: Array[Target.Kind] = []
@@ -245,9 +262,14 @@ func _add_target(p_kind: Target.Kind, p_at: Vector2) -> Target:
 	node.set_script(TARGET_SCRIPT)
 	var target := node as Target
 	target.kind = p_kind
-	# A spread of sizes, because threading is only interesting when some rings are big
-	# enough to go through and some are not.
-	target.outer_radius = randf_range(28.0, 46.0)
+	# A wider spread of sizes, and a third of them tight.
+	#
+	# Every ring used to be threadable and none of them looked any different, so "which
+	# of these can I shoot through" - the question the whole mechanic asks - had the same
+	# answer everywhere and no way to read it. A tight ring is a wall with a hole too
+	# small for the striker, and Target draws the difference.
+	target.outer_radius = randf_range(20.0, 52.0)
+	target.tight = randf() < 0.34
 	target.position = p_at
 	_serial += 1
 	target.name = "%s%d" % [Target.Kind.keys()[p_kind].capitalize(), _serial]
@@ -329,9 +351,6 @@ func _physics_process(delta: float) -> void:
 	_sweep_lost_targets()
 	_watch_striker()
 	_collect_likes()
-	# The multiplier is a thing you are holding, not a thing you have. It bleeds back to
-	# one whenever you are not threading, so a streak has to be maintained.
-	multiplier = maxf(1.0, multiplier - multiplier_decay * delta)
 	_recount()
 
 
@@ -380,12 +399,24 @@ func _watch_striker() -> void:
 
 	var paddle_top := _paddle.position.y - _paddle.thickness
 	if _striker.position.y >= paddle_top - _striker.radius and _striker.linear_velocity.y > 0.0:
-		var across := absf(_striker.position.x - _paddle.position.x)
+		# Where it *crossed* the line, not where it happens to be this frame.
+		#
+		# The ball travels 7.2px per physics step, so resolving the rebound at the
+		# post-step position quantised the contact point by up to that much - against a
+		# game that needs 1.5 to 9.3px of accuracy to put a shot through a hole. Measured:
+		# deliberate aiming threaded the ring it aimed at 17% of the time, which is
+		# *below* the 37-49% chance rate, and aimed play scored no better than random.
+		# Aiming was not hard, it was not connected. Back-projecting along the velocity
+		# to the exact crossing costs one division and gives the player their skill back.
+		var line := paddle_top - _striker.radius
+		var overshoot := (_striker.position.y - line) / maxf(1.0, _striker.linear_velocity.y)
+		var contact := Vector2(_striker.position.x - _striker.linear_velocity.x * overshoot, line)
+		var across := absf(contact.x - _paddle.position.x)
 		if across <= _paddle.width * 0.5 + _striker.radius:
-			# The rebound is aimed by where it lands on the lounger, and the incoming
-			# angle is thrown away. That is what makes the paddle a thing you aim with.
-			_striker.linear_velocity = _paddle.rebound_direction(_striker.global_position) * _striker.speed
-			_striker.position.y = paddle_top - _striker.radius - 1.0
+			# Aimed by where it lands on the lounger; the incoming angle is thrown away.
+			_striker.linear_velocity = _paddle.rebound_direction(contact) * _striker.speed
+			_striker.position = Vector2(contact.x, line - 1.0)
+			_on_returned_to_lounger()
 			if _music != null:
 				_music.play("bounce", 2400.0, int(multiplier))
 			last_event = "rebound"
@@ -401,6 +432,7 @@ func _watch_striker() -> void:
 		strikers_left -= 1
 		last_event = "striker lost"
 		multiplier = 1.0
+		_threaded_this_trip = false
 		_striker.queue_free()
 		_striker = null
 		striker_in_play = false
@@ -451,18 +483,39 @@ func _on_rim_hit(_target: Target, _at: Vector2, _remaining: int) -> void:
 	pass
 
 
+## The striker is back. One thread a trip keeps the streak; a trip that threaded nothing
+## costs a step.
+##
+## This replaces a decay on a timer, which was measurable nonsense: break-even was one
+## thread every 0.71s against a measured mean gap of 10.8s, so the multiplier spent 0.1%
+## of nine boards above 1.5 and was never once above 1.7. A number that is displayed,
+## always 1.0, and provably unreachable teaches the player to stop reading it. Per trip
+## is a rule you can play to.
+func _on_returned_to_lounger() -> void:
+	if _threaded_this_trip:
+		last_event = "streak held at x%0.2f" % multiplier
+	else:
+		multiplier = maxf(1.0, multiplier - multiplier_per_thread)
+	_threaded_this_trip = false
+
+
 func _on_threaded(target: Target) -> void:
 	# Through the middle without touching the rim. The one thing in this game that is
 	# purely skill, so it is the one thing that builds the multiplier.
 	threads += 1
 	if _striker != null and is_instance_valid(_striker):
 		_striker.threads_this_life += 1
-	multiplier += multiplier_per_thread
+	multiplier = minf(multiplier_max, multiplier + multiplier_per_thread)
+	_threaded_this_trip = true
 	score += int(round(thread_bonus * multiplier))
 	meter = minf(meter_max, meter + like_charge)
 	last_event = "threaded %s" % target.name
 	if _music != null:
-		_music.play("merge", target.outer_radius * target.outer_radius * PI, threads)
+		# Its own voice. A thread and a kill of the same ring both played "merge" pitched
+		# by area, which is the same note - so the one moment the game should celebrate
+		# sounded exactly like the ordinary one.
+		_music.play("thread", target.outer_radius * target.outer_radius * PI, threads)
+		_music.set_chain(threads)
 
 
 func _on_target_destroyed(target: Target, at: Vector2, worth: int) -> void:
@@ -504,7 +557,9 @@ func _check_cleared() -> void:
 		boards_cleared += 1
 		# A cleared board pays for the strikers you did not spend. Surviving has to be
 		# worth something on its own, or the careful way to play is worth nothing.
-		score += 250 * boards_cleared + 120 * strikers_left
+		# Scaled by the multiplier, so the streak is worth carrying into the last ring
+		# rather than abandoned once the board is nearly done.
+		score += int(round((250 * boards_cleared + 120 * strikers_left) * multiplier))
 		last_event = "board %d cleared" % boards_cleared
 		if _music != null:
 			_music.play("layer", 30000.0, boards_cleared)
@@ -625,29 +680,42 @@ func _release_party_wave() -> void:
 			like.apply_central_impulse((_paddle.global_position - like.global_position).normalized() * 260.0)
 
 
+## Built into locals and published in one go.
+##
+## Clearing the counters and refilling them in place meant a reader could catch the
+## middle of the rebuild: `targets_left` came back as 1 when the truth was 21, about once
+## in a hundred reads, which faked a cleared board and corrupted a whole measurement run.
+## Anything a tool can read has to be assigned, never accumulated in public.
 func _recount() -> void:
-	targets_left = 0
-	anchored_left = 0
-	loose_left = 0
-	target_positions = PackedVector2Array()
-	loose_positions = PackedVector2Array()
+	var count := 0
+	var anchored := 0
+	var loose := 0
+	var targets := PackedVector2Array()
+	var loosies := PackedVector2Array()
 	for child in _targets.get_children():
 		var target := child as Target
 		if target == null or not target.alive or target.is_queued_for_deletion():
 			continue
-		targets_left += 1
-		target_positions.append(target.position)
+		count += 1
+		targets.append(target.position)
 		if target.freeze:
-			anchored_left += 1
+			anchored += 1
 		else:
-			loose_left += 1
-			loose_positions.append(target.position)
-	likes_loose = 0
-	like_positions = PackedVector2Array()
+			loose += 1
+			loosies.append(target.position)
+	var likes := 0
+	var like_at := PackedVector2Array()
 	for child in _likes.get_children():
 		if child is Like:
-			likes_loose += 1
-			like_positions.append((child as Like).position)
+			likes += 1
+			like_at.append((child as Like).position)
+	targets_left = count
+	anchored_left = anchored
+	loose_left = loose
+	target_positions = targets
+	loose_positions = loosies
+	likes_loose = likes
+	like_positions = like_at
 	if _paddle != null:
 		paddle_position = _paddle.global_position
 

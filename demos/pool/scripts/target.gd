@@ -42,6 +42,12 @@ enum Kind {
 ## skill, it is a coincidence. At 0.66 with an 8px striker the smallest ring here has a
 ## 37px gap for a 16px ball, which is an aim.
 @export var hole_ratio: float = 0.66
+## A tight ring: the hole is too small for the striker, so it is a wall with a decoration
+## in the middle. Roughly a third of a board. Without these, every ring was threadable
+## and none of them looked any different, so the question the mechanic asks - which of
+## these can I shoot through - had the same answer everywhere.
+@export var tight: bool = false
+@export var tight_hole_ratio: float = 0.34
 @export var rim_segments: int = 12
 @export var hit_points: int = 1
 @export var worth: int = 10
@@ -54,7 +60,7 @@ var _flex: float = 0.0
 
 
 func hole_radius() -> float:
-	return outer_radius * hole_ratio
+	return outer_radius * (tight_hole_ratio if tight else hole_ratio)
 
 
 ## Can a striker of this radius pass through the middle? The one question the whole
@@ -225,4 +231,11 @@ func _draw() -> void:
 	var mid := (outer + inner) * 0.5
 	var width := (outer - inner) * (1.0 + _flex * 0.25)
 	draw_arc(Vector2.ZERO, mid, 0.0, TAU, 40, colour, width, true)
-	draw_arc(Vector2.ZERO, inner, 0.0, TAU, 32, Color(0.05, 0.15, 0.22, 0.55), 2.0, true)
+	# The hole states whether it is a way through. A bright inner edge means the striker
+	# fits; a dark one means it does not. Two pixels of 55%-alpha line over a dark pool
+	# said nothing at all, and "can I shoot through this" is the only question the player
+	# is ever asking.
+	if threadable_by(8.0):
+		draw_arc(Vector2.ZERO, inner, 0.0, TAU, 32, Color(0.55, 1.0, 0.95, 0.85), 3.0, true)
+	else:
+		draw_circle(Vector2.ZERO, inner, Color(0.06, 0.16, 0.24, 0.9))

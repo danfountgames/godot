@@ -99,6 +99,10 @@ func _snap(midi: int) -> int:
 func play(kind: String, a: float, chain: int) -> float:
 	var due := next_grid_beat()
 	var midi := midi_for_area(a)
+	if kind == "thread":
+		# A fifth above the ring's own pitch, so a thread is heard as the ring answering
+		# rather than as the ring breaking. A kill and a thread used to be the same note.
+		midi = _snap(midi + 7)
 	if kind == "bounce":
 		# Percussion, not melody: a fixed high rim tone, so a scattered board clatters
 		# as a drum pattern instead of a chord nobody asked for.
@@ -150,7 +154,12 @@ func _sound(entry: Dictionary) -> void:
 	_next_voice = (_next_voice + 1) % maxi(1, _players.size())
 	if player == null:
 		return
-	player.stream = _tone(int(entry["midi"]), 0.9 if entry["kind"] != "bounce" else 0.18)
+	var length := 0.9
+	if entry["kind"] == "bounce":
+		length = 0.18
+	elif entry["kind"] == "thread":
+		length = 0.35
+	player.stream = _tone(int(entry["midi"]), length)
 	player.play()
 
 
