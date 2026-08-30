@@ -11,7 +11,8 @@ This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 - an MCP server inside the editor, with a schema-declared tool registry
 - a local relay binary that bridges MCP stdio clients to the running editor
 - capability-based permissions, client approval, and an audit trail
-- filesystem-discovered skills, trusted only after the user allows them
+- skills that ship compiled into the editor, plus filesystem-discovered ones from a
+  project or an addon, which are trusted only after the user allows them
 - checkpoints taken before any tool writes to the project
 - goal-directed playtests whose verdict is reconciled against what was actually pressed
 - promoting a value tuned in the running game into the authored scene

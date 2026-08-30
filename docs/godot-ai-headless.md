@@ -53,7 +53,8 @@ can tell a missing one from a delivered one without parsing.
 | `--list-prompts` / `--prompt <name>` | The skills: named jobs, and their instructions. Start here. |
 | `--call <tool> --arguments <json>` | One tool, one result on stdout as JSON, exit. |
 | `--batch` | A JSON array of calls on stdin, run over **one** connection. |
-| `--list-tools` | Every tool with its schema, as JSON. 96 on this branch. |
+| `--describe <tool>` | One tool's schema. Reach for this before a call you are unsure of - the argument names are not always the obvious ones. A near miss suggests the right name. |
+| `--list-tools` | Every tool with its schema, as JSON. 99 on this branch. |
 | `--mcp` (default) | Serve MCP over stdio to a client. `--http-port` for HTTP instead. |
 
 Exit status is the thing to check: 0 for success, 1 when the editor answered with an

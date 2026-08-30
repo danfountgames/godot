@@ -120,8 +120,13 @@ static int run(godot_ai::RelayOptions &p_options, std::string &r_error) {
 	}
 
 	godot_ai::Relay relay(options);
+	// Every mode that answers once and exits. A mode missing from this list does not
+	// fail: it falls through to serving MCP on stdin, reads EOF, and exits 0 - a silent
+	// success that produced no output and looked exactly like a working call that had
+	// nothing to say. Adding a one-shot mode means adding it here too.
 	if (!options.call_tool.empty() || options.list_tools || options.batch ||
-			options.list_prompts || !options.prompt_name.empty()) {
+			options.list_prompts || !options.prompt_name.empty() ||
+			!options.describe_tool.empty()) {
 		return relay.run_one_shot();
 	}
 	return relay.run();

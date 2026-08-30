@@ -71,6 +71,12 @@ static const char *USAGE =
 		"  --handshake-timeout <ms>   Editor handshake timeout in milliseconds (default: 5000).\n"
 		"  --call <tool>              Run one tool and print its result as JSON, then exit.\n"
 		"  --list-tools               Print every available tool as JSON, then exit.\n"
+		"  --describe <tool>          Print one tool's schema as JSON, then exit. Reach for\n"
+		"                             this rather than --list-tools before a call you are\n"
+		"                             unsure of: the argument names are not always the\n"
+		"                             obvious ones, and fetching ninety-nine schemas to read\n"
+		"                             one is why people guess instead. A name that does not\n"
+		"                             match suggests the near ones.\n"
 		"  --list-prompts             Print the skills the editor offers as prompts, then\n"
 		"                             exit. These are the intended way in: a named job\n"
 		"                             such as 'run a performance investigation', with the\n"
@@ -210,6 +216,10 @@ bool relay_parse_options(int p_argc, char **p_argv, RelayOptions &r_options, std
 			}
 		} else if (arg == "--list-tools") {
 			r_options.list_tools = true;
+		} else if (arg == "--describe") {
+			if (!next(r_options.describe_tool)) {
+				return false;
+			}
 		} else if (arg == "--list-prompts") {
 			r_options.list_prompts = true;
 		} else if (arg == "--prompt") {
@@ -898,6 +908,56 @@ int Relay::run_one_shot() {
 		JSONValueRef list_result = listed->get("result");
 		write_stdout_line(list_result ? list_result->to_string() : listed->to_string());
 		return list_result ? 0 : 1;
+	}
+
+	if (!options.describe_tool.empty()) {
+		JSONValueRef listed;
+		if (!request("tools/list", "one-shot-describe", JSONValue::make_object(), listed, error)) {
+			log(LOG_ERROR, error);
+			return 2;
+		}
+		JSONValueRef list_result = listed->get("result");
+		JSONValueRef tools = list_result ? list_result->get("tools") : nullptr;
+		if (!tools || !tools->is_array()) {
+			log(LOG_ERROR, "the editor did not return a tool list");
+			return 1;
+		}
+		std::vector<std::string> near_misses;
+		for (const JSONValueRef &tool : tools->get_array()) {
+			JSONValueRef name = tool ? tool->get("name") : nullptr;
+			if (!name || !name->is_string()) {
+				continue;
+			}
+			if (name->get_string() == options.describe_tool) {
+				write_stdout_line(tool->to_string());
+				return 0;
+			}
+			// Case-insensitive substring both ways, so a half-remembered name still
+			// lands: "runtimeseries" finds Godot_RecordRuntimeSeries.
+			std::string haystack = name->get_string();
+			std::string needle = options.describe_tool;
+			for (char &character : haystack) {
+				character = (char)tolower((unsigned char)character);
+			}
+			for (char &character : needle) {
+				character = (char)tolower((unsigned char)character);
+			}
+			if (haystack.find(needle) != std::string::npos ||
+					(needle.size() > 3 && needle.find(haystack) != std::string::npos)) {
+				near_misses.push_back(name->get_string());
+			}
+		}
+		std::string message = "no tool called '" + options.describe_tool + "'";
+		if (!near_misses.empty()) {
+			message += ". Did you mean: ";
+			for (size_t i = 0; i < near_misses.size() && i < 8; i++) {
+				message += (i ? ", " : "") + near_misses[i];
+			}
+		} else {
+			message += ". --list-tools lists them all.";
+		}
+		log(LOG_ERROR, message);
+		return 1;
 	}
 
 	if (options.list_prompts) {
