@@ -105,9 +105,13 @@ panel collision, task-level undo, and headless (`docs/godot-ai-headless.md`).
      without `CONNECT_PERSIST`, which the editor honours all session and the save
      silently drops (fixed).
 
-   Four tasks is not a benchmark and the driver was the model that built the tools.
-   What is needed next is scale, a task that can only be solved by *playing* the game
-   rather than reading it, and a driver that is not us.
+   A fifth task, `sticky-pause/reproduce`, was then added and run: a pure behavioural
+   symptom, reproduced by pressing `ui_cancel` twice against a live headless game
+   (`toggles` stuck at 1), fixed, and re-verified the same way (`toggles` 1 → 2). It is
+   the first task where the closed loop does the work rather than confirming it.
+
+   What is still needed is **scale** and **a driver that is not us**. Five tasks is not
+   a benchmark, and the agent that ran them is the one that built the tools.
 2. **Tools are engine operations, not design intentions** (criticism 3). Skills-first
    discovery is the concrete next step: make the higher-level jobs the prominent surface
    and the 95 primitives the thing they compose. This is the same note `NEXT.md` already

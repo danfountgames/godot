@@ -77,15 +77,26 @@ def main():
             projects.build(task.project, root, fixed=False)
             before = scoring.file_digests(root)
 
-            # Something the task never licensed.
-            bystander = os.path.join(root, "scripts", "audio.gd")
-            if os.path.exists(bystander):
-                with open(bystander, "a") as handle:
-                    handle.write("\n# touched by nobody's request\n")
+            # Something the task never licensed, taken from the project rather than
+            # hardcoded. This used to name scripts/audio.gd, which every project
+            # happened to have until one did not - and then the check failed for a
+            # reason that had nothing to do with collateral detection.
+            unlicensed = sorted(
+                relative for relative in projects.PROJECTS[task.project].files
+                if relative not in task.licensed_paths
+                and not scoring.is_bookkeeping(relative)
+                and relative.endswith(".gd"))
+            check(unlicensed,
+                  "%s: the project has no unlicensed script to touch, so collateral "
+                  "detection cannot be tested against it" % task.identifier)
+            bystander = unlicensed[0]
+            with open(os.path.join(root, bystander), "a") as handle:
+                handle.write("\n# touched by nobody's request\n")
 
             result = scoring.score_task(task, root, before)
-            check("scripts/audio.gd" in result["collateral"],
-                  "%s: an unlicensed change is reported as collateral" % task.identifier)
+            check(bystander in result["collateral"],
+                  "%s: an unlicensed change to %s is reported as collateral"
+                  % (task.identifier, bystander))
             check(not result["clean"],
                   "%s: a run with collateral is not clean, whatever the oracle said"
                   % task.identifier)

@@ -49,6 +49,16 @@ def _connection_points_at_a_real_method(root):
     ])
 
 
+def _pause_toggles_both_ways(root):
+    # The fix has to make _toggle() reversible. Checking for the absence of the early
+    # return is not enough on its own - an agent could delete it and leave `paused =
+    # true` - so both halves are required.
+    return scoring.oracle_all(root, [
+        lambda r: scoring.oracle_text_absent(r, "scripts/pause.gd", "\t\treturn"),
+        lambda r: scoring.oracle_text_present(r, "scripts/pause.gd", "not paused"),
+    ])
+
+
 TASKS = [
     Task(
         identifier="jump-height/fix",
@@ -92,6 +102,26 @@ TASKS = [
         ),
         oracle=_connection_points_at_a_real_method,
         licensed_paths=["scenes/main.tscn", "scripts/spawner.gd"],
+    ),
+    # The first task whose prompt is a pure behavioural symptom: no file named, no
+    # error in the log, nothing to grep for. The fix is one line, and the reason this
+    # task exists is not the fix - it is that confirming it needs the game. After two
+    # presses a broken build and a fixed one differ only in `paused` and `toggles`, and
+    # nothing but a running game will tell you which you have.
+    #
+    # Godot_SendActionInput is the way in, deliberately: ui_cancel is a built-in action
+    # and goes through the input map, so this task is solvable headless, where
+    # coordinates are not.
+    Task(
+        identifier="sticky-pause/reproduce",
+        project="sticky-pause",
+        category="reproduce a behavioural bug",
+        prompt=(
+            "Pressing cancel opens the pause menu, but pressing it again does not close "
+            "it. The player gets stuck. Find out why and fix it."
+        ),
+        oracle=_pause_toggles_both_ways,
+        licensed_paths=["scripts/pause.gd"],
     ),
     Task(
         identifier="jump-height/no-collateral",

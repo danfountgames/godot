@@ -73,6 +73,64 @@ extends Node
 """
 
 
+# --- sticky-pause: a toggle that only works once -----------------------------
+#
+# The first task whose prompt is a pure behavioural symptom, with no hint about which
+# file to open and nothing wrong in the output log.
+#
+# Be precise about what that does and does not demand, because the lesson of the first
+# benchmark run was that a benchmark overclaims easily. Reading pause.gd also reveals
+# this bug - most bugs are findable by reading everything. What is different here is
+# that *confirming the fix* cannot be done by reading: `paused` and `toggles` after two
+# presses are the same in a file either way, and only a running game distinguishes them.
+# That is the capability this product has and others do not, and until now no task
+# needed it.
+
+PAUSE_BYSTANDER = """\
+extends Node
+
+# Nothing in any task touches this. It is here so that changing it can be noticed.
+@export var fade_seconds: float = 0.25
+"""
+
+PAUSE_SCRIPT = """\
+extends Node
+
+## Set while the pause menu is up.
+var paused: bool = false
+
+## How many times the menu has been toggled. A player who opens and closes it once
+## should leave this at 2.
+var toggles: int = 0
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel"):
+		_toggle()
+
+func _toggle() -> void:
+%(body)s
+"""
+
+PAUSE_BROKEN_BODY = """\
+	if paused:
+		return
+	paused = true
+	toggles += 1"""
+
+PAUSE_FIXED_BODY = """\
+	paused = not paused
+	toggles += 1"""
+
+PAUSE_MAIN = """\
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/pause.gd" id="1"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1")
+"""
+
+
 # --- dead-button: a control wired to nothing ---------------------------------
 #
 # The bug traverse-the-menus exists to find. The button is there, it is enabled, it
@@ -182,6 +240,22 @@ PROJECTS = {
             )
         ],
         licensed_paths=["scripts/player.gd", "scenes/main.tscn"],
+    ),
+    "sticky-pause": BenchmarkProject(
+        name="sticky-pause",
+        files={
+            "scripts/fade.gd": PAUSE_BYSTANDER,
+            "scenes/main.tscn": PAUSE_MAIN,
+        },
+        defects=[
+            Defect(
+                "scripts/pause.gd",
+                PAUSE_SCRIPT % {"body": PAUSE_BROKEN_BODY},
+                PAUSE_SCRIPT % {"body": PAUSE_FIXED_BODY},
+                "_toggle() returns early when already paused, so the menu never closes",
+            )
+        ],
+        licensed_paths=["scripts/pause.gd"],
     ),
     "dead-button": BenchmarkProject(
         name="dead-button",

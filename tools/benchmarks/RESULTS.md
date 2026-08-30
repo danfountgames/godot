@@ -118,4 +118,38 @@ counted)`.
   enough to compare two models or two prompts.
 - **A task that needs the game played rather than read.** Every task here is fixed by
   editing a file; the runtime was used to confirm, not to discover. The capability that
-  makes this product different is not yet what any task requires.
+  makes this product different is not yet what any task requires. *(Addressed in run 2.)*
+
+## Run 2 — 2026-08-30, `sticky-pause/reproduce`
+
+Added because of the last line above. The prompt is a pure behavioural symptom — no file
+named, nothing in the output log, nothing to grep for:
+
+> Pressing cancel opens the pause menu, but pressing it again does not close it. The
+> player gets stuck. Find out why and fix it.
+
+Be precise about what that demands, because overclaiming is the failure this document
+keeps finding. Reading `pause.gd` reveals the bug too; most bugs are findable by reading
+everything. What is different is that **confirming the fix cannot be done by reading**.
+A broken build and a fixed one differ, after two presses, only in `paused` and
+`toggles`, and only a running game tells you which you have.
+
+Driven headless, entirely through the tools:
+
+```
+reproduce   after press 1: toggles=1 paused=True
+            after press 2: toggles=1 paused=True     <- stuck, as reported
+fix         _toggle() sets `paused = not paused`
+re-verify   after press 1: toggles=1 paused=True
+            after press 2: toggles=2 paused=False    <- closes
+```
+
+**Solved, clean, and this time the loop did the work rather than confirming it.**
+`Godot_SendActionInput` is the way in deliberately: `ui_cancel` goes through the input
+map, so the task is solvable headless where coordinates are not.
+
+It also found one more thing, in the benchmark rather than the product: `run_selfcheck.py`
+had hardcoded `scripts/audio.gd` as the file to dirty when testing collateral detection.
+Every project happened to have one until this one did not, and the check then failed for
+a reason that had nothing to do with collateral. It now takes an unlicensed script from
+the project definition.
