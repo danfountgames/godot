@@ -2079,7 +2079,7 @@ def run(editor_binary, display):
                 unsupported = reply["result"]["structuredContent"]["report"]
                 check(unsupported["verdict"] == "indeterminate",
                       "a success claimed with no input was taken at face value: %r" % unsupported)
-                check("no input" in unsupported.get("verdict_reason", ""),
+                check("neither injected any input" in unsupported.get("verdict_reason", ""),
                       "the reason should name the missing input: %r" % unsupported.get("verdict_reason"))
                 print("PASS a success claimed without playing is reported as indeterminate")
 

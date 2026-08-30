@@ -196,7 +196,7 @@ TEST_CASE("[godot_ai] A claimed success with no input at all is not a success") 
 	const MCPPlaytest::Verdict verdict =
 			MCPPlaytest::reconcile_verdict(MCPPlaytest::VERDICT_REACHED, 0, 0, false, reason);
 	CHECK(verdict == MCPPlaytest::VERDICT_INDETERMINATE);
-	CHECK(reason.contains("no input"));
+	CHECK(reason.contains("neither injected any input"));
 }
 
 TEST_CASE("[godot_ai] A claimed success past a logged error is reported as indeterminate") {
@@ -232,6 +232,21 @@ TEST_CASE("[godot_ai] 'Not reached' that ran out of time says only that it ran o
 
 TEST_CASE("[godot_ai] Finishing without stating a verdict is not a pass") {
 	String reason;
+	// Driving the game by writing a property on it counts as having acted. A game built
+	// for this interface exposes its verbs as properties precisely because a simulated
+	// drag is a bad unit of intent, and the tooling recommends it - so a run with 391
+	// property writes and no injected input used to score "injected no input at all".
+	CHECK_MESSAGE(
+			MCPPlaytest::reconcile_verdict(MCPPlaytest::VERDICT_REACHED, 0, 0, false, reason, 12) ==
+					MCPPlaytest::VERDICT_REACHED,
+			"a playtest driven entirely by runtime property writes was scored as having done "
+			"nothing");
+	// But reads still are not acting. A report assembled from reads alone cannot account
+	// for anything, which is the whole reason this check exists.
+	CHECK(MCPPlaytest::reconcile_verdict(MCPPlaytest::VERDICT_REACHED, 0, 0, false, reason, 0) ==
+			MCPPlaytest::VERDICT_INDETERMINATE);
+	CHECK(reason.contains("nor wrote anything to the running game"));
+
 	CHECK(MCPPlaytest::reconcile_verdict(MCPPlaytest::VERDICT_UNKNOWN, 0, 5, false, reason) ==
 			MCPPlaytest::VERDICT_INDETERMINATE);
 	CHECK(reason.contains("without stating a verdict"));

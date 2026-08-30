@@ -174,8 +174,13 @@ public:
 	// game logged an error is not lying on purpose - it did not see the error - but the
 	// report must not repeat the claim unqualified. A claimed success with problems
 	// recorded becomes INDETERMINATE and the report says why.
+	// Writes to the running game, as opposed to injected input. Both count as having
+	// acted; a read does not.
+	static Array runtime_actions_in_window(const Array &p_activity);
+
 	static Verdict reconcile_verdict(Verdict p_claimed, int p_problem_count,
-			int p_input_count, bool p_over_budget, String &r_reason);
+			int p_input_count, bool p_over_budget, String &r_reason,
+			int p_runtime_action_count = 0);
 
 	// The whole report object, from its parts. Pure, so the shape is pinned by tests
 	// rather than by whatever the tool happened to build that day.

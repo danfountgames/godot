@@ -54,6 +54,41 @@ bool is_input_tool(const String &p_tool) {
 			p_tool == "Godot_SendEditorInput";
 }
 
+// Driving a game by writing a property on it, which is the other way to play.
+//
+// The reconciliation exists to catch a report written from the source rather than from
+// the game, and it did that by counting injected input. But a game built for this
+// interface exposes its verbs as properties precisely because a simulated drag is a bad
+// unit of intent to assert about - the demo in this repository says so in its README and
+// in its own class docstring, and the tooling recommends it. So a playtest driven the
+// recommended way scored "indeterminate: this playtest injected no input at all", with
+// 391 calls behind it. A false negative aimed squarely at the workflow the product
+// tells people to use.
+//
+// A write to the running game is acting on it. A *read* is not, and that distinction is
+// the whole point: a report assembled from Godot_GetRuntimeProperty and nothing else
+// still cannot account for anything.
+// A call the agent got wrong, as opposed to something the game did.
+//
+// A schema rejection is the interface telling the caller it mistyped, and it is evidence
+// about the caller. Counting it beside "the game logged an error" inflates a number a
+// person reads as a verdict on the build - and it can flip a reached goal to
+// indeterminate on the strength of a misspelt argument name.
+bool is_caller_mistake(const String &p_detail) {
+	return p_detail.begins_with("unknown argument") ||
+			p_detail.begins_with("missing required argument") ||
+			p_detail.contains("must be one of") ||
+			p_detail.contains("is not a valid") ||
+			p_detail.begins_with("unknown tool");
+}
+
+bool is_runtime_action_tool(const String &p_tool) {
+	return p_tool == "Godot_SetRuntimeProperty" ||
+			p_tool == "Godot_CallRuntimeMethod" ||
+			p_tool == "Godot_SetTimeScale" ||
+			p_tool == "Godot_ReplaySession";
+}
+
 // The live session. A struct in a function-local static for the same reason the
 // activity buffer is: a Variant-family member at namespace scope is constructed before
 // the engine's memory subsystem exists and destroyed after it is gone.
@@ -231,6 +266,17 @@ Array MCPPlaytest::input_in_window(const Array &p_activity) {
 	return inputs;
 }
 
+Array MCPPlaytest::runtime_actions_in_window(const Array &p_activity) {
+	Array actions;
+	for (int i = 0; i < p_activity.size(); i++) {
+		const Dictionary record = p_activity[i];
+		if (is_runtime_action_tool(record.get("tool", String()))) {
+			actions.push_back(record);
+		}
+	}
+	return actions;
+}
+
 Array MCPPlaytest::problems_from_log(const Array &p_messages) {
 	Array problems;
 	for (int i = 0; i < p_messages.size(); i++) {
@@ -296,14 +342,18 @@ Array MCPPlaytest::spikes_from_frame_times(const Array &p_frame_times, double p_
 }
 
 MCPPlaytest::Verdict MCPPlaytest::reconcile_verdict(Verdict p_claimed, int p_problem_count,
-		int p_input_count, bool p_over_budget, String &r_reason) {
+		int p_input_count, bool p_over_budget, String &r_reason, int p_runtime_action_count) {
 	r_reason = String();
 
-	if (p_claimed == VERDICT_REACHED && p_input_count == 0) {
-		// Nothing was pressed, so whatever happened, this run did not cause it. This is
-		// the check that catches a report written from the source rather than the game.
-		r_reason = "the goal was reported as reached, but this playtest injected no input "
-				   "at all, so nothing it did can account for reaching it";
+	if (p_claimed == VERDICT_REACHED && p_input_count == 0 && p_runtime_action_count == 0) {
+		// Nothing was pressed and nothing was written to the running game, so whatever
+		// happened, this run did not cause it. This is the check that catches a report
+		// written from the source rather than from the game - and it counts both ways of
+		// acting, because a game that exposes its verbs as properties is doing what this
+		// interface asks of it and must not score zero for it.
+		r_reason = "the goal was reported as reached, but this playtest neither injected any "
+				   "input nor wrote anything to the running game, so nothing it did can "
+				   "account for reaching it";
 		return VERDICT_INDETERMINATE;
 	}
 
@@ -472,23 +522,35 @@ MCPPlaytest::Result MCPPlaytest::finish(Verdict p_verdict, const String &p_summa
 
 	// Problems are read from the activity stream's own failures here; the tool layer
 	// adds the game's output log, which this layer cannot reach.
+	// Two different things used to be pooled into one count that a human reads as
+	// evidence about the build: the game misbehaving, and the agent typing the wrong
+	// argument name. A schema rejection says nothing whatever about the game, and a
+	// report whose `problems` list is padded with the agent's own typos overstates what
+	// it found. They are separated here and both are still shown.
 	Array problems;
+	Array caller_mistakes;
 	for (int i = 0; i < activity.size(); i++) {
 		const Dictionary record = activity[i];
 		const String outcome = record.get("outcome", String());
-		if (outcome == "failed" || outcome == "refused") {
-			Dictionary problem;
-			problem["severity"] = "error";
-			problem["text"] = vformat("%s %s: %s", String(record.get("tool", String())), outcome,
-					String(record.get("detail", String())));
-			problems.push_back(problem);
+		if (outcome != "failed" && outcome != "refused") {
+			continue;
+		}
+		Dictionary entry;
+		entry["severity"] = "error";
+		entry["text"] = vformat("%s %s: %s", String(record.get("tool", String())), outcome,
+				String(record.get("detail", String())));
+		if (is_caller_mistake(record.get("detail", String()))) {
+			caller_mistakes.push_back(entry);
+		} else {
+			problems.push_back(entry);
 		}
 	}
 
 	const bool over_budget = live.budget_seconds > 0 && get_elapsed_seconds() > live.budget_seconds;
 	String reason;
+	const Array runtime_actions = runtime_actions_in_window(activity);
 	const Verdict verdict = reconcile_verdict(p_verdict, problems.size(), inputs.size(),
-			over_budget, reason);
+			over_budget, reason, runtime_actions.size());
 
 	Dictionary meta;
 	meta["slug"] = live.slug;
@@ -497,6 +559,12 @@ MCPPlaytest::Result MCPPlaytest::finish(Verdict p_verdict, const String &p_summa
 	meta["budget_seconds"] = live.budget_seconds;
 	meta["elapsed_seconds"] = get_elapsed_seconds();
 	meta["over_budget"] = over_budget;
+	if (!caller_mistakes.is_empty()) {
+		// Shown, because hiding them would let an agent quietly fail half its calls, but
+		// kept out of `problems` because they are not about the game.
+		meta["caller_mistakes"] = caller_mistakes;
+		meta["caller_mistake_count"] = caller_mistakes.size();
+	}
 	meta["started"] = live.started_iso;
 	meta["finished"] = Time::get_singleton()->get_datetime_string_from_system(true);
 	meta["first_sequence"] = live.first_sequence;
