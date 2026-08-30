@@ -2557,8 +2557,16 @@ def run(editor_binary, display):
                 # S6, against a live game rather than only in a unit test: a run whose
                 # events arrive later than the caller is willing to accept must come back
                 # indeterminate, never passed. Zero tolerance is the caller saying no
-                # lateness at all is acceptable - and on a software-rendered editor
-                # driving a game over a debugger channel, there is always some.
+                # lateness at all is acceptable.
+                #
+                # What is asserted here is the *consistency* of the verdict with the
+                # drift that was actually measured, not that drift happened. Demanding
+                # drift made this check depend on the machine being slow enough to
+                # produce some, and it duly passed for weeks and then failed on a run
+                # that was merely fast enough (0 frames, verdict "passed"). The rule
+                # itself - drift past tolerance is never a pass - is pinned
+                # deterministically with injected drift in test_mcp_replay.h; what only
+                # a live run can show is that real measured drift reaches the verdict.
                 reply = call({"jsonrpc": "2.0", "id": 251, "method": "tools/call",
                               "params": {"name": "Godot_ReplaySession",
                                          "arguments": {"name": "E2E Retroactive Capture",
@@ -2567,18 +2575,25 @@ def run(editor_binary, display):
                 check(not refused(reply), "the zero-tolerance replay failed: %s"
                       % refusal_text(reply))
                 strict = reply["result"]["structuredContent"]
-                # This session carries no assertions, so nothing can outrank drift - which
-                # is what makes it the one that can produce an indeterminate verdict live.
-                # Replaying the recorded session here came back `failed` instead, because a
-                # divergence outranks drift and that is correct.
-                check(strict["verdict"] == "indeterminate",
-                      "a replay with no drift allowance did not report indeterminate: %r" % strict)
-                check("must not be counted as a pass" in strict.get("note", ""),
-                      "an indeterminate verdict does not say what it means: %r" % strict)
-                check(strict["max_drift_frames"] > 0,
-                      "indeterminate without any measured drift: %r" % strict)
-                print("PASS a live replay that drifts past its tolerance is indeterminate, "
-                      "not a pass (%d frames of drift)" % strict["max_drift_frames"])
+                check(strict["drift_tolerance_frames"] == 0,
+                      "the replay did not honour a zero drift tolerance: %r" % strict)
+                # This session carries no assertions, so nothing can outrank drift.
+                # Replaying the *recorded* session here came back "failed" instead,
+                # because a divergence outranks drift and that is correct.
+                if strict["max_drift_frames"] > 0:
+                    check(strict["verdict"] == "indeterminate",
+                          "%d frames of drift past a zero tolerance was still called %r: %r"
+                          % (strict["max_drift_frames"], strict["verdict"], strict))
+                    check("must not be counted as a pass" in strict.get("note", ""),
+                          "an indeterminate verdict does not say what it means: %r" % strict)
+                    print("PASS a live replay that drifts past its tolerance is "
+                          "indeterminate, not a pass (%d frames of drift)"
+                          % strict["max_drift_frames"])
+                else:
+                    check(strict["verdict"] == "passed",
+                          "a replay with no measured drift was not a pass: %r" % strict)
+                    print("PASS a live replay with no measured drift is a pass "
+                          "(the indeterminate path is pinned by unit test instead)")
 
                 # S5: the speed multiplier, and the disclaimer it carries.
                 reply = call({"jsonrpc": "2.0", "id": 252, "method": "tools/call",
@@ -3853,6 +3868,41 @@ def run(editor_binary, display):
                       "params": {"name": "Godot_ReadTextFile", "arguments": {"nope": 1}}})
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
+
+        # --- what the user is looking at ---------------------------------------
+        #
+        # The worst friction in the journey: a node is selected in the scene tree and
+        # the request still has to describe it in prose, because the editor knew and
+        # the agent did not. Carried on Godot_GetEditorStatus rather than a new tool so
+        # a caller already asking what the editor is doing gets it without knowing to
+        # ask twice.
+        reply = call({"jsonrpc": "2.0", "id": 820, "method": "tools/call",
+                      "params": {"name": "Godot_GetEditorStatus"}})
+        check(not refused(reply), "reading editor status failed: %s" % refusal_text(reply))
+        status = reply["result"]["structuredContent"]
+        for field in ("main_screen", "selection", "open_script"):
+            check(field in status, "editor status has no %r: %r" % (field, sorted(status)))
+        check(isinstance(status["selection"], list),
+              "selection is not a list: %r" % (status["selection"],))
+        check(isinstance(status["main_screen"], str) and status["main_screen"],
+              "no main screen was reported: %r" % (status["main_screen"],))
+
+        # Whatever the editor happens to have selected, each entry has to be usable as
+        # an argument to the other tools - a path relative to the edited scene root,
+        # the same form everything else here takes.
+        for entry in status["selection"]:
+            for field in ("name", "path", "class"):
+                check(field in entry, "a selection entry has no %r: %r" % (field, entry))
+            check(not entry["path"].startswith("/root"),
+                  "a selection path is absolute rather than scene-relative: %r" % entry)
+            # The name has to be findable in the edited scene, or the path is a label
+            # rather than an address and the next tool call will miss.
+            tree = call({"jsonrpc": "2.0", "id": 821, "method": "tools/call",
+                         "params": {"name": "Godot_GetEditedSceneTree"}})
+            check(entry["name"] in json.dumps(tree["result"]["structuredContent"]),
+                  "a selected node is not in the edited scene tree: %r" % entry)
+        print("PASS the editor reports what the user is looking at (%d selected, screen %r)"
+              % (len(status["selection"]), status["main_screen"]))
 
         # --- what the project remembers between sessions -----------------------
         #

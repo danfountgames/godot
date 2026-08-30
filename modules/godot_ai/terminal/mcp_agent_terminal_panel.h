@@ -76,6 +76,16 @@ private:
 	Button *stop_button = nullptr;
 	Label *status_label = nullptr;
 
+	// What the agent is doing, shown here because the Activity dock cannot be: both are
+	// bottom-panel items and Godot shows one of those at a time, so the panel that
+	// explains the work sits behind the one you are talking to it in. A line here and a
+	// button to bring the full stream forward.
+	Label *activity_label = nullptr;
+	Button *activity_button = nullptr;
+	int64_t last_activity_sequence = -1;
+
+	void _poll_activity();
+
 	String mcp_config_path;
 	String last_error;
 
@@ -85,6 +95,7 @@ private:
 
 	void _on_start_pressed();
 	void _on_stop_pressed();
+	void _on_activity_pressed();
 	void _on_to_bottom_pressed();
 	void _on_process_exited(int p_exit_code);
 	void _on_terminal_title_changed(const String &p_title);

@@ -39,7 +39,11 @@
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_interface.h"
+#include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
+#include "editor/editor_data.h"
+#include "editor/script/script_editor_base.h"
+#include "editor/script/script_editor_plugin.h"
 #include "editor/run/editor_run_bar.h"
 #include "scene/main/node.h"
 
@@ -465,6 +469,14 @@ public:
 				"True when the editor is drawing to a display, so screenshots and dialogs work. "
 				"False means it was launched headless; relaunching it under a display (see "
 				"tools/virtual_display.py) is what makes the visual tools usable.");
+		properties["main_screen"] = MCPSchema::string_property(
+				"The workspace the user is looking at: 2D, 3D, Script, Game, AssetLib or GodotAI.");
+		properties["selection"] = MCPSchema::array_property(
+				"The nodes the user has selected in the scene tree, in selection order. When a "
+				"request says \"this node\" or \"the enemy\", this is what it means.",
+				MCPSchema::object_schema(Dictionary(), Vector<String>(), true));
+		properties["open_script"] = MCPSchema::string_property(
+				"The script open in the script editor, empty when none is.");
 		return MCPSchema::object_schema(properties);
 	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
@@ -496,6 +508,56 @@ public:
 		result["game_paused_at_breakpoint"] = debugger && debugger->get_default_debugger()
 				? debugger->get_default_debugger()->is_breaked()
 				: false;
+
+		// What the user is looking at.
+		//
+		// The worst friction in the whole journey was here: you have a node selected in
+		// the scene tree and you still have to describe it in prose, because the editor
+		// knew and the agent did not. It rides on this tool rather than a new one so
+		// that every caller already asking "what is the editor doing" gets the answer
+		// without having to know to ask a second question.
+		if (EditorNode::get_editor_main_screen() && EditorNode::get_editor_main_screen()->get_selected_plugin()) {
+			result["main_screen"] = EditorNode::get_editor_main_screen()->get_selected_plugin()->get_plugin_name();
+		} else {
+			result["main_screen"] = String();
+		}
+
+		Array selection;
+		if (EditorSelection *selected = EditorInterface::get_singleton()->get_selection()) {
+			// Top-level selections only: when a node and its child are both selected,
+			// the parent is what the user means, and reporting both invites the agent
+			// to act twice on the same subtree.
+			for (Node *node : selected->get_top_selected_node_list()) {
+				if (!node) {
+					continue;
+				}
+				Dictionary entry;
+				entry["name"] = node->get_name();
+				// Relative to the edited scene root, because that is the form every
+				// other tool in this interface takes.
+				entry["path"] = root ? String(root->get_path_to(node)) : String(node->get_path());
+				entry["class"] = node->get_class();
+				const Ref<Script> script = node->get_script();
+				if (script.is_valid()) {
+					entry["script"] = script->get_path();
+				}
+				selection.push_back(entry);
+			}
+		}
+		result["selection"] = selection;
+
+		// Through the editor base rather than ScriptEditor's own current-script helper,
+		// which is private. The resource on the open tab is the same answer and needs
+		// no engine change to reach.
+		String open_script;
+		if (ScriptEditor::get_singleton() && ScriptEditor::get_singleton()->get_current_editor()) {
+			const Ref<Resource> edited = ScriptEditor::get_singleton()->get_current_editor()->get_edited_resource();
+			if (edited.is_valid()) {
+				open_script = edited->get_path();
+			}
+		}
+		result["open_script"] = open_script;
+
 		return result;
 	}
 };

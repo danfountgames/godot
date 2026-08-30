@@ -231,6 +231,55 @@ TEST_CASE("[godot_ai] Activity reports the same path under two keys once") {
 	CHECK(subjects.size() == 1);
 }
 
+TEST_CASE("[godot_ai] A one-line summary prefers the intention over the tool name") {
+	// The terminal panel shows this because it hides the Activity dock by sharing the
+	// bottom strip with it. A user reading one line wants what the agent is trying to
+	// do, not the name of whichever primitive that decomposed into.
+	Dictionary record;
+	record["tool"] = "Godot_ManageNode";
+	record["summary"] = "create Node2D under /root";
+	record["intent"] = "moving the spawn point";
+	record["outcome"] = "running";
+	CHECK(MCPActivity::describe_record(record) == String::utf8("moving the spawn point…"));
+
+	record.erase("intent");
+	CHECK(MCPActivity::describe_record(record) == String::utf8("create Node2D under /root…"));
+
+	record.erase("summary");
+	CHECK(MCPActivity::describe_record(record) == String::utf8("Godot_ManageNode…"));
+}
+
+TEST_CASE("[godot_ai] The summary says which way a record ended") {
+	Dictionary record;
+	record["intent"] = "renaming the enemy";
+
+	record["outcome"] = "ok";
+	CHECK(MCPActivity::describe_record(record) == "renaming the enemy");
+
+	record["outcome"] = "refused";
+	CHECK(MCPActivity::describe_record(record) == "Refused: renaming the enemy");
+
+	record["outcome"] = "deferred";
+	CHECK(MCPActivity::describe_record(record) == "Waiting: renaming the enemy");
+
+	// A failure without a reason is still a failure worth showing; with one, the
+	// reason is the useful half.
+	record["outcome"] = "failed";
+	CHECK(MCPActivity::describe_record(record) == "Failed: renaming the enemy");
+	record["detail"] = "no node at that path";
+	CHECK(MCPActivity::describe_record(record) == "Failed: renaming the enemy - no node at that path");
+}
+
+TEST_CASE("[godot_ai] A record with nothing to say reads as idle") {
+	CHECK(MCPActivity::describe_record(Dictionary()) == "Idle.");
+
+	// Not the same as an empty record, and it must not render as a bare ellipsis.
+	Dictionary blank;
+	blank["outcome"] = "running";
+	blank["tool"] = "   ";
+	CHECK(MCPActivity::describe_record(blank) == "Idle.");
+}
+
 } // namespace TestMCPActivity
 
 #endif // TEST_MCP_ACTIVITY_H

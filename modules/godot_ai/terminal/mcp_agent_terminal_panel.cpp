@@ -35,6 +35,7 @@
 #include "mcp_agent_launch.h"
 #include "mcp_terminal_widget.h"
 
+#include "../mcp_activity.h"
 #include "../mcp_service.h"
 
 #include "core/config/project_settings.h"
@@ -106,6 +107,22 @@ void MCPAgentTerminalPanel::_build_ui() {
 	status_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
 	toolbar->add_child(status_label);
 
+	// The second half of the collision fix in MCPService::show_activity(): a line
+	// saying what the agent is doing, so the terminal is not a window onto a
+	// conversation with no view of the work.
+	activity_label = memnew(Label);
+	activity_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	activity_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
+	activity_label->set_tooltip_text(TTR("The agent's most recent operation. The Agent Activity panel has the full stream."));
+	activity_label->set_text(MCPActivity::describe_record(Dictionary()));
+	toolbar->add_child(activity_label);
+
+	activity_button = memnew(Button);
+	activity_button->set_text(TTR("Activity"));
+	activity_button->set_tooltip_text(TTR("Show the Agent Activity panel: what the agent did, what it changed, and how to undo it."));
+	activity_button->connect(SceneStringName(pressed), callable_mp(this, &MCPAgentTerminalPanel::_on_activity_pressed));
+	toolbar->add_child(activity_button);
+
 	terminal_frame = memnew(Control);
 	terminal_frame->set_v_size_flags(SIZE_EXPAND_FILL);
 	terminal_frame->set_h_size_flags(SIZE_EXPAND_FILL);
@@ -150,8 +167,43 @@ void MCPAgentTerminalPanel::_build_ui() {
 	_update_controls();
 }
 
+void MCPAgentTerminalPanel::_poll_activity() {
+	const int64_t latest = MCPActivity::get_latest_sequence();
+	if (latest == last_activity_sequence) {
+		return;
+	}
+	last_activity_sequence = latest;
+
+	// One record, the newest. Asking for the whole buffer to render one line would be
+	// the same mistake the Activity dock exists to avoid.
+	const Array recent = MCPActivity::snapshot(MAX((int64_t)0, latest - 1), 1);
+	activity_label->set_text(MCPActivity::describe_record(
+			recent.is_empty() ? Dictionary() : Dictionary(recent[recent.size() - 1])));
+}
+
+void MCPAgentTerminalPanel::_on_activity_pressed() {
+	if (MCPService::get_singleton()) {
+		MCPService::get_singleton()->show_activity();
+	}
+}
+
 void MCPAgentTerminalPanel::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_VISIBILITY_CHANGED: {
+			// Polled only while the panel is on screen. The engine stops delivering
+			// internal process to a node that has left the tree, which is what keeps
+			// this safe in a panel whose teardown comment promises it never polls.
+			set_process_internal(is_visible_in_tree());
+			if (is_visible_in_tree()) {
+				last_activity_sequence = -1;
+				_poll_activity();
+			}
+		} break;
+
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			_poll_activity();
+		} break;
+
 		case NOTIFICATION_PREDELETE: {
 			// One ordered teardown, shared with the Stop button. There is nothing to
 			// disconnect by hand here: the panel never polls its children, so no deferred

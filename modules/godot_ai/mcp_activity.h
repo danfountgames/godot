@@ -109,6 +109,15 @@ public:
 	// better overrides MCPTool::get_activity_subjects() and this is never consulted.
 	static Array extract_subjects(const Dictionary &p_arguments);
 
+	// One line saying what the agent is doing, for somewhere that is not the Activity
+	// dock - the terminal panel, which hides that dock by occupying the same strip.
+	//
+	// Prefers the declared intention over the tool name, because "moving the spawn
+	// point" is what the user wants to read and "Godot_ManageNode" is what the tool
+	// happens to be called. Free of the buffer so it can be tested directly; pass an
+	// empty record for the idle text.
+	static String describe_record(const Dictionary &p_record);
+
 private:
 	// The buffer, its sequence counter and its mutex live in function-local statics in
 	// the .cpp - an `Array` at namespace scope is a Variant-family object constructed
