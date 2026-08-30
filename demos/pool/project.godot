@@ -1,0 +1,39 @@
+; POOLBREAK - top-down, high-drag, rings-only breakout/incremental hybrid.
+;
+; Bootstrapped by hand because the AI tooling attaches to an editor and an editor
+; needs a project to open. Everything after this file was built through the tools.
+
+config_version=5
+
+[application]
+
+config/name="POOLBREAK"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.4", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1152
+window/size/viewport_height=648
+
+[physics]
+
+; Top-down. The water does all the work; nothing falls.
+2d/default_gravity=0.0
+2d/default_linear_damp=0.0
+2d/default_angular_damp=0.0
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+
+[input]
+
+shoot={
+"deadzone": 0.5,
+"events": [Object(InputEventMouseButton,"button_index":1,"pressed":true,"device":-1)]
+}
+jet={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":32,"pressed":true,"device":-1)]
+}
