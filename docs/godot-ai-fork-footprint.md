@@ -25,15 +25,21 @@ $ git diff --name-only 457470a8d0 HEAD -- core scene servers drivers main platfo
 
 | Where | Files | Lines added | Lines removed |
 |---|---|---|---|
-| `modules/godot_ai/` — the whole feature | 153 | 46,578 | 0 |
+| `modules/godot_ai/` — the whole feature | 169 | 51,310 | 0 |
 | `editor/` — the seams it needs | 16 | 302 | 76 |
+| `demos/pool/` — a demo game, no engine code | 19 | 1,626 | 0 |
 | macOS branding (icons, plists, an icon script) | 6 | 182 | 14 |
 | Everything else outside the module | 0 | 0 | 0 |
 
-Sixty-eight thousand lines sounds like a lot until you notice that 46,578 of them are a
-module you can delete, most of the rest is documentation and tooling that never compiles
-into the engine, and the part that touches Godot itself is **302 added lines across
-sixteen editor files**.
+The total sounds like a lot until you notice that 51,310 of those lines are a module you
+can delete, most of the rest is documentation and tooling that never compiles into the
+engine, and the part that touches Godot itself is **302 added lines across sixteen editor
+files** — a number that has not moved as the module has grown.
+
+`demos/pool/` is a Godot project, not engine code: GDScript, a scene and a README. It is
+in the repository because it is the test — a game built end to end through this tooling —
+and it is counted separately here so it cannot flatter or inflate the figure that matters.
+The editor does not know it exists.
 
 ## Will my project open unchanged?
 

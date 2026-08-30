@@ -97,6 +97,15 @@ python3 tools/tests/run_tests.py
 # Do the shipped skills name tools that exist? (fast loop, no engine build)
 python3 tools/skills/check_skills.py
 
+# POOL's acceptance test. Needs an editor open on demos/pool with the game playing;
+# every assertion in it is about behaviour that only exists while it runs.
+python3 demos/pool/verify_first_playable.py
+
+# Hand the interface to agents that did not build it: an editor and a project copy each.
+python3 tools/benchmarks/fanout.py start --project demos/pool --workers 3
+python3 tools/benchmarks/fanout.py collect   # diff each world against what it started from
+python3 tools/benchmarks/fanout.py stop
+
 # Benchmarks: the scoring logic, then whether the planted defects still reproduce.
 # Neither needs an engine build. The self-check matters most - a benchmark whose defect
 # stops reproducing fails in the flattering direction, with every agent passing.

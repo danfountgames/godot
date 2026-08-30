@@ -38,6 +38,8 @@ standing critique of what using this is actually like.
   is no screen; `tools/tests/` covers it
 - `editor/` — engine editor code this module drives (4.8 layout: nested — `editor/scene/`,
   `editor/docks/`, `editor/file_system/`)
+- `demos/pool/` — POOL, a game built end to end through this tooling and the closest
+  thing here to a real test of it; `docs/godot-ai-building-a-game.md` is what that cost
 - `.agent/` — persistent implementation state; read it before starting
 
 ## Build commands
@@ -67,6 +69,8 @@ python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~40s
 python3 tools/relay/tests/run_editor_e2e.py --headless # the same, forced without a display
 python3 tools/relay/tests/run_editor_ui_e2e.py         # the editor's own UI, by keyboard and pointer
 python3 tools/relay/tests/run_replay_two_editors.py    # record in one editor, replay in another
+python3 demos/pool/verify_first_playable.py            # the demo game, checked while it runs
+python3 tools/benchmarks/fanout.py start --workers 3   # an editor each, for other agents
 ```
 
 The end-to-end run starts a virtual display (`tools/virtual_display.py`) when the
