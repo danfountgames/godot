@@ -3869,6 +3869,78 @@ def run(editor_binary, display):
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
 
+        # --- undoing a task, not twelve checkpoints ----------------------------
+        #
+        # Checkpoints are per-tool-call, which is the right granularity to take them at
+        # and the wrong one to be the only way back: a twelve-call session that went
+        # wrong had to be unwound twelve times by hand. Each snapshot carries the goal
+        # that was current when it ran, so a task undoes as one thing.
+        reply = call({"jsonrpc": "2.0", "id": 830, "method": "tools/call",
+                      "params": {"name": "Godot_SetIntent",
+                                 "arguments": {"goal": "e2e task undo",
+                                               "activity": "writing three files"}}})
+        check(not refused(reply), "declaring a goal failed: %s" % refusal_text(reply))
+
+        for index, name in enumerate(("one", "two", "three")):
+            reply = call({"jsonrpc": "2.0", "id": 831 + index, "method": "tools/call",
+                          "params": {"name": "Godot_WriteTextFile",
+                                     "arguments": {"path": "res://task_%s.txt" % name,
+                                                   "text": "written by the task"}}})
+            check(not refused(reply), "the task's write failed: %s" % refusal_text(reply))
+
+        # A file from a *different* task must survive: grouping by goal is the whole
+        # reason this is not "undo everything recent".
+        reply = call({"jsonrpc": "2.0", "id": 834, "method": "tools/call",
+                      "params": {"name": "Godot_SetIntent",
+                                 "arguments": {"goal": "e2e unrelated work",
+                                               "activity": "writing one more file"}}})
+        check(not refused(reply), "changing goal failed: %s" % refusal_text(reply))
+        reply = call({"jsonrpc": "2.0", "id": 835, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": "res://task_other.txt",
+                                               "text": "not part of the task"}}})
+        check(not refused(reply), "the unrelated write failed: %s" % refusal_text(reply))
+
+        for name in ("one", "two", "three", "other"):
+            check(os.path.exists(os.path.join(project, "task_%s.txt" % name)),
+                  "task_%s.txt was never written" % name)
+
+        reply = call({"jsonrpc": "2.0", "id": 836, "method": "tools/call",
+                      "params": {"name": "Godot_ListCheckpoints"}})
+        listed = reply["result"]["structuredContent"]
+        task_names = [t["task"] for t in listed["tasks"]]
+        check("e2e task undo" in task_names,
+              "the task is not listed among the checkpoints' tasks: %r" % task_names)
+        undone_task = [t for t in listed["tasks"] if t["task"] == "e2e task undo"][0]
+        check(undone_task["checkpoints"] == 3,
+              "the task does not hold three checkpoints: %r" % undone_task)
+
+        # Naming both is refused: they undo different amounts, and the difference is
+        # the point.
+        reply = call({"jsonrpc": "2.0", "id": 837, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"id": listed["checkpoints"][0]["id"],
+                                               "task": "e2e task undo"}}})
+        check(refused(reply), "naming both an id and a task was accepted")
+
+        reply = call({"jsonrpc": "2.0", "id": 838, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"task": "e2e task undo"}}})
+        check(not refused(reply), "undoing the task failed: %s" % refusal_text(reply))
+        undone = reply["result"]["structuredContent"]
+        check(undone["checkpoints_restored"] == 3,
+              "the task undo rolled back %r checkpoints, not 3: %r"
+              % (undone["checkpoints_restored"], undone))
+        check(undone["files_removed"] == 3,
+              "the task's three created files were not removed: %r" % undone)
+
+        for name in ("one", "two", "three"):
+            check(not os.path.exists(os.path.join(project, "task_%s.txt" % name)),
+                  "task_%s.txt survived the task undo" % name)
+        check(os.path.exists(os.path.join(project, "task_other.txt")),
+              "undoing one task removed another task's file")
+        print("PASS a whole task undoes in one call, and leaves other tasks alone")
+
         # --- what the user is looking at ---------------------------------------
         #
         # The worst friction in the journey: a node is selected in the scene tree and

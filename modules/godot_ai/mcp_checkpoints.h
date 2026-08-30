@@ -68,6 +68,24 @@ public:
 	// the tool created are removed again.
 	static bool restore(const String &p_id, int &r_restored, int &r_removed, String &r_error);
 
+	// Undoes a whole task rather than one call.
+	//
+	// Checkpoints are per-tool-call, which is the right granularity to *take* them at
+	// and the wrong one to offer as the only way back: a twelve-call session that went
+	// wrong had to be unwound twelve times, by hand, from a list. Each call's snapshot
+	// is stamped with the goal that was current when it ran, so this restores every
+	// checkpoint of one task, newest first - ending on the oldest content, which is the
+	// state before the task began. Files the task created are removed by the same rule
+	// that removes them for a single checkpoint.
+	//
+	// Refuses an empty task name: grouping "everything with no stated goal" would be a
+	// very large button with a very vague label.
+	static bool restore_task(const String &p_task, int &r_checkpoints, int &r_restored,
+			int &r_removed, String &r_error);
+
+	// Tasks that have checkpoints, newest activity first, with how many each holds.
+	static Array list_tasks();
+
 	// Keeps storage bounded; called after each creation.
 	static void prune(int p_keep);
 

@@ -30,6 +30,7 @@
 
 #include "mcp_checkpoints.h"
 
+#include "mcp_agent_state.h"
 #include "mcp_paths.h"
 #include "mcp_editor_refresh.h"
 #include "mcp_service.h"
@@ -172,6 +173,11 @@ String MCPCheckpoints::create(const String &p_tool, const String &p_invocation, 
 	// Already redacted by MCPTool::describe_invocation.
 	manifest["invocation"] = p_invocation;
 	manifest["files"] = files;
+	// The task this call belonged to, so a session that went wrong can be undone as
+	// one thing rather than as twelve. Empty when the agent never declared a goal, and
+	// an empty task deliberately groups nothing: undoing "everything without a stated
+	// goal" would be a very large button with a very vague label.
+	manifest["task"] = MCPAgentIntent::get_goal();
 
 	Ref<FileAccess> manifest_file = FileAccess::open(directory.path_join("manifest.json"), FileAccess::WRITE);
 	if (manifest_file.is_null()) {
@@ -219,6 +225,82 @@ Array MCPCheckpoints::list() {
 		checkpoints.push_back(parsed);
 	}
 	return checkpoints;
+}
+
+Array MCPCheckpoints::list_tasks() {
+	Array tasks;
+	HashMap<String, int> index; // task -> position in `tasks`
+
+	// list() is newest first, so the first time a task is seen is its latest activity
+	// and appending preserves that order.
+	for (const Variant &entry : list()) {
+		const Dictionary checkpoint = entry;
+		const String task = checkpoint.get("task", String());
+		if (task.is_empty()) {
+			continue;
+		}
+		if (int *at = index.getptr(task)) {
+			Dictionary existing = tasks[*at];
+			existing["checkpoints"] = (int)existing["checkpoints"] + 1;
+			existing["oldest"] = checkpoint.get("time", String());
+			continue;
+		}
+		Dictionary summary;
+		summary["task"] = task;
+		summary["checkpoints"] = 1;
+		summary["latest"] = checkpoint.get("time", String());
+		summary["oldest"] = checkpoint.get("time", String());
+		index.insert(task, tasks.size());
+		tasks.push_back(summary);
+	}
+	return tasks;
+}
+
+bool MCPCheckpoints::restore_task(const String &p_task, int &r_checkpoints, int &r_restored,
+		int &r_removed, String &r_error) {
+	r_checkpoints = 0;
+	r_restored = 0;
+	r_removed = 0;
+
+	const String task = p_task.strip_edges();
+	if (task.is_empty()) {
+		r_error = "name the task to undo; an empty task groups every call that never "
+				  "declared a goal, which is not something to offer as one button";
+		return false;
+	}
+
+	Vector<String> ids;
+	for (const Variant &entry : list()) {
+		const Dictionary checkpoint = entry;
+		if (String(checkpoint.get("task", String())) == task) {
+			ids.push_back(checkpoint.get("id", String()));
+		}
+	}
+	if (ids.is_empty()) {
+		r_error = vformat("no checkpoint belongs to a task called '%s'", task);
+		return false;
+	}
+
+	// list() is newest first, and that is the order to restore in: each snapshot holds
+	// the content from *before* its call, so walking backwards ends on the oldest
+	// content, which is the state before the task began.
+	for (const String &id : ids) {
+		int restored = 0;
+		int removed = 0;
+		String error;
+		if (!restore(id, restored, removed, error)) {
+			// Partial is reported rather than hidden. Stopping leaves the project
+			// somewhere between two states, and the caller has to know which
+			// checkpoints did land to reason about where it is.
+			r_error = vformat("undid %d of %d checkpoints, then '%s' failed: %s",
+					r_checkpoints, ids.size(), id, error);
+			return false;
+		}
+		r_checkpoints++;
+		r_restored += restored;
+		r_removed += removed;
+	}
+	return true;
 }
 
 bool MCPCheckpoints::restore(const String &p_id, int &r_restored, int &r_removed, String &r_error) {
