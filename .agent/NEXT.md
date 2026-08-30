@@ -99,8 +99,11 @@ panel collision, task-level undo, and headless (`docs/godot-ai-headless.md`).
    - a benchmark task described a symptom that never happens (fixed);
    - `run_selfcheck.py` claimed "every planted defect reproduces" when it only compares
      files, which is how the previous item survived (fixed);
-   - **nothing in ninety-six tools connects a signal** (open, and the largest remaining
-     gap in the tool surface).
+   - nothing in ninety-six tools connected a signal — `Godot_ManageConnection` now
+     does, and building it found two more defects that each made it look like it
+     worked: a listing swamped by the editor's own observers, and a connection made
+     without `CONNECT_PERSIST`, which the editor honours all session and the save
+     silently drops (fixed).
 
    Four tasks is not a benchmark and the driver was the model that built the tools.
    What is needed next is scale, a task that can only be solved by *playing* the game

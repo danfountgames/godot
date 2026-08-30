@@ -49,7 +49,7 @@ looking for X11, printed "Unable to create DisplayServer", and then segfaulted i
 `XGetSelectionOwner` on the way out. From the editor's side it simply vanished.
 
 This broke the entire closed loop for a headless agent — run the game, observe it,
-revise — which is the product. Ninety-five tools, three test suites and a
+revise — which is the product. Ninety-six tools, three test suites and a
 hundred-and-thirty-check end-to-end run had not noticed, because the end-to-end suite's
 headless path *skips* the runtime checks with `SKIP runtime tree: the headless game did
 not report one`. A skip that had been recording the bug as a fact of life.
@@ -70,13 +70,35 @@ textually present and behaviourally absent, and that is precisely what had happe
 check that existed to stop the benchmark failing in the flattering direction was itself
 phrased in the flattering direction.
 
-**4. There is no tool that connects a signal.** *(open)*
+**4. There was no tool that connects a signal.** *(fixed, and it found two more)*
 
-`dead-button/find` is about an unwired control, and completing it means adding a
-connection to a scene. Nothing in ninety-five tools does that, so the only route is
+`dead-button/find` is about an unwired control, and completing it meant adding a
+connection to a scene. Nothing in ninety-six tools did that, so the only route was
 writing the `.tscn` as text — which the repository's own rules permit only because no
-structured API exists, and which is exactly the kind of edit those rules exist to
+structured API existed, and which is exactly the kind of edit those rules exist to
 prevent. Connecting a signal is one of the commonest things anyone does in this editor.
+
+`Godot_ManageConnection` now does it, and writing it turned up two defects of its own,
+both of which made it look like it worked:
+
+- **A listing was useless.** The editor watches every node in the edited scene, so
+  asking a button what it was connected to returned eleven `ScriptEditor` and
+  `SceneTreeEditor` hooks and not one line of the scene's own wiring. Connections whose
+  far end is outside the scene root are now counted and excluded rather than listed.
+- **The connection did not survive the save.** `Object::connect` makes a *runtime*
+  connection; `PackedScene::pack()` records only connections carrying `CONNECT_PERSIST`.
+  Without it the editor behaved correctly for the rest of the session, `Godot_SaveScene`
+  reported success, and the `.tscn` had no connection in it. This is the failure mode
+  worth remembering from the whole exercise: everything reported success and nothing had
+  happened.
+
+A third, smaller: a refusal for a misspelt signal listed `script_changed,
+property_list_changed, ready, renamed…`, because asking a `Button` for its *own* signals
+returns nothing — `pressed` belongs to `BaseButton`. It now climbs to the class that
+actually declares them.
+
+The task was re-run afterwards and passes through the tool, with no hand-edited scene
+text.
 
 A fifth, smaller one: the collateral measurement reported three changes on the first
 task and all three were false positives — two `.uid` files the importer wrote and the
