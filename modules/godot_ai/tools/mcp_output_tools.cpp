@@ -86,7 +86,10 @@ public:
 		Dictionary properties;
 		properties["messages"] = MCPSchema::array_property("Messages, oldest first.",
 				MCPSchema::object_schema(message_properties));
-		properties["total"] = MCPSchema::integer_property("Total messages currently held by the log.");
+		properties["total"] = MCPSchema::integer_property(
+				"How many messages matched, after problems_only and contains are applied. Zero here with a non-zero messages_in_log means the log has lines and none of them match.");
+		properties["messages_in_log"] = MCPSchema::integer_property(
+				"How many messages the log holds in total, before any filter.");
 		properties["truncated"] = MCPSchema::bool_property("True when older messages were left out.");
 		return MCPSchema::object_schema(properties);
 	}
@@ -131,7 +134,12 @@ public:
 
 		Dictionary result;
 		result["messages"] = matched;
-		result["total"] = total;
+		// The count *after* filtering, not before. `problems_only: true` returning an
+		// empty list beside `total: 3` reads as "there are three things I am declining to
+		// show you", when the truth is that the log holds three lines and none of them is
+		// a problem. The unfiltered size is still available, under a name that says so.
+		result["total"] = matched.size();
+		result["messages_in_log"] = total;
 		result["truncated"] = truncated;
 		return result;
 	}

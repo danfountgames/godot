@@ -610,10 +610,21 @@ Dictionary cross_check_errors(const Dictionary &p_result) {
 						 "moment it stopped and cannot grow. Godot_GetDebuggerBreak has the error, "
 						 "the call stack and the locals; Godot_ResumeFromBreak lets it carry on.";
 	} else if (editor_errors > reported) {
-		result["note"] = vformat("The editor has recorded %d error(s) the game did not report here. "
-								 "Read Godot_GetDebuggerBreak and the output log before concluding "
-								 "this run was clean.",
-				editor_errors - reported);
+		// Say where the difference comes from, or this is a dangling thread.
+		//
+		// It used to point at the output log, where the errors are usually not: the
+		// editor's counter accumulates across the whole session, including errors from
+		// *previous* runs and from the editor's own work, while this list is what the
+		// current game reported. Three separate agents chased that difference and none of
+		// them found anything, because on a clean run there is nothing to find.
+		result["editor_errors_since_editor_started"] = editor_errors;
+		result["note"] = vformat("The editor's own counter stands at %d error(s) against the %d "
+								 "this run reported. That counter is cumulative across the whole "
+								 "editor session - earlier runs, and the editor's own work, are "
+								 "in it - so a difference here is not evidence about this run. "
+								 "Godot_ReadOutputLog with problems_only shows what is actually "
+								 "in the log.",
+				editor_errors, reported);
 	}
 	return result;
 }
