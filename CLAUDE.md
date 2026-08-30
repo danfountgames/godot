@@ -53,6 +53,8 @@ never put task progress, logs, or temporary next actions in `CLAUDE.md`.
 |---|---|
 | `docs/godot-ai-clone-spec.md` | Authoritative specification |
 | `docs/godot-ai-fork-footprint.md` | What this fork changes in Godot itself, measured |
+| `docs/godot-ai-headless.md` | Driving the editor from a shell: the CLI, and the policy an unattended run declares |
+| `docs/godot-ai-user-journey.md` | What using this is actually like, and what is wrong with it |
 | `modules/godot_ai/` | Editor-side MCP service, tool registry, tools, permissions |
 | `modules/godot_ai/tests/` | doctest unit tests, auto-included when `tests=yes` |
 | `tools/relay/` | Standalone `godot-ai-relay` stdio↔TCP bridge (no engine dependency) |

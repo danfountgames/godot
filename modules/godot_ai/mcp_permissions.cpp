@@ -155,9 +155,17 @@ MCPPermissions::Decision MCPPermissions::evaluate(const MCPSession &p_session, M
 
 	const MCPPolicy policy = get_policy(p_capability);
 	if (policy == MCP_POLICY_DENY) {
+		// Name where the decision came from. An operator debugging a CI run needs to
+		// know whether to edit their environment or somebody's editor settings, and
+		// blaming settings for an environment's decision sends them to the wrong file.
+		MCPPolicy declared_deny = MCP_POLICY_DENY;
+		const bool from_environment = MCPUnattended::policy_override(p_capability, declared_deny);
 		decision.outcome = OUTCOME_DENY;
-		decision.reason = vformat("the '%s' capability is set to deny in the editor's AI settings",
-				mcp_capability_to_string(p_capability));
+		decision.reason = from_environment
+				? vformat("the '%s' capability is set to deny by %s",
+						  mcp_capability_to_string(p_capability), MCPUnattended::ENV_POLICY)
+				: vformat("the '%s' capability is set to deny in the editor's AI settings",
+						  mcp_capability_to_string(p_capability));
 		return decision;
 	}
 	if (policy == MCP_POLICY_ALLOW) {

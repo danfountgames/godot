@@ -148,6 +148,29 @@ TEST_CASE("[godot_ai] Whitespace and trailing separators are tolerated") {
 	CHECK(policies[MCP_CAP_EDIT_FILES] == MCP_POLICY_DENY);
 }
 
+TEST_CASE("[godot_ai] A denial names where the decision came from") {
+	// An operator debugging a CI run needs to know whether to edit their environment
+	// or somebody's editor settings; blaming settings for the environment's decision
+	// sends them to the wrong file.
+	MCPSession session;
+	session.client_approved = true;
+	{
+		EnvironmentScope scope("edit_files=deny");
+		const MCPPermissions::Decision decision =
+				MCPPermissions::evaluate(session, MCP_CAP_EDIT_FILES, "Godot_WriteTextFile");
+		CHECK(decision.outcome == MCPPermissions::OUTCOME_DENY);
+		CHECK(decision.reason.contains(MCPUnattended::ENV_POLICY));
+	}
+	{
+		EnvironmentScope scope("");
+		MCPPermissions::set_policy_override(MCP_CAP_EDIT_FILES, MCP_POLICY_DENY);
+		const MCPPermissions::Decision decision =
+				MCPPermissions::evaluate(session, MCP_CAP_EDIT_FILES, "Godot_WriteTextFile");
+		CHECK(decision.outcome == MCPPermissions::OUTCOME_DENY);
+		CHECK(decision.reason.contains("editor's AI settings"));
+	}
+}
+
 TEST_CASE("[godot_ai] A read-only session still refuses what the policy allows") {
 	EnvironmentScope scope("edit_files=allow");
 

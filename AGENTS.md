@@ -24,6 +24,9 @@ This is a fork of Godot Engine 4.8-dev that adds Unity-style AI editor tooling:
 
 The authoritative definition of the product is `docs/godot-ai-clone-spec.md`.
 Implementation status per requirement lives in `.agent/SPEC_LEDGER.md`.
+`docs/godot-ai-headless.md` covers driving all of it from a shell, which is a
+first-class mode and not a degraded one; `docs/godot-ai-user-journey.md` is the
+standing critique of what using this is actually like.
 
 ## Priority directories
 
