@@ -16,6 +16,7 @@ work here, not an advanced option.
 | `investigate-a-crash` | Turn "it crashed" into a reproducible, minimised sequence |
 | `traverse-the-menus` | Walk every reachable screen and report what is unreachable, what has no way back, and what does nothing |
 | `tune-and-keep` | Adjust a value in play, judge it, and promote the one that felt right into the scene |
+| `measure-a-feel-target` | Turn a stated number - "crosses in about three seconds" - into one read off the running game, then tune until it holds |
 | `performance-profiling` | Capture a profiler window and read it |
 | `find-a-performance-regression` | It used to be fast: measure the same sequence twice and attribute the difference |
 | `test-an-input-path` | Prove an input reaches what it drives, on every device the game claims to support |

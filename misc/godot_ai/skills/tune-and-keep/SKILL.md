@@ -21,6 +21,10 @@ survives into the project.
 
 The game must already be running.
 
+**If the brief states a number, use `measure-a-feel-target` instead.** "It should feel
+weighty" is this skill; "it should cross the screen in about three seconds" is a
+measurement, and arguing about it by eye when the game can be asked is wasted time.
+
 ## When you have candidates in mind, offer them as a set
 
 `Godot_OfferVariants` is the workspace for exactly this. `offer` captures the current

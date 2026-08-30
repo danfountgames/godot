@@ -220,6 +220,9 @@ transfer.
 - **`Godot_WriteTextFile` reloads a script the editor has open**, so an export added to
   an attached script exists on the edited node immediately, and can be tuned live and
   promoted back.
+- **A new skill, `measure-a-feel-target`**, so the next agent does not have to rediscover
+  the loop: record from inside, read the shape, try candidates as a set, solve for the
+  number where arithmetic exists, and watch for two stated targets that fight each other.
 
 ## What should change next, in order
 
