@@ -205,6 +205,47 @@ perfectly good tools as refusing without saying why; and `PackedVector2Array` pr
 components flat while `Vector2` prints `(x, y)`, so the board read as empty and the empty
 board looked like a spawning bug. Check the exit status and the shape, not one of them.
 
+## Three agents that did not build this, 2026-08-30
+
+`docs/godot-ai-three-agents.md`. Three agents, an editor each on its own copy of POOL,
+given a fix / a measurement / a build task and told only how to reach the relay. All three
+finished and all three were right. The full findings are in that document; what matters
+for what comes next:
+
+**Fixed as a result:** the skills were not shipped at all (compiled into the binary now);
+`Godot_RecordRuntimeSeries` recorded a window of zeros for a property that does not exist;
+`Godot_WaitForRuntimeCondition` could only compare equality and silently corrupted a
+measurement; vectors came back only as text in two encodings and produced a confident wrong
+table; `Godot_PlayMainScene` answered before the game was reachable so the next call said
+"no game is running", which was false.
+
+**Open, in the order they cost round trips:**
+
+1. **`--describe <tool>`.** All three lost six to eight calls to argument-name drift. The
+   refusals are good; the only way to read one schema is to fetch ninety-nine.
+2. **Frame stepping for the `PlayMainScene` game.** Two wanted "advance N physics frames
+   and return"; one abandoned a whole measurement approach for want of it.
+3. **Arming a recording before the action.** `Godot_RecordRuntimeSeries` blocks, so from a
+   single client it can only follow the thing it records, and misses its first frames -
+   measured at 12.55px of an 868px shot. Its own description tells you to do the thing it
+   does not allow.
+4. **The playtest reconciler counts input events only**, so driving a game by property -
+   the route this product recommends, in the README and in the game's own docstring -
+   scores `indeterminate`. A false negative aimed at the recommended workflow.
+5. **Calling a method on a running node.** Setting four properties in a loop instead.
+6. **A structured patch write.** Whole-file writes for a one-character constant change, on
+   the most-used and riskiest tool.
+7. **`frame` is the read frame, not the write frame**, so a stale property reads as current.
+8. **No physics-contact timeline.** The brief's targets are phrased relative to "the last
+   event" and nothing reports events; one agent reconstructed them from discontinuities in
+   a speed trace and called it forensics rather than instrumentation.
+9. **`Godot_GetActivity` permanently reads `deferred`.**
+
+**The measurement that is still missing.** None of the three started from a skill, because
+there were none to start from. Whether the skills *lead* - the thing the design bets on -
+is unmeasured, and is now measurable. Re-running these three against a build that ships
+them is the obvious next experiment, and `tools/benchmarks/fanout.py` provisions it.
+
 ## Two replay levels
 
 Do not promise "deterministic replay". Raw input is one source of state among many —
