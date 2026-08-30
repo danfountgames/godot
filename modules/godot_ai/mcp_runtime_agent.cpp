@@ -47,6 +47,7 @@
 #include "main/performance.h"
 #include "servers/audio/audio_server.h"
 #include "core/object/script_language.h"
+#include "scene/2d/node_2d.h"
 #include "scene/gui/control.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
@@ -1089,6 +1090,9 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	if (p_command == "set_property") {
 		return _set_property(p_arguments, r_error);
 	}
+	if (p_command == "find_nodes") {
+		return _find_nodes(p_arguments, r_error);
+	}
 	if (p_command == "node_info") {
 		return _node_info(p_arguments, r_error);
 	}
@@ -1903,6 +1907,121 @@ Dictionary MCPRuntimeAgent::_set_property(const Dictionary &p_arguments, String 
 	VariantWriter::write_to_string(applied, text);
 	result["text"] = text;
 	return result;
+}
+
+// Everything under p_root that matches, depth-first, with the paths that address it.
+static void collect_matching(Node *p_node, const String &p_class,
+		const String &p_contains, bool p_use_near, const Vector2 &p_near, double p_within,
+		int p_limit, Array &r_out) {
+	if (!p_node || r_out.size() >= p_limit) {
+		return;
+	}
+	bool matches = true;
+	if (!p_class.is_empty() && !p_node->is_class(p_class)) {
+		// is_class rather than get_class: asking for CollisionObject2D should find a
+		// RigidBody2D, or the caller has to know the exact leaf class to find anything.
+		matches = false;
+	}
+	if (matches && !p_contains.is_empty() && String(p_node->get_name()).findn(p_contains) < 0) {
+		matches = false;
+	}
+	Vector2 position;
+	bool has_position = false;
+	if (Node2D *node_2d = Object::cast_to<Node2D>(p_node)) {
+		position = node_2d->get_global_position();
+		has_position = true;
+	} else if (Control *control = Object::cast_to<Control>(p_node)) {
+		position = control->get_global_position();
+		has_position = true;
+	}
+	if (matches && p_use_near) {
+		matches = has_position && position.distance_to(p_near) <= p_within;
+	}
+	if (matches) {
+		Dictionary entry;
+		// Absolute, because that is what every other runtime tool takes. Returning a
+		// path relative to the root under a key called "path" hands the caller the one
+		// string in the reply that will not work anywhere else.
+		entry["path"] = String(p_node->get_path());
+		entry["name"] = String(p_node->get_name());
+		entry["type"] = p_node->get_class();
+		if (has_position) {
+			entry["position"] = position;
+			if (p_use_near) {
+				entry["distance"] = position.distance_to(p_near);
+			}
+		}
+		r_out.push_back(entry);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		collect_matching(p_node->get_child(i), p_class, p_contains, p_use_near,
+				p_near, p_within, p_limit, r_out);
+	}
+}
+
+// Finding a node that nothing named.
+//
+// A script that spawns nodes without naming them leaves them as "@RigidBody2D@270", and
+// the number is an instance counter: it addresses that node now and will not address it
+// again after a restart. Building a game with these tools, that made every ring in the
+// pool unaddressable, and the only fix available from outside was to change the game.
+// Class, name fragment and position all survive a restart.
+Dictionary MCPRuntimeAgent::_find_nodes(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		r_error = "the running game has no scene tree";
+		return Dictionary();
+	}
+	const String under = p_arguments.has("under") ? String(p_arguments["under"]) : String("/root");
+	Node *root = under.is_empty() || under == "/root"
+			? (Node *)tree->get_root()
+			: tree->get_root()->get_node_or_null(NodePath(under));
+	if (!root) {
+		r_error = vformat("no node at '%s' in the running game to search under", under);
+		return Dictionary();
+	}
+	const String want_class = p_arguments.has("class_name") ? String(p_arguments["class_name"]) : String();
+	if (!want_class.is_empty() && !ClassDB::class_exists(want_class)) {
+		// Said rather than silently returning nothing: an empty result for a misspelt
+		// class reads as "there are none", which is a different and much worse answer.
+		r_error = vformat("'%s' is not an engine class; search by name_contains instead, or "
+						  "name the base class such as Node2D or RigidBody2D",
+				want_class);
+		return Dictionary();
+	}
+	const String contains = p_arguments.has("name_contains") ? String(p_arguments["name_contains"]) : String();
+	const bool use_near = p_arguments.has("near_x") && p_arguments.has("near_y");
+	const Vector2 near_point(use_near ? (double)p_arguments["near_x"] : 0.0,
+			use_near ? (double)p_arguments["near_y"] : 0.0);
+	const double within = p_arguments.has("within") ? (double)p_arguments["within"] : 64.0;
+	int limit = p_arguments.has("limit") ? (int)p_arguments["limit"] : 50;
+	limit = CLAMP(limit, 1, 500);
+
+	Array found;
+	collect_matching(root, want_class, contains, use_near, near_point,
+			within, limit, found);
+
+	if (use_near) {
+		// Nearest first, so "the ring I just hit" is entry zero.
+		found.sort_custom(callable_mp_static(&MCPRuntimeAgent::_closer_first));
+	}
+
+	Dictionary result;
+	result["under"] = under;
+	result["found"] = found;
+	result["count"] = found.size();
+	result["truncated"] = found.size() >= limit;
+	if (found.is_empty()) {
+		result["note"] = "nothing matched. Godot_GetRuntimeSceneTree lists everything that is "
+						 "there, which is the quickest way to find out why.";
+	}
+	return result;
+}
+
+bool MCPRuntimeAgent::_closer_first(const Variant &p_a, const Variant &p_b) {
+	const Dictionary a = p_a;
+	const Dictionary b = p_b;
+	return (double)a.get("distance", 0.0) < (double)b.get("distance", 0.0);
 }
 
 Dictionary MCPRuntimeAgent::_node_info(const Dictionary &p_arguments, String &r_error) {

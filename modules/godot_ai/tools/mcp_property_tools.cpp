@@ -376,19 +376,26 @@ static void request_remote_tree() {
 	}
 }
 
-static void collect_remote_nodes(TreeItem *p_item, int p_depth, int p_max_depth, Array &r_nodes) {
+static void collect_remote_nodes(TreeItem *p_item, int p_depth, int p_max_depth,
+		const String &p_parent_path, Array &r_nodes) {
 	if (!p_item) {
 		return;
 	}
+	const String name = p_item->get_text(0);
+	// The path, not just the name and a depth. Every other runtime tool takes a path, so
+	// leaving the caller to rebuild one from an indented list is asking it to reimplement
+	// tree walking to use the rest of the interface.
+	const String path = p_depth == 0 ? String("/root") : p_parent_path + "/" + name;
 	Dictionary entry;
-	entry["name"] = p_item->get_text(0);
+	entry["name"] = name;
 	entry["depth"] = p_depth;
+	entry["path"] = path;
 	r_nodes.push_back(entry);
 	if (p_depth >= p_max_depth) {
 		return;
 	}
 	for (TreeItem *child = p_item->get_first_child(); child; child = child->get_next()) {
-		collect_remote_nodes(child, p_depth + 1, p_max_depth, r_nodes);
+		collect_remote_nodes(child, p_depth + 1, p_max_depth, path, r_nodes);
 	}
 }
 
@@ -397,7 +404,12 @@ public:
 	virtual String get_tool_name() const override { return "Godot_GetRuntimeSceneTree"; }
 	virtual String get_description() const override {
 		return "Return the node tree of the *running* game, as reported by the debugger. "
-			   "This is the live tree, which can differ from the edited scene.";
+			   "This is the live tree, which can differ from the edited scene. Each node "
+			   "carries the path the other runtime tools take. Nodes a script created "
+			   "without naming them appear as '@RigidBody2D@270', and that number is an "
+			   "instance counter that changes every run - so it addresses the node now and "
+			   "will not address it again. Godot_FindRuntimeNodes matches on class, name "
+			   "and position instead, which survives a restart.";
 	}
 	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
 	virtual Dictionary get_input_schema() const override {
@@ -415,7 +427,7 @@ public:
 	Dictionary _build(int p_max_depth) const {
 		Array nodes;
 		collect_remote_nodes(EditorDebuggerNode::get_singleton()->get_remote_tree()->get_root(),
-				0, p_max_depth, nodes);
+				0, p_max_depth, String(), nodes);
 		Dictionary result;
 		result["nodes"] = nodes;
 		result["running"] = true;

@@ -116,8 +116,29 @@ snapshots, and `--batch`'s help says what batching is actually for.
 Rings spawned at runtime came back from `Godot_GetRuntimeSceneTree` as
 `@RigidBody2D@270`. The number is an instance counter: it changes every run, so nothing
 outside can name the same ring twice. Naming them in `_add_ring` fixed it for this game,
-but a tool driving *someone else's* game has no such recourse. Something that addresses a
-runtime node by class and index, or by position, is missing.
+but a tool driving *someone else's* game has no such recourse.
+
+**`Godot_FindRuntimeNodes` now addresses them by what does survive a restart** — engine
+class, a fragment of the name, or where they are:
+
+```
+$ Godot_FindRuntimeNodes class_name=RigidBody2D near_x=512 near_y=490 within=400
+
+{"path": "/root/Main/Rings/Ring2", "type": "RigidBody2D",
+ "position": "(668, 250.96)", "distance": 285.44}
+```
+
+Base classes match their subclasses, so `CollisionObject2D` finds a `RigidBody2D` and the
+caller does not have to know the exact leaf class. With `near_x`/`near_y` the results sort
+by distance, so the thing closest to where something just happened is entry zero. A class
+name that does not exist is a **refusal**, not an empty list: "there are none" and "you
+misspelt it" are different answers, and only one of them is worth acting on.
+
+`Godot_GetRuntimeSceneTree` now also carries each node's path, which it did not — it gave
+a name and a depth, and left the caller to rebuild tree walking before it could use any
+other runtime tool. The path in both is absolute, which is a deliberate second pass: the
+first version returned one relative to the scene root, so the field called `path` was the
+one string in the reply that would not work anywhere else.
 
 ### 3. Rewriting an attached script strands the editor's copy
 
@@ -171,12 +192,14 @@ transfer.
   what to do instead.
 - The relay's `--batch` help text is no longer interleaved with `--continue-on-error`'s,
   and says what batching is actually for.
-- **`Godot_RecordRuntimeSeries` is new**, and is the largest of the four: it removes the
+- **`Godot_RecordRuntimeSeries` is new**, and is the largest of these: it removes the
   reason every game driven this way would have had to instrument itself.
+- **`Godot_FindRuntimeNodes` is new**, and `Godot_GetRuntimeSceneTree` now carries paths,
+  so a node a script created without naming it can be addressed at all.
 
 ## What should change next, in order
 
 1. **Address a runtime node without a stable name.** By class and index, or by position.
 2. **Reload a script the editor has open**, so promotion works after a rewrite.
-3. **A worked example in the skills** that says the game must instrument itself, because
+2. **A worked example in the skills** that says the game must instrument itself, because
    an agent that has not hit this will spend its first hour sampling from outside.

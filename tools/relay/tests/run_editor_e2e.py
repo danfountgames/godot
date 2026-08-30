@@ -2920,6 +2920,57 @@ def run(editor_binary, display):
                       "a node that does not exist did not report missing samples: %r" % absent)
                 print("PASS Godot_RecordRuntimeSeries honours the interval and counts what it could not read")
 
+                # --- finding a node nothing named ---------------------------------
+                # A node a script created comes back from the tree as "@RigidBody2D@270",
+                # and that number is an instance counter: it addresses the node now and
+                # not after a restart. Class, name and position all survive one.
+                reply = call({"jsonrpc": "2.0", "id": 1253, "method": "tools/call",
+                              "params": {"name": "Godot_FindRuntimeNodes",
+                                         "arguments": {"class_name": "Node", "limit": 5}}})
+                check(reply["result"]["isError"] is False,
+                      "finding nodes failed: %s" % refusal_text(reply))
+                foundr = reply["result"]["structuredContent"]
+                check(foundr["count"] > 0, "no node in the game is a Node: %r" % foundr)
+                # The path has to be the one every other runtime tool takes, or the field
+                # named "path" is the one string in the reply that does not work.
+                for entry in foundr["found"]:
+                    check(entry["path"].startswith("/root"),
+                          "a found path is not absolute: %r" % entry)
+                probe = foundr["found"][0]["path"]
+                reply = call({"jsonrpc": "2.0", "id": 1254, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeNodeInfo",
+                                         "arguments": {"path": probe}}})
+                check(reply["result"]["isError"] is False,
+                      "a path from Godot_FindRuntimeNodes did not resolve: %s" % refusal_text(reply))
+
+                reply = call({"jsonrpc": "2.0", "id": 1255, "method": "tools/call",
+                              "params": {"name": "Godot_FindRuntimeNodes",
+                                         "arguments": {"name_contains": "zzz-nothing"}}})
+                empty = reply["result"]["structuredContent"]
+                check(empty["count"] == 0, "a nonsense fragment matched: %r" % empty)
+                check("note" in empty, "an empty result gave no guidance: %r" % empty)
+
+                # A misspelt class must say so. An empty list reads as "there are none",
+                # which is a different and much worse answer.
+                reply = call({"jsonrpc": "2.0", "id": 1256, "method": "tools/call",
+                              "params": {"name": "Godot_FindRuntimeNodes",
+                                         "arguments": {"class_name": "Node2DD"}}})
+                check(reply["result"]["isError"] is True,
+                      "a class that does not exist returned results instead of refusing")
+                check("not an engine class" in refusal_text(reply),
+                      "the refusal does not explain itself: %s" % refusal_text(reply))
+                print("PASS Godot_FindRuntimeNodes addresses nodes by class and refuses a misspelt one")
+
+                # The tree itself now carries the paths, so nothing has to rebuild them
+                # from an indented list to use the rest of the interface.
+                reply = call({"jsonrpc": "2.0", "id": 1257, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeSceneTree",
+                                         "arguments": {"max_depth": 3}}})
+                treer = reply["result"]["structuredContent"]
+                check(all(n["path"].startswith("/root") for n in treer["nodes"]),
+                      "a runtime tree node has no absolute path: %r" % treer["nodes"][:3])
+                print("PASS Godot_GetRuntimeSceneTree carries the path each node is addressed by")
+
                 # --- the full profiler: start, drive, stop, read the export -------
                 # Godot_ProfileWindow answers "how slow"; the capture answers "why".
                 # The window is explicit because the point is to drive the game while
