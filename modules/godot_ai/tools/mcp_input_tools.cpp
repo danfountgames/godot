@@ -838,6 +838,56 @@ void mcp_register_input_tools() {
 				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties), 60.0))));
 	}
 
+	{
+		Dictionary properties;
+		properties["path"] = MCPSchema::string_property(
+				"Node path in the running game, such as /root/Main/Player.");
+		properties["property"] = MCPSchema::string_property(
+				"Property to record, such as position or linear_velocity.");
+		properties["frames"] = MCPSchema::integer_property(
+				"How many samples to take. At 60Hz, 120 is two seconds.", 120);
+		properties["every_n_frames"] = MCPSchema::integer_property(
+				"Sample every N frames. 1 is every frame.", 1);
+		Vector<String> clocks;
+		clocks.push_back("physics");
+		clocks.push_back("process");
+		properties["clock"] = MCPSchema::enum_property(
+				"Which clock to sample on. Physics for anything a body does - a shot, a jump "
+				"arc, a collision chain. Process for anything visual - a tween, a fade, a "
+				"camera move.",
+				clocks, "physics");
+		Vector<String> components;
+		components.push_back("x");
+		components.push_back("y");
+		components.push_back("z");
+		components.push_back("length");
+		properties["component"] = MCPSchema::enum_property(
+				"For a vector property, which number to record. 'length' is how fast something "
+				"is going, which is usually the question. Without this a Vector2 series comes "
+				"back as text and is much harder to read.",
+				components, "");
+		Vector<String> required;
+		required.push_back("path");
+		required.push_back("property");
+		registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+				"Godot_RecordRuntimeSeries", "record_series",
+				"Record one property of a running node every frame for a window, and return the "
+				"whole window in one reply. Start it, then do the thing you want to watch.\n\n"
+				"Use this rather than a loop of Godot_GetRuntimeProperty for anything that moves. "
+				"Reading from out here is not sampling: every read is a round trip, so a handful "
+				"of them span seconds while the thing being watched is usually over in less, and "
+				"they land on different frames from each other. Building a game with these tools, "
+				"a 0.6-second shot came back as three samples of a movement that had already "
+				"finished, and the resulting table looked exactly like a physics bug. The game is "
+				"the only thing running at frame rate, so the game does the sampling.\n\n"
+				"The reply carries the values as a packed array with the first and last frame and "
+				"the interval, so the timeline is reconstructable. Numbers stay numbers; one "
+				"non-numeric sample makes the whole window text. Frames where the node or "
+				"property could not be read are counted in `missing` rather than dropped, "
+				"because a hole in a series is invisible and a count is not.",
+				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties, required), 90.0))));
+	}
+
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetTimeScale", "time_scale",
 			"Speed up or slow down the running game, for walking a long route without waiting "

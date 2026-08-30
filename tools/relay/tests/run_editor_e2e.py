@@ -2874,6 +2874,52 @@ def run(editor_binary, display):
                       "the failing verdict does not name the worst frame: %r" % strict)
                 print("PASS Godot_ProfileWindow judges the worst frame against a budget")
 
+                # --- recording one property every frame ---------------------------
+                # The reason this tool exists: a read from out here is a round trip, so
+                # a handful of them span seconds and land on unrelated frames. The game
+                # is the only thing running at frame rate.
+                reply = call({"jsonrpc": "2.0", "id": 1250, "method": "tools/call",
+                              "params": {"name": "Godot_RecordRuntimeSeries",
+                                         "arguments": {"path": "/root/Main", "property": "process_priority",
+                                                       "frames": 30, "clock": "physics"}}})
+                check(reply["result"]["isError"] is False,
+                      "recording a series failed: %s" % refusal_text(reply))
+                seriesr = reply["result"]["structuredContent"]
+                check(seriesr["samples"] == 30, "wrong sample count: %r" % seriesr)
+                check(seriesr["missing"] == 0, "a readable property reported missing samples: %r" % seriesr)
+                check(seriesr["numeric"] is True, "an int property came back as text: %r" % seriesr)
+                check(seriesr["clock"] == "physics", "the wrong clock was used: %r" % seriesr)
+                # Consecutive frames, in order. A series whose frames are not contiguous
+                # is not a timeline, and the interval is the only thing that says so.
+                check(seriesr["last_frame"] - seriesr["first_frame"] == 29,
+                      "30 samples at every frame did not span 30 frames: %r" % seriesr)
+                check(len(seriesr["values"]) == 30, "values do not match the sample count: %r" % seriesr)
+                print("PASS Godot_RecordRuntimeSeries records %d physics frames in one call"
+                      % seriesr["samples"])
+
+                # Every other frame, and a node that is not there. The second is the one
+                # worth checking: a hole in a series is invisible, so it has to be counted.
+                reply = call({"jsonrpc": "2.0", "id": 1251, "method": "tools/call",
+                              "params": {"name": "Godot_RecordRuntimeSeries",
+                                         "arguments": {"path": "/root/Main", "property": "process_priority",
+                                                       "frames": 10, "every_n_frames": 3,
+                                                       "clock": "process"}}})
+                spaced = reply["result"]["structuredContent"]
+                check(spaced["interval_frames"] == 3, "the interval was ignored: %r" % spaced)
+                check(spaced["last_frame"] - spaced["first_frame"] == 27,
+                      "10 samples every 3rd frame did not span 28 frames: %r" % spaced)
+                check(spaced["clock"] == "process", "the process clock was not honoured: %r" % spaced)
+
+                reply = call({"jsonrpc": "2.0", "id": 1252, "method": "tools/call",
+                              "params": {"name": "Godot_RecordRuntimeSeries",
+                                         "arguments": {"path": "/root/Main/NoSuchNode",
+                                                       "property": "process_priority",
+                                                       "frames": 5}}})
+                absent = reply["result"]["structuredContent"]
+                check(absent["missing"] == 5,
+                      "a node that does not exist did not report missing samples: %r" % absent)
+                print("PASS Godot_RecordRuntimeSeries honours the interval and counts what it could not read")
+
                 # --- the full profiler: start, drive, stop, read the export -------
                 # Godot_ProfileWindow answers "how slow"; the capture answers "why".
                 # The window is explicit because the point is to drive the game while

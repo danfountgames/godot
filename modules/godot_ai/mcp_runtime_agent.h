@@ -127,6 +127,42 @@ class MCPRuntimeWatcher : public Object {
 		HashMap<String, Array> peak_players;
 	};
 
+	// One property, every frame, for a window.
+	//
+	// This exists because reading a running game from outside is not sampling it. Every
+	// Godot_GetRuntimeProperty is a round trip, and through the relay's one-shot mode it
+	// is also a process launch and a handshake - about half a second. Six reads therefore
+	// span three seconds, and the thing being watched is usually over in less: building a
+	// game with this, the first shot lasted 0.6s and the three samples that came back
+	// described a movement that had already finished. Even batched over one connection
+	// the six replies came back stamped with frames 18872 to 18887.
+	//
+	// The game is the only thing running at frame rate, so the game does the sampling and
+	// the whole window comes back in one reply.
+	struct Series {
+		String request_id;
+		String path;
+		String property;
+		int remaining = 0;
+		int interval_frames = 1;
+		int countdown = 0;
+		// Physics by default. A shot, a jump arc and a collision chain all happen on the
+		// physics clock, and sampling them on the process clock adds a beat of jitter to
+		// every reading for no reason. Anything visual - a tween, a fade, a camera - is
+		// the other way round.
+		bool physics = true;
+		// "x", "y", "z" or "length" when the property is a vector. Without it a Vector2
+		// series comes back as a hundred and fifty strings, and the commonest question
+		// asked of a moving body - how fast is it - needs a number.
+		String component;
+		int first_frame = 0;
+		int last_frame = 0;
+		int missing = 0;
+		bool numeric = true;
+		Vector<double> values;
+		Vector<String> texts;
+	};
+
 	// A gesture is more than one event, and **the frames between them are part of it.**
 	//
 	// Delivering press+release, or a drag's whole sweep, inside one frame is not a faster
@@ -170,6 +206,7 @@ class MCPRuntimeWatcher : public Object {
 	Vector<Profile> profiles;
 	Vector<SceneTest> scene_tests;
 	Vector<AudioWindow> audio_windows;
+	Vector<Series> series;
 	Vector<Gesture> gestures;
 
 	static MCPRuntimeWatcher *singleton;
@@ -193,11 +230,24 @@ public:
 	void add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms);
 	void add_scene_test(const String &p_request_id, double p_timeout_seconds);
 	void add_audio_window(const String &p_request_id, int p_frames);
+	// Records one property every p_interval_frames for p_frames samples, then answers
+	// once with the whole window. See Series for why this belongs in the game.
+	void add_series(const String &p_request_id, const String &p_path, const String &p_property,
+			int p_frames, int p_interval_frames, bool p_physics, const String &p_component);
 	// Queues a gesture for frame-paced delivery. `p_result` is echoed back when the last
 	// event has been delivered, with the frames it spanned added.
 	void add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,
 			const Dictionary &p_result, int p_frames_per_step);
 	void on_frame();
+	// Series recorded on the physics clock. Nothing else needs this hook, so it does
+	// nothing else - keeping the per-physics-step cost at one loop over an empty
+	// vector when nobody is recording.
+	void on_physics_frame();
+
+private:
+	void _advance_series(bool p_physics);
+
+public:
 };
 
 class MCPRuntimeAgent {

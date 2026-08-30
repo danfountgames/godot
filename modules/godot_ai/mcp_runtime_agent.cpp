@@ -229,6 +229,10 @@ void MCPRuntimeWatcher::create() {
 	singleton = memnew(MCPRuntimeWatcher);
 	// Checked once a frame, which is the finest granularity the game itself has.
 	tree->connect("process_frame", callable_mp(singleton, &MCPRuntimeWatcher::on_frame));
+	// Physics too, for series recorded on that clock. A shot, a jump arc and a collision
+	// chain all happen here, and sampling them from process frames adds a beat of jitter
+	// to every reading.
+	tree->connect("physics_frame", callable_mp(singleton, &MCPRuntimeWatcher::on_physics_frame));
 }
 
 void MCPRuntimeWatcher::destroy() {
@@ -237,6 +241,7 @@ void MCPRuntimeWatcher::destroy() {
 	}
 	if (SceneTree::get_singleton()) {
 		SceneTree::get_singleton()->disconnect("process_frame", callable_mp(singleton, &MCPRuntimeWatcher::on_frame));
+		SceneTree::get_singleton()->disconnect("physics_frame", callable_mp(singleton, &MCPRuntimeWatcher::on_physics_frame));
 	}
 	memdelete(singleton);
 	singleton = nullptr;
@@ -277,6 +282,155 @@ void MCPRuntimeWatcher::add_audio_window(const String &p_request_id, int p_frame
 	window.request_id = p_request_id;
 	window.remaining = p_frames;
 	audio_windows.push_back(window);
+}
+
+void MCPRuntimeWatcher::add_series(const String &p_request_id, const String &p_path,
+		const String &p_property, int p_frames, int p_interval_frames, bool p_physics,
+		const String &p_component) {
+	Series recording;
+	recording.request_id = p_request_id;
+	recording.path = p_path;
+	recording.property = p_property;
+	recording.remaining = p_frames;
+	recording.interval_frames = MAX(1, p_interval_frames);
+	recording.physics = p_physics;
+	recording.component = p_component;
+	recording.first_frame = -1;
+	series.push_back(recording);
+}
+
+// Services every series on one clock. Split out rather than duplicated because the two
+// hooks differ only in which frame counter stamps the samples.
+void MCPRuntimeWatcher::_advance_series(bool p_physics) {
+	if (series.is_empty()) {
+		return;
+	}
+	SceneTree *tree = SceneTree::get_singleton();
+	Node *root = tree ? tree->get_root() : nullptr;
+	const int frame = p_physics
+			? (int)Engine::get_singleton()->get_physics_frames()
+			: (int)Engine::get_singleton()->get_process_frames();
+
+	for (int i = series.size() - 1; i >= 0; i--) {
+		Series &recording = series.write[i];
+		if (recording.physics != p_physics) {
+			continue;
+		}
+		if (recording.countdown > 0) {
+			recording.countdown--;
+			continue;
+		}
+		recording.countdown = recording.interval_frames - 1;
+
+		Node *node = root ? root->get_node_or_null(NodePath(recording.path)) : nullptr;
+		bool valid = false;
+		Variant value;
+		if (node) {
+			value = node->get(recording.property, &valid);
+		}
+		if (!valid) {
+			// A node that has not spawned yet, or has been freed mid-window, is a fact
+			// about the game rather than a reason to abandon the recording - and one
+			// that a hole in the series would hide. Counted, and the sample is a zero
+			// that the count explains.
+			recording.missing++;
+		}
+		if (recording.first_frame < 0) {
+			recording.first_frame = frame;
+		}
+		recording.last_frame = frame;
+
+		// A component asked for on a vector turns the whole series numeric, which is the
+		// difference between a readable answer and a wall of "(-117.19, -359.15)".
+		if (valid && !recording.component.is_empty()) {
+			double picked = 0.0;
+			bool picked_ok = true;
+			if (value.get_type() == Variant::VECTOR2) {
+				const Vector2 v = value;
+				if (recording.component == "x") {
+					picked = v.x;
+				} else if (recording.component == "y") {
+					picked = v.y;
+				} else if (recording.component == "length") {
+					picked = v.length();
+				} else {
+					picked_ok = false;
+				}
+			} else if (value.get_type() == Variant::VECTOR3) {
+				const Vector3 v = value;
+				if (recording.component == "x") {
+					picked = v.x;
+				} else if (recording.component == "y") {
+					picked = v.y;
+				} else if (recording.component == "z") {
+					picked = v.z;
+				} else if (recording.component == "length") {
+					picked = v.length();
+				} else {
+					picked_ok = false;
+				}
+			} else {
+				picked_ok = false;
+			}
+			if (picked_ok) {
+				value = picked;
+			}
+		}
+
+		const Variant::Type type = value.get_type();
+		if (valid && (type == Variant::FLOAT || type == Variant::INT || type == Variant::BOOL)) {
+			recording.values.push_back((double)value);
+		} else {
+			// One non-numeric sample makes the whole window textual: a series that is
+			// half an array of numbers and half strings is worse to read than either.
+			if (valid) {
+				recording.numeric = false;
+			}
+			recording.values.push_back(0.0);
+		}
+		recording.texts.push_back(valid ? String(value) : String());
+
+		recording.remaining--;
+		if (recording.remaining > 0) {
+			continue;
+		}
+
+		Dictionary result;
+		result["path"] = recording.path;
+		result["property"] = recording.property;
+		result["clock"] = recording.physics ? "physics" : "process";
+		result["first_frame"] = recording.first_frame;
+		result["last_frame"] = recording.last_frame;
+		result["interval_frames"] = recording.interval_frames;
+		if (!recording.component.is_empty()) {
+			result["component"] = recording.component;
+		}
+		result["samples"] = recording.values.size();
+		result["missing"] = recording.missing;
+		result["numeric"] = recording.numeric;
+		if (recording.numeric) {
+			PackedFloat64Array numbers;
+			numbers.resize(recording.values.size());
+			for (int v = 0; v < recording.values.size(); v++) {
+				numbers.write[v] = recording.values[v];
+			}
+			result["values"] = numbers;
+		} else {
+			PackedStringArray strings;
+			strings.resize(recording.texts.size());
+			for (int v = 0; v < recording.texts.size(); v++) {
+				strings.write[v] = recording.texts[v];
+			}
+			result["values"] = strings;
+		}
+		const String request_id = recording.request_id;
+		series.remove_at(i);
+		MCPRuntimeAgent::reply(request_id, result);
+	}
+}
+
+void MCPRuntimeWatcher::on_physics_frame() {
+	_advance_series(true);
 }
 
 void MCPRuntimeWatcher::add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,
@@ -371,6 +525,8 @@ void MCPRuntimeWatcher::on_frame() {
 		}
 		frame_samples.push_back(sample);
 	}
+
+	_advance_series(false);
 
 	// Gestures first: an event delivered this frame should be seen by the same frame's
 	// _process, and by anything else in this loop that is watching for its effect.
@@ -721,6 +877,40 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 			const double budget = arguments.has("budget_frame_ms") ? (double)arguments["budget_frame_ms"] : 0.0;
 			watcher->add_profile(request_id, frames, budget);
 		}
+		return OK;
+	}
+
+	if (command == "record_series") {
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		const String path = arguments.has("path") ? String(arguments["path"]) : String();
+		const String property = arguments.has("property") ? String(arguments["property"]) : String();
+		if (!watcher || path.is_empty() || property.is_empty()) {
+			_fail(request_id, "recording a series needs a node path and a property name");
+			return OK;
+		}
+		const int frames = arguments.has("frames") ? (int)arguments["frames"] : 120;
+		if (frames < 1 || frames > 1800) {
+			_fail(request_id, "record between 1 and 1800 samples");
+			return OK;
+		}
+		const int interval = arguments.has("every_n_frames") ? (int)arguments["every_n_frames"] : 1;
+		if (interval < 1 || interval > 60) {
+			_fail(request_id, "sample every 1 to 60 frames");
+			return OK;
+		}
+		const String clock = arguments.has("clock") ? String(arguments["clock"]) : String("physics");
+		if (clock != "physics" && clock != "process") {
+			_fail(request_id, "clock is 'physics' or 'process'");
+			return OK;
+		}
+		const String component = arguments.has("component") ? String(arguments["component"]) : String();
+		if (!component.is_empty() && component != "x" && component != "y" && component != "z" &&
+				component != "length") {
+			_fail(request_id, "component is 'x', 'y', 'z' or 'length'");
+			return OK;
+		}
+		watcher->add_series(request_id, path, property, frames, interval, clock == "physics", component);
 		return OK;
 	}
 

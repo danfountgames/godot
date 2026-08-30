@@ -70,17 +70,46 @@ looked like a physics bug and was actually an artefact of the sampling. Hours co
 into that. `--batch` collapses six reads to 0.24s, which is a twelvefold improvement and
 still not a snapshot — the six replies came back stamped with frames 18872 through 18887.
 
-The answer is that **the game has to instrument itself**. POOL keeps a
-`PackedFloat32Array` of the active ring's speed per physics frame and the whole flight is
-then one read. Once that existed, everything became legible at once: the glide decay, the
-exact frame of each merge, the wallow, and the grab.
+The answer is that **the sampling has to happen inside the game**. POOL solved it for
+itself by keeping a `PackedFloat32Array` of the active ring's speed per physics frame, and
+once that existed everything became legible at once: the glide decay, the exact frame of
+each merge, the wallow, and the grab.
 
-That is a real design constraint of driving a game through a protocol, and nothing in the
-tooling said so. Two things changed as a result: `Godot_GetRuntimeProperty` now says it in
-its own description and returns the frame it read on, and `--batch`'s help text says it is
-the only way to read several properties close enough together to mean anything. Neither
-removes the constraint. A future `Godot_RecordRuntimeSeries` — name the node, the
-property and the rate, let the game buffer it, collect it later — would.
+But every game worth measuring would have to write that, and it is not the game's job.
+**`Godot_RecordRuntimeSeries` now does it for any of them.** Name a node, a property, a
+frame count and a clock; the game records it and the whole window comes back in one reply.
+The same shot, with no game-side instrumentation at all:
+
+```
+$ Godot_RecordRuntimeSeries path=/root/Main/Rings/Ring13 property=linear_velocity
+                            component=length frames=160 clock=physics
+
+{clock: physics, first_frame: 351, last_frame: 510, samples: 160, missing: 0, numeric: true}
+
+  f+ 32     0    0    0    0    0    0    0    0    0  378  376  373  371  369  367  365
+  f+ 64   330  328  326  324  323  321  319  317  315  313  311  310  308   47  164  163
+  f+ 96   147  147  146  145  144  143  142  142  141  140   66   92   91   91   90   90
+  f+112    89   89   88   88   87   87   86   84   73   67   62   58   53   49   46   42
+  f+128    39   36   33   31   29   26   24   23   21   19   18   17   15   14   13   12
+  f+144    11   10   10    9    8    8    7    7    6    6    5    0    0    0    0    0
+```
+
+Four details are there because of what this exercise cost:
+
+- **The clock is a choice, defaulting to physics.** A shot, a jump arc and a collision
+  chain all happen on the physics step; sampling them from process frames adds a beat of
+  jitter to every reading. Anything visual is the other way round.
+- **`component` picks one number out of a vector.** Without it a `Vector2` window came
+  back as a hundred and sixty strings, and "how fast is it going" is the commonest
+  question anyone asks of a moving body.
+- **Unreadable frames are counted, not dropped.** A node that has not spawned yet, or has
+  been freed mid-window, leaves `missing: 5` rather than a hole — because a hole in a
+  series is invisible and a count is not.
+- **The reply carries the first frame, the last, and the interval,** so the timeline is
+  reconstructable rather than being a bag of numbers.
+
+`Godot_GetRuntimeProperty` also now says in its own description that reads are not
+snapshots, and `--batch`'s help says what batching is actually for.
 
 ### 2. Nothing in the game was addressable
 
@@ -142,13 +171,12 @@ transfer.
   what to do instead.
 - The relay's `--batch` help text is no longer interleaved with `--continue-on-error`'s,
   and says what batching is actually for.
+- **`Godot_RecordRuntimeSeries` is new**, and is the largest of the four: it removes the
+  reason every game driven this way would have had to instrument itself.
 
 ## What should change next, in order
 
-1. **`Godot_RecordRuntimeSeries`.** Name a node, a property and a rate; the game buffers
-   it; collect the buffer in one call. This is the single largest gap, and every game
-   worth measuring will otherwise reimplement it.
-2. **Address a runtime node without a stable name.** By class and index, or by position.
-3. **Reload a script the editor has open**, so promotion works after a rewrite.
-4. **A worked example in the skills** that says the game must instrument itself, because
+1. **Address a runtime node without a stable name.** By class and index, or by position.
+2. **Reload a script the editor has open**, so promotion works after a rewrite.
+3. **A worked example in the skills** that says the game must instrument itself, because
    an agent that has not hit this will spend its first hour sampling from outside.
