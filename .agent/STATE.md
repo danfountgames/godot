@@ -231,6 +231,53 @@ into the editor over MCP sampling — and then whatever the benchmarks say is we
 Build-order items 4 (bug capture), 5 (promotion and the tuning workspace) and the D1/D2
 half of the design conversation are all done and listed above.
 
+S-22 (in progress): **POOL, and using the tooling on a game design rather than on the
+tooling.** `demos/pool/` is a breakout game built end to end through the MCP interface,
+and it is now the sharpest test this repository has of whether the closed loop is real —
+because the loop being exercised is *design* feedback, not bug fixing.
+
+The method that works, and it is the point of the whole branch: spawn agents that did not
+build the game, hand each one a running editor and one design question, and act on what
+they measure. Two reports have landed and both were acted on in full (commit
+`e2b61a9e04`).
+
+- **Pacing.** Median board 161s with **71% of all board time containing no scoring
+  event**; the final quarter took 5.7x the first; one board ran 210 consecutive seconds
+  with nothing happening. The grid was also a hard cap — the layout truncated its plan to
+  the number of slots, so no export could put more than 28 rings on a board, and
+  over-specifying one count *silently deleted every other ring type*. Fixed by draining
+  the pool in the tail, a 9x6 grid, and trimming that takes rings off the crowd rather
+  than off the specials. Measured after, six boards: median **81s**, dead time **16%**.
+- **The meter.** Full at 7.8s and at maximum for 95% of a board; the Party Wave refunded
+  96 of its 100 within 1.6s by hoovering up the Likes from the rings it had just killed,
+  so a board could be cleared in 9.6s by pressing it repeatedly. Fixed by a smaller charge
+  per Like and a three-second lockout after a wave. Measured after: at maximum **0%** of
+  every board, shields granted 4-7 and refused 10-22 — the two costs compete now.
+- **The current.** Pull had no cost and push had no upside. The lounger collided with
+  nothing, so a ring dragged down passed through it and out of the pool, deleted *and
+  counted as cleared*; rings shouldered each other and nothing ever damaged anything, so
+  45 seconds of held push destroyed nothing while taking the catch window from 74px to
+  zero. Both are now what the README always claimed they were.
+
+**Two defects that acting on those reports uncovered**, neither of which either agent was
+looking for:
+
+- **Threading was decorative.** Godot pairs two bodies when *either* mask holds the
+  other's layer (`modules/godot_physics_2d/godot_collision_object_2d.h:198`), and the
+  targets shared the walls' layer — so the solver bounced the striker off every rim
+  regardless of what the ring's sensor had decided. A thread scored, raised the
+  multiplier, and the ball clipped anyway. The rule the game is named after had been
+  cosmetic since the sensor rebuild.
+- **The striker could orbit.** One measured board ran 200 seconds and destroyed 18 of 44
+  rings with the ball skimming the top of the pool. That is also the mechanism behind the
+  494-repeat-thread, 15,454-point exploit the second agent found. A minimum vertical
+  component removes the orbit; a ring can now only be threaded once per trip.
+
+The known gap, recorded rather than tuned away: **nothing in POOL can kill you.** A
+perfect-tracking bot lost zero strikers over six boards and four of sixty over an earlier
+twenty. Whether the board needs real danger or only a player worse than a bot is the next
+thing to find out, and it needs a human or a deliberately worse bot.
+
 ## A silent failure that predated everything
 
 Building the tuning workspace's discard path turned up a defect older than any of this
@@ -517,8 +564,13 @@ Both cost real time here, and both look like product bugs until measured properl
 
 ## Last completed command
 
-`python3 .agent/evidence/spike_agent_terminal_panel.py` — all checks passed, with a
-screenshot of a live shell running inside the editor's Agent Terminal panel.
+Six boards of POOL played through the relay against the edited scripts, with the pacing
+and meter numbers above. The harness is in the session scratchpad (`measure.py`), not the
+repository: it is a measuring instrument for one design question, and
+`demos/pool/verify_first_playable.py` is the committed check.
+
+Before that: `python3 .agent/evidence/spike_agent_terminal_panel.py` — all checks passed,
+with a screenshot of a live shell running inside the editor's Agent Terminal panel.
 
 ## Next command
 

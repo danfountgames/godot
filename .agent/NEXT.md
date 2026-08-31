@@ -246,6 +246,36 @@ there were none to start from. Whether the skills *lead* - the thing the design 
 is unmeasured, and is now measurable. Re-running these three against a build that ships
 them is the obvious next experiment, and `tools/benchmarks/fanout.py` provisions it.
 
+## Agents playtesting a game *design*, 2026-08-30/31
+
+The three-agent run above handed out engineering tasks. The next two handed out **design
+questions** — "does this board's pacing hold up over a session", "is the current worth
+holding, or is one of pull and push simply better" — and that turns out to be the sharper
+use of the whole branch. Both agents came back with numbers nobody had thought to collect,
+and acting on them (commit `e2b61a9e04`) halved POOL's board length and cut its dead time
+from 71% to 16%. The detail is in `.agent/STATE.md` under S-22.
+
+What that method needs, in the order it cost time:
+
+1. **A readout for "is anything happening".** Both agents had to reconstruct pacing from
+   discontinuities in counters, because nothing reported events over time. The game now
+   publishes `quiet_seconds`, which is the whole measurement; the general version of this
+   is item 8 in the list above — a physics-contact timeline — and this is the second
+   independent report to ask for it.
+2. **A worse player.** Every measurement here was taken by a bot that tracks the ball
+   perfectly, so it lost zero strikers over six boards and could say nothing at all about
+   danger, difficulty, or whether the loss condition exists. A playtest harness that can
+   be told how good to be is worth more than another tool.
+3. **Don't trust a stated design.** Every line of POOL's own pull/push table was false in
+   the build, and the README had asserted all of it for weeks. The agents found that by
+   trying to *use* each verb and measuring the result. That is the behaviour to make
+   routine — a skill, not a lucky prompt.
+
+One thing to be careful about, because it nearly produced a wrong fix: an agent's report
+can be right about the measurement and stale about the cause. Both of these reports
+diagnosed the multiplier as dead, which was true when they started and had been fixed
+before they finished. Check a finding against the tree before acting on it.
+
 ## Two replay levels
 
 Do not promise "deterministic replay". Raw input is one source of state among many —
