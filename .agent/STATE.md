@@ -589,9 +589,15 @@ Both cost real time here, and both look like product bugs until measured properl
 ## Last completed command
 
 Six boards of POOL played through the relay against the edited scripts, with the pacing
-and meter numbers above. The harness is in the session scratchpad (`measure.py`), not the
-repository: it is a measuring instrument for one design question, and
-`demos/pool/verify_first_playable.py` is the committed check.
+and meter numbers above, through `demos/pool/playtest.py` — which is now committed, and
+is the instrument every design number in `demos/pool/README.md` came out of. Its three
+docstring rules are the method, not decoration: ask the game what state it is in rather
+than keeping your own copy, play badly on purpose, and measure the gaps rather than the
+totals.
+
+`demos/pool/verify_first_playable.py`, which `CLAUDE.md` and `AGENTS.md` both listed as a
+canonical command, **did not exist** — it went in the breakout rebuild and nothing noticed
+because nobody ran it. Both now point at `playtest.py`.
 
 Before that: `python3 .agent/evidence/spike_agent_terminal_panel.py` — all checks passed,
 with a screenshot of a live shell running inside the editor's Agent Terminal panel.

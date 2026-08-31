@@ -97,9 +97,10 @@ python3 tools/tests/run_tests.py
 # Do the shipped skills name tools that exist? (fast loop, no engine build)
 python3 tools/skills/check_skills.py
 
-# POOL's acceptance test. Needs an editor open on demos/pool with the game playing;
-# every assertion in it is about behaviour that only exists while it runs.
-python3 demos/pool/verify_first_playable.py
+# POOL, played and measured. Needs an editor open on demos/pool; it starts the game
+# itself. The last argument is how good the player is - a bot that never misses cannot
+# tell you anything about difficulty, so measure with `ok` or `poor` as well as `bot`.
+python3 demos/pool/playtest.py 5 hoard ok
 
 # Hand the interface to agents that did not build it: an editor and a project copy each.
 python3 tools/benchmarks/fanout.py start --project demos/pool --workers 3

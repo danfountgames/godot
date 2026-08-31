@@ -22,6 +22,7 @@ work here, not an advanced option.
 | `test-an-input-path` | Prove an input reaches what it drives, on every device the game claims to support |
 | `scene-cleanup` | Tidy a scene by proposing the whole plan first, so the renames are one decision and a delete is its own |
 | `check-a-visual-change` | Capture before and after and compare them, so an edit is shown to change what it meant to and nothing else |
+| `judge-a-design` | Answer a question about how a game *plays* - pacing, whether a verb is worth using, whether a choice is a real choice - with numbers, including how to play badly on purpose and how to catch your own harness lying |
 
 These are also served as **MCP prompts**, so a client surfaces them as named jobs
 rather than leaving them two tool calls deep behind the primitives. Only skills you have

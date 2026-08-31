@@ -75,7 +75,7 @@ python3 tools/relay/tests/run_editor_e2e.py            # whole stack, ~40s
 python3 tools/relay/tests/run_editor_e2e.py --headless # the same, forced without a display
 python3 tools/relay/tests/run_editor_ui_e2e.py         # the editor's own UI, by keyboard and pointer
 python3 tools/relay/tests/run_replay_two_editors.py    # record in one editor, replay in another
-python3 demos/pool/verify_first_playable.py            # the demo game, checked while it runs
+python3 demos/pool/playtest.py 5 hoard ok              # the demo game, played and measured
 python3 tools/benchmarks/fanout.py start --workers 3   # an editor each, for other agents
 ```
 
