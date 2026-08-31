@@ -491,6 +491,69 @@ void MCPRuntimeWatcher::_advance_series(bool p_physics) {
 
 void MCPRuntimeWatcher::on_physics_frame() {
 	_advance_series(true);
+	_advance_steps(true);
+}
+
+bool MCPRuntimeWatcher::add_step(const String &p_request_id, int p_frames, bool p_physics,
+		String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree) {
+		r_error = "the running game has no scene tree";
+		return false;
+	}
+	if (tree->is_suspended()) {
+		r_error = "the game is suspended, and pause cannot be set while it is";
+		return false;
+	}
+	Step step;
+	step.request_id = p_request_id;
+	step.remaining = p_frames;
+	step.physics = p_physics;
+	steps.push_back(step);
+	// Let it run. _advance_steps stops it again, which is the only place that happens:
+	// unpausing here and pausing there keeps the whole rule in one pair of functions.
+	tree->set_pause(false);
+	return true;
+}
+
+// One step's countdown, run on whichever clock it asked for.
+//
+// Nothing here is conditional on the game being paused first. Stepping an unpaused game
+// is a legitimate way to say "run exactly this many more frames and then stop", and it is
+// how a caller freezes a game at a moment of interest without having had the foresight to
+// pause before it.
+void MCPRuntimeWatcher::_advance_steps(bool p_physics) {
+	if (steps.is_empty()) {
+		return;
+	}
+	SceneTree *tree = SceneTree::get_singleton();
+	for (int i = steps.size() - 1; i >= 0; i--) {
+		Step &step = steps.write[i];
+		if (step.physics != p_physics) {
+			continue;
+		}
+		if (step.remaining > 0) {
+			step.remaining--;
+			step.ran++;
+			continue;
+		}
+		// Countdown spent. Pausing now, before this iteration reaches
+		// PhysicsServer::step(), is what makes the frame count exact - see Step.
+		if (tree && !tree->is_suspended()) {
+			tree->set_pause(true);
+		}
+		Dictionary result;
+		result["paused"] = tree ? tree->is_paused() : false;
+		// Frames simulated, which is the only number a caller can reason with.
+		result["frames"] = step.ran;
+		result["clock"] = step.physics ? "physics" : "process";
+		// An identifier for *when* this stopped, not a duration. See Step: differencing
+		// this across a pause measures how long the caller took, not what the game did.
+		result["physics_frame"] = (int64_t)Engine::get_singleton()->get_physics_frames();
+		const String request_id = step.request_id;
+		steps.remove_at(i);
+		MCPRuntimeAgent::reply(request_id, result);
+	}
 }
 
 void MCPRuntimeWatcher::add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,
@@ -570,6 +633,7 @@ Array MCPRuntimeWatcher::get_frame_times() const {
 }
 
 void MCPRuntimeWatcher::on_frame() {
+	_advance_steps(false);
 	// The frame's own cost, before anything below spends any of it. Recorded
 	// unconditionally: a spike is only visible against the frames around it, so there is
 	// nothing to arm and nothing to remember to arm.
@@ -1023,6 +1087,30 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 		return OK;
 	}
 
+	if (command == "step_frames") {
+		MCPRuntimeWatcher::create();
+		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
+		if (!watcher) {
+			_fail(request_id, "the running game cannot schedule frame work");
+			return OK;
+		}
+		const int frames = arguments.has("frames") ? (int)arguments["frames"] : 1;
+		if (frames < 1 || frames > 600) {
+			_fail(request_id, "step between 1 and 600 frames");
+			return OK;
+		}
+		const String clock = arguments.has("clock") ? String(arguments["clock"]) : String("physics");
+		if (clock != "physics" && clock != "process") {
+			_fail(request_id, "clock is 'physics' or 'process'");
+			return OK;
+		}
+		String error;
+		if (!watcher->add_step(request_id, frames, clock == "physics", error)) {
+			_fail(request_id, error);
+		}
+		return OK;
+	}
+
 	if (command == "audio_window") {
 		MCPRuntimeWatcher::create();
 		MCPRuntimeWatcher *watcher = MCPRuntimeWatcher::get_singleton();
@@ -1253,6 +1341,9 @@ Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p
 	}
 	if (p_command == "audio_state") {
 		return _audio_state(p_arguments, r_error);
+	}
+	if (p_command == "pause") {
+		return _pause(p_arguments, r_error);
 	}
 	r_error = vformat("unknown runtime command '%s'", p_command);
 	return Dictionary();
@@ -1690,6 +1781,39 @@ Dictionary MCPRuntimeAgent::_time_scale(const Dictionary &p_arguments, String &r
 	// exactly the kind this would hide.
 	result["note"] = "time scale changes how the game runs; do not use it during a playtest "
 					 "or a timing measurement";
+	return result;
+}
+
+Dictionary MCPRuntimeAgent::_pause(const Dictionary &p_arguments, String &r_error) {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree) {
+		r_error = "the running game has no scene tree";
+		return Dictionary();
+	}
+	// `has`-guarded rather than read through operator[]: on a const Dictionary that
+	// inserts a null for a missing key, and the call is then rejected by the schema as
+	// wrongly typed. Omitting `paused` is how a caller asks without changing anything.
+	if (p_arguments.has("paused")) {
+		if (tree->is_suspended()) {
+			r_error = "the game is suspended, and pause cannot be set while it is";
+			return Dictionary();
+		}
+		tree->set_pause((bool)p_arguments["paused"]);
+	}
+
+	Dictionary result;
+	result["paused"] = tree->is_paused();
+	result["physics_frame"] = (int64_t)Engine::get_singleton()->get_physics_frames();
+	result["process_frame"] = (int64_t)Engine::get_singleton()->get_process_frames();
+	if (tree->is_paused()) {
+		// Said out loud because it is the one thing that makes a paused reading wrong.
+		// Pause stops the physics servers and the _process/_physics_process callbacks of
+		// nodes that inherit it; a node whose process_mode is Always keeps running, by
+		// design, and that is usually the pause menu, but in an agent-driven game it can
+		// just as easily be the thing being measured.
+		result["note"] = "physics is stopped and inherited process callbacks are not called; "
+						 "nodes with process_mode Always keep running";
+	}
 	return result;
 }
 

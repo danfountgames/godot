@@ -10,6 +10,8 @@ tools:
   - Godot_FindRuntimeNodes
   - Godot_GetRuntimeProperty
   - Godot_SetRuntimeProperty
+  - Godot_PauseRuntime
+  - Godot_StepRuntimeFrames
   - Godot_RecordRuntimeSeries
   - Godot_WaitForRuntimeCondition
   - Godot_CaptureGame
@@ -63,6 +65,19 @@ statement about where the player wants the paddle, which is the thing you actual
 
 Batch your reads. One property read is a round trip; a control loop needs several a
 second, so send them together and read the replies together rather than in series.
+
+**Pause whenever the answer has to be exact.** A running game moves tens of frames
+between two of your calls, so a screenshot, a property and a scene tree fetched in three
+calls describe three different moments, and a value you set is read back after the world
+has moved on. `Godot_PauseRuntime` stops it; `Godot_StepRuntimeFrames` advances a known
+number of frames and stops it again. That turns "set this, then something happened" into
+"set this, step one frame, and exactly this happened" — which is the difference between a
+correlation and a cause. Two agents lost a measurement each for want of it before it
+existed.
+
+Do not use `Godot_SetTimeScale` for this. A zero scale is not a pause, it is a game
+running with a zero delta, and any raised scale changes the physics rather than merely
+the pace.
 
 ## 3. Ask the game what state it is in. Never keep your own copy
 

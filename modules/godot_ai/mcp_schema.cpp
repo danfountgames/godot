@@ -148,7 +148,19 @@ bool MCPSchema::_validate_value(const Variant &p_value, const Dictionary &p_sche
 			for (int i = 0; i < required.size(); i++) {
 				const String key = required[i];
 				if (!value.has(key)) {
-					r_error = vformat("missing required argument '%s'", p_path.is_empty() ? key : (p_path + "." + key));
+					// With what the argument is for, not just its name. A caller that has
+					// guessed one name wrong has usually guessed the shape wrong too, and
+					// the description is the cheapest way to correct both without spending
+					// a round trip on fetching the schema.
+					String detail;
+					if (properties.has(key)) {
+						const Dictionary property_schema = properties[key];
+						if (property_schema.has("description")) {
+							detail = vformat(" - %s", String(property_schema["description"]));
+						}
+					}
+					r_error = vformat("missing required argument '%s'%s",
+							p_path.is_empty() ? key : (p_path + "." + key), detail);
 					return false;
 				}
 			}
@@ -162,12 +174,32 @@ bool MCPSchema::_validate_value(const Variant &p_value, const Dictionary &p_sche
 			for (int i = 0; i < keys.size(); i++) {
 				const String key = keys[i];
 				if (!properties.has(key)) {
+					// Argument-name drift is the single most common way a call fails here:
+					// three agents given the same tools lost six to eight calls each to it,
+					// guessing `action` for `operation`, `source` for a field that does not
+					// exist, `name` for `path`. Listing the known names was not enough,
+					// because the caller still has to work out which of eight is the one it
+					// meant. Naming the near miss closes the loop in the refusal itself.
 					String known;
+					String near;
 					const Array property_names = properties.keys();
 					for (int j = 0; j < property_names.size(); j++) {
-						known += (j > 0 ? ", " : "") + String(property_names[j]);
+						const String candidate = property_names[j];
+						known += (j > 0 ? ", " : "") + candidate;
+						// Case-insensitive containment both ways, the same rule the relay's
+						// --describe uses for tool names: 'nodepath' finds 'path', and
+						// 'path' finds 'node_path'.
+						const String a = candidate.to_lower();
+						const String b = key.to_lower();
+						if (a == b || a.contains(b) || (b.length() > 2 && b.contains(a))) {
+							near += (near.is_empty() ? "" : ", ") + candidate;
+						}
 					}
-					r_error = vformat("unknown argument '%s' (known arguments: %s)", key, known.is_empty() ? "none" : known);
+					r_error = vformat("unknown argument '%s'", key);
+					if (!near.is_empty()) {
+						r_error += vformat(". Did you mean: %s", near);
+					}
+					r_error += vformat(" (known arguments: %s)", known.is_empty() ? "none" : known);
 					return false;
 				}
 			}

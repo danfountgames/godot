@@ -9,6 +9,8 @@ tools:
   - Godot_GetRuntimeSceneTree
   - Godot_GetRuntimeProperty
   - Godot_SetRuntimeProperty
+  - Godot_PauseRuntime
+  - Godot_StepRuntimeFrames
   - Godot_PromoteRuntimeValue
   - Godot_SaveScene
   - Godot_PlayMainScene
@@ -141,7 +143,13 @@ that turned out to fight another one.
 - **Do not raise the time scale to measure something physical.** Godot multiplies the
   physics delta by it, so a scene at 5x is a coarser scene, not a faster one. Bodies
   travel further per step and land differently. Every number you take is then about a
-  simulation nobody will play.
+  simulation nobody will play. Lowering it is no better: a zero scale is not a pause, it
+  is a game running with a zero delta. When you want the game to hold still, use
+  `Godot_PauseRuntime`, and `Godot_StepRuntimeFrames` to advance it a known amount.
+- **Do not difference `physics_frame` across a pause to count frames.** The engine's
+  frame counter keeps advancing while the game is paused — only the physics servers and
+  the process callbacks stop — so that subtraction measures how long *you* took. The
+  `frames` field of a step result is the simulated count.
 - **Do not report a number without the run it came from.** "About three seconds" is an
   impression. `crossing_time 2.73` with the series behind it is a measurement.
 - **Do not tune until it passes and stop there.** Check the shape again afterwards: a

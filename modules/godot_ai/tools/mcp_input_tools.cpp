@@ -962,7 +962,12 @@ void mcp_register_input_tools() {
 				"an instance counter: it addresses the node now and will not address it again "
 				"after a restart. Class, name fragment and position all survive one. Give "
 				"near_x and near_y to sort by distance, so the thing closest to where something "
-				"just happened is the first result.",
+				"just happened is the first result.\n\n"
+				"Matches come back under `found` (not `nodes`), each with `path`, `name`, "
+				"`type` and `position`, and `count` says how many. The node named by `under` "
+				"is itself a candidate, and so are child nodes such as collision shapes - so "
+				"give a class_name when you want the bodies rather than everything beneath "
+				"them.",
 				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties)))));
 	}
 
@@ -1000,6 +1005,67 @@ void mcp_register_input_tools() {
 			"animation and input timing all change, and a bug that only appears at normal speed "
 			"is exactly the kind this hides.",
 			MCP_CAP_RUN_PROJECT, time_scale_schema()))));
+
+	{
+		Dictionary properties;
+		properties["paused"] = MCPSchema::bool_property(
+				"true to pause, false to resume. Omit to ask without changing anything.");
+		registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+				"Godot_PauseRuntime", "pause",
+				"Pause or resume the running game, and report which it now is.\n\n"
+				"**Pause before you measure anything you also change.** Set a property on a "
+				"live game and read it back, and you cannot tell whether the physics server "
+				"has seen the write yet, because forty frames went by between your two calls. "
+				"Paused, every read answers about the same instant, and a screenshot, a "
+				"property and a scene tree taken in three separate calls all describe one "
+				"frame. This is the fix for 'the value I set does not seem to have applied'.\n\n"
+				"Pause stops the physics servers and the process callbacks of nodes that "
+				"inherit it. A node whose process_mode is Always keeps running - usually a "
+				"pause menu, but check, because in an agent-driven game it is sometimes the "
+				"thing being measured.\n\n"
+				"Use Godot_StepRuntimeFrames to advance a known number of frames from here. "
+				"Do not reach for Godot_SetTimeScale(0) instead: a zero scale is not a pause, "
+				"it is a game running with a zero delta, and the difference shows up as soon "
+				"as anything integrates.",
+				MCP_CAP_RUN_PROJECT, MCPSchema::object_schema(properties)))));
+	}
+
+	{
+		Dictionary properties;
+		properties["frames"] = MCPSchema::integer_property(
+				"How many frames to run, 1 to 600. One frame is the usual answer.", 1);
+		Vector<String> clocks;
+		clocks.push_back("physics");
+		clocks.push_back("process");
+		properties["clock"] = MCPSchema::enum_property(
+				"Which clock to count. 'physics' for anything that moves, collides or is "
+				"driven from _physics_process; 'process' for a tween, a UI animation or "
+				"anything driven from _process.",
+				clocks, "physics");
+		registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+				"Godot_StepRuntimeFrames", "step_frames",
+				"Run the game exactly N frames and stop it again, then report what ran.\n\n"
+				"This is the tool for cause and effect. Pause, read the state, set a "
+				"property or send an input, step one frame, read it again: the difference is "
+				"attributable to that one thing, which is not true of any measurement taken "
+				"while the game is running freely.\n\n"
+				"The count is exact, not approximate - it re-pauses before the frame after "
+				"the last one is simulated, and `frames` in the result is what actually ran. "
+				"Leaves the game paused when it returns, so a read taken afterwards "
+				"describes precisely the frame it stopped on, and there is no hurry about "
+				"taking it. Step again to go further; Godot_PauseRuntime with paused=false "
+				"hands control back to the game.\n\n"
+				"Do not try to measure elapsed frames yourself by differencing "
+				"`physics_frame` across calls. The engine's frame counter keeps advancing "
+				"while the game is paused - only the physics servers and the process "
+				"callbacks stop - so that subtraction measures how long *you* took, not what "
+				"the game did. `frames` is the simulated count; `physics_frame` is only an "
+				"identifier for when this stopped.\n\n"
+				"Stepping an unpaused game is allowed and means 'run this many more frames "
+				"and then stop', which is how you freeze a moment you did not see coming.",
+				MCP_CAP_RUN_PROJECT,
+				MCPSchema::object_schema(properties), 60.0))));
+	}
 
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetGameWindowSize", "resize_window",
