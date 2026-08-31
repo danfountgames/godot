@@ -131,6 +131,42 @@ Changes made while the game is running are **not persistent**. Tools that affect
 running game are named and documented separately from tools that change the project,
 and the server states this in its `initialize` instructions.
 
+### Driving a running game: pause before you measure
+
+The first thing to know about the runtime tools, because two independent playtest agents
+each lost a measurement to not knowing it: **a running game moves tens of frames between
+two of your calls.** A property you set is read back after the world has moved on, and a
+screenshot, a property and a scene tree fetched in three calls describe three different
+moments. It is not latency you can tune away; it is what "running" means.
+
+| Tool | Capability | Purpose |
+|---|---|---|
+| `Godot_PauseRuntime` | run_project | Pause or resume the game, and report which it is |
+| `Godot_StepRuntimeFrames` | run_project | Run exactly N frames on the physics or process clock, then pause again |
+
+Paused, every read answers about the same instant. Stepping turns "set this, then
+something happened" into "set this, step one frame, and exactly this happened". The count
+is exact rather than approximate, and the reason is where the pause lands: `SceneTree`
+emits `physics_frame` at the top of `physics_process`, and `PhysicsServer::step()` runs
+later in the same `Main::iteration`, so pausing inside the callback cancels that frame's
+simulation. The countdown therefore runs to zero and re-pauses on the callback *after*,
+which makes N frames happen rather than N−1.
+
+Two traps, both of which have already caught someone here:
+
+- **`Godot_SetTimeScale(0)` is not a pause.** It is a game running with a zero delta.
+  Raising it is worse: Godot multiplies the physics delta by the scale, so a scene at 5x
+  is a coarser scene rather than a faster one.
+- **Do not difference `physics_frame` to count frames.** The engine's frame counter keeps
+  advancing while the tree is paused — `Main::iteration` still runs its ticks, and only
+  the physics servers and the inherited process callbacks stop. That subtraction measures
+  how long the *caller* took; a one-frame step reads as five if you were slow. The
+  `frames` field of a step result is the simulated count.
+
+Pause stops nodes that inherit it. A node whose `process_mode` is Always keeps running —
+usually a pause menu, but worth checking, because in an agent-driven game it is sometimes
+the thing being measured.
+
 ### Undoing things
 
 Three different scopes, deliberately not interchangeable:

@@ -221,10 +221,24 @@ table; `Godot_PlayMainScene` answered before the game was reachable so the next 
 
 **Open, in the order they cost round trips:**
 
-1. **`--describe <tool>`.** All three lost six to eight calls to argument-name drift. The
-   refusals are good; the only way to read one schema is to fetch ninety-nine.
-2. **Frame stepping for the `PlayMainScene` game.** Two wanted "advance N physics frames
-   and return"; one abandoned a whole measurement approach for want of it.
+1. ~~**`--describe <tool>`.**~~ **Done**, and then done properly. `--describe` landed
+   first, but it only helps a caller who already suspects it is wrong. The refusal itself
+   now teaches: an unknown argument names the near miss ("unknown argument 'frame'. Did
+   you mean: frames"), and a missing required argument carries that argument's
+   description, so the shape arrives with the name and no round trip is spent fetching a
+   schema.
+
+   Still open in the same family: **nothing declares a result shape.** The runtime tools
+   return an open object, so `Godot_FindRuntimeNodes` answering under `found` rather than
+   `nodes` is undiscoverable — it is documented in that tool's description now, but by
+   hand, and only because I guessed wrong myself while writing a verification. Real
+   output schemas would fix the class.
+2. ~~**Frame stepping for the `PlayMainScene` game.**~~ **Done.** `Godot_PauseRuntime` and
+   `Godot_StepRuntimeFrames`, verified against a live game: a body holding 430 px/s moves
+   7.1667px for one stepped frame and 35.8333px for five, and 0.0000px over 0.8s while
+   paused. This was also the one thing Unity's MCP surface had that this did not — their
+   official server exposes enter/exit play mode and the fuller third-party ones add
+   pause, but none of them steps a known number of frames.
 3. **Arming a recording before the action.** `Godot_RecordRuntimeSeries` blocks, so from a
    single client it can only follow the thing it records, and misses its first frames -
    measured at 12.55px of an 868px shot. Its own description tells you to do the thing it
@@ -275,6 +289,49 @@ One thing to be careful about, because it nearly produced a wrong fix: an agent'
 can be right about the measurement and stale about the cause. Both of these reports
 diagnosed the multiplier as dead, which was true when they started and had been fixed
 before they finished. Check a finding against the tree before acting on it.
+
+## Where this sits against Unity's MCP surface, 2026-08-31
+
+Checked rather than assumed, though `unity.com` and `docs.unity3d.com` are both blocked
+by this container's egress proxy, so the official details come from search summaries and
+the open-source implementations, and Unity's own server is a moving beta.
+
+- **Official** (`com.unity.ai.assistant`, Unity 6+): live scene hierarchy, GameObjects,
+  component values, console, build settings. Play mode via `enter_play_mode`,
+  `exit_play_mode`, `play_unity_game`, `read_unity_console_logs`, and
+  `execute_csharp_script_in_unity_editor`. Client approval on first connect, remembered,
+  with permission tiers from read-only through full autonomy.
+- **CoplayDev**: 47 tools, MIT, deliberately focused.
+- **Funplay**: 156 tools (34 "core"). `execute_code` via in-memory Roslyn as the *primary*
+  orchestration tool, `simulate_key_press`/`mouse_click`/`mouse_drag`, game/scene/editor
+  screenshots, built-in prompts, auto-undo, resources exposing scene and console state.
+- **AnkleBreaker**: ~330 tools. Play/pause/stop, profiler and deep profiles, frame
+  debugger with draw calls, Input System action maps, per-action undo, HTTP bridge.
+
+**Do not compete on tool count.** `execute_code` makes that number meaningless: with
+arbitrary C# compiled and run on the editor thread you never need a 331st tool. Their
+approach is strictly more capable and ours is strictly more auditable, and the trade is
+worth stating honestly rather than pretending it is a win — the cost of refusing
+arbitrary execution is that we keep discovering the missing primitive, which is exactly
+what frame stepping was.
+
+The closed loop is **no longer unique**: Funplay has play mode, input simulation,
+screenshots and named prompts, which was this branch's pitch. Convergence is also visible
+on client approval and on undo. What still has no equivalent anywhere found:
+
+1. **Promoting a runtime value into the authored scene.** Unity's discourse around play
+   mode is all about *losing* changes on exit. `Godot_PromoteRuntimeValue` carries a tuned
+   live value into the edited scene through the undo manager behind a checkpoint.
+2. **Verdict reconciliation.** Everyone can produce a playtest report; the report is
+   whatever the model says. This one downgrades a claimed success to `indeterminate` when
+   no input was injected or an error was logged.
+3. **Exact frame stepping**, record/replay across two editor processes, and headless-first
+   operation. AnkleBreaker's editor-window capture is Windows-only.
+
+So the defensible ground is the discipline, not the surface area: no arbitrary execution,
+evidence-checked verdicts, runtime→authored promotion, and skills that lead instead of a
+hundred equal-weight tools. That ground needs occupying deliberately, because the parts of
+it that were merely *first* are already being caught up.
 
 ## Two replay levels
 

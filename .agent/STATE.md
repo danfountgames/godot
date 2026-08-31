@@ -288,6 +288,36 @@ deliberately with the guard *off* produced none either, so the guard was removed
 lesson is the one this repository keeps relearning in new clothes: **a measurement that
 confirms your fix is not evidence until the instrument has been checked too.**
 
+**S-23 (done): pause and step, and refusals that teach.** The one gap two playtest agents
+both asked for, and the one thing Unity's MCP surface had that this did not.
+
+`Godot_PauseRuntime` and `Godot_StepRuntimeFrames` (`mcp_runtime_agent.{h,cpp}`,
+registered in `tools/mcp_input_tools.cpp`). The exactness comes from where the pause
+lands: `SceneTree` emits `physics_frame` at the top of `physics_process` and
+`PhysicsServer::step()` runs later in the same `Main::iteration`, so pausing inside the
+callback cancels that frame. The countdown runs to zero and re-pauses on the callback
+after, which makes N frames happen rather than N−1. Verified against a live game, not
+asserted: a body holding 430 px/s moves 7.1667px for one stepped frame and 35.8333px for
+five — speed/60 to four decimal places — and 0.0000px over 0.8s while paused.
+
+**Two mistakes, both in the test rather than the code, and both the same mistake as the
+POOL "orbit".** It first differenced `Engine::get_physics_frames()` and reported a
+one-frame step as five: that counter keeps advancing while the tree is paused, because
+`Main::iteration` still runs its ticks and only the servers stop, so the subtraction
+measures how long the caller took. Then its "nothing happened this frame" check watched
+game counters, and a rebound off the paddle repositions the ball without touching any of
+them; the correct test is that the velocity vector is unchanged, which is precisely the
+condition under which distance equals speed × frames. **Three times in one session the
+expensive error was in the instrument, not the thing measured.** Both traps are now
+written into the header, the tool descriptions, the module README and two skills.
+
+Making the tools teach themselves, since argument-name drift cost three agents six to
+eight calls each: an unknown argument now names the near miss ("unknown argument 'frame'.
+Did you mean: frames") by the same rule the relay's `--describe` uses for tool names, and
+a missing required argument carries that argument's description so the shape arrives with
+the name. Still open: nothing declares a *result* shape, which is why
+`Godot_FindRuntimeNodes` answering under `found` rather than `nodes` is undiscoverable.
+
 The gap that is real, recorded rather than tuned away: the loss condition looked like
 decoration because the bot was perfect. Given a reaction delay and an aiming error it is
 not. Measured across six boards each, with three strikers a board:

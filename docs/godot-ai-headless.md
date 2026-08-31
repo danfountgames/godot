@@ -159,6 +159,44 @@ profile it, record and replay a session, stop it. The end-to-end suite covers **
 its 135 checks in the headless configuration** — near parity, and every difference below
 is a real property of having no renderer rather than a gap in the tooling.
 
+### Pause and step, before anything you need to be exact about
+
+The mistake worth avoiding first, because two agents each lost a measurement to it: a
+running game moves tens of frames between two of your calls. A property you set is read
+back after the world has moved on, and a screenshot, a property and a scene tree fetched
+in three calls describe three different moments. That is not a latency problem you can
+tune away; it is what "running" means.
+
+```sh
+bin/godot-ai-relay --call Godot_PauseRuntime      --arguments '{"paused": true}'  --project <path>
+bin/godot-ai-relay --call Godot_StepRuntimeFrames --arguments '{"frames": 1}'     --project <path>
+bin/godot-ai-relay --call Godot_PauseRuntime      --arguments '{"paused": false}' --project <path>
+```
+
+Paused, every read answers about the same instant and there is no hurry about taking it.
+`Godot_StepRuntimeFrames` runs exactly the frames you asked for and stops again, so
+"set this, step one frame, read it" is a cause rather than a correlation. It is exact,
+not approximate — measured against a body holding a constant 430 px/s, one stepped frame
+moves it 7.1667px and five move it 35.8333px, which is speed/60 per frame to four
+decimal places.
+
+Two things to know:
+
+- **`Godot_SetTimeScale(0)` is not a pause.** It is a game running with a zero delta, and
+  any raised scale changes the physics rather than the pace — Godot multiplies the
+  physics delta by it, so a scene at 5x is a coarser scene, not a faster one.
+- **Do not difference `physics_frame` to count frames.** The engine's frame counter keeps
+  advancing while the game is paused, because `Main::iteration` still runs its ticks and
+  only the physics servers and the inherited process callbacks stop. That subtraction
+  measures how long *you* took. The `frames` field of a step result is the simulated
+  count.
+
+Pause stops nodes that inherit it; a node whose `process_mode` is Always keeps running.
+Usually that is a pause menu, but check — in an agent-driven game it is sometimes the
+thing being measured.
+
+### Two things that had to be made true
+
 This was not true until the tooling made it true, and both halves are worth knowing
 because they change how a headless game behaves.
 
