@@ -19,8 +19,17 @@ func _process(_delta: float) -> void:
 		"SHIELD " if game.meter >= game.shield_cost else "",
 		"PARTY WAVE" if game.meter >= game.party_wave_cost else ""]
 	var state := "shield %0.1fs" % game.shield_left if game.shield_active else game.last_event
-	$Stats/Feel.text = "threads %d   rim hits %d   %0.0fs   %s" % [
-		game.threads, game.rim_hits, game.board_seconds, state]
+	if game.drain_open:
+		state = "DRAIN OPEN - %0.0fs" % maxf(0.0, game.drain_seconds - (game.quiet_seconds - game.stall_seconds))
+	elif game.wave_lock_left > 0.0:
+		state = "meter shut %0.1fs" % game.wave_lock_left
+	# `likes in water` earns its place on a crowded line: on every board played without the
+	# current, ninety to a hundred and thirty Likes sat uncollected and the interface never
+	# mentioned it once. It is the single number that makes pull's value legible, and
+	# without it a player can lose the whole reward economy and never learn that they have.
+	$Stats/Feel.text = "threads %d   rim hits %d   ring hits %d   likes in water %d   %0.0fs   %s" % [
+		game.threads, game.rim_hits, game.ring_impacts, game.likes_loose,
+		game.board_seconds, state]
 	for key in ["SlickerWater", "HeavierStriker", "ExtraShot", "JetPressure"]:
 		var button := get_node_or_null("Upgrades/" + key) as Button
 		if button != null:

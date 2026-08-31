@@ -20,12 +20,35 @@ extends RigidBody2D
 ## Small, because the whole point is that it fits through things. A striker much
 ## bigger than this turns every ring into a solid brick and the game becomes
 ## ordinary breakout with a pool skin.
-@export var radius: float = 8.0
+##
+## Shared as a constant because the ring has to draw the same answer the ring *decides*:
+## Target paints the hole bright when the striker fits, and when that test was written
+## against a hardcoded 8.0 the picture would have started lying the moment this changed.
+const DEFAULT_RADIUS := 6.5
+@export var radius: float = DEFAULT_RADIUS
 ## Held, not approached. The current changes where this points and never how big it is.
 @export var speed: float = 430.0
 ## How hard the current can turn it, in radians per second at full strength. Enough to
 ## curve a shot back to the paddle across half a pool; not enough to reverse it.
-@export var turn_rate: float = 3.4
+##
+## 3.4 was too much by about threefold, and it ate the best thing in the game. Measured
+## with the pool emptied and the lounger parked: the catch window is 74px with no current
+## - half the lounger plus the ball, which is the honest geometry - and **300px** with
+## pull held, so a 132px lounger defended 71% of an 840px pool. At that authority you
+## cannot miss, and the rebound aiming that the whole game is built on stops mattering
+## because any rebound comes back. 1.2 puts the window near 110px: pull is a real rescue,
+## and it is still a rescue you can fail.
+@export var turn_rate: float = 1.2
+## The shallowest line the ball is allowed to travel, as a fraction of its speed.
+##
+## Without this a striker can settle into a near-horizontal orbit between the side walls
+## and never come back down. It is not a rare corner: one measured board ran **200 seconds
+## and destroyed eighteen of forty-four rings** because the ball spent nearly all of it
+## skimming the top of the pool, and the same pin is how an earlier run farmed 494 repeat
+## threads. The current cannot rescue it either, because the pull is weakest at exactly
+## the far end where the orbit sits. At 0.18 the ball crosses the pool vertically at least
+## every seven seconds, whatever else is done to it, and the orbit stops existing.
+@export var min_vertical: float = 0.18
 
 var launched: bool = false
 var threads_this_life: int = 0
@@ -48,9 +71,16 @@ func _ready() -> void:
 	var collider := CollisionShape2D.new()
 	collider.shape = shape
 	add_child(collider)
-	# Layer 2, colliding only with the walls. It passes straight through every target
-	# body: whether a pass is a thread or a clip is decided by Target, on the striker's
-	# line, because a solver cannot tell those apart and a 2D ring encloses its own hole.
+	# Layer 2, colliding only with the walls (layer 1). It passes straight through every
+	# target body: whether a pass is a thread or a clip is decided by Target, on the
+	# striker's line, because a solver cannot tell those apart and a 2D ring encloses its
+	# own hole.
+	#
+	# This only became true when the targets moved off layer 1. Godot pairs two bodies if
+	# *either* one's mask contains the other's layer, so while targets were also on layer 1
+	# the solver bounced the striker off the rim regardless of what the sensor decided: a
+	# "thread" scored, raised the multiplier, and then the ball clipped anyway. The rule
+	# the whole game rests on was decorative for as long as those two bits were the same.
 	collision_layer = 2
 	collision_mask = 1
 	contact_monitor = true
@@ -91,6 +121,12 @@ func _physics_process(_delta: float) -> void:
 	var heading := linear_velocity.normalized()
 	if heading.is_zero_approx():
 		heading = Vector2.UP
+	# Applied here rather than at each place a heading is set, because a wall bounce, a
+	# rim deflection and the current can each produce a shallow line and only the frame
+	# loop sees all three.
+	if absf(heading.y) < min_vertical:
+		heading.y = min_vertical * (-1.0 if heading.y < 0.0 else 1.0)
+		heading = heading.normalized()
 	linear_velocity = heading * speed
 
 	_trail.push_back(global_position)

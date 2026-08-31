@@ -49,15 +49,30 @@ func impulse_for(p_at: Vector2, p_mass: float, p_delta: float) -> Vector2:
 	return towards * (-strength) * force * reachability * p_delta * p_mass
 
 
-## Bends the striker. Positive pull turns it towards the paddle; push turns it away.
+## Bends the striker. Pull turns it towards the paddle; push turns it away, but only while
+## it is already leaving.
+##
+## The asymmetry is the fix for push being a button that loses the game. Measured: the
+## catch window with no current is 74px, which is exactly the lounger's own geometry.
+## Holding push while the ball descended took that to **zero** - there was no ball, at any
+## offset, from any height, that push did not throw away. Its measurable effect on the
+## board over forty-five seconds was nothing at all, so it was a verb whose entire
+## contribution was losing. Scaled by how fast the ball is climbing, push reads as "hold
+## it up there and let it work" and stops being suicide on the way down.
 func steer_striker(p_striker: Striker, p_delta: float) -> void:
 	if is_zero_approx(strength):
 		return
 	var reachability := falloff(p_striker.global_position)
 	if reachability <= 0.0:
 		return
+	var authority := -strength * steering * reachability
+	if strength > 0.0:
+		var climbing := -p_striker.linear_velocity.y / maxf(1.0, p_striker.speed)
+		authority *= clampf(climbing, 0.0, 1.0)
+		if is_zero_approx(authority):
+			return
 	var towards := origin - p_striker.global_position
-	p_striker.steer(towards, -strength * steering * reachability, p_delta)
+	p_striker.steer(towards, authority, p_delta)
 
 
 func _draw() -> void:

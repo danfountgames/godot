@@ -37,18 +37,58 @@ is a sensor, and the pass is judged on the striker's line — miss the centre by
 the hole and you are through it. Loose rings still collide with each other and the walls
 as ordinary bodies, which was never the part that was broken.
 
+That rebuild was then decorative for a while, which is worth knowing about. Godot pairs
+two bodies when *either* one's mask contains the other's layer, and the targets were
+sitting on the same layer as the walls — so the solver went on bouncing the striker off
+every rim no matter what the sensor decided. A thread scored, raised the multiplier, and
+then the ball clipped anyway. Moving the rings to their own layer is what made the rule
+the game is named after actually true.
+
+## The tail, and the drain
+
+A breakout board's last three rings are its worst minutes: they are scattered, they are
+behind you, and hunting them is not the game you were just playing. Measured over twenty
+boards, the median board ran 161 seconds and **71% of all board time contained no scoring
+event at all**; the final quarter took 5.7 times the first, and one board went 210
+consecutive seconds with nothing happening.
+
+So the pool drains. Once a board is down to its last few rings and nothing has been hit
+for eight seconds, the survivors are cut loose from their anchors and dragged towards the
+middle where the striker can reach them — and if the quiet goes on, the drain takes them
+and the board ends, at full value, because they were survived rather than skipped. It
+arms only in the tail, so it can never be waited out for a free clear of a full board.
+
+Measured after: median board **81 seconds**, dead time **16%**, and the drain finishes
+every board it opens on.
+
 ## The pull/push trade
 
 Neither is the safe choice, which is the point:
 
 | | gets you | costs you |
 |---|---|---|
-| **pull** | curves the ball home, vacuums Likes into the meter | drags the loose rings down at the edge you are defending |
-| **push** | bends the ball away, opens formations, shoves loose rings into anchored ones | sends your uncollected Likes off the board |
+| **pull** | curves the ball home, vacuums Likes into the meter | drags the loose rings down onto the lounger, where they get in your way |
+| **push** | bends the ball away while it is climbing, drives loose rings into anchored ones and breaks them | sends your uncollected Likes over the open edge |
 
 The shield closes the triangle: pull a dangerous pile towards yourself, raise the barrier
 at the last moment, and turn the risk into a payout. But the barrier and the Party Wave
 draw on the same meter, so staying alive and hitting hard compete.
+
+**None of that table was true in the build until a playtester checked every line of it.**
+Pull's cost did not exist: the lounger collided with nothing, so a ring dragged down went
+straight through it and out of the pool, where it was deleted *and counted as cleared* —
+pull was a free clear button, and 60 dropped balls onto a planted ring cost 0 strikers.
+Push had no upside: rings shouldered each other all day and nothing ever damaged
+anything, so 45 seconds of held push against a full board destroyed nothing and moved
+nothing, while the same 45 seconds took the catch window from 74px to **zero**. And the
+Likes it was supposed to send over the edge had no drift at all, so they sat motionless
+in the water for ever — 90 to 130 of them uncollected on every board played without pull,
+with nothing in the interface to say so.
+
+The fixes are the table: the lounger masks the rings, a ring driven into another above
+200 px/s damages it, Likes drift slowly towards the open edge, push only steers the ball
+while it is already climbing, and pull's steering came down threefold (it turned a 132px
+lounger into a 600px one, which is not a rescue, it is not being able to miss).
 
 ## Driving it without hands
 
@@ -64,19 +104,30 @@ assert about:
 | `restart_requested` | Rebuild the board. |
 
 And the board reads back in one call: `score`, `multiplier`, `meter`, `strikers_left`,
-`targets_left`, `anchored_left`, `loose_left`, `threads`, `rim_hits`, `targets_destroyed`,
-`likes_collected`, `board_seconds`, `striker_position`, `target_positions`,
+`targets_left`, `anchored_left`, `loose_left`, `threads`, `rim_hits`, `ring_impacts`,
+`targets_destroyed`, `likes_collected`, `likes_loose`, `board_seconds`, `quiet_seconds`,
+`drain_open`, `wave_lock_left`, `striker_position`, `target_positions`,
 `loose_positions`, `like_positions`, `last_event`.
+
+`quiet_seconds` — how long since anything scored — earns its place: it is the number that
+turned "this board drags" into a measurement, and it is what the drain watches.
 
 By hand: mouse moves the lounger, left button pulls, right button pushes, space launches,
 shift raises the barrier, enter releases the wave.
 
 ## What is not here yet
 
-Bosses, worlds, the six-board structure, power-ups, multiball, and the between-run
-progression — the cocktails and Followers that turn a board into a run. The brief is
+Bosses, worlds, power-ups, multiball, and the between-run progression — the Followers
+that persist after a run ends. The cocktails taken between boards are in. The brief is
 explicit that the plainest possible formation has to be enjoyable for several minutes
 before any of that is worth building, and that is the thing currently under test.
+
+**The known gap: nothing here can kill you.** Across six measured boards a
+perfect-tracking bot lost zero strikers, and across an earlier twenty it lost four of
+sixty and failed no boards at all. The loss condition is decoration. Rings piling on the
+lounger and the shortened catch window are new and untested against a human; whether the
+board needs real danger, or only a player who is worse than a bot, is the next thing to
+find out.
 
 There is deliberately **no passive income on the board**. Nothing pays out for sitting
 there; the level is a score-driven test of control, and the idle half of the design lives

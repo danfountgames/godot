@@ -32,20 +32,53 @@ extends Node2D
 ##   restart_requested   rebuild the board
 
 @export var strikers_per_board: int = 3
-@export var anchored_count: int = 16
-@export var loose_count: int = 6
+@export var anchored_count: int = 26
+@export var loose_count: int = 8
 @export var heavy_count: int = 2
-@export var armoured_count: int = 2
+@export var armoured_count: int = 6
 @export var popper_count: int = 1
 @export var collector_count: int = 1
 
+## The tail, and the drain that ends it.
+##
+## Measured over twenty boards: the median board ran 161 seconds and 79% of it was gone in
+## the first thirty. The last quarter took 98 seconds - 5.7 times the first - and 71% of
+## all board time had no scoring event in it at all, because it was spent hunting two or
+## three survivors round the corners of an empty pool. One board went 210 consecutive
+## seconds with nothing happening.
+##
+## So the pool drains. Once the board is down to its last few rings and nothing has been
+## hit for a while, the survivors are cut loose and pulled towards the middle where the
+## striker can reach them; if the quiet continues, the drain takes them and the board is
+## over. It only arms in the tail, so it can never be waited out for a free clear.
+@export var drain_threshold: int = 6
+@export var stall_seconds: float = 8.0
+@export var drain_seconds: float = 8.0
+@export var drain_pull: float = 340.0
+
 ## The meter, and the two things that empty it.
 @export var meter_max: float = 100.0
-@export var like_charge: float = 4.0
+## Measured: at 4.0 the meter was full 3.7 to 11.2 seconds into a board and then sat at
+## maximum for 95% of it, earning 488-564 charge against a tank of 100. Four fifths of
+## every board's reward was thrown away, and the two things the meter buys never competed
+## because there was always enough for both.
+##
+## 1.5 was derived against a 28-ring board, and then the board grew to 44. A ring scatters
+## Likes in proportion to its size, so the supply went with it - 105 Likes a board became
+## about 150, the meter was still at maximum for 84-100% of every board, and the choice
+## was still not a choice. 0.9 puts a board's whole take at roughly 135 against a tank of
+## 100: about one Party Wave, or three or four barriers, and never both.
+@export var like_charge: float = 0.9
 @export var shield_cost: float = 35.0
 @export var shield_seconds: float = 2.5
 @export var party_wave_cost: float = 100.0
 @export var party_wave_speed: float = 900.0
+## A wave used to pay for itself: it kills a board's worth of rings at once, every kill
+## scatters Likes, the wave pulls them all to the lounger, and the meter came back from 4
+## to 100 in 1.6 seconds. Spamming it cleared a board in 9.6 seconds. The wave was
+## cheapest exactly when it was strongest, which is backwards, so the meter is shut for a
+## few seconds afterwards and the wave's own debris does not refund it.
+@export var wave_lockout_seconds: float = 3.0
 
 ## Threading pays mostly through the multiplier rather than through a flat bonus, so a
 ## streak is worth holding and a single thread is not a coin you picked up. Measured
@@ -94,6 +127,9 @@ var likes_loose: int = 0
 var likes_collected: int = 0
 var threads: int = 0
 var rim_hits: int = 0
+## Rings driven into each other hard enough to damage. The only readout that tells you
+## whether push did anything.
+var ring_impacts: int = 0
 var targets_destroyed: int = 0
 var board_cleared: bool = false
 var board_failed: bool = false
@@ -120,6 +156,11 @@ var like_positions: PackedVector2Array = PackedVector2Array()
 ## Seconds since the board started. A breakout level is meant to last one to three
 ## minutes; nothing else here would tell you whether it does.
 var board_seconds: float = 0.0
+## Seconds since anything last scored. The single most useful number for judging pacing,
+## and the thing the drain watches.
+var quiet_seconds: float = 0.0
+var drain_open: bool = false
+var wave_lock_left: float = 0.0
 var last_event: String = ""
 
 var _pool: Pool
@@ -134,6 +175,15 @@ var _serial: int = 0
 ## Whether this trip up the pool has threaded anything yet. The multiplier is spent by
 ## the *round trip*, not by the clock.
 var _threaded_this_trip: bool = false
+## The biggest ring the current grid can hold without the rack overlapping itself.
+var _max_radius: float = 30.0
+var _quiet: float = 0.0
+var _drain_left: float = 0.0
+var _wave_lock: float = 0.0
+## Rings already threaded on this trip up the pool, by instance id.
+var _threaded_rings: Dictionary = {}
+## Everything a cocktail can change, as it was before any cocktail had.
+var _defaults: Dictionary = {}
 
 const TARGET_SCRIPT := preload("res://scripts/target.gd")
 const STRIKER_SCRIPT := preload("res://scripts/striker.gd")
@@ -152,6 +202,7 @@ func _ready() -> void:
 	_paddle.position = Vector2(_pool.size.x * 0.5, _pool.size.y - 34.0)
 	_paddle.set_limits(0.0, _pool.size.x)
 	paddle_x = _paddle.position.x
+	_snapshot_defaults()
 	_begin_board(true)
 
 
@@ -171,6 +222,12 @@ func _begin_board(p_fresh: bool) -> void:
 	strikers_left = strikers_per_board
 	shield_active = false
 	shield_left = 0.0
+	drain_open = false
+	_drain_left = 0.0
+	_quiet = 0.0
+	quiet_seconds = 0.0
+	_wave_lock = 0.0
+	wave_lock_left = 0.0
 	if p_fresh:
 		# A fresh *run*, not merely a fresh board. Everything the run accumulates resets
 		# here and nowhere else, so clearing a board keeps what it earned.
@@ -185,6 +242,7 @@ func _begin_board(p_fresh: bool) -> void:
 		multiplier = 1.0
 		threads = 0
 		rim_hits = 0
+		ring_impacts = 0
 		targets_destroyed = 0
 		likes_collected = 0
 		party_waves = 0
@@ -215,11 +273,21 @@ func _lay_out_board() -> void:
 	# Spacing first, count second. The slots have to be further apart than the biggest
 	# ring is wide or the board is born overlapping - which does not look like a layout
 	# mistake, it looks like the physics exploding, because that is what happens next.
-	var columns := 7
-	var rows := 4
-	var spacing := Vector2(104.0, 94.0)
+	#
+	# Nine by six rather than seven by four, because the grid was the real difficulty
+	# ceiling. The plan was silently truncated to however many slots existed, so no export
+	# on this script could put more than twenty-eight rings on a board; at peak the striker
+	# kills about one a second, and a thirty-second head was baked into the geometry. The
+	# rings shrink to suit, which is a fairer trade than a sparser board: a smaller ring is
+	# a harder ring.
+	var columns := 9
+	var rows := 6
+	var spacing := Vector2(84.0, 74.0)
 	var span := Vector2(spacing.x * float(columns - 1), spacing.y * float(rows - 1))
-	var margin := Vector2((_pool.size.x - span.x) * 0.5, 70.0)
+	var margin := Vector2((_pool.size.x - span.x) * 0.5, 56.0)
+	# Derived, never guessed. The last time these two numbers were set independently the
+	# rack was born inside itself and the loose rings blew apart on frame one.
+	_max_radius = minf(spacing.x, spacing.y) * 0.5 - 7.0
 
 	# Jittered, and not every slot filled.
 	#
@@ -233,10 +301,10 @@ func _lay_out_board() -> void:
 	for row in rows:
 		for column in columns:
 			slots.append(margin + Vector2(
-					span.x * float(column) / float(columns - 1) + randf_range(-22.0, 22.0),
-					span.y * float(row) / float(rows - 1) + randf_range(-18.0, 18.0)))
+					span.x * float(column) / float(columns - 1) + randf_range(-14.0, 14.0),
+					span.y * float(row) / float(rows - 1) + randf_range(-10.0, 10.0)))
 	slots.shuffle()
-	slots.resize(maxi(8, slots.size() - 6))
+	slots.resize(maxi(8, slots.size() - 10))
 
 	var harder := _difficulty()
 	var plan: Array[Target.Kind] = []
@@ -253,8 +321,27 @@ func _lay_out_board() -> void:
 	for i in collector_count:
 		plan.append(Target.Kind.COLLECTOR)
 
+	_trim_to_fit(plan, slots.size())
+	plan.shuffle()
 	for i in mini(plan.size(), slots.size()):
 		_add_target(plan[i], slots[i])
+
+
+## More rings asked for than there is room for, resolved by taking them off the crowd.
+##
+## This used to be a truncation of the plan, which is built one kind at a time - so
+## `anchored_count: 60` gave twenty-eight anchored rings and *silently deleted every other
+## kind on the board*. The specials are the board's variety and there are never many of
+## them; the filler is what should give way.
+func _trim_to_fit(p_plan: Array[Target.Kind], p_room: int) -> void:
+	for expendable in [Target.Kind.ANCHORED, Target.Kind.LOOSE, Target.Kind.ARMOURED]:
+		var i := p_plan.size() - 1
+		while i >= 0 and p_plan.size() > p_room:
+			if p_plan[i] == expendable:
+				p_plan.remove_at(i)
+			i -= 1
+	while p_plan.size() > p_room:
+		p_plan.remove_at(p_plan.size() - 1)
 
 
 func _add_target(p_kind: Target.Kind, p_at: Vector2) -> Target:
@@ -268,7 +355,11 @@ func _add_target(p_kind: Target.Kind, p_at: Vector2) -> Target:
 	# of these can I shoot through" - the question the whole mechanic asks - had the same
 	# answer everywhere and no way to read it. A tight ring is a wall with a hole too
 	# small for the striker, and Target draws the difference.
-	target.outer_radius = randf_range(20.0, 52.0)
+	# Sized against the grid rather than against a taste in numbers, so widening the board
+	# cannot silently reintroduce the overlapping rack. Heavy rings take the top of the
+	# range: they are supposed to read as the thing in the way.
+	target.outer_radius = _max_radius if p_kind == Target.Kind.HEAVY \
+			else randf_range(_max_radius * 0.72, _max_radius)
 	target.tight = randf() < 0.34
 	target.position = p_at
 	_serial += 1
@@ -277,6 +368,7 @@ func _add_target(p_kind: Target.Kind, p_at: Vector2) -> Target:
 	target.struck.connect(_on_struck)
 	target.rim_hit.connect(_on_rim_hit)
 	target.threaded.connect(_on_threaded)
+	target.collided.connect(_on_rings_collided)
 	_targets.add_child(target)
 	return target
 
@@ -326,7 +418,10 @@ func _physics_process(delta: float) -> void:
 
 	_paddle.wanted_x = paddle_x
 	_current.strength = clampf(current, -1.0, 1.0)
-	_current.origin = _paddle.global_position
+	# The top edge of the lounger, not its centre. Aimed at the centre, pull steered the
+	# ball at a point 22px *below* the surface it has to land on, and measurably pulled
+	# grazing balls under the end of the lounger that no current at all would have saved.
+	_current.origin = _paddle.global_position - Vector2(0.0, _paddle.thickness)
 	_current.queue_redraw()
 
 	if launch_requested:
@@ -344,6 +439,10 @@ func _physics_process(delta: float) -> void:
 		shield_left = maxf(0.0, shield_left - delta)
 		shield_active = shield_left > 0.0
 
+	if _wave_lock > 0.0:
+		_wave_lock = maxf(0.0, _wave_lock - delta)
+	wave_lock_left = _wave_lock
+
 	if striker_in_play:
 		board_seconds += delta
 
@@ -352,6 +451,56 @@ func _physics_process(delta: float) -> void:
 	_watch_striker()
 	_collect_likes()
 	_recount()
+	_run_drain(delta)
+
+
+## The end of a board, taken out of the player's hands once it stops being a game.
+##
+## Arms only in the tail - `drain_threshold` rings or fewer - so it can never be waited
+## out for a free clear of a full board, and only while a striker is actually in play.
+## Two stages, because the first one is still a game: the survivors are cut loose and
+## dragged into the middle where they can be reached, and the player gets `drain_seconds`
+## to take them. Miss that and the pool takes them, at full value, because they were
+## survived rather than skipped.
+func _run_drain(delta: float) -> void:
+	if board_cleared or board_failed or run_over or not striker_in_play:
+		return
+	_quiet += delta
+	quiet_seconds = _quiet
+	if not drain_open:
+		if targets_left <= drain_threshold and targets_left > 0 and _quiet >= stall_seconds:
+			drain_open = true
+			_drain_left = drain_seconds
+			last_event = "the drain opens"
+			for child in _targets.get_children():
+				var loosened := child as Target
+				if loosened != null and loosened.alive:
+					loosened.release()
+			if _music != null:
+				_music.play("layer", 20000.0, targets_left)
+		return
+
+	var mouth := Vector2(_pool.size.x * 0.5, _pool.size.y * 0.62)
+	for child in _targets.get_children():
+		var target := child as Target
+		if target == null or not target.alive:
+			continue
+		target.apply_current((mouth - target.global_position).normalized() * drain_pull * delta)
+	_drain_left -= delta
+	if _drain_left > 0.0:
+		return
+	last_event = "drained"
+	for child in _targets.get_children():
+		var last := child as Target
+		if last != null and last.alive:
+			last.take_rim_hit(last.global_position, 99)
+
+
+## Something scored. The drain is watching this and nothing else, because "is anything
+## happening" is a question about events, not about whether objects still exist.
+func _stir() -> void:
+	_quiet = 0.0
+	quiet_seconds = 0.0
 
 
 func _apply_current(delta: float) -> void:
@@ -382,7 +531,13 @@ func _sweep_lost_targets() -> void:
 		if target.position.y > _pool.size.y + 60.0:
 			target.alive = false
 			target.queue_free()
-			last_event = "%s drifted out" % target.name
+			# Not progress. Measured: holding pull with no ball in play at all removed five
+			# of twenty-eight targets in five seconds and banked 154 points, because a ring
+			# dragged out of the open edge was deleted and counted as cleared. A ring you
+			# let out of the pool is a ring you did not break, so it costs a step of the
+			# streak and pays nothing.
+			multiplier = maxf(1.0, multiplier - multiplier_per_thread)
+			last_event = "%s went down the drain" % target.name
 			call_deferred("_check_cleared")
 
 
@@ -433,6 +588,7 @@ func _watch_striker() -> void:
 		last_event = "striker lost"
 		multiplier = 1.0
 		_threaded_this_trip = false
+		_threaded_rings.clear()
 		_striker.queue_free()
 		_striker = null
 		striker_in_play = false
@@ -452,7 +608,9 @@ func _collect_likes() -> void:
 		if like.global_position.distance_to(_paddle.global_position) <= _paddle.width * 0.5 + 18.0:
 			likes_collected += like.worth
 			score += int(round(like.worth * multiplier))
-			meter = minf(meter_max, meter + like_charge)
+			if _wave_lock <= 0.0:
+				meter = minf(meter_max, meter + like_charge)
+			_stir()
 			like.queue_free()
 		elif like.global_position.y > _pool.size.y + 30.0:
 			# Reward that reached the edge is gone. Pull is how you stop that happening,
@@ -467,6 +625,7 @@ func _on_struck(target: Target, striker: Striker) -> void:
 	# survived - so a board of one-hit rings reported that nothing had ever been hit.
 	rim_hits += 1
 	score += int(round(2 * multiplier))
+	_stir()
 	if _music != null:
 		_music.play("bounce", 2400.0, int(multiplier))
 	striker.deflect_from(target.global_position)
@@ -475,6 +634,23 @@ func _on_struck(target: Target, striker: Striker) -> void:
 		# rearranges the board rather than just clearing it.
 		target.apply_current((target.global_position - striker.global_position).normalized() * 260.0)
 	target.take_rim_hit(striker.global_position)
+
+
+## One ring driven into another. Push's whole payoff, and until now it did not exist: the
+## signal was never emitted, so holding push against a full board for forty-five seconds
+## destroyed nothing and moved nothing off. It scores less than a struck rim because the
+## striker is not the one doing the work - what push buys is a board rearranged, not
+## points.
+func _on_rings_collided(hitter: Target, hit: Target, speed: float) -> void:
+	if not hitter.alive or not hit.alive:
+		return
+	ring_impacts += 1
+	score += int(round(multiplier))
+	_stir()
+	if _music != null:
+		_music.play("bounce", hit.outer_radius * hit.outer_radius * PI, 1)
+	last_event = "%s slammed into %s at %d" % [hitter.name, hit.name, int(speed)]
+	hit.take_rim_hit(hit.global_position)
 
 
 func _on_rim_hit(_target: Target, _at: Vector2, _remaining: int) -> void:
@@ -497,18 +673,34 @@ func _on_returned_to_lounger() -> void:
 	else:
 		multiplier = maxf(1.0, multiplier - multiplier_per_thread)
 	_threaded_this_trip = false
+	# A fresh trip, so every ring is worth threading again. Held between rebounds, this is
+	# what closes the pin-and-repeat exploit: a striker parked near the top edge threaded
+	# the *same* rings 494 times for 15,454 points - seventeen times what clearing a board
+	# properly pays - while destroying ten targets of twenty-eight. Threading a ring you
+	# already threaded on this trip is a trick, not an aim.
+	_threaded_rings.clear()
 
 
 func _on_threaded(target: Target) -> void:
 	# Through the middle without touching the rim. The one thing in this game that is
 	# purely skill, so it is the one thing that builds the multiplier.
+	#
+	# Once per ring per trip. Threading a chain of different rings on one pass is the
+	# best thing you can do here and it still pays every time; threading the same ring
+	# over and over from a ball you have pinned in a corner is not that.
+	if _threaded_rings.has(target.get_instance_id()):
+		last_event = "threaded %s again - no score" % target.name
+		return
+	_threaded_rings[target.get_instance_id()] = true
 	threads += 1
+	_stir()
 	if _striker != null and is_instance_valid(_striker):
 		_striker.threads_this_life += 1
 	multiplier = minf(multiplier_max, multiplier + multiplier_per_thread)
 	_threaded_this_trip = true
 	score += int(round(thread_bonus * multiplier))
-	meter = minf(meter_max, meter + like_charge)
+	if _wave_lock <= 0.0:
+		meter = minf(meter_max, meter + like_charge)
 	last_event = "threaded %s" % target.name
 	if _music != null:
 		# Its own voice. A thread and a kill of the same ring both played "merge" pitched
@@ -521,6 +713,7 @@ func _on_threaded(target: Target) -> void:
 func _on_target_destroyed(target: Target, at: Vector2, worth: int) -> void:
 	targets_destroyed += 1
 	score += int(round(worth * multiplier))
+	_stir()
 	if _music != null:
 		_music.play("merge", target.outer_radius * target.outer_radius * PI, int(multiplier))
 	if target.kind == Target.Kind.POPPER:
@@ -616,24 +809,44 @@ func _take_cocktail(p_name: String) -> void:
 	_next_board()
 
 
-## Everything a cocktail moved, put back. A run that quietly inherited the last run's
-## upgrades would look like a difficulty curve and be a bug.
+## Everything a cocktail can move, remembered before any of them has. A run that quietly
+## inherited the last run's upgrades would look like a difficulty curve and be a bug.
+##
+## Snapshotted rather than written out a second time. The hand-written version drifted
+## twice - it was still restoring a 62-degree bounce angle and a thread bonus of 25 after
+## both had been tuned away - so restarting a run silently played a slightly different
+## game from the one that had just been measured. A list of defaults kept in two places is
+## a list of defaults kept in one place and a bug.
+func _snapshot_defaults() -> void:
+	_defaults = {
+		"force": _current.force,
+		"steering": _current.steering,
+		"width": _paddle.width,
+		"max_bounce_degrees": _paddle.max_bounce_degrees,
+		"shield_seconds": shield_seconds,
+		"thread_bonus": thread_bonus,
+		"multiplier_per_thread": multiplier_per_thread,
+		"strikers_per_board": strikers_per_board,
+		"party_wave_cost": party_wave_cost,
+		"meter_max": meter_max,
+	}
+
+
 func _reset_cocktail_effects() -> void:
-	if _current != null:
-		_current.force = 900.0
-		_current.steering = 1.0
-	if _paddle != null:
-		_paddle.width = 132.0
-		_paddle.max_bounce_degrees = 62.0
-		_paddle.rebuild()
-		if _pool != null:
-			_paddle.set_limits(0.0, _pool.size.x)
-	shield_seconds = 2.5
-	thread_bonus = 25
-	multiplier_per_thread = 0.25
-	strikers_per_board = 3
-	party_wave_cost = 100.0
-	meter_max = 100.0
+	if _defaults.is_empty():
+		return
+	_current.force = _defaults["force"]
+	_current.steering = _defaults["steering"]
+	_paddle.width = _defaults["width"]
+	_paddle.max_bounce_degrees = _defaults["max_bounce_degrees"]
+	_paddle.rebuild()
+	_paddle.set_limits(0.0, _pool.size.x)
+	shield_seconds = _defaults["shield_seconds"]
+	thread_bonus = _defaults["thread_bonus"]
+	multiplier_per_thread = _defaults["multiplier_per_thread"]
+	strikers_per_board = _defaults["strikers_per_board"]
+	party_wave_cost = _defaults["party_wave_cost"]
+	meter_max = _defaults["meter_max"]
 
 
 func _next_board() -> void:
@@ -660,6 +873,12 @@ func _release_party_wave() -> void:
 		return
 	meter -= party_wave_cost
 	party_waves += 1
+	# Shut the meter. Everything below kills a board's worth of rings at once, every kill
+	# scatters Likes, and the wave then hoovers them all into the lounger - so the wave
+	# bought itself back in 1.6 seconds and a board could be cleared in 9.6 by pressing
+	# this repeatedly. A wave has to be paid for out of play that came before it.
+	_wave_lock = wave_lockout_seconds
+	wave_lock_left = _wave_lock
 	last_event = "party wave"
 	if _music != null:
 		_music.play("layer", 40000.0, int(multiplier))

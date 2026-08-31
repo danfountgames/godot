@@ -24,6 +24,12 @@ signal rim_hit(target: Target, at: Vector2, remaining: int)
 signal threaded(target: Target)
 ## The striker clipped the rim: the game reflects it and scores the hit.
 signal struck(target: Target, striker: Striker)
+## One ring hit another hard enough to matter. This is push's entire payoff and it was
+## missing: rings shouldered each other about all day and nothing ever called
+## take_rim_hit, so a measured forty-five seconds of held push against a full board
+## destroyed zero targets and moved none off it. The README promised this; the code did
+## not do it.
+signal collided(hitter: Target, hit: Target, speed: float)
 
 enum Kind {
 	ANCHORED, ## Level geometry. Does not move; flexes when the current pushes it.
@@ -36,12 +42,17 @@ enum Kind {
 
 @export var kind: Kind = Kind.ANCHORED
 @export var outer_radius: float = 34.0
-## The hole is two thirds of the outer radius. Measured against the alternative: at 0.6
+## The hole, as a fraction of the outer radius. Measured against the alternative: at 0.6
 ## with an 11px striker, a full board of twenty collisions produced *zero* threads - the
 ## gap was real but needed about seven pixels of accuracy at 430 px/s, which is not a
-## skill, it is a coincidence. At 0.66 with an 8px striker the smallest ring here has a
-## 37px gap for a 16px ball, which is an aim.
-@export var hole_ratio: float = 0.66
+## skill, it is a coincidence.
+##
+## Raised from 0.66 when the board grew from twenty-eight rings to fifty and the rings
+## shrank to fit. Threading is the game's identity and its window is `hole - striker`, so
+## a smaller ring silently makes the whole mechanic rarer; 0.72 against a 6.5px striker
+## puts the smallest ring here back to about nine pixels of aim and the biggest to
+## fifteen, which is roughly where the thirty-four-pixel rings were.
+@export var hole_ratio: float = 0.72
 ## A tight ring: the hole is too small for the striker, so it is a wall with a decoration
 ## in the middle. Roughly a third of a board. Without these, every ring was threadable
 ## and none of them looked any different, so the question the mechanic asks - which of
@@ -51,12 +62,16 @@ enum Kind {
 @export var rim_segments: int = 12
 @export var hit_points: int = 1
 @export var worth: int = 10
+## How fast one ring has to meet another to damage it. Below this a pile of floats is
+## scenery, which is what a pool of inflatables should mostly be.
+@export var impact_speed: float = 200.0
 
 var alive: bool = true
 var threads: int = 0
 
 var _hole: Area2D
 var _flex: float = 0.0
+var _impact_cooldown: float = 0.0
 
 
 func hole_radius() -> float:
@@ -91,6 +106,8 @@ func _ready() -> void:
 	_hole.body_entered.connect(_on_sensor_entered)
 	add_child(_hole)
 
+	body_entered.connect(_on_body_entered)
+
 
 func _configure_kind() -> void:
 	var surface := PhysicsMaterial.new()
@@ -115,7 +132,6 @@ func _configure_kind() -> void:
 			mass = 6.0
 			linear_damp = 2.4
 			angular_damp = 3.0
-			outer_radius = maxf(outer_radius, 44.0)
 		Kind.ARMOURED:
 			freeze = true
 			freeze_mode = RigidBody2D.FREEZE_MODE_STATIC
@@ -137,8 +153,12 @@ func _configure_kind() -> void:
 ## about, the walls, the party wave. Still a ring of colliders rather than a disc, so a
 ## pile of floats interlocks the way inflatables do instead of stacking like coins.
 func _build_rim() -> void:
-	collision_layer = 1
-	collision_mask = 1
+	# Layer 16, not layer 1. The striker's mask is layer 1 (the walls), and Godot pairs two
+	# bodies when *either* mask holds the other's layer - so a target sharing the walls'
+	# layer was solid to the striker no matter what the sensor said. Masking 1 and 16 keeps
+	# what this body is for: shouldering other rings, the walls, and the lounger.
+	collision_layer = 16
+	collision_mask = 1 | 16
 	var mid := (outer_radius + hole_radius()) * 0.5
 	var thickness := maxf(3.0, (outer_radius - hole_radius()) * 0.5)
 	for i in rim_segments:
@@ -149,6 +169,19 @@ func _build_rim() -> void:
 		collider.shape = shape
 		collider.position = Vector2(cos(angle), sin(angle)) * mid
 		add_child(collider)
+
+
+## Cut loose from its anchor, so the water can have it. Used when the drain opens at the
+## end of a board: the last few rings stop being level geometry and become flotsam that
+## comes to the player, rather than three survivors to be hunted round the corners.
+func release() -> void:
+	if not freeze:
+		return
+	freeze = false
+	mass = 2.0
+	linear_damp = 1.4
+	angular_damp = 2.0
+	queue_redraw()
 
 
 ## Push from the current. Anchored rings cannot move, so they flex - which is the only
@@ -168,6 +201,29 @@ func _physics_process(delta: float) -> void:
 	if _flex > 0.0:
 		_flex = maxf(0.0, _flex - delta * 1.8)
 		queue_redraw()
+	if _impact_cooldown > 0.0:
+		_impact_cooldown = maxf(0.0, _impact_cooldown - delta)
+
+
+## Another ring, arriving. `body_entered` fires on both of them, so the cooldown is set on
+## the pair and only one of the two reports the hit; without that a resting pile grinds
+## itself to pieces on re-entry noise.
+func _on_body_entered(body: Node) -> void:
+	var other := body as Target
+	if other == null or not alive or not other.alive:
+		return
+	if _impact_cooldown > 0.0 or other._impact_cooldown > 0.0:
+		return
+	var relative := (linear_velocity - other.linear_velocity).length()
+	if relative < impact_speed:
+		return
+	note_impact()
+	other.note_impact()
+	collided.emit(self, other, relative)
+
+
+func note_impact() -> void:
+	_impact_cooldown = 0.25
 
 
 func take_rim_hit(p_at: Vector2, p_damage: int = 1) -> void:
@@ -235,7 +291,7 @@ func _draw() -> void:
 	# fits; a dark one means it does not. Two pixels of 55%-alpha line over a dark pool
 	# said nothing at all, and "can I shoot through this" is the only question the player
 	# is ever asking.
-	if threadable_by(8.0):
+	if threadable_by(Striker.DEFAULT_RADIUS):
 		draw_arc(Vector2.ZERO, inner, 0.0, TAU, 32, Color(0.55, 1.0, 0.95, 0.85), 3.0, true)
 	else:
 		draw_circle(Vector2.ZERO, inner, Color(0.06, 0.16, 0.24, 0.9))

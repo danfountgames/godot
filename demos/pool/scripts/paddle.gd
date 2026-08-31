@@ -32,12 +32,18 @@ var _collider: CollisionShape2D
 func _ready() -> void:
 	rebuild()
 	wanted_x = position.x
-	# On its own layer, colliding with nothing. The rebound is resolved in code so that
-	# where the striker lands across the lounger decides where it goes; letting the
-	# solver also have an opinion would mean the incoming angle quietly won half the
-	# time, and the player would never learn to aim.
+	# Layer 8, masking only the rings (16). The rebound against the striker is resolved in
+	# code so that where the ball lands across the lounger decides where it goes; letting
+	# the solver also have an opinion would mean the incoming angle quietly won half the
+	# time, and the player would never learn to aim. The striker is on layer 2 and this
+	# masks 16, so the solver never sees that pair.
+	#
+	# Rings are a different matter, and this used to mask nothing at all. A ring pulled
+	# down the pool went *through* the lounger and out of the open edge, which deleted it
+	# for free: pull was a clear button, and the danger half of the pull/push trade did not
+	# exist in the build. Now the lounger is something a float can pile up against.
 	collision_layer = 8
-	collision_mask = 0
+	collision_mask = 16
 
 
 ## Rebuilt rather than scaled, because a cocktail that widens the lounger has to widen

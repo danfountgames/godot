@@ -13,6 +13,17 @@ extends RigidBody2D
 ## Below this the pull just moves it; above it, it is coming to you fast enough that it
 ## will reach the paddle without further help.
 @export var drift_damp: float = 1.2
+## The pool is draining, slowly, all the time. Against `drift_damp` this settles at about
+## forty pixels a second, so a Like left alone crosses the pool and is gone in roughly ten
+## seconds.
+##
+## Without it Likes had zero gravity and damping, so they drifted a few pixels and then
+## stopped **forever**: 90 to 130 of them sat motionless in the water on every board played
+## without the current, the stated cost of push (your uncollected reward goes over the
+## edge) never once happened, and a player who had not worked out that the left button is
+## a hoover finished a board having collected nothing, with no way to find out why. A
+## reward that waits indefinitely is not a reward, it is furniture.
+@export var drain_pull: float = 48.0
 
 var _age: float = 0.0
 
@@ -39,6 +50,8 @@ func apply_current(p_push: Vector2) -> void:
 
 func _physics_process(delta: float) -> void:
 	_age += delta
+	sleeping = false
+	apply_central_force(Vector2(0.0, drain_pull) * mass)
 	queue_redraw()
 
 
