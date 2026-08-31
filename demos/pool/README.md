@@ -122,12 +122,25 @@ that persist after a run ends. The cocktails taken between boards are in. The br
 explicit that the plainest possible formation has to be enjoyable for several minutes
 before any of that is worth building, and that is the thing currently under test.
 
-**The known gap: nothing here can kill you.** Across six measured boards a
-perfect-tracking bot lost zero strikers, and across an earlier twenty it lost four of
-sixty and failed no boards at all. The loss condition is decoration. Rings piling on the
-lounger and the shortened catch window are new and untested against a human; whether the
-board needs real danger, or only a player who is worse than a bot, is the next thing to
-find out.
+## Can it kill you?
+
+It looked for a while as though it could not: a bot that predicts the striker's crossing
+point exactly, through the side walls, lost zero strikers over six boards. That was the
+bot, not the game. Give it the two things a person actually has — a reaction delay before
+the hand follows the eye, and an error in where they think the ball is going — and the
+loss condition turns out to be the sharpest dial in the build. Six boards each, three
+strikers a board:
+
+| player | reaction | aim error | strikers lost per board | boards cleared |
+|---|---|---|---|---|
+| bot | none | none | 0 | 6/6 |
+| ok | 0.30s | 45px | 2.0 | 5/5 |
+| poor | 0.50s | 80px | 3.0 | 0/6 — every board failed, in 7 to 77 seconds |
+
+Three strikers is about right, then: a competent player spends two of them a board, and a
+bad one is out before the first board ends. What is still untested is a *person*, who is
+neither of these — worse than any of them at prediction, and far better at deciding when
+to pull.
 
 There is deliberately **no passive income on the board**. Nothing pays out for sitting
 there; the level is a score-driven test of control, and the idle half of the design lives

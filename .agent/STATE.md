@@ -268,15 +268,39 @@ looking for:
   regardless of what the ring's sensor had decided. A thread scored, raised the
   multiplier, and the ball clipped anyway. The rule the game is named after had been
   cosmetic since the sensor rebuild.
-- **The striker could orbit.** One measured board ran 200 seconds and destroyed 18 of 44
-  rings with the ball skimming the top of the pool. That is also the mechanism behind the
-  494-repeat-thread, 15,454-point exploit the second agent found. A minimum vertical
-  component removes the orbit; a ring can now only be threaded once per trip.
+- **A 15,454-point exploit.** One board threaded the same rings 494 times from a ball
+  pinned near the top edge, while destroying 10 of 28 targets — seventeen times what
+  clearing a board properly pays. A ring can now only be threaded once per trip up the
+  pool, so a chain of different rings still pays every time and a pinned ball pays once.
 
-The known gap, recorded rather than tuned away: **nothing in POOL can kill you.** A
-perfect-tracking bot lost zero strikers over six boards and four of sixty over an earlier
-twenty. Whether the board needs real danger or only a player worse than a bot is the next
-thing to find out, and it needs a human or a deliberately worse bot.
+**A wrong fix, and how it was caught.** A board was also seen running 200 seconds while
+destroying 18 of 44 rings, which reads exactly like the classic breakout failure — the
+ball settling into a near-horizontal orbit between the side walls. A minimum vertical
+component was added and the stalls stopped, which looked like confirmation.
+
+It was the harness. The playtest bot tracked "is a striker live" with its own flag rather
+than reading the game's `striker_in_play`, missed the re-serve whenever its sample loop
+stepped over the frame the old ball vanished on, and then never launched the new one — so
+the board sat untouched with nothing in play. The tell was in the data the whole time:
+`quiet_seconds` was frozen near 1.0 through all 200 seconds, and it only advances while a
+striker is in play. Fixing the harness removed every stall, and five boards run
+deliberately with the guard *off* produced none either, so the guard was removed. The
+lesson is the one this repository keeps relearning in new clothes: **a measurement that
+confirms your fix is not evidence until the instrument has been checked too.**
+
+The gap that is real, recorded rather than tuned away: the loss condition looked like
+decoration because the bot was perfect. Given a reaction delay and an aiming error it is
+not. Measured across six boards each, with three strikers a board:
+
+| player | reaction | aim error | strikers lost per board | boards cleared |
+|---|---|---|---|---|
+| bot | none | none | 0 | 6/6 |
+| ok | 0.30s | 45px | 2.0 | 5/5 |
+| poor | 0.50s | 80px | 3.0 | 0/6 — every board failed, in 7 to 77 seconds |
+
+So POOL does not need more danger; it needed a playtester who could miss. That is the
+generalisable finding, and it is now the second thing on the list in `.agent/NEXT.md`:
+**a playtest bot that can be told how good to be is worth more than another tool.**
 
 ## A silent failure that predated everything
 

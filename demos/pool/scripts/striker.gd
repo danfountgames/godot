@@ -39,16 +39,21 @@ const DEFAULT_RADIUS := 6.5
 ## because any rebound comes back. 1.2 puts the window near 110px: pull is a real rescue,
 ## and it is still a rescue you can fail.
 @export var turn_rate: float = 1.2
-## The shallowest line the ball is allowed to travel, as a fraction of its speed.
+
+## There is deliberately **no minimum vertical component** here, and that is worth a note
+## because one was added and then taken out again.
 ##
-## Without this a striker can settle into a near-horizontal orbit between the side walls
-## and never come back down. It is not a rare corner: one measured board ran **200 seconds
-## and destroyed eighteen of forty-four rings** because the ball spent nearly all of it
-## skimming the top of the pool, and the same pin is how an earlier run farmed 494 repeat
-## threads. The current cannot rescue it either, because the pull is weakest at exactly
-## the far end where the orbit sits. At 0.18 the ball crosses the pool vertically at least
-## every seven seconds, whatever else is done to it, and the orbit stops existing.
-@export var min_vertical: float = 0.18
+## A board was seen running 200 seconds while destroying 18 of 44 rings, and the obvious
+## reading was the classic breakout failure: the ball settled into a near-horizontal orbit
+## between the side walls and never came down. A guard clamping the heading away from
+## horizontal duly made it stop happening.
+##
+## It was not the ball. The playtest harness tracked "is a striker live" with its own flag
+## instead of reading the game's, missed the re-serve whenever its sample loop stepped over
+## the frame the old ball vanished on, and then never launched the new one - so the board
+## sat untouched with nothing in play. Fixing the harness removed every stall, and five
+## boards with the guard *off* produced none either. The evidence for the orbit was an
+## instrument reporting its own bug.
 
 var launched: bool = false
 var threads_this_life: int = 0
@@ -121,12 +126,6 @@ func _physics_process(_delta: float) -> void:
 	var heading := linear_velocity.normalized()
 	if heading.is_zero_approx():
 		heading = Vector2.UP
-	# Applied here rather than at each place a heading is set, because a wall bounce, a
-	# rim deflection and the current can each produce a shallow line and only the frame
-	# loop sees all three.
-	if absf(heading.y) < min_vertical:
-		heading.y = min_vertical * (-1.0 if heading.y < 0.0 else 1.0)
-		heading = heading.normalized()
 	linear_velocity = heading * speed
 
 	_trail.push_back(global_position)
