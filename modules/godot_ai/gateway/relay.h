@@ -81,6 +81,10 @@ struct RelayOptions {
 	std::string call_tool;
 	std::string call_arguments; // JSON object, defaults to {}.
 	bool list_tools = false;
+	// One tool's schema, by name. --list-tools returns ninety-nine of them, and
+	// three agents each lost six to eight round trips guessing argument names
+	// rather than fetch and grep that.
+	std::string describe_tool;
 	// The skills, as MCP prompts. Reachable from the CLI for the same reason they are
 	// served at all: they are the intended way in, and a scripted agent that can only
 	// see ninety-six primitives is the failure mode skills exist to avoid. `--call` never

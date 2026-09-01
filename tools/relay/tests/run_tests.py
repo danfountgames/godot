@@ -624,7 +624,9 @@ def _responding_editor(result_payload=None, refuse_tool=None):
                     "result": {"protocolVersion": "2025-06-18", "capabilities": {}}}
         if message.get("method") == "tools/list":
             return {"jsonrpc": "2.0", "id": message["id"],
-                    "result": {"tools": [{"name": "Godot_GetEditorStatus"}]}}
+                    "result": {"tools": [{"name": "Godot_GetEditorStatus",
+                                          "description": "What the editor is doing.",
+                                          "inputSchema": {"type": "object", "properties": {}}}]}}
         if message.get("method") == "prompts/list":
             return {"jsonrpc": "2.0", "id": message["id"],
                     "result": {"prompts": [{"name": "tidy-the-scene",
@@ -791,6 +793,38 @@ def test_list_prompts_offers_the_skills_from_the_command_line():
         listed = json.loads(result.stdout.decode())
         assert_eq([p["name"] for p in listed["prompts"]], ["tidy-the-scene"],
                   "the skill is offered")
+    finally:
+        editor.close()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@test
+def test_describe_returns_one_tool_and_suggests_near_misses():
+    """Three agents each lost six to eight round trips guessing argument names, because
+    the only way to read one schema was to fetch ninety-nine and grep."""
+    editor = _responding_editor()
+    home = _one_shot_home(editor)
+    try:
+        result = run_relay_one_shot(["--describe", "Godot_GetEditorStatus"], home)
+        assert_eq(result.returncode, 0, "--describe failed: %s" % result.stderr.decode())
+        # Output, not merely exit 0. The first version of this mode was missing from the
+        # one-shot dispatch in main.cpp, so it fell through to serving MCP on stdin, read
+        # EOF and exited 0 - printing nothing and looking exactly like a working call
+        # with nothing to say.
+        described = json.loads(result.stdout.decode())
+        assert_eq(described["name"], "Godot_GetEditorStatus", "the named tool came back")
+        assert_eq("inputSchema" in described, True, "the schema came back")
+
+        # A half-remembered name is the case this exists for.
+        result = run_relay_one_shot(["--describe", "editorstatus"], home)
+        assert_eq(result.returncode, 1, "a partial name should not silently succeed")
+        assert_eq("Godot_GetEditorStatus" in result.stderr.decode(),
+                  True, "the near miss was not suggested: %s" % result.stderr.decode())
+
+        result = run_relay_one_shot(["--describe", "Godot_NothingLikeThis"], home)
+        assert_eq(result.returncode, 1, "an unknown tool should fail")
+        assert_eq("--list-tools" in result.stderr.decode(),
+                  True, "an unknown tool should point somewhere: %s" % result.stderr.decode())
     finally:
         editor.close()
         shutil.rmtree(home, ignore_errors=True)
