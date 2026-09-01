@@ -96,6 +96,23 @@ void EditorRun::build_base_arguments(const String &p_scene, const String &p_writ
 	args.push_back("--editor-pid");
 	args.push_back(itos(OS::get_singleton()->get_process_id()));
 
+	// An editor with no display cannot launch a game that needs one.
+	//
+	// Upstream assumes an editor implies a screen, so nothing here told the child which
+	// display driver to use and the child went looking for X11. On a machine with none
+	// it printed "Unable to create DisplayServer", then crashed with SIGSEGV inside
+	// XGetSelectionOwner while cleaning up - so from the editor's side the game simply
+	// vanished, with `playing` back to false and an empty output log.
+	//
+	// That breaks the whole closed loop for an agent driving a headless editor: run the
+	// game, observe it, revise. The first real benchmark run hit it on its first attempt
+	// to verify a fix. Passing the driver down costs nothing when there is a display,
+	// because then this branch does not fire.
+	if (DisplayServer::get_singleton() && DisplayServer::get_singleton()->get_name() == "headless") {
+		args.push_back("--display-driver");
+		args.push_back("headless");
+	}
+
 	bool debug_collisions = EditorSettings::get_singleton()->get_project_metadata("debug_options", "run_debug_collisions", false);
 	bool debug_paths = EditorSettings::get_singleton()->get_project_metadata("debug_options", "run_debug_paths", false);
 	bool debug_navigation = EditorSettings::get_singleton()->get_project_metadata("debug_options", "run_debug_navigation", false);

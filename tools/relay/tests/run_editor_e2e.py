@@ -1624,7 +1624,50 @@ def run(editor_binary, display):
                         tree = candidate
                         break
                 time.sleep(0.5)
-            if tree is not None:
+
+            # Unconditional now, and that is the change that matters. This used to be
+            # asserted only where a display existed, and skipped headless with "the
+            # headless game did not report one" - which quietly recorded a real bug as a
+            # fact of life. The editor never told the game which display driver to use,
+            # so a headless editor launched a game that could not create a DisplayServer
+            # and then segfaulted on the way out. The whole closed loop was broken for a
+            # headless agent and a skip was hiding it. The first real benchmark run found
+            # it in minutes.
+            check(tree is not None, "the running game never reported its scene tree")
+
+            if not has_display:
+                # The loop itself works headless, and these prove it: read the live tree,
+                # read a property, change one, and drive the game by action. What does
+                # not work headless is anything aimed at window coordinates - the root
+                # viewport is a 64x64 stub, because the dummy display server ignores the
+                # project's configured size and --resolution does not change it. So the
+                # geometry-dependent block below is display-only, and it is skipped here
+                # for that reason rather than because the game is absent.
+                names = [n["name"] for n in tree["nodes"]]
+                check("Main" in names and "Player" in names,
+                      "the runtime tree does not match the scene: %r" % names)
+
+                probe = call({"jsonrpc": "2.0", "id": 861, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main", "property": "name"}}})
+                check(not refused(probe),
+                      "reading a live property failed headless: %s" % refusal_text(probe))
+                check(probe["result"]["structuredContent"]["value"] == "Main",
+                      "the live property read the wrong value: %r"
+                      % probe["result"]["structuredContent"])
+
+                probe = call({"jsonrpc": "2.0", "id": 862, "method": "tools/call",
+                              "params": {"name": "Godot_SendActionInput",
+                                         "arguments": {"action": "e2e_fire"}}})
+                check(not refused(probe),
+                      "action input failed headless: %s" % refusal_text(probe))
+
+                print("PASS the closed loop works headless: live tree, live property, "
+                      "action input")
+                print("SKIP the geometry-dependent runtime checks: a headless game's root "
+                      "viewport is a 64x64 stub, so window coordinates address nothing")
+
+            if tree is not None and has_display:
                 names = [n["name"] for n in tree["nodes"]]
                 check("Main" in names and "Player" in names,
                       "the runtime tree does not match the scene: %r" % names)
@@ -1649,6 +1692,15 @@ def run(editor_binary, display):
                 # --- real input into the running game -------------------------
                 # The button is at (100,100)-(300,160) inside a CanvasLayer, so its
                 # centre is a point a player could hit.
+                #
+                # Only where there is a display, and for a reason worth stating rather
+                # than skipping past. A headless game's root viewport is a 64x64 stub:
+                # the dummy display server ignores the project's configured size and
+                # --resolution does not change it, so the whole interface is laid out
+                # in 64x64 and a coordinate from the real design addresses nothing.
+                # Godot_SendPointerInput refusing it is correct. The consequence for a
+                # headless agent is real and is written down in godot-ai-headless.md:
+                # drive the game with actions and keys, not with coordinates.
                 reply = call({"jsonrpc": "2.0", "id": 89, "method": "tools/call",
                               "params": {"name": "Godot_SendPointerInput",
                                          "arguments": {"x": 200, "y": 130,
@@ -3180,10 +3232,9 @@ def run(editor_binary, display):
                 call({"jsonrpc": "2.0", "id": 129, "method": "tools/call",
                       "params": {"name": "Godot_SetTimeScale", "arguments": {"scale": 1}}})
                 print("PASS Godot_SetTimeScale changes and restores the pace of the game")
-            elif has_display:
-                raise Failure("the running game never reported its scene tree")
-            else:
-                print("SKIP runtime tree: the headless game did not report one")
+            # No trailing else: the tree is asserted unconditionally above, before the
+            # split, so its absence is a failure in either configuration rather than a
+            # skip in one of them.
 
             reply = call({"jsonrpc": "2.0", "id": 87, "method": "tools/call",
                           "params": {"name": "Godot_StopPlaying"}})
