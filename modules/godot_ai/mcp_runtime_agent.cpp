@@ -33,6 +33,8 @@
 #ifdef TOOLS_ENABLED
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
+#include "servers/display/display_server.h"
 #include "core/debugger/engine_debugger.h"
 #include "core/input/input.h"
 #include "core/input/input_event.h"
@@ -830,7 +832,55 @@ Error MCPRuntimeAgent::parse_message(void *p_user, const String &p_message, cons
 	return OK;
 }
 
+// Give a headless game the viewport the project asked for.
+//
+// The dummy display server never applies `display/window/size/viewport_width|height`,
+// so a headless game lays its whole interface out inside a 100x100 stub. Every control
+// is then somewhere no coordinate from the real design points at, and
+// Godot_SendPointerInput correctly refuses every click - which left a headless agent
+// able to read a running game and drive it only by action, never by pointer. That is
+// half the product missing in the mode this is most often run in.
+//
+// Window::set_size() works on the root even with no display; the size is simply never
+// set. Adopting the configured one restores what the game would have had with a window,
+// costs nothing when a real display already sized it, and is announced so nobody has to
+// wonder why the numbers changed.
+static void ensure_usable_viewport() {
+	static bool considered = false;
+	if (considered) {
+		return;
+	}
+	considered = true;
+
+	if (!DisplayServer::get_singleton() || DisplayServer::get_singleton()->get_name() != "headless") {
+		return;
+	}
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		considered = false; // Too early to tell; look again on the next request.
+		return;
+	}
+
+	const int width = GLOBAL_GET("display/window/size/viewport_width");
+	const int height = GLOBAL_GET("display/window/size/viewport_height");
+	if (width <= 0 || height <= 0) {
+		return;
+	}
+	const Size2i current = tree->get_root()->get_size();
+	if (current.width >= width && current.height >= height) {
+		return;
+	}
+	tree->get_root()->set_size(Size2i(width, height));
+	print_line(vformat("Godot AI: this game has no display, so its viewport was %dx%d; set to the "
+					   "project's configured %dx%d so laid-out controls are where they belong.",
+			current.width, current.height, width, height));
+}
+
 Dictionary MCPRuntimeAgent::_handle(const String &p_command, const Dictionary &p_arguments, String &r_error) {
+	// Before anything else, and once: an agent's first request is the earliest moment
+	// the game is known to be driven rather than played.
+	ensure_usable_viewport();
+
 	if (p_command == "ping") {
 		return _ping(p_arguments, r_error);
 	}
