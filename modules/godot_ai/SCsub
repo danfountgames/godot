@@ -61,6 +61,21 @@ if terminal_enabled:
     # The wrapper needs the public header too.
     env_godot_ai.Prepend(CPPPATH=[thirdparty_dir + "include"])
 
+# The shipped skills, compiled in. See skills_builder.py for why they cannot simply be
+# files: nothing in skill discovery looks where they live, so on a fresh project the
+# advertised way in listed nothing at all.
+import skills_builder
+
+env_godot_ai.Depends(
+    "#modules/godot_ai/mcp_builtin_skills.gen.h",
+    Glob("#misc/godot_ai/skills/*/SKILL.md") + ["#modules/godot_ai/skills_builder.py"],
+)
+env_godot_ai.CommandNoCache(
+    "#modules/godot_ai/mcp_builtin_skills.gen.h",
+    Glob("#misc/godot_ai/skills/*/SKILL.md"),
+    env.Run(skills_builder.make_builtin_skills),
+)
+
 module_obj = []
 
 env_godot_ai.add_source_files(module_obj, "*.cpp")

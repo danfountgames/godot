@@ -16,11 +16,13 @@ work here, not an advanced option.
 | `investigate-a-crash` | Turn "it crashed" into a reproducible, minimised sequence |
 | `traverse-the-menus` | Walk every reachable screen and report what is unreachable, what has no way back, and what does nothing |
 | `tune-and-keep` | Adjust a value in play, judge it, and promote the one that felt right into the scene |
+| `measure-a-feel-target` | Turn a stated number - "crosses in about three seconds" - into one read off the running game, then tune until it holds |
 | `performance-profiling` | Capture a profiler window and read it |
 | `find-a-performance-regression` | It used to be fast: measure the same sequence twice and attribute the difference |
 | `test-an-input-path` | Prove an input reaches what it drives, on every device the game claims to support |
 | `scene-cleanup` | Tidy a scene by proposing the whole plan first, so the renames are one decision and a delete is its own |
 | `check-a-visual-change` | Capture before and after and compare them, so an edit is shown to change what it meant to and nothing else |
+| `judge-a-design` | Answer a question about how a game *plays* - pacing, whether a verb is worth using, whether a choice is a real choice - with numbers, including how to play badly on purpose and how to catch your own harness lying |
 
 These are also served as **MCP prompts**, so a client surfaces them as named jobs
 rather than leaving them two tool calls deep behind the primitives. Only skills you have

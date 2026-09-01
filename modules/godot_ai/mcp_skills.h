@@ -90,6 +90,9 @@ public:
 
 	// Trust state, persisted in editor settings.
 	static bool is_allowed(const String &p_name);
+	// Builtin skills are trusted unless turned off by name; see the comment where
+	// they are discovered for why they are the one exception.
+	static bool is_revoked(const String &p_name);
 	static void set_allowed(const String &p_name, bool p_allowed);
 
 	// Instruction body of a skill, read on demand.

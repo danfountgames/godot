@@ -31,6 +31,11 @@
 #include "mcp_builtin_tools.h"
 
 #include "../mcp_paths.h"
+#include "../mcp_deferred.h"
+
+#include "core/object/callable_mp.h"
+#include "core/os/os.h"
+#include "../mcp_runtime_bridge.h"
 #include "../mcp_tool_registry.h"
 
 #include "core/variant/array.h"
@@ -380,8 +385,10 @@ public:
 	}
 	virtual String get_description() const override {
 		return main_scene
-				? "Run the project's main scene. Changes made while the game runs are not persistent."
-				: "Run the scene currently open in the editor. Changes made while the game runs are not persistent.";
+				? "Run the project's main scene, and wait until the runtime tools can reach it. "
+				  "Changes made while the game runs are not persistent."
+				: "Run the scene currently open in the editor, and wait until the runtime tools "
+				  "can reach it. Changes made while the game runs are not persistent.";
 	}
 	virtual MCPCapability get_capability() const override { return MCP_CAP_RUN_PROJECT; }
 	virtual Dictionary get_input_schema() const override { return MCPSchema::object_schema(Dictionary()); }
@@ -393,6 +400,9 @@ public:
 		properties["game_process_count"] = MCPSchema::integer_property(
 				"How many game processes the editor is running. More than one means a runtime "
 				"read and an input injection may not reach the same process.");
+		properties["reachable"] = MCPSchema::bool_property(
+				"True when the runtime tools can talk to the game. This call waits for it, so a "
+				"false here means the game started and its debugger connection never came up.");
 		return MCPSchema::object_schema(properties);
 	}
 	virtual Dictionary run(const Dictionary &p_arguments, MCPToolError &r_error) override {
@@ -409,9 +419,46 @@ public:
 			EditorInterface::get_singleton()->play_current_scene();
 		}
 
+		// Answers when the game can actually be *talked to*, not when the process has
+		// been launched.
+		//
+		// Launching is instant; the debugger connection that every runtime tool goes
+		// through takes a second or two more. Returning at launch meant `playing: true`
+		// followed immediately by "no game is running" from the very next call - which is
+		// not true, and sends the reader looking for a crash that did not happen. Making
+		// the caller sleep an arbitrary amount is the thing this whole interface exists
+		// to stop people doing.
+		deadline_msec = OS::get_singleton()->get_ticks_msec() + REACHABLE_TIMEOUT_MSEC;
+		return MCPDeferred::make_deferred_result(
+				MCPDeferred::begin_polled(REACHABLE_TIMEOUT_MSEC / 1000.0 + 2.0,
+						callable_mp(this, &PlaySceneTool::_poll)));
+	}
+
+private:
+	static constexpr uint64_t REACHABLE_TIMEOUT_MSEC = 20000;
+	uint64_t deadline_msec = 0;
+
+	Variant _poll() {
+		MCPRuntimeBridge *bridge = MCPRuntimeBridge::get_singleton();
+		const bool reachable = bridge && bridge->is_game_reachable();
+		const bool timed_out = OS::get_singleton()->get_ticks_msec() >= deadline_msec;
+		if (!reachable && !timed_out) {
+			return Variant();
+		}
+
 		Dictionary result;
-		result["playing"] = EditorInterface::get_singleton()->is_playing_scene();
+		result["playing"] = EditorInterface::get_singleton()
+				? EditorInterface::get_singleton()->is_playing_scene()
+				: false;
+		result["reachable"] = reachable;
 		add_game_processes(result);
+		if (!reachable) {
+			// Reported rather than refused: the process may be alive and simply slow, and
+			// the pid list above is the thing to look at next.
+			result["note"] = "the game was launched but its debugger connection has not come "
+							 "up, so the runtime tools cannot reach it yet. If the process "
+							 "list above is empty it failed to start; read Godot_ReadOutputLog.";
+		}
 		return result;
 	}
 };

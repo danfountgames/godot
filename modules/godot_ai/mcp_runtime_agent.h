@@ -83,6 +83,17 @@ class MCPRuntimeWatcher : public Object {
 		String property;
 		Variant expected;
 		double deadline = 0.0;
+		// "equals" unless asked otherwise. Equality alone cannot express "wait until this
+		// changes", and the gap silently corrupted a real measurement: a wait for
+		// rings_in_world == 1 was satisfied *immediately* because it was already 1, so
+		// the caller carried on before the restart it was waiting for, set a property on
+		// a node about to be freed, and got a plausible wrong answer with no error
+		// anywhere.
+		String comparison = "equals";
+		// For "changes_from": what it was when the wait was armed, so "different from
+		// now" is a thing that can be waited on at all.
+		Variant baseline;
+		bool has_baseline = false;
 	};
 
 	// Capturing a sequence and measuring a window of frames are the same shape as a
@@ -225,7 +236,8 @@ public:
 	// finished yet".
 	static bool read_scene_test(bool &r_finished, Array &r_cases);
 
-	void add(const String &p_request_id, const String &p_path, const String &p_property, const Variant &p_expected, double p_timeout_seconds);
+	void add(const String &p_request_id, const String &p_path, const String &p_property,
+			const Variant &p_expected, double p_timeout_seconds, const String &p_comparison = "equals");
 	void add_sequence(const String &p_request_id, int p_frames, int p_interval_frames);
 	void add_profile(const String &p_request_id, int p_frames, double p_budget_frame_ms);
 	void add_scene_test(const String &p_request_id, double p_timeout_seconds);

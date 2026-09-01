@@ -30,6 +30,8 @@
 
 #include "mcp_skills.h"
 
+#include "mcp_builtin_skills.gen.h"
+
 #include "mcp_paths.h"
 
 #include "core/config/project_settings.h"
@@ -152,6 +154,19 @@ Vector<String> MCPSkills::get_roots() {
 	}
 #endif
 	return roots;
+}
+
+// A skill's text, wherever it lives. A builtin one has no file to read.
+static String builtin_text(const MCPSkill &p_skill) {
+	if (p_skill.root_kind == "builtin") {
+		for (int i = 0; MCP_BUILTIN_SKILLS[i].name != nullptr; i++) {
+			if (p_skill.path == String("builtin://") + MCP_BUILTIN_SKILLS[i].name) {
+				return String::utf8(MCP_BUILTIN_SKILLS[i].text);
+			}
+		}
+		return String();
+	}
+	return FileAccess::get_file_as_string(p_skill.path);
 }
 
 static String root_kind_for(const String &p_root, const String &p_project_root) {
@@ -388,11 +403,74 @@ Vector<MCPSkill> MCPSkills::discover() {
 		dir->list_dir_end();
 	}
 
+	// And the skills that ship with the editor, after everything on disk, so a project
+	// can replace one by name. Skipped when the roots are overridden: that override means
+	// "discovery is exactly these directories", and a test that pins a count would
+	// otherwise be measuring how many skills the fork happens to ship.
+	if (!s_roots_override.is_empty()) {
+		return skills;
+	}
+
+	// (continued) They are compiled in rather than installed: the places
+	// discovery looks are all per-project or per-user, and a fresh project has none of
+	// them - so the way in that the initialize instructions and the relay's own help
+	// both advertise listed nothing at all. See modules/godot_ai/skills_builder.py.
+	for (int i = 0; MCP_BUILTIN_SKILLS[i].name != nullptr; i++) {
+		MCPSkill skill;
+		skill.root_kind = "builtin";
+		skill.path = String("builtin://") + MCP_BUILTIN_SKILLS[i].name;
+
+		String body;
+		String error;
+		if (!parse(String::utf8(MCP_BUILTIN_SKILLS[i].text), skill, body, error)) {
+			// A shipped skill that does not parse is a build defect, not a user problem,
+			// but hiding it would make it invisible in exactly the builds it is broken in.
+			skill.name = MCP_BUILTIN_SKILLS[i].name;
+			skill.problem = error;
+			skills.push_back(skill);
+			continue;
+		}
+		if (seen_names.has(skill.name)) {
+			continue;
+		}
+		// Allowed unless the user has revoked it by name.
+		//
+		// The trust rule everywhere else is deliberate and stays: a skill is text that
+		// steers the model, so one that turned up in a project or an addon is untrusted
+		// until somebody says otherwise. A skill compiled into the editor is a different
+		// thing - it arrived by the same route as the tool descriptions, which are
+		// already trusted, and nobody can add one without shipping a new binary.
+		// Requiring consent for those would leave the advertised way in empty on every
+		// fresh project, which is exactly the state this is fixing.
+		skill.allowed = !is_revoked(skill.name);
+		seen_names.push_back(skill.name);
+		skills.push_back(skill);
+	}
+
 	return skills;
 }
 
 static String allowed_skills_setting() {
 	return "network/godot_ai/allowed_skills";
+}
+
+static String revoked_skills_setting() {
+	return "network/godot_ai/revoked_builtin_skills";
+}
+
+// Whether the user has explicitly turned a builtin skill off. The allow list cannot
+// answer this: an empty one means "nothing has been decided", not "everything is off".
+bool MCPSkills::is_revoked(const String &p_name) {
+	if (s_allow_override_set) {
+		return !s_allow_override.has(p_name);
+	}
+#ifdef TOOLS_ENABLED
+	if (EditorSettings::get_singleton() && EditorSettings::get_singleton()->has_setting(revoked_skills_setting())) {
+		const PackedStringArray revoked = EditorSettings::get_singleton()->get_setting(revoked_skills_setting());
+		return revoked.has(p_name);
+	}
+#endif
+	return false;
 }
 
 bool MCPSkills::is_allowed(const String &p_name) {
@@ -454,7 +532,7 @@ bool MCPSkills::read_instructions(const MCPSkill &p_skill, String &r_body, Strin
 	}
 
 	MCPSkill parsed;
-	const String text = FileAccess::get_file_as_string(p_skill.path);
+	const String text = builtin_text(p_skill);
 	String error;
 	if (!parse(text, parsed, r_body, error)) {
 		r_error = error;
@@ -466,6 +544,12 @@ bool MCPSkills::read_instructions(const MCPSkill &p_skill, String &r_body, Strin
 bool MCPSkills::read_resource(const MCPSkill &p_skill, const String &p_relative, String &r_contents, String &r_error) {
 	if (!p_skill.allowed) {
 		r_error = vformat("skill '%s' has not been allowed", p_skill.name);
+		return false;
+	}
+	if (p_skill.root_kind == "builtin") {
+		r_error = vformat("'%s' ships with the editor and is a single file, so it carries no "
+						  "resources; everything it has to say is in its instructions",
+				p_skill.name);
 		return false;
 	}
 	if (p_relative.strip_edges().is_empty()) {
