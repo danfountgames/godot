@@ -46,11 +46,12 @@ class MCPRuntimeBridge;
 class MCPAgentTerminalPanel;
 #endif
 
-// Editor-side half of the bridge: a loopback listener that godot-ai-relay connects
-// to, following the lifecycle pattern of the in-tree debug adapter server.
+// The editor's MCP service: a direct Streamable HTTP endpoint plus a loopback bridge
+// listener for the embedded `godot --godot-ai-stdio` gateway, following the lifecycle
+// pattern of the in-tree debug adapter server.
 //
-// The editor never owns stdio for the protocol - the relay does - so engine prints
-// can never corrupt a client's stream.
+// The editor never owns stdio for the protocol - gateway mode enters before engine
+// initialisation - so engine prints can never corrupt a client's stream.
 class MCPService : public EditorPlugin, public MCPProtocol::Delegate {
 	GDCLASS(MCPService, EditorPlugin);
 
@@ -185,7 +186,7 @@ public:
 	virtual String get_project_name() const override;
 	virtual String get_editor_version() const override;
 
-	// State directory shared with godot-ai-relay ($GODOT_AI_HOME, else ~/.godot-ai).
+	// State directory shared with the embedded gateway ($GODOT_AI_HOME, else ~/.godot-ai).
 	static String get_state_dir();
 	static String get_instances_dir();
 

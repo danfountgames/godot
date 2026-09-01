@@ -38,9 +38,10 @@
 // Reusable workflow instructions discovered from the filesystem, as SKILL.md files
 // with YAML frontmatter.
 //
-// Skills are *discovered* but never automatically trusted: a skill is an instruction
-// file that anyone could have dropped into a project or an addon, so it stays denied
-// until the user allows it by name.
+// Filesystem skills are discovered but never automatically trusted: anyone could have
+// dropped one into a project or addon, so it stays denied until the user allows it by
+// name. Skills compiled into the editor are the one exception; they arrived through
+// the same trusted route as tool descriptions and are usable unless explicitly revoked.
 struct MCPSkill {
 	String name;
 	String description;
@@ -50,9 +51,9 @@ struct MCPSkill {
 
 	String path; // Absolute path of the SKILL.md file.
 	String res_path; // res:// form when inside the project, otherwise empty.
-	String root_kind; // "project", "plugin" or "user".
+	String root_kind; // "project", "plugin", "user" or "builtin".
 
-	bool allowed = false; // User trust decision.
+	bool allowed = false; // User trust decision, or not-revoked for a builtin.
 	bool version_supported = true; // Whether required_editor_version matches.
 	String problem; // Non-empty when the file was found but is unusable.
 

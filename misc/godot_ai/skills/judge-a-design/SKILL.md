@@ -34,7 +34,7 @@ The most expensive mistake here, and it is a comfortable one. A game's own docum
 states what its mechanics do, its variables are named after what they were meant to be,
 and both are frequently wrong in ways only playing reveals.
 
-Worked example, from this repository's own demo. Its README described a pull/push trade —
+Worked example from a physics-heavy prototype. Its brief described a pull/push trade —
 pull gathers reward and brings danger, push buys safety and sends reward away. Every line
 of that was false in the build. Pull had no danger, because the paddle collided with
 nothing, so a hazard dragged towards the player passed through them and out of the level,
@@ -84,7 +84,7 @@ the pace.
 The single most expensive bug available in this work, because it produces data rather than
 an error.
 
-A harness in this repository tracked "is the ball live" with a local flag: set it on
+A measurement harness tracked "is the ball live" with a local flag: set it on
 launch, clear it when the ball is seen below the play area. Its sample loop stepped over
 the frame the old ball vanished on, so the flag stayed set, so it never launched the next
 one — and the level sat untouched. That produced two 200-second "stalls" with 96% dead
@@ -122,7 +122,7 @@ A level's problem is almost never its length. It is how much of that length cont
 nothing.
 
 Count the time since anything last scored, and report the fraction of the level spent
-above a few seconds of that. In this repository that number was **71%** — a level whose
+above a few seconds of that. In one measured level that number was **71%** — a level whose
 median length was 161 seconds contained the same 48 to 56 seconds of action however long
 it ran — and it is the finding that halved the level and changed the design. The total
 length alone said "one to three minutes, as specified" and hid all of it.

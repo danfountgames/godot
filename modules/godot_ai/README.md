@@ -1,48 +1,44 @@
 # Godot AI tooling
 
-An MCP (Model Context Protocol) server built into the Godot editor, so external AI
-clients — Claude Code, Cursor, Codex CLI, or anything else that speaks MCP over
-stdio — can inspect and drive the editor under the user's control.
-
-This module is the editor half. The client-facing half is `tools/relay/`.
-The design this implements is described in `docs/godot-ai-clone-spec.md`.
+An MCP (Model Context Protocol) server built into the Godot editor, so an agent in
+the editor's terminal — or any external MCP client — can inspect and drive the live
+editor under the user's control. The design this implements is described in
+`docs/godot-ai-clone-spec.md`.
 
 ## Architecture
 
 ```
-┌────────────────────┐  MCP over stdio  ┌────────────────┐  NDJSON/TCP  ┌──────────────────┐
-│ MCP client         │◄────────────────►│ godot-ai-relay │◄────────────►│ Godot editor     │
-│ (Claude Code, …)   │   (JSON-RPC 2.0) │  (tiny binary) │  127.0.0.1   │ MCPService       │
-└────────────────────┘                  └────────────────┘              └──────────────────┘
+┌────────────────────┐  Streamable HTTP MCP  ┌──────────────────────────┐
+│ Agent Terminal or  │◄─────────────────────►│ Godot editor / MCPService│
+│ external client    │    127.0.0.1 + token  │ (the MCP server)         │
+└────────────────────┘                       └──────────────────────────┘
+            │                                             ▲
+            └─ stdio-only clients: godot --godot-ai-stdio ┘
 ```
 
-Two processes, on purpose:
+The editor serves Streamable HTTP MCP itself. The Agent Terminal connects directly;
+there is no relay process in that product path. A client that only speaks stdio runs
+the same editor binary as `godot --godot-ai-stdio`. That mode is entered before engine
+initialisation and uses only engine-free C++17, so Godot's ordinary prints can never
+corrupt protocol stdout.
 
-- **The relay owns stdin/stdout.** The Godot editor prints to stdout freely (warnings,
-  driver messages, `print()` from `@tool` scripts). If the editor spoke the protocol
-  on stdio, any of that would corrupt a client's stream. The relay never writes
-  anything to stdout but protocol frames, and drops any frame in either direction that
-  is not a JSON object.
-- **The editor owns the socket.** `MCPService` is an `EditorPlugin`, so its lifetime
-  follows the editor's, exactly like the in-tree debug adapter and language servers.
-
-The relay finds a running editor through a small registry: each editor writes
+The stdio gateway finds a running editor through a small registry: each editor writes
 `$GODOT_AI_HOME/instances/<pid>.json` (default `~/.godot-ai`) describing its pid,
-port, project and versions. Descriptors pointing at dead editors are pruned when a
-connection is refused.
+bridge port, HTTP port and token, project, and versions. The descriptor is mode 0600;
+descriptors pointing at dead editors are pruned when a connection is refused.
 
 ## Setting up a client
 
 1. Open your project in the editor. The Output panel logs
    `--- Godot AI service listening on 127.0.0.1:<port> ---`.
-2. Point your MCP client at the relay:
+2. Point a stdio MCP client at the editor binary's gateway mode:
 
    ```json
    {
      "mcpServers": {
        "godot": {
-         "command": "/path/to/godot/bin/godot-ai-relay",
-         "args": ["--mcp", "--client-name", "claude-code"]
+        "command": "/path/to/bin/godot",
+        "args": ["--godot-ai-stdio", "--mcp", "--client-name", "claude-code"]
        }
      }
    }
@@ -54,10 +50,11 @@ connection is refused.
    listed as pending. Approve it in *Editor Settings → Network → Godot AI →
    Approved Clients*, then reconnect.
 
-Relay flags: `--editor-socket <port|host:port>`, `--project`, `--instance`,
+Gateway flags: `--editor-socket <port|host:port>`, `--project`, `--instance`,
 `--read-only`, `--approval-mode ask|allow|deny`, `--client-name`, `--log-level`,
-`--handshake-timeout <ms>`, `--home`. Run `godot-ai-relay --help` for the full list;
-all output goes to stderr.
+`--handshake-timeout <ms>`, and `--home`. It also has focused scripting modes:
+`--call`, `--batch`, `--list-tools`, `--describe`, `--list-prompts`, and `--prompt`.
+Run `godot --godot-ai-stdio --help` for the full list; diagnostics go to stderr.
 
 ## Permissions
 
@@ -93,7 +90,7 @@ names look sensitive (`api_key`, `token`, `password`, …) redacted at source.
 
 | Tool | Capability | Purpose |
 |---|---|---|
-| `Godot_GetEditorStatus` | read_project | Edited scene, play state, project root |
+| `Godot_GetEditorStatus` | read_project | Edited scene, selection, workspace, open script, play state, project root |
 | `Godot_ListScenes` | read_project | Scene files, optionally under a folder |
 | `Godot_ListAssets` | read_project | Project files, filtered by extension |
 | `Godot_ReadTextFile` | read_project | Read a UTF-8 file from the project |
@@ -113,9 +110,18 @@ names look sensitive (`api_key`, `token`, `password`, …) redacted at source.
 | `Godot_UndoLastAction` | edit_scene | Undo the most recent editor action |
 | `Godot_RedoLastAction` | edit_scene | Redo the most recently undone action |
 | `Godot_RestoreCheckpoint` | edit_files | Put a checkpoint's files back |
+| `Godot_RecallProjectMemory` | read_project | Recall durable project facts recorded by earlier sessions |
+| `Godot_UpdateProjectMemory` | edit_files | Record, replace, or forget one durable project fact |
+| `Godot_LookupClass` | read_project | Query this build's API reference and project script classes |
+| `Godot_ManageConnection` | edit_scene | Persistently connect or disconnect a scene signal |
 | `Godot_CaptureViewport` | edit_files | Save the rendered editor viewport as a PNG |
 | `Godot_CaptureInspectorProperty` | edit_files | Inspect a Resource or scene node, expand a raw property chain, highlight its final property, and save a centered Inspector-only crop |
 | `Godot_CaptureSceneTreeNode` | edit_files | Open a scene, reveal and highlight an exact NodePath, and save a centered Scene-dock-only crop |
+| `Godot_CompareCaptures` | edit_files | Measure two captures and optionally save an annotated diff |
+| `Godot_RecordRuntimeSeries` | read_runtime | Sample one live property at game-frame rate |
+| `Godot_FindRuntimeNodes` | read_runtime | Find transient nodes by class, name, or position |
+| `Godot_PauseRuntime` | run_project | Pause, resume, or query the running game |
+| `Godot_StepRuntimeFrames` | run_project | Advance an exact number of physics or process frames and pause again |
 
 The two semantic documentation captures take `context_above` and `context_below` in
 editor UI points. They return the target row's pixel position and height inside the
@@ -139,6 +145,7 @@ Three different scopes, deliberately not interchangeable:
 |---|---|---|
 | Editor undo | in-memory scene edits that have not been saved | `Godot_UndoLastAction` |
 | Checkpoints | files a tool wrote | `Godot_RestoreCheckpoint` |
+| Task checkpoint | all files written under one `Godot_SetIntent` task | `Godot_RestoreCheckpoint` with that task key |
 | Version control | your own history | never touched by these tools |
 
 Before any mutating tool runs, the protocol layer snapshots the files that tool
@@ -150,13 +157,18 @@ snapshots the scene file.
 
 ## Skills
 
-Reusable workflow instructions discovered as `SKILL.md` files with YAML frontmatter,
-from `res://ai_skills/`, `res://addons/*/ai_skills/` and the user's skill folder, in
-that precedence order. A discovered skill is **not** trusted: `Godot_ListSkills`
-shows it, but `Godot_ReadSkill` refuses its instructions until you allow it by name
-in *Editor Settings → Network → Godot AI → Allowed Skills*. Supporting files load on
-demand and cannot escape the skill's own folder. See `misc/godot_ai/skills/` for a
-working example.
+Reusable workflow instructions are discovered as `SKILL.md` files with YAML
+frontmatter, from `res://ai_skills/`, `res://addons/*/ai_skills/`, the user's skill
+folder, and the library embedded in the editor binary. A filesystem skill is **not**
+trusted: `Godot_ListSkills` shows it, but its instructions stay unavailable until the
+user allows it in the Godot AI dialog. Built-ins arrived with the trusted editor binary
+and are usable by default, but the user can revoke them. Supporting files load on
+demand and cannot escape the skill's own folder.
+
+Allowed skills are also MCP prompts, so clients can enter through a named job rather
+than compose a large primitive tool surface from scratch. The stdio gateway exposes
+the same path with `--list-prompts` and `--prompt <name> --context <text>`. See
+`misc/godot_ai/skills/` for the shipped library.
 
 ## Registering your own tools
 
@@ -218,9 +230,8 @@ treatment.
 
 ```sh
 scons platform=linuxbsd target=editor dev_build=yes debug_symbols=no scu_build=yes tests=yes -j$(nproc)
-tools/relay/build.sh
 
-python3 tools/relay/tests/run_tests.py       # relay: transport, discovery, lifecycle
+python3 tools/relay/tests/run_tests.py       # embedded gateway: transport, discovery, CLI
 python3 tools/tests/run_tests.py             # the virtual display
 cd /tmp && <repo>/bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --test-case="*[godot_ai]*"
 python3 tools/relay/tests/run_editor_e2e.py  # whole stack against a live editor
@@ -232,11 +243,12 @@ refuses any path outside that directory.
 
 ## Working without a screen
 
-Some of this toolset is only meaningful on screen: the three `Godot_Capture*` editor
-tools photograph rendered UI, `Godot_AskUser` puts a dialog in front of someone, and a launched game has
-to stay alive long enough to report its scene tree. A container has none of that, and
-an editor started there runs headless — the visual tools then refuse, correctly but
-uselessly.
+Some of this toolset is only meaningful on screen: editor capture tools photograph
+rendered UI and `Godot_AskUser` puts a dialog in front of someone. In a genuinely
+headless editor, captures refuse immediately, questions refuse rather than waiting for
+a user who cannot exist, and proposals return a dry run. Games still launch through
+the headless display driver with the project's configured viewport, so runtime state,
+input, sampling, playtests, and scene tests remain useful without pixels.
 
 `tools/virtual_display.py` supplies the missing screen. It starts an X server that
 renders into memory, points Mesa's software OpenGL at it, and gives the editor the
@@ -259,78 +271,40 @@ Ask the editor which it has rather than guessing: `Godot_GetEditorStatus` report
 
 Install the dependencies with `apt-get install -y xvfb x11-utils libgl1-mesa-dri`.
 
-## Serving more than one client, over HTTP
+## Direct HTTP clients
 
-The stdio relay is a child process of one client. When that is the wrong shape - a
-client that is not a child process, or several at once - the same binary serves MCP
-over HTTP instead:
+The editor listens on loopback for Streamable HTTP MCP (port 6110 by default, probing
+nearby ports when occupied). `POST /mcp` with a JSON-RPC message; `initialize` answers
+with an `Mcp-Session-Id` header that later requests must carry, and `DELETE /mcp` ends
+the session. Each session has independent permissions and deferred calls.
 
-```sh
-godot-ai-relay --http-port 7345                      # token generated and printed to stderr
-godot-ai-relay --http-port 7345 --http-token <token> # or choose one
-```
+The current port and bearer token are in the editor's mode-0600 instance descriptor.
+Without `Authorization: Bearer <token>`, the endpoint returns 401. It cannot bind to a
+non-loopback address. `GODOT_AI_HTTP_TOKEN` may supply the per-run token; otherwise the
+editor generates one. Never write the token into a client configuration—reference an
+environment variable, as the Agent Terminal does with `${GODOT_AI_MCP_TOKEN}`.
 
-`POST /mcp` with a JSON-RPC message; `initialize` answers with an `Mcp-Session-Id`
-header that later requests must carry, and `DELETE /mcp` ends the session. Every
-session gets its own connection to the editor, which is what keeps concurrent clients
-from reading each other's replies.
+## The Agent Terminal
 
-Two refusals are deliberate. Without a valid `Authorization: Bearer` header nothing
-happens - the endpoint runs editor tools, so an open one is a remote code execution
-service. And binding anywhere but loopback needs `--http-allow-remote` and a token you
-chose yourself. Server-initiated streams (the SSE half of Streamable HTTP) are not
-implemented: nothing in this toolset pushes to a client.
+The Agent Terminal is the editor's one conversation surface. It runs the user's coding
+agent in a real pseudo-terminal, gives supported clients a secretless direct-HTTP MCP
+configuration, and briefs Claude Code at launch on the run → observe → diagnose → fix
+loop. The token exists only in the child environment; the generated config contains an
+environment-variable reference. Unknown commands are started exactly as typed instead
+of being handed guessed vendor-specific flags.
 
-## Configuring a client
-
-Rather than hand-editing an MCP client's configuration:
-
-```sh
-godot-ai-relay --list-backends
-godot-ai-relay --install-backend stdio --backend-config ~/.config/<client>/mcp.json
-godot-ai-relay --check-backends --backend-config ~/.config/<client>/mcp.json
-```
-
-The entry names the binary that wrote it, carries over the options that decide *which*
-editor is driven (`--project`, `--read-only`, `--client-name`), and records the relay
-and bridge versions it was generated for so `--check-backends` can tell you when it has
-gone stale. Existing servers in the file are left alone.
-
-The HTTP entry references `${GODOT_AI_HTTP_TOKEN}` rather than a token: configuration
-files get copied, synced and pasted into bug reports, so `--install-backend` refuses
-to write a secret into one.
-
-## The chat panel
-
-*AI Chat* is an editor dock, and a command palette entry (**Godot AI: Chat**) that
-opens it with the caret already in the input.
-
-The editor has no model. It has no API key, no vendor account, and no business
-acquiring either — so the panel does not call a model at all. It asks the *client*
-to, through MCP's `sampling/createMessage`: whichever agent is already connected to
-this editor has a model, and sampling exists precisely so a server can borrow one.
-Credentials stay where they already are, the choice of model stays where the user
-already made it, and the panel works with whatever client is attached rather than one
-this fork happened to bundle. With no sampling-capable client connected, the panel
-says exactly that instead of failing quietly.
-
-The conversation is kept in the editor's own settings directory, not in the project,
-so it survives closing the editor without becoming an asset that gets imported or
-committed. *Attach Edited Scene* stages the current scene for the next message; its
-contents are read when the message is sent, go through the same project-root
-confinement as every tool path, and are truncated with a note rather than silently
-cut. A turn in flight can be cancelled, which tells the client to stop and refuses any
-answer that arrives afterwards.
+The strip above the terminal shows the active intent, latest tool and affected object,
+and whether the agent is running, paused, or stopped. Stop is enforced by the service,
+not just painted in the UI: a stopped session cannot release itself. The Activity
+panel remains the full audit/evidence view.
 
 ## Starting a game project
 
 `misc/godot_ai/project_template/` is a bootstrap project for agent-driven game
 production: a near-empty Godot project plus the `AGENTS.md` / `CLAUDE.md` instructions
 an autonomous agent needs to build a game in it with these tools. Copy it, write
-`docs/GAME_SPEC.md`, and point a client at the editor. Its README covers the
-permission grant a first unattended session needs, and the parts of the interface that
-do *not* exist — there is no input-injection tool, so real-input verification comes
-from the host harness.
+`docs/GAME_SPEC.md`, and point a client at the editor. Its README covers permission,
+the authored/runtime distinction, and the evidence expected before calling work done.
 
 ## Exported games
 
@@ -348,13 +322,13 @@ its symbols.
 | `no running Godot editor … was found` | No editor open, or it uses a different `GODOT_AI_HOME` |
 | `several editor instances are running` | Pass `--project` or `--instance` |
 | `client '…' is not approved` | Approve it in Editor Settings and reconnect |
-| `bridge protocol mismatch` | Relay and editor are from different builds; update both |
+| `bridge protocol mismatch` | Gateway and running editor are from different builds; update and restart the editor binary |
 | `… did not answer the bridge handshake` | Editor is busy or wedged; raise `--handshake-timeout` |
 | `… needs approval for the '…' capability` | Set that capability to `allow`, or use `--approval-mode allow` |
 | `resolves outside the project directory` | Working as intended: tools cannot leave the project |
 
-For diagnostics, run the relay with `--log-level debug`; it logs every forwarded
-frame to stderr, never to stdout.
+For gateway diagnostics, add `--log-level debug`; it logs forwarded frames to stderr,
+never to stdout.
 
 ## Implementation notes
 
@@ -363,7 +337,7 @@ frame to stderr, never to stdout.
   JSON-RPC surface unit-testable.
 - `MCPService` polls from `NOTIFICATION_INTERNAL_PROCESS` behind a re-entrancy guard,
   because tools call editor operations that can pump the main loop.
-- The relay and the editor share a bridge protocol version (`RELAY_BRIDGE_VERSION` /
+- The embedded gateway and the editor share a bridge protocol version (`RELAY_BRIDGE_VERSION` /
   `MCPProtocol::BRIDGE_VERSION`); change them together.
 - This is a clean-room implementation of the *behaviour* described in the
   specification. No proprietary implementation code was copied, and tool names are

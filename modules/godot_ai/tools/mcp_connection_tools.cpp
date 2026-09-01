@@ -47,7 +47,7 @@ namespace {
 // This was missing, and the way it was found is worth recording: not a test, but the
 // first real benchmark run. `dead-button/find` is a task about an unwired control, and
 // completing it meant writing the `.tscn` as text - the exact edit the repository's
-// rules exist to prevent - because ninety-six tools included no way to connect a
+// rules exist to prevent - because the extensive tool surface included no way to connect a
 // signal. It is among the commonest things anyone does in this editor.
 //
 // Text editing a scene is worse than it looks. A connection is not just a line in a

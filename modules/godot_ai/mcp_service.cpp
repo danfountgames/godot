@@ -56,7 +56,7 @@
 #include "editor/settings/editor_settings.h"
 
 // Ports are probed upward from the configured one so several editors can run at
-// once; the relay learns the real port from the instance descriptor.
+// once; the embedded gateway learns the real port from the instance descriptor.
 static const int PORT_PROBE_RANGE = 20;
 static const int MAX_FRAME_CHARACTERS = 32 * 1024 * 1024;
 
@@ -88,7 +88,7 @@ MCPService::~MCPService() {
 }
 
 String MCPService::get_state_dir() {
-	// Shared with godot-ai-relay, which resolves the same location without engine
+	// Shared with the embedded gateway, which resolves the same location without engine
 	// APIs; keep both implementations in step.
 	const String override_dir = OS::get_singleton()->get_environment("GODOT_AI_HOME");
 	if (!override_dir.is_empty()) {

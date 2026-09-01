@@ -59,8 +59,8 @@ bool is_input_tool(const String &p_tool) {
 // The reconciliation exists to catch a report written from the source rather than from
 // the game, and it did that by counting injected input. But a game built for this
 // interface exposes its verbs as properties precisely because a simulated drag is a bad
-// unit of intent to assert about - the demo in this repository says so in its README and
-// in its own class docstring, and the tooling recommends it. So a playtest driven the
+// unit of intent to assert about - the agent-facing workflow recommends that interface.
+// So a playtest driven the
 // recommended way scored "indeterminate: this playtest injected no input at all", with
 // 391 calls behind it. A false negative aimed squarely at the workflow the product
 // tells people to use.

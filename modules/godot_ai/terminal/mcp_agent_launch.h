@@ -38,12 +38,10 @@
 // it lives out here as plain functions over plain data, and the tests exercise every
 // branch.
 //
-// The shape differs from the `GodotBeamDev` branch it descends from, because this fork's
-// transport does. That branch pointed the agent at an HTTP endpoint inside the editor and
-// authenticated it with a bearer token generated from `Math::random()` - a predictable
-// value guarding a live editor. Here the agent launches `godot-ai-relay` over stdio and
-// the editor's own approval flow decides what it may do, so there is no long-lived
-// credential to generate, leak into a config file, or forget to revoke.
+// The shape differs from the `GodotBeamDev` branch it descends from. This fork also points
+// the agent straight at the editor, but with a cryptographically random per-run token held
+// only in a mode-0600 descriptor and the child's environment. The generated configuration
+// references that environment variable, so there is no credential to commit or leak.
 
 #ifdef MCP_TERMINAL_ENABLED
 

@@ -24,7 +24,7 @@ document in the repository).
 
 **M3 — Agent experience.** Defined by `docs/godot-ai-agent-experience-spec.md`, tracked
 in `.agent/EXPERIENCE_LEDGER.md`. The problem it addressed was not missing capability —
-around ninety tools exist and nearly all are verified — but **legibility and composition**:
+102 tools exist and nearly all are verified — but **legibility and composition**:
 no interface showed the agent working, and nothing strung the primitives into a workflow.
 
 **Largely landed.** The user's six-step build order is complete: revalidation, the thin
@@ -47,6 +47,36 @@ Rows that are still not, checked against the ledger rather than remembered:
 
 M1 (foundation and protocol) and M2 (the agent interface) are both complete; see the
 spec ledger and interface ledger for their evidence.
+
+## Latest verified slice (2026-09-01)
+
+S-23 (done): selectively ported the agency/usefulness work from
+`origin/claude/status-i8oaes` onto `ai2`, preserving DEC-0013/0014/0015. The demo,
+standalone relay program, stale branch state, arbitrary runtime-method tool and the
+experimental unattended policy were deliberately not brought across.
+
+What landed:
+
+- durable, bounded project memory; the editor's real class reference (including
+  project script classes); and current selection/workspace/open-script context
+- trusted skills as MCP prompts and embedded built-ins, plus focused gateway CLI
+  entry points (`--describe`, `--list-prompts`, `--prompt`)
+- task-level checkpoint restore, capture comparison, persistent signal wiring, and a
+  compact activity strip in the Agent Terminal
+- headless game launch with the configured viewport; immediate headless question
+  refusal and proposal dry-run behaviour
+- frame-rate runtime series, transient-node search, pause and exact frame stepping,
+  structured runtime values, and immediate reload of an attached script after write
+- playtest reconciliation that counts real successful runtime actions, keeps failed
+  attempts out, and reports schema/tool near misses without conflating caller error
+  with editor failure
+
+Fresh native arm64 evidence after the port: incremental editor build succeeds; the
+Godot AI module suite passes **317 cases / 3903 assertions**; the complete engine suite
+passes **1734 cases / 425384 assertions**; the embedded gateway passes **48/48**; direct
+HTTP passes with **102 tools**; and native plus forced-headless editor E2E both pass all
+checks. The benchmark tests pass 14/14 and every shipped skill names tools that exist.
+The two-editor replay script retains its documented macOS display-path skip.
 
 ## Current vertical slice
 
@@ -400,14 +430,9 @@ From the earlier full sweep (predating S-18; counts are of that time):
 
 ## Working-tree expectations
 
-Clean. The three changes this section previously listed as pending have resolved:
-the X4/X5 evidence rewrite and the `mcp_editor_ui_tools.cpp` additions both landed
-(the latter in the 4.8 merge `117870273`); the untracked scratch script
-`tools/relay/tests/call_running_editor.py` was never committed and no longer exists.
-`claude/status-i8oaes` is level with `origin`.
-
-This checkout is a **fresh container**: there is no engine build and no relay binary
-until you make them. `tools/relay/build.sh` takes seconds; the editor takes ~8 minutes.
+Clean after S-23. Branch `ai2` contains the selective agency tranche; it does not
+contain `demos/pool` or the obsolete standalone relay. A fresh, tests-enabled native
+arm64 editor binary exists at `bin/godot.macos.editor.dev.arm64`.
 
 ## Active failures
 
@@ -490,9 +515,9 @@ Both cost real time here, and both look like product bugs until measured properl
   after every verified slice; never run a recursive delete rooted at the CWD.
 - Run the engine test binary from outside the repository (`cd /tmp`) as defence in
   depth.
-- Windows relay behaviour cannot be *run* here. The Windows backend is cross-compiled
+- Windows gateway behaviour cannot be *run* here. The Windows backend is cross-compiled
   in CI so it cannot rot, but nothing has executed it. The macOS POSIX backend now has
-  64/64 passing relay tests on a native arm64 host.
+  48/48 passing gateway tests on a native arm64 host.
 - **Do not record a gap as environmental without trying.** Screenshots, dialogs and
   runtime inspection were all recorded that way and none of them had to be; the
   display was one `apt-get install xvfb` away, and treating it as unreachable hid a
@@ -500,8 +525,9 @@ Both cost real time here, and both look like product bugs until measured properl
 
 ## Last completed command
 
-`python3 .agent/evidence/spike_agent_terminal_panel.py` — all checks passed, with a
-screenshot of a live shell running inside the editor's Agent Terminal panel.
+`python3 tools/relay/tests/run_replay_two_editors.py` — clean documented skip on macOS.
+Immediately before it, the full engine suite and both native/headless editor E2E runs
+passed; their current counts are in S-23 above.
 
 ## Next command
 

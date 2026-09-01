@@ -41,20 +41,6 @@
 
 namespace TestMCPAgentLaunch {
 
-static Dictionary parse_config(const String &p_json) {
-	JSON json;
-	REQUIRE(json.parse(p_json) == OK);
-	return json.get_data();
-}
-
-static Dictionary godot_server(const String &p_json) {
-	const Dictionary config = parse_config(p_json);
-	REQUIRE(config.has("mcpServers"));
-	const Dictionary servers = config["mcpServers"];
-	REQUIRE(servers.has("godot-ai"));
-	return servers["godot-ai"];
-}
-
 static int index_of(const Vector<String> &p_list, const String &p_value) {
 	for (int i = 0; i < p_list.size(); i++) {
 		if (p_list[i] == p_value) {

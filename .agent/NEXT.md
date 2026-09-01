@@ -24,6 +24,14 @@ the system second nature for the agent, and cut weight that duplicates.** Concre
   the briefing currently reaches only Claude Code. The seam exists
   (`mcp_agent_build_arguments`); teach it other agents' flags only from their real
   documentation, never by guessing.
+- **Agency/usefulness tranche landed 2026-09-01.** Fresh agents can recall bounded
+  project memory, query this editor's real API, see the user's current context, enter
+  through trusted skills/prompts, compare visual evidence, restore a whole task, wire
+  signals structurally, sample live state at frame rate, find transient nodes, and
+  pause/step the simulation. This was selectively ported from
+  `origin/claude/status-i8oaes`; its demo, standalone relay, arbitrary runtime method
+  call and unattended-policy experiment were intentionally excluded. Current live
+  surface: 102 tools; native and forced-headless E2E both green.
 
 
 The build order below is **the user's**, given 2026-08-26, and it supersedes the tier
@@ -154,7 +162,7 @@ to build the general level on.
   how long a playtest takes; how much model usage it costs; how many false alarms appear
   in reports. Competitors can add runtime tools; a mature evaluation suite is far harder
   to copy.
-- **The 77-tool surface is itself a reliability risk.** More similarly-named primitives
+- **The 102-tool surface is itself a reliability risk.** More similarly-named primitives
   means more chances to pick wrong or to build an invalid sequence. Skills and
   higher-level sessions must become **the normal way the model operates** — "run a
   performance investigation", "reproduce this input sequence" — with the primitives

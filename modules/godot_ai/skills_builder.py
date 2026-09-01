@@ -7,7 +7,7 @@ answered `{"prompts": []}` on every real project, while the end-to-end suite pas
 because it *copies* a skill into its own test project first.
 
 That is worth spelling out, because the whole design rests on it: the skills are meant to
-be the way in, offered ahead of ninety-nine tools, and shipping them as documentation in
+be the way in, offered ahead of a large tool registry, and shipping them as documentation in
 the repository meant they were the way in for nobody. Two independent agents handed this
 interface for the first time both reported the front door opening onto an empty room.
 

@@ -152,7 +152,7 @@ bool MCPProtocol::_handle_hello(const Dictionary &p_params, const Variant &p_id,
 		Dictionary data;
 		data["editor_bridge_version"] = BRIDGE_VERSION;
 		r_response = make_error(p_id, ERROR_BRIDGE_VERSION,
-				vformat("this editor speaks bridge protocol %s; update godot-ai-relay to match", BRIDGE_VERSION), data);
+				vformat("this editor speaks bridge protocol %s; use the matching Godot editor binary for --godot-ai-stdio", BRIDGE_VERSION), data);
 		return true;
 	}
 
@@ -228,7 +228,7 @@ bool MCPProtocol::_handle_initialize(const Dictionary &p_params, const Variant &
 	Dictionary capabilities;
 	capabilities["tools"] = tools_capability;
 	// The skills, as jobs a person can pick rather than as two tool calls behind
-	// ninety-five primitives. See _handle_prompts_list.
+	// dozens of primitives. See _handle_prompts_list.
 	capabilities["prompts"] = prompts_capability;
 
 	Dictionary server_info;

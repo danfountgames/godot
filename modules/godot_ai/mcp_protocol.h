@@ -58,7 +58,7 @@ public:
 
 	// MCP revision implemented here.
 	static const char *PROTOCOL_VERSION;
-	// Framing/handshake version shared with godot-ai-relay. Bumped together.
+	// Framing/handshake version shared with the embedded stdio gateway. Bumped together.
 	static const char *BRIDGE_VERSION;
 	static const char *SERVER_NAME;
 
@@ -108,12 +108,12 @@ private:
 
 	// Skills, served as MCP prompts.
 	//
-	// The tool surface is itself a reliability risk: ninety-five similarly-named
+	// The tool surface is itself a reliability risk: dozens of similarly-named
 	// primitives means more chances to pick the wrong one or to build an invalid
 	// sequence, and the answer was always meant to be that skills - "run a performance
 	// investigation", "reproduce this input sequence" - become the normal way the model
 	// operates, with the primitives composed underneath. That could not happen while a
-	// skill was two tool calls deep behind ninety-five equals.
+	// skill was two tool calls deep behind a wall of equals.
 	//
 	// `prompts` is the part of MCP built for this: a client surfaces them as named jobs
 	// a person can pick. Only *usable* skills are listed, so the user's trust decision

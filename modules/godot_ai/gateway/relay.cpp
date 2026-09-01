@@ -74,7 +74,7 @@ static const char *USAGE =
 		"  --describe <tool>          Print one tool's schema as JSON, then exit. Reach for\n"
 		"                             this rather than --list-tools before a call you are\n"
 		"                             unsure of: the argument names are not always the\n"
-		"                             obvious ones, and fetching ninety-nine schemas to read\n"
+		"                             obvious ones, and fetching the whole registry to read\n"
 		"                             one is why people guess instead. A name that does not\n"
 		"                             match suggests the near ones.\n"
 		"  --list-prompts             Print the skills the editor offers as prompts, then\n"
