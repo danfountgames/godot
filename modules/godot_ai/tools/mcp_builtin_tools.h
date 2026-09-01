@@ -96,4 +96,10 @@ void mcp_register_variant_tools();
 // Putting a plan to the user before any of it happens.
 void mcp_register_proposal_tools();
 
+// What previous sessions learned about this project, kept in the project.
+void mcp_register_memory_tools();
+
+// The editor's class reference, including the project's own script classes.
+void mcp_register_docs_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

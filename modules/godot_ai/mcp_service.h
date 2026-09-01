@@ -153,6 +153,15 @@ public:
 	// listening before telling a user their agent will have no tools.
 	static MCPService *get_singleton();
 
+	// Brings the Agent Activity panel to the front.
+	//
+	// It and the Agent Terminal are both bottom-panel items, and Godot shows one of
+	// those at a time - so the panel that says what the agent is doing sits behind the
+	// one it is talking to you in, which is the wrong way round at exactly the moment
+	// it matters. The terminal carries a one-line summary and this button so the
+	// evidence is always one press away.
+	void show_activity();
+
 	void start();
 	void stop();
 	void restart();

@@ -125,6 +125,44 @@ void push_subject(Array &r_subjects, const String &p_kind, const String &p_path)
 
 } // namespace
 
+String MCPActivity::describe_record(const Dictionary &p_record) {
+	if (p_record.is_empty()) {
+		return "Idle.";
+	}
+
+	// The intention first. A user reading a one-line strip wants "moving the spawn
+	// point", not the name of whichever primitive that decomposed into.
+	String subject = String(p_record.get("intent", String())).strip_edges();
+	if (subject.is_empty()) {
+		subject = String(p_record.get("summary", String())).strip_edges();
+	}
+	if (subject.is_empty()) {
+		subject = String(p_record.get("tool", String())).strip_edges();
+	}
+	if (subject.is_empty()) {
+		return "Idle.";
+	}
+
+	const String outcome = p_record.get("outcome", String());
+	if (outcome == "running") {
+		// String::utf8, not a bare literal: appending a `const char *` treats its bytes
+		// as Latin-1, so a raw "…" arrives as three mojibake characters.
+		return subject + String::utf8("…");
+	}
+	if (outcome == "refused") {
+		return vformat("Refused: %s", subject);
+	}
+	if (outcome == "failed") {
+		const String detail = String(p_record.get("detail", String())).strip_edges();
+		return detail.is_empty() ? vformat("Failed: %s", subject)
+								 : vformat("Failed: %s - %s", subject, detail);
+	}
+	if (outcome == "deferred") {
+		return vformat("Waiting: %s", subject);
+	}
+	return subject;
+}
+
 Array MCPActivity::extract_subjects(const Dictionary &p_arguments) {
 	Array subjects;
 	const Array keys = p_arguments.keys();

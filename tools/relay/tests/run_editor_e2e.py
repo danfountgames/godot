@@ -375,6 +375,25 @@ stream = ExtResource("3")
 # reached _gui_input. An implementation of Godot_SendPointerInput that took a shortcut
 # - calling the handler, emitting the signal - would satisfy the first and fail the
 # second, which is the only reason this test is worth anything.
+PATROL_ROUTE_SCRIPT = '''class_name PatrolRoute
+extends Node2D
+
+## A closed loop of waypoints an enemy walks.
+##
+## Nothing in the engine has a class like this, which is the point: an agent that
+## can only recall Godot's own API cannot know it exists.
+
+## How long to pause at each waypoint, in seconds.
+@export var dwell_seconds: float = 1.5
+
+## Emitted when the walker gets back to where it started.
+signal loop_completed(laps: int)
+
+## Returns the waypoint after [param index], wrapping at the end of the route.
+func next_waypoint(index: int) -> Vector2:
+\treturn Vector2.ZERO
+'''
+
 TARGET_SCRIPT = """extends Button
 
 var saw_input_event := false
@@ -652,6 +671,11 @@ def build_project(root):
         handle.write(SURFACE_SCRIPT)
     with open(os.path.join(root, "scripts", "saves.gd"), "w") as handle:
         handle.write(SAVES_SCRIPT)
+    # A documented class of the project's own. The class reference is generated from
+    # this too, which is what makes Godot_LookupClass a way to explore *this project*
+    # rather than only a way to look up Godot.
+    with open(os.path.join(root, "scripts", "patrol_route.gd"), "w") as handle:
+        handle.write(PATROL_ROUTE_SCRIPT)
     os.makedirs(os.path.join(root, "audio"), exist_ok=True)
     write_wav(os.path.join(root, "audio", "chime.wav"))
     with open(os.path.join(root, "project.godot"), "w") as handle:
@@ -1056,37 +1080,50 @@ def run(editor_binary, display):
         # Nobody is here to answer, so a short timeout proves the whole deferred path
         # end to end: the request is held, the editor keeps working, and exactly one
         # response arrives later.
-        before = time.time()
-        reply = call({"jsonrpc": "2.0", "id": 90, "method": "tools/call",
-                      "params": {"name": "Godot_AskUser",
-                                 "arguments": {"question": "Is anyone there?",
-                                               "timeout_seconds": 2}}})
-        elapsed = time.time() - before
-        check(refused(reply), "an unanswered question did not fail")
-        check("timed out" in refusal_text(reply),
-              "the unanswered question did not report a timeout: %r" % refusal_text(reply))
-        check(elapsed >= 1.5, "the response came back too fast to have been deferred (%.2fs)" % elapsed)
+        #
+        # This needs a display, and not for the reason it looks like. Godot_AskUser is
+        # only the vehicle; what is being tested is the deferral. With no display there
+        # is nobody to ask at all, so the tool now answers immediately by design and
+        # cannot carry this test - see the unattended check below, and the deferred
+        # path is exercised headless by the polled tools later in this run.
+        if has_display:
+            before = time.time()
+            reply = call({"jsonrpc": "2.0", "id": 90, "method": "tools/call",
+                          "params": {"name": "Godot_AskUser",
+                                     "arguments": {"question": "Is anyone there?",
+                                                   "timeout_seconds": 2}}})
+            elapsed = time.time() - before
+            check(refused(reply), "an unanswered question did not fail")
+            check("timed out" in refusal_text(reply),
+                  "the unanswered question did not report a timeout: %r" % refusal_text(reply))
+            check(elapsed >= 1.5,
+                  "the response came back too fast to have been deferred (%.2fs)" % elapsed)
 
-        # The editor must still be serving other calls while a question is pending.
-        reply = call({"jsonrpc": "2.0", "id": 91, "method": "tools/call",
-                      "params": {"name": "Godot_GetEditorStatus"}})
-        check(reply["result"]["isError"] is False, "the editor stopped serving after a deferred call")
-        print("PASS Godot_AskUser deferred the response and timed out cleanly")
+            # The editor must still be serving other calls while a question is pending.
+            reply = call({"jsonrpc": "2.0", "id": 91, "method": "tools/call",
+                          "params": {"name": "Godot_GetEditorStatus"}})
+            check(reply["result"]["isError"] is False,
+                  "the editor stopped serving after a deferred call")
+            print("PASS Godot_AskUser deferred the response and timed out cleanly")
 
-        # The timeout answered the client. The dialog has to go with it: left up, it
-        # invites an answer, accepts the click, and does nothing, because the token it
-        # would complete is already gone. This used to be exactly what happened.
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            reply = call({"jsonrpc": "2.0", "id": 94, "method": "tools/call",
-                          "params": {"name": "Godot_ListWindows"}})
-            stale = [window for window in reply["result"]["structuredContent"]["windows"]
-                     if window["title"] == "Godot AI asks"]
-            if not stale:
-                break
-            time.sleep(0.5)
-        check(not stale, "the timed-out question left its dialog on screen: %r" % stale)
-        print("PASS a timed-out question closes its own dialog")
+            # The timeout answered the client. The dialog has to go with it: left up,
+            # it invites an answer, accepts the click, and does nothing, because the
+            # token it would complete is already gone. This used to be exactly what
+            # happened. Inside the display branch because with no display no dialog
+            # was ever opened, and a check that passes because nothing happened is
+            # not a check.
+            stale = []
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                reply = call({"jsonrpc": "2.0", "id": 94, "method": "tools/call",
+                              "params": {"name": "Godot_ListWindows"}})
+                stale = [window for window in reply["result"]["structuredContent"]["windows"]
+                         if window["title"] == "Godot AI asks"]
+                if not stale:
+                    break
+                time.sleep(0.5)
+            check(not stale, "the timed-out question left its dialog on screen: %r" % stale)
+            print("PASS a timed-out question closes its own dialog")
 
         # --- answering the question for real ----------------------------------
         # A timeout only proves the plumbing. This drives the dialog the way a person
@@ -1103,6 +1140,24 @@ def run(editor_binary, display):
             print("PASS Godot_AskUser reports a dismissed question as cancelled")
         elif has_display:
             print("SKIP clicking the dialog: xdotool is not installed")
+        else:
+            # The headless path, which nothing used to check because every dialog test
+            # was behind `has_display`. An EditorNode is not a person: `--headless
+            # --editor` has a complete one and nobody looking at it, so this used to
+            # open a dialog on the dummy display server and wait out the whole timeout.
+            started = time.time()
+            reply = call({"jsonrpc": "2.0", "id": 95, "method": "tools/call",
+                          "params": {"name": "Godot_AskUser",
+                                     "arguments": {"question": "is anybody there?",
+                                                   "timeout_seconds": 120}}})
+            elapsed = time.time() - started
+            check(refused(reply), "an unattended editor accepted a question for a human")
+            check(elapsed < 15,
+                  "the question was refused but took %.1fs; it waited rather than answering"
+                  % elapsed)
+            check("nobody" in refusal_text(reply),
+                  "the refusal does not say why: %s" % refusal_text(reply))
+            print("PASS an unattended editor refuses a question at once (%.1fs)" % elapsed)
 
         # --- proposing a plan before doing any of it ---------------------------
         #
@@ -1275,6 +1330,29 @@ def run(editor_binary, display):
             print("PASS applying a plan's defaults approves the reversible changes and no others")
         elif has_display:
             print("SKIP deciding a plan: xdotool is not installed")
+        else:
+            # Unattended, a plan degrades to the dry run it already knew how to produce
+            # rather than to an error: the grouping and validation are still worth
+            # having, and the caller is told plainly that nobody approved anything.
+            started = time.time()
+            reply = call({"jsonrpc": "2.0", "id": 796, "method": "tools/call",
+                          "params": {"name": "Godot_ProposeChange",
+                                     "arguments": {"title": "tidy the scene",
+                                                   "changes": plan_changes,
+                                                   "timeout_seconds": 120}}})
+            elapsed = time.time() - started
+            check(not refused(reply), "an unattended plan errored: %s" % refusal_text(reply))
+            check(elapsed < 15,
+                  "the plan came back but took %.1fs; it waited for nobody" % elapsed)
+            unattended_plan = reply["result"]["structuredContent"]
+            check(unattended_plan["unattended"] is True,
+                  "the plan does not say it was unattended: %r" % unattended_plan)
+            check(unattended_plan["decided"] is False,
+                  "an unattended plan claimed a decision: %r" % unattended_plan)
+            # The point of degrading rather than erroring: the work is still there.
+            check(len(unattended_plan["groups"]) > 1,
+                  "the unattended plan lost its grouping: %r" % unattended_plan)
+            print("PASS an unattended plan degrades to a dry run at once (%.1fs)" % elapsed)
 
         # --- screenshots ------------------------------------------------------
         inspector_resource_args = {
@@ -2505,8 +2583,16 @@ def run(editor_binary, display):
                 # S6, against a live game rather than only in a unit test: a run whose
                 # events arrive later than the caller is willing to accept must come back
                 # indeterminate, never passed. Zero tolerance is the caller saying no
-                # lateness at all is acceptable - and on a software-rendered editor
-                # driving a game over a debugger channel, there is always some.
+                # lateness at all is acceptable.
+                #
+                # What is asserted here is the *consistency* of the verdict with the
+                # drift that was actually measured, not that drift happened. Demanding
+                # drift made this check depend on the machine being slow enough to
+                # produce some, and it duly passed for weeks and then failed on a run
+                # that was merely fast enough (0 frames, verdict "passed"). The rule
+                # itself - drift past tolerance is never a pass - is pinned
+                # deterministically with injected drift in test_mcp_replay.h; what only
+                # a live run can show is that real measured drift reaches the verdict.
                 reply = call({"jsonrpc": "2.0", "id": 251, "method": "tools/call",
                               "params": {"name": "Godot_ReplaySession",
                                          "arguments": {"name": "E2E Retroactive Capture",
@@ -3648,10 +3734,16 @@ def run(editor_binary, display):
 
         # The point of the tool: knowing a dialog is open without looking at a screen.
         # Godot_AskUser is deferred, so its dialog stays up while other calls are served.
-        relay.send_message({"jsonrpc": "2.0", "id": 153, "method": "tools/call",
-                            "params": {"name": "Godot_AskUser",
-                                       "arguments": {"question": "Is this window listed?",
-                                                     "timeout_seconds": 10}}})
+        #
+        # Only where there is a display. Unattended, the tool answers at once instead of
+        # opening a dialog nobody could ever see, so there would be no pending question
+        # to look for - and its immediate error would arrive as the next reply on the
+        # wire and be read as the answer to some other call.
+        if has_display:
+            relay.send_message({"jsonrpc": "2.0", "id": 153, "method": "tools/call",
+                                "params": {"name": "Godot_AskUser",
+                                           "arguments": {"question": "Is this window listed?",
+                                                         "timeout_seconds": 10}}})
         # --- finding things in the editor's interface -------------------------
         reply = call({"jsonrpc": "2.0", "id": 155, "method": "tools/call",
                       "params": {"name": "Godot_FindControl", "arguments": {}}})
@@ -3731,27 +3823,30 @@ def run(editor_binary, display):
                 if reply.get("id") == 153:
                     question_reply[0] = reply
 
-        titles = set()
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            reply = call_by_id(154, "Godot_ListWindows")
-            titles = {window["title"] for window in
-                      reply["result"]["structuredContent"]["windows"]}
-            if "Godot AI asks" in titles:
-                break
-            time.sleep(0.5)
-        check("Godot AI asks" in titles,
-              "an open dialog was not among the listed windows: %r" % sorted(titles))
-        print("PASS an open dialog is visible through Godot_ListWindows, with no screen")
+        if has_display:
+            titles = set()
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                reply = call_by_id(154, "Godot_ListWindows")
+                titles = {window["title"] for window in
+                          reply["result"]["structuredContent"]["windows"]}
+                if "Godot AI asks" in titles:
+                    break
+                time.sleep(0.5)
+            check("Godot AI asks" in titles,
+                  "an open dialog was not among the listed windows: %r" % sorted(titles))
+            print("PASS an open dialog is visible through Godot_ListWindows, with no screen")
 
-        # Let the question time out so the deferred reply is drained before moving on.
-        deadline = time.time() + 40
-        while question_reply[0] is None and time.time() < deadline:
-            reply = relay.read_message(timeout=30)
-            if reply is not None and reply.get("id") == 153:
-                question_reply[0] = reply
-        check(question_reply[0] is not None,
-              "the pending question never produced its reply")
+            # Let the question time out so the deferred reply is drained before moving on.
+            deadline = time.time() + 40
+            while question_reply[0] is None and time.time() < deadline:
+                reply = relay.read_message(timeout=30)
+                if reply is not None and reply.get("id") == 153:
+                    question_reply[0] = reply
+            check(question_reply[0] is not None,
+                  "the pending question never produced its reply")
+        else:
+            print("SKIP listing an open dialog: unattended, no dialog is ever opened")
 
         # --- checkpoints ------------------------------------------------------
         # The write above must have produced a checkpoint; restoring it has to remove
@@ -3808,6 +3903,192 @@ def run(editor_binary, display):
                       "params": {"name": "Godot_ReadTextFile", "arguments": {"nope": 1}}})
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
+
+        # --- what the user is looking at ---------------------------------------
+        #
+        # The worst friction in the journey: a node is selected in the scene tree and
+        # the request still has to describe it in prose, because the editor knew and
+        # the agent did not. Carried on Godot_GetEditorStatus rather than a new tool so
+        # a caller already asking what the editor is doing gets it without knowing to
+        # ask twice.
+        reply = call({"jsonrpc": "2.0", "id": 820, "method": "tools/call",
+                      "params": {"name": "Godot_GetEditorStatus"}})
+        check(not refused(reply), "reading editor status failed: %s" % refusal_text(reply))
+        status = reply["result"]["structuredContent"]
+        for field in ("main_screen", "selection", "open_script"):
+            check(field in status, "editor status has no %r: %r" % (field, sorted(status)))
+        check(isinstance(status["selection"], list),
+              "selection is not a list: %r" % (status["selection"],))
+        check(isinstance(status["main_screen"], str) and status["main_screen"],
+              "no main screen was reported: %r" % (status["main_screen"],))
+
+        # Whatever the editor happens to have selected, each entry has to be usable as
+        # an argument to the other tools - a path relative to the edited scene root,
+        # the same form everything else here takes.
+        for entry in status["selection"]:
+            for field in ("name", "path", "class"):
+                check(field in entry, "a selection entry has no %r: %r" % (field, entry))
+            check(not entry["path"].startswith("/root"),
+                  "a selection path is absolute rather than scene-relative: %r" % entry)
+            # The name has to be findable in the edited scene, or the path is a label
+            # rather than an address and the next tool call will miss.
+            tree = call({"jsonrpc": "2.0", "id": 821, "method": "tools/call",
+                         "params": {"name": "Godot_GetEditedSceneTree"}})
+            check(entry["name"] in json.dumps(tree["result"]["structuredContent"]),
+                  "a selected node is not in the edited scene tree: %r" % entry)
+        print("PASS the editor reports what the user is looking at (%d selected, screen %r)"
+              % (len(status["selection"]), status["main_screen"]))
+
+        # --- what the project remembers between sessions -----------------------
+        #
+        # `.agent/` is memory for the tooling project; the game being edited had none,
+        # so every session relearned it. The checks that matter are the ones that keep
+        # a memory store from becoming a liability: recall must not return everything,
+        # and a name must not be able to become a path.
+        reply = call({"jsonrpc": "2.0", "id": 800, "method": "tools/call",
+                      "params": {"name": "Godot_RecallProjectMemory", "arguments": {}}})
+        check(not refused(reply), "recalling an empty memory errored: %s" % refusal_text(reply))
+        empty = reply["result"]["structuredContent"]
+        check(empty["count"] == 0, "a fresh project already remembered something: %r" % empty)
+        check("nothing has been recorded" in empty["note"].lower(),
+              "an empty store does not say so: %r" % empty)
+
+        reply = call({"jsonrpc": "2.0", "id": 801, "method": "tools/call",
+                      "params": {"name": "Godot_UpdateProjectMemory",
+                                 "arguments": {"name": "Patrol Routes!",
+                                               "subject": "How enemies patrol",
+                                               "body": "PatrolRoute owns the waypoints. "
+                                                       "Enemies never own their own path."}}})
+        check(not refused(reply), "remembering failed: %s" % refusal_text(reply))
+        remembered = reply["result"]["structuredContent"]
+        check(remembered["name"] == "patrol-routes",
+              "the name was not normalised: %r" % remembered)
+        check(remembered["path"] == "res://.godot_ai/memory/patrol-routes.md",
+              "the note landed somewhere unexpected: %r" % remembered)
+
+        # It is a file in the project, which is what makes it reviewable and
+        # correctable by a person rather than an opaque store.
+        note_file = os.path.join(project, ".godot_ai", "memory", "patrol-routes.md")
+        check(os.path.exists(note_file), "the note was not written to the project")
+        with open(note_file) as handle:
+            note_text = handle.read()
+        check(note_text.startswith("---\n"), "the note is not readable markdown: %r" % note_text[:40])
+        check("subject: How enemies patrol" in note_text,
+              "the note lost its subject: %r" % note_text[:200])
+
+        reply = call({"jsonrpc": "2.0", "id": 802, "method": "tools/call",
+                      "params": {"name": "Godot_RecallProjectMemory", "arguments": {}}})
+        index = reply["result"]["structuredContent"]
+        check(index["count"] == 1, "the note is not in the index: %r" % index)
+        entry = index["notes"][0]
+        # The index summarises. Returning every body on every recall is how a memory
+        # store turns into context poisoning.
+        check("body" not in entry, "the index returned a whole body: %r" % entry)
+        check(entry["summary"].startswith("PatrolRoute owns"),
+              "the index has no useful summary: %r" % entry)
+
+        reply = call({"jsonrpc": "2.0", "id": 803, "method": "tools/call",
+                      "params": {"name": "Godot_RecallProjectMemory",
+                                 "arguments": {"name": "patrol-routes"}}})
+        full = reply["result"]["structuredContent"]["notes"][0]
+        check("Enemies never own their own path." in full["body"],
+              "reading a note by name did not return it in full: %r" % full)
+
+        # A name is reduced to [a-z0-9-] before it is ever a path, so traversal is
+        # unrepresentable rather than merely rejected. This writes to the store, not
+        # above it.
+        reply = call({"jsonrpc": "2.0", "id": 804, "method": "tools/call",
+                      "params": {"name": "Godot_UpdateProjectMemory",
+                                 "arguments": {"name": "../../escaped",
+                                               "subject": "Confinement",
+                                               "body": "this must land inside the store"}}})
+        check(not refused(reply), "a slugged name was rejected: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["path"]
+              == "res://.godot_ai/memory/escaped.md",
+              "a traversing name escaped the store: %r" % reply["result"]["structuredContent"])
+        check(not os.path.exists(os.path.join(os.path.dirname(project), "escaped.md")),
+              "a note was written outside the project")
+
+        reply = call({"jsonrpc": "2.0", "id": 805, "method": "tools/call",
+                      "params": {"name": "Godot_UpdateProjectMemory",
+                                 "arguments": {"action": "forget", "name": "escaped"}}})
+        check(not refused(reply), "forgetting failed: %s" % refusal_text(reply))
+        check(reply["result"]["structuredContent"]["count"] == 1,
+              "forgetting removed the wrong number of notes: %r"
+              % reply["result"]["structuredContent"])
+        reply = call({"jsonrpc": "2.0", "id": 806, "method": "tools/call",
+                      "params": {"name": "Godot_UpdateProjectMemory",
+                                 "arguments": {"action": "forget", "name": "escaped"}}})
+        check(refused(reply), "forgetting a note twice succeeded the second time")
+        print("PASS project memory writes readable notes, indexes without dumping, "
+              "and cannot be named out of its folder")
+
+        # --- exploring the editor's own class reference ------------------------
+        #
+        # 800-odd documented classes were sitting in the tree unread while the model
+        # worked from a remembered API - on a 4.8-dev fork, and with no way at all to
+        # know the project's own classes.
+        reply = call({"jsonrpc": "2.0", "id": 810, "method": "tools/call",
+                      "params": {"name": "Godot_LookupClass",
+                                 "arguments": {"class_name": "CharacterBody2D"}}})
+        check(not refused(reply), "looking up a core class failed: %s" % refusal_text(reply))
+        looked_up = reply["result"]["structuredContent"]
+        check(looked_up["api_type"] == "core", "CharacterBody2D is not core: %r" % looked_up)
+        check("PhysicsBody2D" in looked_up["inheritance_chain"],
+              "the inheritance chain is wrong: %r" % looked_up["inheritance_chain"])
+        check("Node" in looked_up["inheritance_chain"],
+              "the chain does not reach Node: %r" % looked_up["inheritance_chain"])
+        # A big class must be clipped rather than dumped, and must say that it was.
+        check(looked_up["truncated"] is False or "note" in looked_up,
+              "a clipped answer did not say so: %r" % looked_up)
+
+        reply = call({"jsonrpc": "2.0", "id": 811, "method": "tools/call",
+                      "params": {"name": "Godot_LookupClass",
+                                 "arguments": {"class_name": "CharacterBody2D",
+                                               "member": "move_and_slide"}}})
+        member = reply["result"]["structuredContent"]["members"][0]
+        check(member["kind"] == "method", "move_and_slide is not a method: %r" % member)
+        check(member["signature"].startswith("move_and_slide()"),
+              "the signature does not read like a call: %r" % member)
+        check("[" not in member["description"],
+              "BBCode markup reached the caller: %r" % member["description"][:120])
+
+        # The project's own class, which is the half no model can have seen.
+        reply = call({"jsonrpc": "2.0", "id": 812, "method": "tools/call",
+                      "params": {"name": "Godot_LookupClass",
+                                 "arguments": {"class_name": "PatrolRoute"}}})
+        check(not refused(reply),
+              "the project's own class is not in the reference: %s" % refusal_text(reply))
+        own = reply["result"]["structuredContent"]
+        check(own["api_type"] == "project script",
+              "a script class is not marked as one: %r" % own)
+        check(own["script_path"] == "res://scripts/patrol_route.gd",
+              "the script class does not point at its file: %r" % own)
+        kinds = {m["name"]: m["kind"] for m in own["members"]}
+        check(kinds.get("dwell_seconds") == "property",
+              "an exported variable is missing from the reference: %r" % kinds)
+        check(kinds.get("loop_completed") == "signal",
+              "a declared signal is missing from the reference: %r" % kinds)
+        check(kinds.get("next_waypoint") == "method",
+              "a documented method is missing from the reference: %r" % kinds)
+
+        reply = call({"jsonrpc": "2.0", "id": 813, "method": "tools/call",
+                      "params": {"name": "Godot_LookupClass",
+                                 "arguments": {"search": "PatrolRou"}}})
+        found = reply["result"]["structuredContent"]["classes"]
+        check(any(c["class_name"] == "PatrolRoute" for c in found),
+              "searching did not find the project's class: %r" % found)
+
+        # A near miss is the common case - wrong case, or a name remembered from
+        # another engine version - so the refusal has to be more use than "no".
+        reply = call({"jsonrpc": "2.0", "id": 814, "method": "tools/call",
+                      "params": {"name": "Godot_LookupClass",
+                                 "arguments": {"class_name": "characterbody2d"}}})
+        check(refused(reply), "a wrongly-cased class name was accepted")
+        check("CharacterBody2D" in refusal_text(reply),
+              "the refusal does not suggest the right name: %s" % refusal_text(reply))
+        print("PASS the class reference answers for core classes, the project's own "
+              "scripts, and near misses")
 
         # --- the stop control, last ------------------------------------------
         # Deliberately the final check that needs a working agent: there is no resume

@@ -699,6 +699,12 @@ void MCPService::restart() {
 	start();
 }
 
+void MCPService::show_activity() {
+	if (activity_dock) {
+		make_bottom_panel_item_visible(activity_dock);
+	}
+}
+
 // ----------------------------------------------------------------- approvals ---
 
 static String approved_clients_setting() {
