@@ -105,4 +105,7 @@ void mcp_register_docs_tools();
 // Comparing two captures, so evidence about a visual medium can be visual.
 void mcp_register_compare_tools();
 
+// Wiring a signal to a method, through the undo history rather than through the file.
+void mcp_register_connection_tools();
+
 #endif // MCP_BUILTIN_TOOLS_H

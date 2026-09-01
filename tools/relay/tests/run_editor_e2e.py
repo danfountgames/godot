@@ -402,6 +402,10 @@ var press_count := 0
 func _ready() -> void:
 	pressed.connect(_on_pressed)
 
+# A handler with nothing connected to it, for the signal-wiring checks to connect.
+func _on_wired_pressed() -> void:
+	print("E2E_WIRED")
+
 func _on_pressed() -> void:
 	press_count += 1
 	print("E2E_CLICK press_count=%d saw_input_event=%s" % [press_count, saw_input_event])
@@ -3954,6 +3958,106 @@ def run(editor_binary, display):
                       "params": {"name": "Godot_ReadTextFile", "arguments": {"nope": 1}}})
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
+
+        # --- wiring a signal ---------------------------------------------------
+        #
+        # This tool exists because the first real benchmark run needed it and there was
+        # nothing: ninety-six tools and no way to connect a signal, so the only route
+        # was writing the .tscn as text. Two of the checks below are for bugs found by
+        # using it, both of which made it look like it worked.
+        reply = call({"jsonrpc": "2.0", "id": 870, "method": "tools/call",
+                      "params": {"name": "Godot_OpenScene",
+                                 "arguments": {"path": "res://scenes/main.tscn"}}})
+        check(not refused(reply), "opening the scene failed: %s" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 871, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "list", "from": "Hud/Target"}}})
+        check(not refused(reply), "listing connections failed: %s" % refusal_text(reply))
+        listing = reply["result"]["structuredContent"]
+        # The editor watches every node in the edited scene, so an unfiltered listing
+        # came back with eleven ScriptEditor and SceneTreeEditor hooks and none of the
+        # scene's own wiring. Counted, not silently dropped.
+        check(isinstance(listing["connections"], list),
+              "the listing has no connections array: %r" % listing)
+        for entry in listing["connections"]:
+            check(not entry["to"].startswith(".."),
+                  "an editor-side connection leaked into the listing: %r" % entry)
+
+        # A misspelt signal is the common mistake, so the refusal has to name the real
+        # ones. Asking a Button for its *own* signals returns nothing - `pressed` is
+        # BaseButton's - so this used to answer with Object's `script_changed,
+        # property_list_changed, ready…` and help nobody.
+        reply = call({"jsonrpc": "2.0", "id": 872, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "connect", "from": "Hud/Target",
+                                               "to": "Hud/Target",
+                                               "signal": "clicked",
+                                               "method": "_on_wired_pressed"}}})
+        check(refused(reply), "a signal that does not exist was accepted")
+        check("pressed" in refusal_text(reply),
+              "the refusal does not name the real signals: %s" % refusal_text(reply))
+
+        # Connecting to a method that is not there would reproduce the defect this tool
+        # exists to fix, so it is refused rather than written.
+        reply = call({"jsonrpc": "2.0", "id": 873, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "connect", "from": "Hud/Target",
+                                               "to": "Hud/Target",
+                                               "signal": "pressed",
+                                               "method": "_no_such_handler"}}})
+        check(refused(reply), "a connection to a missing method was accepted")
+        check("does nothing" in refusal_text(reply),
+              "the refusal does not explain why: %s" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 874, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "connect", "from": "Hud/Target",
+                                               "to": "Hud/Target",
+                                               "signal": "pressed",
+                                               "method": "_on_wired_pressed"}}})
+        check(not refused(reply), "connecting failed: %s" % refusal_text(reply))
+
+        reply = call({"jsonrpc": "2.0", "id": 875, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "connect", "from": "Hud/Target",
+                                               "to": "Hud/Target",
+                                               "signal": "pressed",
+                                               "method": "_on_wired_pressed"}}})
+        check(not refused(reply), "connecting twice errored: %s" % refusal_text(reply))
+        check("already existed" in reply["result"]["structuredContent"].get("note", ""),
+              "connecting an existing connection did not say so: %r"
+              % reply["result"]["structuredContent"])
+
+        # The check that matters most. A plain Object::connect is a runtime connection:
+        # PackedScene::pack() records only connections carrying CONNECT_PERSIST, so
+        # without it the editor behaves correctly all session, the save reports success,
+        # and the connection is simply absent from the file. It was absent, first time.
+        reply = call({"jsonrpc": "2.0", "id": 876, "method": "tools/call",
+                      "params": {"name": "Godot_SaveScene"}})
+        check(not refused(reply), "saving failed: %s" % refusal_text(reply))
+        with open(os.path.join(project, "scenes", "main.tscn")) as handle:
+            saved_scene = handle.read()
+        check('method="_on_wired_pressed"' in saved_scene,
+              "the connection did not survive the save - it was made without "
+              "CONNECT_PERSIST and exists only in memory")
+
+        reply = call({"jsonrpc": "2.0", "id": 877, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "disconnect", "from": "Hud/Target",
+                                               "to": "Hud/Target",
+                                               "signal": "pressed",
+                                               "method": "_on_wired_pressed"}}})
+        check(not refused(reply), "disconnecting failed: %s" % refusal_text(reply))
+        reply = call({"jsonrpc": "2.0", "id": 878, "method": "tools/call",
+                      "params": {"name": "Godot_ManageConnection",
+                                 "arguments": {"action": "disconnect", "from": "Hud/Target",
+                                               "to": "Hud/Target",
+                                               "signal": "pressed",
+                                               "method": "_on_wired_pressed"}}})
+        check(refused(reply), "disconnecting something already gone was accepted")
+        print("PASS Godot_ManageConnection wires a signal, persists it to the scene, and "
+              "refuses the three ways it would otherwise look like it worked")
 
         # --- comparing two captures --------------------------------------------
         #
