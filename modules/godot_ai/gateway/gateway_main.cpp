@@ -84,7 +84,8 @@ int godot_ai_gateway_main(int argc, char **argv) {
 	int status;
 	{
 		godot_ai::Relay relay(options);
-		if (!options.call_tool.empty() || options.list_tools || options.batch) {
+		if (!options.call_tool.empty() || options.list_tools || options.batch ||
+				options.list_prompts || !options.prompt_name.empty()) {
 			status = relay.run_one_shot();
 		} else {
 			status = relay.run();
