@@ -449,6 +449,89 @@ def run(editor_binary, display):
         check(refused(reply), "an unknown key name was accepted")
         print("PASS Godot_SendEditorInput refuses off-window points and unknown keys")
 
+        # --- Agent Terminal: selection and setup happen before launch ----------
+        reply = call({"jsonrpc": "2.0", "id": 30, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"text": "Agent Terminal"}}})
+        terminal_tabs = [match for match in reply["result"]["structuredContent"]["matches"]
+                         if match["kind"] == "tab" and not match["disabled"]]
+        check(terminal_tabs, "the Agent Terminal bottom-panel tab was not found")
+        reply = call({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "click",
+                                               "x": terminal_tabs[0]["center_x"],
+                                               "y": terminal_tabs[0]["center_y"]}}})
+        check(not refused(reply), "opening Agent Terminal failed: %s" % refusal_text(reply))
+        time.sleep(1.0)
+
+        reply = call({"jsonrpc": "2.0", "id": 32, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"text": "Codex"}}})
+        codex_selectors = [match for match in reply["result"]["structuredContent"]["matches"]
+                           if match["kind"] == "control" and match["class"] == "OptionButton"]
+        check(codex_selectors,
+              "Codex is not the visible default in the Agent Terminal selector")
+
+        reply = call({"jsonrpc": "2.0", "id": 33, "method": "tools/call",
+                      "params": {"name": "Godot_FindControl",
+                                 "arguments": {"text": "Set Up & Start"}}})
+        starters = [match for match in reply["result"]["structuredContent"]["matches"]
+                    if match["kind"] == "control" and not match["disabled"]]
+        check(starters, "the Agent Terminal has no Set Up & Start button")
+        reply = call({"jsonrpc": "2.0", "id": 34, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "click",
+                                               "x": starters[0]["center_x"],
+                                               "y": starters[0]["center_y"]}}})
+        check(not refused(reply), "opening Agent Setup failed: %s" % refusal_text(reply))
+
+        deadline = time.time() + 10
+        setup_open = False
+        while time.time() < deadline:
+            reply = call({"jsonrpc": "2.0", "id": 35, "method": "tools/call",
+                          "params": {"name": "Godot_ListWindows"}})
+            setup_open = any(window["title"] == "Agent Setup"
+                             for window in reply["result"]["structuredContent"]["windows"])
+            if setup_open:
+                break
+            time.sleep(0.4)
+        check(setup_open, "Set Up & Start did not open Agent Setup before launching")
+
+        expected_setup_controls = (
+            ("Approve this Agent Terminal as an MCP client", True),
+            ("Edit project files", False),
+            ("Let Codex request approval for Git, network, and protected paths", False),
+            ("Start Agent", False),
+        )
+        for index, (text, disabled) in enumerate(expected_setup_controls, start=36):
+            reply = call({"jsonrpc": "2.0", "id": index, "method": "tools/call",
+                          "params": {"name": "Godot_FindControl",
+                                     "arguments": {"text": text,
+                                                   "window": "Agent Setup"}}})
+            matches = reply["result"]["structuredContent"]["matches"]
+            check(matches, "Agent Setup is missing %r" % text)
+            check(matches[0]["disabled"] == disabled,
+                  "Agent Setup has the wrong enabled state for %r: %r" % (text, matches[0]))
+
+        # Cancel rather than start a real vendor CLI. The window disappearing proves
+        # setup is a separate, mandatory stage rather than decoration after spawn.
+        reply = call({"jsonrpc": "2.0", "id": 40, "method": "tools/call",
+                      "params": {"name": "Godot_SendEditorInput",
+                                 "arguments": {"action": "key_tap", "key": "Escape"}}})
+        check(not refused(reply), "dismissing Agent Setup failed: %s" % refusal_text(reply))
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            reply = call({"jsonrpc": "2.0", "id": 41, "method": "tools/call",
+                          "params": {"name": "Godot_ListWindows"}})
+            if not any(window["title"] == "Agent Setup"
+                       for window in reply["result"]["structuredContent"]["windows"]):
+                break
+            time.sleep(0.4)
+        check(not any(window["title"] == "Agent Setup"
+                      for window in reply["result"]["structuredContent"]["windows"]),
+              "Escape did not cancel Agent Setup")
+        print("PASS Agent Terminal defaults to Codex and requires access setup before launch")
+
         # The chat panel is gone - one conversation surface, the agent terminal.
         # Its round trip (send, answer as the client, cancel) went with it.
 

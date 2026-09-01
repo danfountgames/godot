@@ -131,20 +131,75 @@ Vector<String> mcp_agent_build_claude_arguments(const String &p_mcp_config_path,
 	return arguments;
 }
 
-bool mcp_agent_command_is_claude(const String &p_command) {
-	// By file name, so an absolute path to a particular build is still recognised, and
-	// case-insensitively for the platforms that do not care.
-	const String name = p_command.strip_edges().get_file().to_lower();
-	return name == "claude" || name == "claude.exe" || name == "claude.cmd";
+static String codex_toml_string(const String &p_value) {
+	return "\"" + p_value.c_escape() + "\"";
 }
 
-Vector<String> mcp_agent_build_arguments(const String &p_command, const String &p_mcp_config_path, const String &p_extra_system_prompt) {
-	if (mcp_agent_command_is_claude(p_command)) {
+Vector<String> mcp_agent_build_codex_arguments(int p_http_port, const String &p_client_name,
+		bool p_read_only, bool p_allow_host_approval, const String &p_project_path,
+		const String &p_developer_instructions) {
+	Vector<String> arguments;
+
+	if (!p_project_path.is_empty()) {
+		arguments.push_back("--cd");
+		arguments.push_back(p_project_path);
+	}
+	arguments.push_back("--sandbox");
+	arguments.push_back(p_read_only ? "read-only" : "workspace-write");
+	arguments.push_back("--ask-for-approval");
+	arguments.push_back(p_allow_host_approval ? "on-request" : "never");
+	// The terminal widget already owns scrollback. Inline mode makes it remain useful
+	// after Codex redraws or exits instead of hiding the conversation in an alt screen.
+	arguments.push_back("--no-alt-screen");
+	arguments.push_back("--strict-config");
+
+	const String prefix = "mcp_servers.godot-ai.";
+	arguments.push_back("--config");
+	arguments.push_back(prefix + "url=" + codex_toml_string(vformat("http://127.0.0.1:%d/mcp", p_http_port)));
+	arguments.push_back("--config");
+	arguments.push_back(prefix + "bearer_token_env_var=" + codex_toml_string("GODOT_AI_MCP_TOKEN"));
+
+	String headers = prefix + "http_headers={";
+	if (!p_client_name.is_empty()) {
+		headers += codex_toml_string("X-Godot-AI-Client-Name") + "=" + codex_toml_string(p_client_name);
+	}
+	if (p_read_only) {
+		if (!p_client_name.is_empty()) {
+			headers += ",";
+		}
+		headers += codex_toml_string("X-Godot-AI-Read-Only") + "=" + codex_toml_string("1");
+	}
+	if (!p_client_name.is_empty() || p_read_only) {
+		arguments.push_back("--config");
+		arguments.push_back(headers + "}");
+	}
+
+	arguments.push_back("--config");
+	arguments.push_back(prefix + "required=true");
+	// The user has just approved this exact server and its Godot capability classes in
+	// the setup dialog. Repeating a second prompt for every MCP call adds no boundary;
+	// the editor remains authoritative and still refuses every denied capability.
+	arguments.push_back("--config");
+	arguments.push_back(prefix + "default_tools_approval_mode=" + codex_toml_string("approve"));
+
+	if (!p_developer_instructions.is_empty()) {
+		// This briefs Codex without supplying a positional user prompt. A positional
+		// prompt starts a turn immediately, which made the terminal appear to ask its own
+		// question before the user had typed anything.
+		arguments.push_back("--config");
+		arguments.push_back("developer_instructions=" + codex_toml_string(p_developer_instructions));
+	}
+	return arguments;
+}
+
+Vector<String> mcp_agent_build_arguments(MCPAgentKind p_kind, const String &p_mcp_config_path,
+		const String &p_extra_system_prompt, int p_http_port, const String &p_client_name,
+		bool p_read_only, bool p_allow_host_approval, const String &p_project_path) {
+	if (p_kind == MCP_AGENT_CLAUDE) {
 		return mcp_agent_build_claude_arguments(p_mcp_config_path, p_extra_system_prompt);
 	}
-	// Started exactly as the user typed it. Guessing at flags for a command we do not
-	// know is how a terminal ends up unable to run a shell.
-	return Vector<String>();
+	return mcp_agent_build_codex_arguments(p_http_port, p_client_name, p_read_only,
+			p_allow_host_approval, p_project_path, p_extra_system_prompt);
 }
 
 Vector<String> mcp_agent_inherited_variable_names() {

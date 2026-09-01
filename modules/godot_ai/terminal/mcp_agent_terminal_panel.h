@@ -57,8 +57,9 @@
 class Button;
 class CheckBox;
 class Label;
-class LineEdit;
+class MCPAgentSetupDialog;
 class MCPTerminalWidget;
+class OptionButton;
 class ScrollContainer;
 
 class MCPAgentTerminalPanel : public VBoxContainer {
@@ -70,7 +71,7 @@ private:
 	ScrollContainer *scroll_container = nullptr;
 	Button *to_bottom_button = nullptr;
 
-	LineEdit *command_field = nullptr;
+	OptionButton *agent_selector = nullptr;
 	CheckBox *read_only_check = nullptr;
 	Button *start_button = nullptr;
 	Button *stop_button = nullptr;
@@ -83,6 +84,10 @@ private:
 	Label *activity_label = nullptr;
 	Button *activity_button = nullptr;
 	int64_t last_activity_sequence = -1;
+	MCPAgentSetupDialog *setup_dialog = nullptr;
+	int setup_agent_kind = 0;
+	String codex_command = "codex";
+	String claude_command = "claude";
 
 	void _poll_activity();
 
@@ -94,6 +99,7 @@ private:
 	void _set_status(const String &p_text);
 
 	void _on_start_pressed();
+	void _on_setup_confirmed();
 	void _on_stop_pressed();
 	void _on_activity_pressed();
 	void _on_to_bottom_pressed();
@@ -101,6 +107,7 @@ private:
 	void _on_terminal_title_changed(const String &p_title);
 	void _on_scroll_changed(double p_value);
 	void _on_frame_resized();
+	bool _launch_configured();
 
 	// Writes the temporary MCP configuration, owner-readable only. Returns false and
 	// fills `r_error` if it could not be written.
@@ -112,8 +119,8 @@ protected:
 	static void _bind_methods();
 
 public:
-	// Starts the agent. Returns false and reports why in the status line when the relay
-	// or the agent binary cannot be found, or the MCP service is not listening.
+	// Opens the mandatory setup step. The agent starts only after the user confirms its
+	// editor, MCP, and workspace access there.
 	bool launch();
 
 	// Asks the agent to exit and cleans up after it. Safe to call when nothing is

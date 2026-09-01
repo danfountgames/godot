@@ -108,6 +108,20 @@ MCPPolicy MCPPermissions::get_policy(MCPCapability p_capability) {
 	return get_default_policy(p_capability);
 }
 
+bool MCPPermissions::set_policy(MCPCapability p_capability, MCPPolicy p_policy) {
+	if (p_capability < 0 || p_capability >= MCP_CAP_MAX || p_capability == MCP_CAP_DANGEROUS_EXEC) {
+		return false;
+	}
+#ifdef TOOLS_ENABLED
+	if (EditorSettings::get_singleton()) {
+		EditorSettings::get_singleton()->set_setting(
+				policy_setting_name(p_capability), mcp_policy_to_string(p_policy));
+		return true;
+	}
+#endif
+	return false;
+}
+
 void MCPPermissions::set_policy_override(MCPCapability p_capability, MCPPolicy p_policy) {
 	ERR_FAIL_INDEX(p_capability, MCP_CAP_MAX);
 	s_policy_override_set[p_capability] = true;

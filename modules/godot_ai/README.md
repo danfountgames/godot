@@ -68,6 +68,9 @@ so adding a tool cannot quietly widen what an agent can reach.
 | `edit_files` | ask | Write files inside the project |
 | `edit_scene` | ask | Mutate the edited scene or resources |
 | `run_project` | ask | Start/stop play mode |
+| `simulate_input` | ask | Send pointer, keyboard, and action input |
+| `read_user_data` | ask | Read game saves and settings under `user://` |
+| `edit_user_data` | ask | Write or delete game saves and settings under `user://` |
 | `dangerous_exec` | **deny, always** | Arbitrary reach. Cannot be granted |
 
 Policies live in *Editor Settings → Network → Godot AI*. Three rules hold regardless
@@ -79,8 +82,9 @@ of settings:
 
 Filesystem access is confined to the project root. Paths are normalised, `..`
 traversal is refused, and the result is re-checked after symlink resolution, so a
-link inside the project cannot be a door out of it. `user://` is deliberately out of
-reach.
+link inside the project cannot be a door out of it. The separate user-data tools are
+confined to `user://` and require their own capability; they cannot turn a user-data
+path into project or arbitrary host access.
 
 Every invocation — allowed or refused — is appended to an audit log next to the
 instance registry (`$GODOT_AI_HOME/audit/<project>.log`), with argument values whose
@@ -286,12 +290,31 @@ environment variable, as the Agent Terminal does with `${GODOT_AI_MCP_TOKEN}`.
 
 ## The Agent Terminal
 
-The Agent Terminal is the editor's one conversation surface. It runs the user's coding
-agent in a real pseudo-terminal, gives supported clients a secretless direct-HTTP MCP
-configuration, and briefs Claude Code at launch on the run → observe → diagnose → fix
-loop. The token exists only in the child environment; the generated config contains an
-environment-variable reference. Unknown commands are started exactly as typed instead
-of being handed guessed vendor-specific flags.
+The Agent Terminal is the editor's one conversation surface. Choose **Codex** (the
+default) or **Claude Code**, then press **Set Up & Start**. No agent process starts yet:
+an **Agent Setup** dialog first lets the user:
+
+- edit the executable name or absolute path;
+- confirm the direct MCP endpoint and approve this exact Agent Terminal client;
+- allow or deny each Godot capability, including project edits, scene edits, play,
+  simulated input, and game save data;
+- choose a read-only session; and
+- for Codex, allow approval requests for protected Git operations, network access, and
+  paths outside the workspace.
+
+Confirming **Start Agent** persists the visible Godot policies and only then launches
+the process in a real pseudo-terminal. Codex receives the editor as a required
+Streamable HTTP MCP server through per-launch `--config` overrides, with
+`workspace-write` (or `read-only`) and `on-request` host approvals. This does not modify
+`~/.codex/config.toml`. `.git` and network access remain protected by Codex, so commit
+and push can surface a Codex approval instead of silently receiving full host access.
+Claude Code receives an owner-readable temporary JSON configuration instead. In both
+cases the bearer token exists only in the child environment, never in the generated
+configuration or process arguments.
+
+Both agents are briefed at launch on the run → observe → diagnose → fix loop. Codex's
+briefing is a developer instruction rather than a positional prompt, so opening the
+terminal does not start a turn or ask a question before the user types one.
 
 The strip above the terminal shows the active intent, latest tool and affected object,
 and whether the agent is running, paused, or stopped. Stop is enforced by the service,
@@ -322,6 +345,8 @@ its symbols.
 | `no running Godot editor … was found` | No editor open, or it uses a different `GODOT_AI_HOME` |
 | `several editor instances are running` | Pass `--project` or `--instance` |
 | `client '…' is not approved` | Approve it in Editor Settings and reconnect |
+| Codex starts without `godot-ai` | Start it from the Agent Terminal. Its per-launch server is marked required, so a current Codex CLI reports setup failure instead of silently omitting it |
+| Agent executable is not found on macOS | In Agent Setup, use an absolute path such as `/Users/you/.local/bin/codex`; apps opened from Finder may inherit a smaller PATH than Terminal |
 | `bridge protocol mismatch` | Gateway and running editor are from different builds; update and restart the editor binary |
 | `… did not answer the bridge handshake` | Editor is busy or wedged; raise `--handshake-timeout` |
 | `… needs approval for the '…' capability` | Set that capability to `allow`, or use `--approval-mode allow` |

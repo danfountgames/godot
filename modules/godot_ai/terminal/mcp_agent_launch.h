@@ -50,12 +50,17 @@
 
 // Everything needed to start one agent process.
 struct MCPAgentLaunchPlan {
-	String command; // The agent binary, e.g. "claude".
+	String command; // The agent binary, e.g. "codex".
 	Vector<String> arguments;
 	Vector<String> environment; // "NAME=value" entries.
 	String working_directory;
 	String mcp_config_path; // Written before launch, removed after; empty if none.
 	String mcp_config_json;
+};
+
+enum MCPAgentKind {
+	MCP_AGENT_CODEX,
+	MCP_AGENT_CLAUDE,
 };
 
 // What every agent is told at launch about the editor it is sitting inside. Injected
@@ -76,17 +81,20 @@ String mcp_agent_build_http_mcp_config(int p_http_port, const String &p_client_n
 // The command line for Claude Code, given a configuration file to read.
 Vector<String> mcp_agent_build_claude_arguments(const String &p_mcp_config_path, const String &p_extra_system_prompt);
 
-// True for a command this knows the command line of. Everything else is started bare.
-bool mcp_agent_command_is_claude(const String &p_command);
+// The Codex CLI reads Streamable HTTP servers from its TOML configuration. These
+// per-launch overrides add this editor without changing ~/.codex/config.toml, source
+// the bearer token from the child's environment, and make the server required so a
+// session cannot quietly start without its Godot tools.
+Vector<String> mcp_agent_build_codex_arguments(int p_http_port, const String &p_client_name,
+		bool p_read_only, bool p_allow_host_approval, const String &p_project_path,
+		const String &p_developer_instructions);
 
-// The command line for whatever the user asked to run.
-//
-// Only a command we recognise gets flags. The obvious shortcut - always pass
-// `--mcp-config` - turns the panel into something that only ever works with one agent:
-// point it at a shell, at Codex, at anything else, and the process dies at once on an
-// option it has never heard of. An unrecognised command is started as the user typed it,
-// and finds the configuration through GODOT_AI_MCP_CONFIG in its environment.
-Vector<String> mcp_agent_build_arguments(const String &p_command, const String &p_mcp_config_path, const String &p_extra_system_prompt);
+// The selected backend determines the flags, independently of the executable's file
+// name. That keeps absolute paths and locally renamed builds useful without guessing at
+// an arbitrary command's CLI.
+Vector<String> mcp_agent_build_arguments(MCPAgentKind p_kind, const String &p_mcp_config_path,
+		const String &p_extra_system_prompt, int p_http_port, const String &p_client_name,
+		bool p_read_only, bool p_allow_host_approval, const String &p_project_path);
 
 // The environment an agent inherits: a named allowlist plus the terminal's own settings.
 // An allowlist rather than the whole environment, so an editor launched from a shell

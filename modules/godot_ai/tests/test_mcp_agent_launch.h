@@ -62,16 +62,78 @@ TEST_CASE("[godot_ai] Claude Code is pointed at that configuration and nothing e
 	CHECK(index_of(arguments, "--strict-mcp-config") >= 0);
 }
 
-TEST_CASE("[godot_ai] Nothing pre-authorises the editor's tools") {
-	// The branch passed `--allowedTools mcp__godot__*`, which silences the client's own
-	// confirmation for every editor tool at once. The editor asks too, but leaving only
-	// one gate between an agent and the project is not a decision to make by accident.
+TEST_CASE("[godot_ai] Claude receives no blanket permission bypass") {
+	// Claude has no shared pre-launch permission schema, so its own confirmation remains
+	// intact. Codex is different: the Agent Setup dialog explicitly configures both
+	// layers before its per-server tool prompts are suppressed.
 	const Vector<String> arguments = mcp_agent_build_claude_arguments("/tmp/agent.json", String());
 	for (int i = 0; i < arguments.size(); i++) {
 		CHECK(arguments[i] != "--allowedTools");
 		CHECK(arguments[i] != "--dangerously-skip-permissions");
 		CHECK_FALSE(arguments[i].contains("bypassPermissions"));
 	}
+}
+
+TEST_CASE("[godot_ai] Codex receives this editor as a required Streamable HTTP MCP server") {
+	const Vector<String> arguments = mcp_agent_build_codex_arguments(6110,
+			"Godot Agent Terminal (codex)", false, true, "/tmp/project", "Use the editor.");
+
+	const int directory_flag = index_of(arguments, "--cd");
+	REQUIRE(directory_flag >= 0);
+	CHECK(arguments[directory_flag + 1] == "/tmp/project");
+	const int sandbox_flag = index_of(arguments, "--sandbox");
+	REQUIRE(sandbox_flag >= 0);
+	CHECK(arguments[sandbox_flag + 1] == "workspace-write");
+	const int approval_flag = index_of(arguments, "--ask-for-approval");
+	REQUIRE(approval_flag >= 0);
+	CHECK(arguments[approval_flag + 1] == "on-request");
+	CHECK(index_of(arguments, "--no-alt-screen") >= 0);
+	CHECK(index_of(arguments, "--strict-config") >= 0);
+
+	bool has_url = false;
+	bool has_token_environment = false;
+	bool has_client_name = false;
+	bool is_required = false;
+	bool mcp_is_preapproved = false;
+	bool has_briefing = false;
+	for (int i = 0; i < arguments.size(); i++) {
+		const String argument = arguments[i];
+		has_url |= argument == "mcp_servers.godot-ai.url=\"http://127.0.0.1:6110/mcp\"";
+		has_token_environment |= argument == "mcp_servers.godot-ai.bearer_token_env_var=\"GODOT_AI_MCP_TOKEN\"";
+		has_client_name |= argument.contains("X-Godot-AI-Client-Name") && argument.contains("Godot Agent Terminal (codex)");
+		is_required |= argument == "mcp_servers.godot-ai.required=true";
+		mcp_is_preapproved |= argument == "mcp_servers.godot-ai.default_tools_approval_mode=\"approve\"";
+		has_briefing |= argument == "developer_instructions=\"Use the editor.\"";
+		CHECK_FALSE(argument.contains("test-secret"));
+		CHECK(argument != "--dangerously-bypass-approvals-and-sandbox");
+	}
+	CHECK(has_url);
+	CHECK(has_token_environment);
+	CHECK(has_client_name);
+	CHECK(is_required);
+	CHECK(mcp_is_preapproved);
+	CHECK(has_briefing);
+	// A positional prompt starts a turn before the user asks for anything. The briefing
+	// belongs in developer instructions instead.
+	CHECK(index_of(arguments, "Use the editor.") == -1);
+}
+
+TEST_CASE("[godot_ai] Codex read-only and no-approval choices reach both security boundaries") {
+	const Vector<String> arguments = mcp_agent_build_codex_arguments(6111,
+			"Godot Agent Terminal (codex)", true, false, "/tmp/project", String());
+
+	const int sandbox_flag = index_of(arguments, "--sandbox");
+	REQUIRE(sandbox_flag >= 0);
+	CHECK(arguments[sandbox_flag + 1] == "read-only");
+	const int approval_flag = index_of(arguments, "--ask-for-approval");
+	REQUIRE(approval_flag >= 0);
+	CHECK(arguments[approval_flag + 1] == "never");
+
+	bool has_read_only_header = false;
+	for (int i = 0; i < arguments.size(); i++) {
+		has_read_only_header |= arguments[i].contains("X-Godot-AI-Read-Only") && arguments[i].contains("\"1\"");
+	}
+	CHECK(has_read_only_header);
 }
 
 TEST_CASE("[godot_ai] The HTTP configuration points at the editor and carries no secret") {
@@ -127,24 +189,18 @@ TEST_CASE("[godot_ai] A system prompt is appended only when there is one") {
 	CHECK(with_prompt[flag + 1] == "You are in Godot.");
 }
 
-TEST_CASE("[godot_ai] Only a command we recognise is given a command line") {
-	// The panel used to hand every command Claude Code's flags. Point it at a shell and
-	// the process died at once on an option it had never heard of - which is exactly how
-	// the first real run of the panel failed.
-	CHECK(mcp_agent_command_is_claude("claude"));
-	CHECK(mcp_agent_command_is_claude("/usr/local/bin/claude"));
-	CHECK(mcp_agent_command_is_claude("  claude  "));
-	CHECK_FALSE(mcp_agent_command_is_claude("sh"));
-	CHECK_FALSE(mcp_agent_command_is_claude("/bin/bash"));
-	CHECK_FALSE(mcp_agent_command_is_claude("codex"));
-	CHECK_FALSE(mcp_agent_command_is_claude(""));
+TEST_CASE("[godot_ai] The selected backend controls arguments independently of its executable path") {
+	const Vector<String> claude = mcp_agent_build_arguments(MCP_AGENT_CLAUDE,
+			"/tmp/a.json", "brief", 6110, "client", false, true, "/tmp/project");
+	CHECK(index_of(claude, "--mcp-config") >= 0);
+	CHECK(index_of(claude, "--append-system-prompt") >= 0);
+	CHECK(index_of(claude, "--sandbox") == -1);
 
-	CHECK(mcp_agent_build_arguments("claude", "/tmp/a.json", String()).size() > 0);
-	CHECK(mcp_agent_build_arguments("/opt/bin/claude", "/tmp/a.json", String()).size() > 0);
-
-	// Anything else starts exactly as the user typed it.
-	CHECK(mcp_agent_build_arguments("sh", "/tmp/a.json", String()).is_empty());
-	CHECK(mcp_agent_build_arguments("codex", "/tmp/a.json", String()).is_empty());
+	const Vector<String> codex = mcp_agent_build_arguments(MCP_AGENT_CODEX,
+			String(), "brief", 6110, "client", false, true, "/tmp/project");
+	CHECK(index_of(codex, "--mcp-config") == -1);
+	CHECK(index_of(codex, "--sandbox") >= 0);
+	CHECK(index_of(codex, "developer_instructions=\"brief\"") >= 0);
 }
 
 TEST_CASE("[godot_ai] An agent we do not know finds the configuration in its environment") {

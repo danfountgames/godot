@@ -33,9 +33,11 @@
 #include "mcp_agent_terminal_panel.h"
 
 #include "mcp_agent_launch.h"
+#include "mcp_agent_setup_dialog.h"
 #include "mcp_terminal_widget.h"
 
 #include "../mcp_activity.h"
+#include "../mcp_permissions.h"
 #include "../mcp_service.h"
 
 #include "core/config/project_settings.h"
@@ -48,7 +50,7 @@
 #include "scene/gui/button.h"
 #include "scene/gui/check_box.h"
 #include "scene/gui/label.h"
-#include "scene/gui/line_edit.h"
+#include "scene/gui/option_button.h"
 #include "scene/gui/scroll_bar.h"
 #include "scene/gui/scroll_container.h"
 
@@ -81,11 +83,13 @@ void MCPAgentTerminalPanel::_build_ui() {
 	command_label->set_text(TTR("Agent:"));
 	toolbar->add_child(command_label);
 
-	command_field = memnew(LineEdit);
-	command_field->set_text("claude");
-	command_field->set_custom_minimum_size(Size2(160, 0));
-	command_field->set_tooltip_text(TTR("The coding agent to run. Anything on your PATH, or an absolute path."));
-	toolbar->add_child(command_field);
+	agent_selector = memnew(OptionButton);
+	agent_selector->add_item(TTR("Codex"), MCP_AGENT_CODEX);
+	agent_selector->add_item(TTR("Claude Code"), MCP_AGENT_CLAUDE);
+	agent_selector->select(0);
+	agent_selector->set_custom_minimum_size(Size2(140, 0));
+	agent_selector->set_tooltip_text(TTR("Choose the coding agent. Codex is the default; its Godot MCP server is added for this launch."));
+	toolbar->add_child(agent_selector);
 
 	read_only_check = memnew(CheckBox);
 	read_only_check->set_text(TTR("Read-only"));
@@ -93,7 +97,7 @@ void MCPAgentTerminalPanel::_build_ui() {
 	toolbar->add_child(read_only_check);
 
 	start_button = memnew(Button);
-	start_button->set_text(TTR("Start"));
+	start_button->set_text(TTR("Set Up & Start"));
 	start_button->connect(SceneStringName(pressed), callable_mp(this, &MCPAgentTerminalPanel::_on_start_pressed));
 	toolbar->add_child(start_button);
 
@@ -162,6 +166,10 @@ void MCPAgentTerminalPanel::_build_ui() {
 	terminal_frame->add_child(to_bottom_button);
 
 	scroll_container->get_v_scroll_bar()->connect(SceneStringName(value_changed), callable_mp(this, &MCPAgentTerminalPanel::_on_scroll_changed));
+
+	setup_dialog = memnew(MCPAgentSetupDialog);
+	setup_dialog->connect(SNAME("confirmed"), callable_mp(this, &MCPAgentTerminalPanel::_on_setup_confirmed));
+	add_child(setup_dialog);
 
 	_set_status(TTR("Not started."));
 	_update_controls();
@@ -283,13 +291,6 @@ bool MCPAgentTerminalPanel::launch() {
 		return false;
 	}
 
-	const String command = command_field->get_text().strip_edges();
-	if (command.is_empty()) {
-		last_error = TTR("Name an agent to run.");
-		_set_status(last_error);
-		return false;
-	}
-
 	// No relay. The editor spawned this agent, so the editor serves it directly over
 	// its own Streamable HTTP endpoint (DEC-0014); the only thing to check is that the
 	// endpoint actually opened.
@@ -299,18 +300,79 @@ bool MCPAgentTerminalPanel::launch() {
 		return false;
 	}
 
-	const String client_name = vformat("Godot Agent Terminal (%s)", command.get_file());
-	const String config_json = mcp_agent_build_http_mcp_config(
-			service->get_http_port(), client_name, read_only_check->is_pressed());
+	setup_agent_kind = agent_selector->get_selected_id();
+	const String command = setup_agent_kind == MCP_AGENT_CLAUDE ? claude_command : codex_command;
+	setup_dialog->configure((MCPAgentKind)setup_agent_kind, command,
+			read_only_check->is_pressed(), service->get_http_port());
+	setup_dialog->popup_centered_clamped(Size2(680, 700) * EDSCALE, 0.9f);
+	_set_status(TTR("Waiting for Agent Setup."));
+	return true;
+}
+
+void MCPAgentTerminalPanel::_on_setup_confirmed() {
+	_launch_configured();
+}
+
+bool MCPAgentTerminalPanel::_launch_configured() {
+	last_error = String();
+	if (!terminal || terminal->is_process_running()) {
+		_set_status(TTR("Already running."));
+		return false;
+	}
+
+	MCPService *service = MCPService::get_singleton();
+	if (!service || !service->is_running() || service->get_http_port() <= 0) {
+		last_error = TTR("The GodotAI MCP service stopped before setup completed. Restart it and try again.");
+		_set_status(last_error);
+		return false;
+	}
+
+	const MCPAgentKind kind = (MCPAgentKind)setup_agent_kind;
+	const String command = setup_dialog->get_command();
+	if (command.is_empty()) {
+		last_error = TTR("Name an agent executable in Agent Setup.");
+		_set_status(last_error);
+		return false;
+	}
+	if (kind == MCP_AGENT_CLAUDE) {
+		claude_command = command;
+	} else {
+		codex_command = command;
+	}
+
+	// The setup dialog is the interactive permission decision which the previous
+	// "ask" policies were missing. Persist exactly what it showed before connecting.
+	for (int i = 0; i < MCP_CAP_MAX; i++) {
+		const MCPCapability capability = (MCPCapability)i;
+		if (!setup_dialog->should_update_capability(capability)) {
+			continue;
+		}
+		MCPPermissions::set_policy(capability,
+				setup_dialog->is_capability_allowed(capability) ? MCP_POLICY_ALLOW : MCP_POLICY_DENY);
+	}
+
+	const String backend_name = kind == MCP_AGENT_CLAUDE ? "claude" : "codex";
+	const String client_name = vformat("Godot Agent Terminal (%s)", backend_name);
+	// Confirmation is also explicit first-client approval. Doing it before spawn avoids
+	// the guaranteed failed first MCP connection that otherwise made Codex report no
+	// tools even though the editor had launched it.
+	service->approve_client_name(client_name);
+
+	const bool read_only = read_only_check->is_pressed();
+	const String config_json = kind == MCP_AGENT_CLAUDE ?
+			mcp_agent_build_http_mcp_config(service->get_http_port(), client_name, read_only) :
+			String();
 
 	// A previous run's file, if the process died without going through shutdown().
 	_remove_mcp_config();
 
-	String write_error;
-	if (!_write_mcp_config(config_json, write_error)) {
-		last_error = write_error;
-		_set_status(last_error);
-		return false;
+	if (kind == MCP_AGENT_CLAUDE) {
+		String write_error;
+		if (!_write_mcp_config(config_json, write_error)) {
+			last_error = write_error;
+			_set_status(last_error);
+			return false;
+		}
 	}
 
 	Vector<String> environment;
@@ -329,9 +391,10 @@ bool MCPAgentTerminalPanel::launch() {
 	// The briefing is what makes the editor's tools the agent's default behaviour
 	// rather than a discovery: without it, a coding agent treats the project as files
 	// and reports edits it never watched run.
-	const Vector<String> arguments = mcp_agent_build_arguments(command, mcp_config_path,
-			mcp_agent_editor_briefing(read_only_check && read_only_check->is_pressed()));
 	const String working_directory = ProjectSettings::get_singleton()->globalize_path("res://");
+	const Vector<String> arguments = mcp_agent_build_arguments(kind, mcp_config_path,
+			mcp_agent_editor_briefing(read_only), service->get_http_port(), client_name,
+			read_only, setup_dialog->is_host_approval_allowed(), working_directory);
 
 	String start_error;
 	if (!terminal->start_process(command, arguments, environment, working_directory, start_error)) {
@@ -342,14 +405,8 @@ bool MCPAgentTerminalPanel::launch() {
 		return false;
 	}
 
-	if (mcp_agent_command_is_claude(command)) {
-		_set_status(vformat(TTR("Running %s, connected directly to this editor on port %d."),
-				command, MCPService::get_singleton()->get_http_port()));
-	} else {
-		// Say so rather than implying a connection this cannot make. The configuration is
-		// there for the command to use; whether it does is up to it.
-		_set_status(vformat(TTR("Running %s. Its MCP configuration is at $GODOT_AI_MCP_CONFIG."), command));
-	}
+	_set_status(vformat(TTR("Running %s with the godot-ai MCP server on port %d."),
+			command, service->get_http_port()));
 	_update_controls();
 	emit_signal(SNAME("agent_started"));
 	return true;
@@ -381,8 +438,8 @@ void MCPAgentTerminalPanel::_update_controls() {
 	if (stop_button) {
 		stop_button->set_disabled(!running);
 	}
-	if (command_field) {
-		command_field->set_editable(!running);
+	if (agent_selector) {
+		agent_selector->set_disabled(running);
 	}
 	if (read_only_check) {
 		// The session's mode is fixed when the relay connects, so offering to change it

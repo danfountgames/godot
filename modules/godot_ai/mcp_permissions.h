@@ -79,6 +79,9 @@ public:
 	// Editor-settings-backed policy, with the specification's defaults when no
 	// EditorSettings exists (headless runs and unit tests).
 	static MCPPolicy get_policy(MCPCapability p_capability);
+	// Persists the editor policy selected by the user. Dangerous execution is not a
+	// configurable capability and is always refused.
+	static bool set_policy(MCPCapability p_capability, MCPPolicy p_policy);
 	static void set_policy_override(MCPCapability p_capability, MCPPolicy p_policy);
 	static void clear_policy_overrides();
 	static MCPPolicy get_default_policy(MCPCapability p_capability);
