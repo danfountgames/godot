@@ -888,6 +888,33 @@ void mcp_register_input_tools() {
 				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties, required), 90.0))));
 	}
 
+	{
+		Dictionary properties;
+		properties["under"] = MCPSchema::string_property(
+				"Search below this node. Defaults to the whole tree.", "/root");
+		properties["class_name"] = MCPSchema::string_property(
+				"Engine class to match, such as RigidBody2D or Button. Base classes match "
+				"their subclasses, so CollisionObject2D finds a RigidBody2D.", "");
+		properties["name_contains"] = MCPSchema::string_property(
+				"Case-insensitive fragment of the node name.", "");
+		properties["near_x"] = MCPSchema::number_property("Search near this global x.");
+		properties["near_y"] = MCPSchema::number_property("Search near this global y.");
+		properties["within"] = MCPSchema::number_property(
+				"How far from near_x/near_y counts as near, in pixels.", 64.0);
+		properties["limit"] = MCPSchema::integer_property("Most matches to return.", 50);
+		registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
+				"Godot_FindRuntimeNodes", "find_nodes",
+				"Find nodes in the running game by class, by a fragment of their name, or by "
+				"where they are, and get back the paths that address them.\n\n"
+				"This is how you address something a script created. A node nothing named comes "
+				"back from Godot_GetRuntimeSceneTree as '@RigidBody2D@270', and that number is "
+				"an instance counter: it addresses the node now and will not address it again "
+				"after a restart. Class, name fragment and position all survive one. Give "
+				"near_x and near_y to sort by distance, so the thing closest to where something "
+				"just happened is the first result.",
+				MCP_CAP_READ_RUNTIME, MCPSchema::object_schema(properties)))));
+	}
+
 	registry->register_tool(Ref<MCPTool>(memnew(RuntimeCommandTool(
 			"Godot_SetTimeScale", "time_scale",
 			"Speed up or slow down the running game, for walking a long route without waiting "
