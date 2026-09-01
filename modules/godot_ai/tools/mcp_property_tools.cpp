@@ -496,7 +496,14 @@ public:
 	virtual String get_description() const override {
 		return "Set a property on a node in the *running* game. The change affects the running "
 			   "game only and is discarded when it stops - it is not written to the project. "
-			   "Use Godot_SetSceneProperty for a change that must survive.";
+			   "Use Godot_SetSceneProperty for a change that must survive, and "
+			   "Godot_PromoteRuntimeValue to keep one you tuned here.\n\n"
+			   "If you are about to set a value and read something back to see what it did, "
+			   "pause first (Godot_PauseRuntime) and advance deliberately "
+			   "(Godot_StepRuntimeFrames). The write lands immediately, but the physics "
+			   "server has not stepped yet, and on a running game tens of frames go by "
+			   "between your two calls - which is why a set can look as though it did not "
+			   "apply, or as though it did something it did not.";
 	}
 	virtual MCPCapability get_capability() const override { return MCP_CAP_READ_RUNTIME; }
 	virtual Dictionary get_input_schema() const override {

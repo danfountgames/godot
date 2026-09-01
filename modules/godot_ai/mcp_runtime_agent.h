@@ -166,6 +166,19 @@ class MCPRuntimeWatcher : public Object {
 		// series comes back as a hundred and fifty strings, and the commonest question
 		// asked of a moving body - how fast is it - needs a number.
 		String component;
+		// Arm now, record when it moves.
+		//
+		// The recorder blocks for its window, so from one client it can only be placed
+		// *after* the thing it is meant to watch - and then it misses the beginning.
+		// Measured on a real shot: two frames, 12.55px of 868px. Its own description
+		// says "start it, then do the thing you want to watch", which is precisely what
+		// a single client cannot do. With this it waits at the value it was armed at and
+		// starts on the frame that value changes, so the first sample is the first frame
+		// of the movement.
+		bool start_on_change = false;
+		bool started = false;
+		Variant armed_value;
+		double arm_deadline = 0.0;
 		int first_frame = 0;
 		int last_frame = 0;
 		int missing = 0;
@@ -198,6 +211,37 @@ class MCPRuntimeWatcher : public Object {
 		int since_heartbeat = 0;
 		Dictionary result;
 	};
+
+	// Running the game a fixed number of frames and stopping again.
+	//
+	// The reason this is worth having: a paused game is the only time a reader and the
+	// thing it is reading agree. Two agents independently hit the same wall - they set a
+	// property, read it back, and could not tell whether the physics server had seen the
+	// write yet, because between the two calls the game ran another forty frames. Stepping
+	// turns "roughly then" into "exactly there".
+	//
+	// The counting is off by one on purpose. `physics_frame` is emitted at the top of
+	// SceneTree::physics_process, and PhysicsServer::step() runs later in the same
+	// Main::iteration - so pausing inside the callback cancels *that* frame's simulation.
+	// The step therefore runs its countdown to zero and re-pauses on the callback after,
+	// which makes exactly N frames happen rather than N-1.
+	struct Step {
+		String request_id;
+		int remaining = 0;
+		// Frames actually simulated, counted rather than derived.
+		//
+		// Engine::get_physics_frames() cannot be differenced to get this: it keeps
+		// counting while the tree is paused, because Main::iteration still runs its
+		// physics ticks and only the *servers* are switched off. Subtracting the two ends
+		// therefore measures wall-clock time, not simulation, and a step that ran one
+		// frame reports five if the caller happened to be slow. That mistake was made
+		// here first, in the test written to check this code.
+		int ran = 0;
+		// Which clock to count. Physics is almost always the one that matters; process
+		// is for something driven from _process, such as a tween or a UI animation.
+		bool physics = true;
+	};
+	Vector<Step> steps;
 
 	// Frame time, every frame, for as long as this watcher exists.
 	//
@@ -245,11 +289,16 @@ public:
 	// Records one property every p_interval_frames for p_frames samples, then answers
 	// once with the whole window. See Series for why this belongs in the game.
 	void add_series(const String &p_request_id, const String &p_path, const String &p_property,
-			int p_frames, int p_interval_frames, bool p_physics, const String &p_component);
+			int p_frames, int p_interval_frames, bool p_physics, const String &p_component,
+			bool p_start_on_change, double p_arm_timeout_seconds);
 	// Queues a gesture for frame-paced delivery. `p_result` is echoed back when the last
 	// event has been delivered, with the frames it spanned added.
 	void add_gesture(const String &p_request_id, const Vector<Ref<InputEvent>> &p_events,
 			const Dictionary &p_result, int p_frames_per_step);
+	// Unpauses, counts p_frames frames on the chosen clock, pauses again, and answers with
+	// what actually ran. Returns false when the tree is suspended, which is the one state
+	// in which pause cannot be set.
+	bool add_step(const String &p_request_id, int p_frames, bool p_physics, String &r_error);
 	void on_frame();
 	// Series recorded on the physics clock. Nothing else needs this hook, so it does
 	// nothing else - keeping the per-physics-step cost at one loop over an empty
@@ -258,6 +307,7 @@ public:
 
 private:
 	void _advance_series(bool p_physics);
+	void _advance_steps(bool p_physics);
 
 public:
 };
@@ -292,6 +342,7 @@ class MCPRuntimeAgent {
 	static Dictionary _runtime_errors(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _resize_window(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _time_scale(const Dictionary &p_arguments, String &r_error);
+	static Dictionary _pause(const Dictionary &p_arguments, String &r_error);
 	static Dictionary _audio_state(const Dictionary &p_arguments, String &r_error);
 
 	// Every injected event is recorded, so "a click was sent" and "a click arrived" can

@@ -2093,7 +2093,7 @@ def run(editor_binary, display):
                 unsupported = reply["result"]["structuredContent"]["report"]
                 check(unsupported["verdict"] == "indeterminate",
                       "a success claimed with no input was taken at face value: %r" % unsupported)
-                check("no input" in unsupported.get("verdict_reason", ""),
+                check("neither injected any input" in unsupported.get("verdict_reason", ""),
                       "the reason should name the missing input: %r" % unsupported.get("verdict_reason"))
                 print("PASS a success claimed without playing is reported as indeterminate")
 
@@ -3015,6 +3015,43 @@ def run(editor_binary, display):
                       "the refusal does not name the property: %s" % refusal_text(reply))
                 print("PASS Godot_RecordRuntimeSeries honours the interval, and refuses rather "
                       "than recording a window of zeros")
+
+                # Armed and waiting. A recording that cannot be started before the action
+                # misses its beginning, and the call blocks so a single client cannot
+                # drive the action while it runs. Only the give-up path is checkable from
+                # one connection, and it is the one that must not silently return an
+                # empty window: "it never moved" and "I stopped waiting" are different.
+                reply = call({"jsonrpc": "2.0", "id": 1258, "method": "tools/call",
+                              "params": {"name": "Godot_RecordRuntimeSeries",
+                                         "arguments": {"path": "/root/Main",
+                                                       "property": "process_priority",
+                                                       "frames": 5, "start_on_change": True,
+                                                       "arm_timeout_seconds": 2}}})
+                check(refused(reply),
+                      "an armed recording of something that never moved returned data")
+                check("process_priority" in refusal_text(reply),
+                      "the arm timeout does not name what it was waiting on: %s"
+                      % refusal_text(reply))
+                print("PASS Godot_RecordRuntimeSeries arms, waits, and says so when nothing moved")
+
+                # --- vectors come back as numbers --------------------------------
+                # They used to come back only as text, in two different encodings -
+                # `text` as "Vector2(143.84, 132.88)" and `value` as "(143.84, 132.88)".
+                # A caller pulling numbers out with a regex ate the 2 out of "Vector2"
+                # and built a complete, plausible, wrong table with no error anywhere.
+                reply = call({"jsonrpc": "2.0", "id": 1259, "method": "tools/call",
+                              "params": {"name": "Godot_GetRuntimeProperty",
+                                         "arguments": {"path": "/root/Main/Player",
+                                                       "property": "position"}}})
+                if reply["result"]["isError"] is False:
+                    vector = reply["result"]["structuredContent"]
+                    check(isinstance(vector["value"], list),
+                          "a Vector2 did not come back as numbers: %r" % vector)
+                    check(all(isinstance(n, (int, float)) for n in vector["value"]),
+                          "a Vector2's components are not numbers: %r" % vector)
+                    check(vector.get("components") == ["x", "y"],
+                          "a Vector2 did not say what its numbers are: %r" % vector)
+                    print("PASS a Vector2 comes back as numbers with its components named")
 
                 # --- finding a node nothing named ---------------------------------
                 # A node a script created comes back from the tree as "@RigidBody2D@270",
