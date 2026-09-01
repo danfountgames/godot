@@ -105,6 +105,21 @@ private:
 	static bool _handle_hello(const Dictionary &p_params, const Variant &p_id, MCPSession &r_session, Delegate *p_delegate, Dictionary &r_response);
 	static bool _handle_initialize(const Dictionary &p_params, const Variant &p_id, MCPSession &r_session, Dictionary &r_response);
 	static bool _handle_tools_list(const Variant &p_id, Dictionary &r_response);
+
+	// Skills, served as MCP prompts.
+	//
+	// The tool surface is itself a reliability risk: ninety-five similarly-named
+	// primitives means more chances to pick the wrong one or to build an invalid
+	// sequence, and the answer was always meant to be that skills - "run a performance
+	// investigation", "reproduce this input sequence" - become the normal way the model
+	// operates, with the primitives composed underneath. That could not happen while a
+	// skill was two tool calls deep behind ninety-five equals.
+	//
+	// `prompts` is the part of MCP built for this: a client surfaces them as named jobs
+	// a person can pick. Only *usable* skills are listed, so the user's trust decision
+	// still gates them, and reading one goes through the same check.
+	static bool _handle_prompts_list(const Variant &p_id, Dictionary &r_response);
+	static bool _handle_prompts_get(const Dictionary &p_params, const Variant &p_id, Dictionary &r_response);
 	static bool _handle_tools_call(const Dictionary &p_params, const Variant &p_id, MCPSession &r_session, Delegate *p_delegate, Dictionary &r_response);
 
 };

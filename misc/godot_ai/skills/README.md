@@ -20,6 +20,24 @@ work here, not an advanced option.
 | `find-a-performance-regression` | It used to be fast: measure the same sequence twice and attribute the difference |
 | `test-an-input-path` | Prove an input reaches what it drives, on every device the game claims to support |
 | `scene-cleanup` | Tidy a scene by proposing the whole plan first, so the renames are one decision and a delete is its own |
+| `check-a-visual-change` | Capture before and after and compare them, so an edit is shown to change what it meant to and nothing else |
+
+These are also served as **MCP prompts**, so a client surfaces them as named jobs
+rather than leaving them two tool calls deep behind the primitives. Only skills you have
+allowed appear there — the trust decision below gates the prompt list exactly as it
+gates `Godot_ReadSkill`.
+
+## Two habits every skill should have
+
+**Start by recalling.** `Godot_RecallProjectMemory` returns an index of what previous
+sessions learned about this project — conventions, ownership, decisions, traps. It is
+cheaper than rediscovering the same facts, and the notes are markdown in
+`res://.godot_ai/memory/` that a person can read and correct.
+
+**Finish by recording.** When you learn something that will still be true next month,
+write it down with `Godot_UpdateProjectMemory`. Not a transcript of what you did — the
+activity log already holds that — but the standing fact: which node owns what, why a
+thing is the way it is, what broke last time and why.
 
 Copy a folder from here into one of the discovery roots to use it:
 

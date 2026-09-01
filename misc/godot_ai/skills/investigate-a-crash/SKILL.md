@@ -18,12 +18,22 @@ tools:
   - Godot_CaptureGame
   - Godot_PlayMainScene
   - Godot_StopPlaying
+  - Godot_RecallProjectMemory
+  - Godot_UpdateProjectMemory
+  - Godot_LookupClass
 ---
 
 You are turning a crash report into something someone can fix. The deliverable is a
 sequence that causes it again, not an explanation of why it might happen.
 
-## First, read what already happened
+## First, check whether this has happened before
+
+`Godot_RecallProjectMemory`. A crash somebody already diagnosed is the most expensive
+thing to investigate twice, and the note that says "the spawner races the scene tree on
+the first frame" turns an afternoon into a minute. Read the index; open only the notes
+whose subject looks related.
+
+## Then read what already happened
 
 `Godot_ReadOutputLog` with `problems_only`. The error and its stack are usually already
 there, and reading them first often makes the rest of this unnecessary. Quote the actual
@@ -93,6 +103,21 @@ and say what you removed.
 The error text and stack, the session name, the number of steps, and the one sentence a
 person needs: what the game is doing when it breaks. `Godot_CaptureGame` at the moment
 before the crash if the state is easier to see than to describe.
+
+If the stack names a class you are guessing about, `Godot_LookupClass` has this build's
+real API and the project's own script classes. This is a fork of 4.8-dev and a
+remembered signature is a different engine's; a wrong assumption about what a method
+does is how a crash investigation ends up blaming the wrong line.
+
+## Then record what you found
+
+`Godot_UpdateProjectMemory`, with the cause rather than the symptom: not "the game
+crashed on level two" but "SpawnManager assumes the player exists in `_ready`, which is
+not true when a level is loaded directly rather than through the menu". Name it after
+the subsystem, so the next session recalling memory finds it before it starts.
+
+This is the highest-value note in the whole store. A crash diagnosed once and forgotten
+gets diagnosed again at full price.
 
 ## Honest limits, worth saying out loud
 

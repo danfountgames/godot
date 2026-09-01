@@ -3904,6 +3904,181 @@ def run(editor_binary, display):
         check(reply["error"]["code"] == -32602, "bad arguments are not invalid-params")
         print("PASS invalid arguments rejected")
 
+        # --- comparing two captures --------------------------------------------
+        #
+        # Evidence about a visual medium should be something you look at. Screenshots
+        # existed and were treated as attachments; nothing could answer "did this
+        # change what the player sees, and where?" without a person opening two files.
+        #
+        # Deliberately in the part of the run that happens with or without a display:
+        # the comparison is arithmetic on two files and must not need a screen, which
+        # matters because the thing it supports is the part that otherwise does.
+        write_png(os.path.join(project, "shot_before.png"), width=40, height=40)
+        write_png(os.path.join(project, "shot_after.png"), width=40, height=40, gradient=True)
+        write_png(os.path.join(project, "shot_wide.png"), width=80, height=40)
+
+        reply = call({"jsonrpc": "2.0", "id": 850, "method": "tools/call",
+                      "params": {"name": "Godot_CompareCaptures",
+                                 "arguments": {"before": "res://shot_before.png",
+                                               "after": "res://shot_before.png"}}})
+        check(not refused(reply), "comparing a file with itself failed: %s" % refusal_text(reply))
+        same = reply["result"]["structuredContent"]
+        check(same["verdict"] == "identical",
+              "a file compared with itself is not identical: %r" % same)
+        check(same["changed_pixels"] == 0, "identical images reported changes: %r" % same)
+        check("changed_bounds" not in same,
+              "an unchanged comparison reported a changed area: %r" % same)
+
+        reply = call({"jsonrpc": "2.0", "id": 851, "method": "tools/call",
+                      "params": {"name": "Godot_CompareCaptures",
+                                 "arguments": {"before": "res://shot_before.png",
+                                               "after": "res://shot_after.png",
+                                               "output": "res://shot_diff.png"}}})
+        check(not refused(reply), "comparing two images failed: %s" % refusal_text(reply))
+        changed = reply["result"]["structuredContent"]
+        check(changed["verdict"] == "substantial",
+              "a flat image against a gradient is not substantial: %r" % changed)
+        check(changed["changed_pixels"] > 0, "no pixels differ: %r" % changed)
+        check(changed["width"] == 40 and changed["height"] == 40,
+              "the comparison reports the wrong size: %r" % changed)
+        # The box is what makes the answer actionable rather than a number.
+        bounds = changed["changed_bounds"]
+        check(bounds["width"] > 0 and bounds["height"] > 0,
+              "the changed area has no extent: %r" % bounds)
+        check(changed["summary"], "the comparison produced no readable summary")
+
+        # And it writes a picture, because somebody is going to look at it.
+        diff_on_disk = os.path.join(project, "shot_diff.png")
+        check(os.path.exists(diff_on_disk), "the difference image was not written")
+        with open(diff_on_disk, "rb") as handle:
+            check(handle.read(8) == b"\x89PNG\r\n\x1a\n",
+                  "the difference image is not a PNG")
+
+        # A resized window is a different question from a changed one.
+        reply = call({"jsonrpc": "2.0", "id": 852, "method": "tools/call",
+                      "params": {"name": "Godot_CompareCaptures",
+                                 "arguments": {"before": "res://shot_before.png",
+                                               "after": "res://shot_wide.png"}}})
+        check(refused(reply), "two differently-sized images were compared anyway")
+        check("40x40" in refusal_text(reply) and "80x40" in refusal_text(reply),
+              "the refusal does not name both sizes: %s" % refusal_text(reply))
+        print("PASS Godot_CompareCaptures measures a change, locates it, and draws it")
+
+        # --- skills, served as jobs rather than buried under the tools ---------
+        #
+        # The tool surface is itself a reliability risk: ninety-five similarly-named
+        # primitives is more chances to pick wrong. Skills were always meant to be the
+        # normal way the model operates, and could not be while one sat two tool calls
+        # deep behind ninety-five equals. MCP prompts are the part of the protocol a
+        # client surfaces as named jobs.
+        reply = call({"jsonrpc": "2.0", "id": 840, "method": "prompts/list"})
+        check("error" not in reply, "prompts/list failed: %r" % reply.get("error"))
+        prompts = reply["result"]["prompts"]
+        names = [p["name"] for p in prompts]
+        check("scene-cleanup" in names,
+              "the shipped skill is not offered as a prompt: %r" % names)
+        offered = [p for p in prompts if p["name"] == "scene-cleanup"][0]
+        check(offered["description"],
+              "the prompt carries no description: %r" % offered)
+        check(any(a["name"] == "context" and a["required"] is False
+                  for a in offered["arguments"]),
+              "the prompt takes no optional context: %r" % offered)
+
+        reply = call({"jsonrpc": "2.0", "id": 841, "method": "prompts/get",
+                      "params": {"name": "scene-cleanup"}})
+        check("error" not in reply, "prompts/get failed: %r" % reply.get("error"))
+        messages = reply["result"]["messages"]
+        check(len(messages) == 1 and messages[0]["role"] == "user",
+              "the prompt did not come back as one user message: %r" % messages)
+        body = messages[0]["content"]["text"]
+        check("Godot_ProposeChange" in body,
+              "the prompt body is not the skill's instructions: %r" % body[:200])
+
+        # The optional context is appended rather than interpolated, so a skill that
+        # never mentions it still gets it.
+        reply = call({"jsonrpc": "2.0", "id": 842, "method": "prompts/get",
+                      "params": {"name": "scene-cleanup",
+                                 "arguments": {"context": "the boss arena"}}})
+        check("the boss arena" in reply["result"]["messages"][0]["content"]["text"],
+              "the context argument did not reach the prompt")
+
+        reply = call({"jsonrpc": "2.0", "id": 843, "method": "prompts/get",
+                      "params": {"name": "no-such-skill"}})
+        check("error" in reply, "prompts/get accepted a skill that does not exist")
+        print("PASS the shipped skills are offered as MCP prompts, with their instructions")
+
+        # --- undoing a task, not twelve checkpoints ----------------------------
+        #
+        # Checkpoints are per-tool-call, which is the right granularity to take them at
+        # and the wrong one to be the only way back: a twelve-call session that went
+        # wrong had to be unwound twelve times by hand. Each snapshot carries the goal
+        # that was current when it ran, so a task undoes as one thing.
+        reply = call({"jsonrpc": "2.0", "id": 830, "method": "tools/call",
+                      "params": {"name": "Godot_SetIntent",
+                                 "arguments": {"goal": "e2e task undo",
+                                               "activity": "writing three files"}}})
+        check(not refused(reply), "declaring a goal failed: %s" % refusal_text(reply))
+
+        for index, name in enumerate(("one", "two", "three")):
+            reply = call({"jsonrpc": "2.0", "id": 831 + index, "method": "tools/call",
+                          "params": {"name": "Godot_WriteTextFile",
+                                     "arguments": {"path": "res://task_%s.txt" % name,
+                                                   "text": "written by the task"}}})
+            check(not refused(reply), "the task's write failed: %s" % refusal_text(reply))
+
+        # A file from a *different* task must survive: grouping by goal is the whole
+        # reason this is not "undo everything recent".
+        reply = call({"jsonrpc": "2.0", "id": 834, "method": "tools/call",
+                      "params": {"name": "Godot_SetIntent",
+                                 "arguments": {"goal": "e2e unrelated work",
+                                               "activity": "writing one more file"}}})
+        check(not refused(reply), "changing goal failed: %s" % refusal_text(reply))
+        reply = call({"jsonrpc": "2.0", "id": 835, "method": "tools/call",
+                      "params": {"name": "Godot_WriteTextFile",
+                                 "arguments": {"path": "res://task_other.txt",
+                                               "text": "not part of the task"}}})
+        check(not refused(reply), "the unrelated write failed: %s" % refusal_text(reply))
+
+        for name in ("one", "two", "three", "other"):
+            check(os.path.exists(os.path.join(project, "task_%s.txt" % name)),
+                  "task_%s.txt was never written" % name)
+
+        reply = call({"jsonrpc": "2.0", "id": 836, "method": "tools/call",
+                      "params": {"name": "Godot_ListCheckpoints"}})
+        listed = reply["result"]["structuredContent"]
+        task_names = [t["task"] for t in listed["tasks"]]
+        check("e2e task undo" in task_names,
+              "the task is not listed among the checkpoints' tasks: %r" % task_names)
+        undone_task = [t for t in listed["tasks"] if t["task"] == "e2e task undo"][0]
+        check(undone_task["checkpoints"] == 3,
+              "the task does not hold three checkpoints: %r" % undone_task)
+
+        # Naming both is refused: they undo different amounts, and the difference is
+        # the point.
+        reply = call({"jsonrpc": "2.0", "id": 837, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"id": listed["checkpoints"][0]["id"],
+                                               "task": "e2e task undo"}}})
+        check(refused(reply), "naming both an id and a task was accepted")
+
+        reply = call({"jsonrpc": "2.0", "id": 838, "method": "tools/call",
+                      "params": {"name": "Godot_RestoreCheckpoint",
+                                 "arguments": {"task": "e2e task undo"}}})
+        check(not refused(reply), "undoing the task failed: %s" % refusal_text(reply))
+        undone = reply["result"]["structuredContent"]
+        check(undone["checkpoints_restored"] == 3,
+              "the task undo rolled back %r checkpoints, not 3: %r"
+              % (undone["checkpoints_restored"], undone))
+        check(undone["files_removed"] == 3,
+              "the task's three created files were not removed: %r" % undone)
+
+        for name in ("one", "two", "three"):
+            check(not os.path.exists(os.path.join(project, "task_%s.txt" % name)),
+                  "task_%s.txt survived the task undo" % name)
+        check(os.path.exists(os.path.join(project, "task_other.txt")),
+              "undoing one task removed another task's file")
+        print("PASS a whole task undoes in one call, and leaves other tasks alone")
+
         # --- what the user is looking at ---------------------------------------
         #
         # The worst friction in the journey: a node is selected in the scene tree and

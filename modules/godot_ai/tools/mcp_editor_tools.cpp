@@ -696,6 +696,7 @@ void mcp_register_builtin_tools() {
 	mcp_register_proposal_tools();
 	mcp_register_memory_tools();
 	mcp_register_docs_tools();
+	mcp_register_compare_tools();
 
 	registry->register_tool(Ref<MCPTool>(memnew(OpenSceneTool)));
 	registry->register_tool(Ref<MCPTool>(memnew(CloseSceneTool)));

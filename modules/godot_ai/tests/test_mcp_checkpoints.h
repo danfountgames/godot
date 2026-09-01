@@ -31,6 +31,7 @@
 #ifndef TEST_MCP_CHECKPOINTS_H
 #define TEST_MCP_CHECKPOINTS_H
 
+#include "modules/godot_ai/mcp_agent_state.h"
 #include "modules/godot_ai/mcp_checkpoints.h"
 #include "modules/godot_ai/mcp_paths.h"
 #include "modules/godot_ai/mcp_tool_registry.h"
@@ -209,6 +210,98 @@ TEST_CASE("[godot_ai] Checkpoint edge cases") {
 		MCPCheckpoints::prune(2);
 		CHECK(MCPCheckpoints::list().size() <= 2);
 	}
+}
+
+TEST_CASE("[godot_ai] A task is undone as one thing, not as twelve checkpoints") {
+	CheckpointFixture fixture("task");
+	fixture.write("a.txt", "a before");
+	fixture.write("b.txt", "b before");
+
+	MCPAgentIntent::set_goal("make the jump feel better");
+	String error;
+
+	// Three calls in one task, each touching a different file, in the order an agent
+	// would make them.
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "a", paths_of("res://a.txt"), error).is_empty());
+	fixture.write("a.txt", "a after");
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "b", paths_of("res://b.txt"), error).is_empty());
+	fixture.write("b.txt", "b after");
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "c", paths_of("res://c.txt"), error).is_empty());
+	fixture.write("c.txt", "c is new");
+
+	// Work outside the task must survive the undo, which is the whole reason the
+	// grouping has to be by goal rather than by "everything recent".
+	MCPAgentIntent::set_goal("something else entirely");
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "d", paths_of("res://d.txt"), error).is_empty());
+	fixture.write("d.txt", "d is new");
+
+	int checkpoints = 0;
+	int restored = 0;
+	int removed = 0;
+	REQUIRE(MCPCheckpoints::restore_task("make the jump feel better", checkpoints, restored, removed, error));
+	CHECK(checkpoints == 3);
+
+	CHECK(fixture.read("a.txt") == "a before");
+	CHECK(fixture.read("b.txt") == "b before");
+	// c.txt did not exist before the task, so undoing the task removes it again.
+	CHECK_FALSE(fixture.exists("c.txt"));
+	// d.txt belonged to a different task and is untouched.
+	CHECK(fixture.read("d.txt") == "d is new");
+
+	MCPAgentIntent::clear();
+}
+
+TEST_CASE("[godot_ai] Checkpoints report the tasks they group into") {
+	CheckpointFixture fixture("tasklist");
+	fixture.write("a.txt", "a");
+	fixture.write("b.txt", "b");
+
+	String error;
+	MCPAgentIntent::set_goal("first task");
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "a", paths_of("res://a.txt"), error).is_empty());
+	MCPAgentIntent::set_goal("second task");
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "b", paths_of("res://b.txt"), error).is_empty());
+
+	const Array tasks = MCPCheckpoints::list_tasks();
+	REQUIRE(tasks.size() == 2);
+	// Most recently active first, matching the checkpoint listing it is derived from.
+	CHECK(String(Dictionary(tasks[0])["task"]) == "second task");
+	CHECK((int)Dictionary(tasks[0])["checkpoints"] == 1);
+	CHECK(String(Dictionary(tasks[1])["task"]) == "first task");
+
+	MCPAgentIntent::clear();
+}
+
+TEST_CASE("[godot_ai] Undoing refuses an empty task and an unknown one") {
+	CheckpointFixture fixture("taskrefuse");
+
+	int checkpoints = 0;
+	int restored = 0;
+	int removed = 0;
+	String error;
+
+	// Grouping "every call that never declared a goal" would be a very large button
+	// with a very vague label.
+	CHECK_FALSE(MCPCheckpoints::restore_task("   ", checkpoints, restored, removed, error));
+	CHECK(error.contains("empty task"));
+
+	CHECK_FALSE(MCPCheckpoints::restore_task("no such task", checkpoints, restored, removed, error));
+	CHECK(error.contains("no such task"));
+	CHECK(checkpoints == 0);
+}
+
+TEST_CASE("[godot_ai] A checkpoint taken with no goal belongs to no task") {
+	CheckpointFixture fixture("nogoal");
+	fixture.write("a.txt", "a");
+
+	MCPAgentIntent::clear();
+	String error;
+	REQUIRE_FALSE(MCPCheckpoints::create("Godot_WriteTextFile", "a", paths_of("res://a.txt"), error).is_empty());
+
+	// It is still a checkpoint and still individually restorable; it just cannot be
+	// swept up by a task undo.
+	CHECK(MCPCheckpoints::list().size() == 1);
+	CHECK(MCPCheckpoints::list_tasks().is_empty());
 }
 
 TEST_CASE("[godot_ai] Mutating file tools declare what they will write") {

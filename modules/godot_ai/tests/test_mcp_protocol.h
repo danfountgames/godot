@@ -32,6 +32,12 @@
 #define TEST_MCP_PROTOCOL_H
 
 #include "modules/godot_ai/mcp_protocol.h"
+#include "modules/godot_ai/mcp_skills.h"
+#include "modules/godot_ai/tests/test_mcp_fs_helpers.h"
+
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
+#include "core/os/os.h"
 #include "modules/godot_ai/mcp_tool_registry.h"
 
 #include "core/object/callable_mp.h"
@@ -136,6 +142,112 @@ static void open_session(MCPSession &r_session, TestDelegate &p_delegate) {
 	initialize_params["protocolVersion"] = MCPProtocol::PROTOCOL_VERSION;
 	MCPProtocol::handle_message(request("initialize", 2, initialize_params), r_session, &p_delegate, response);
 	MCPProtocol::handle_message(request("notifications/initialized", Variant()), r_session, &p_delegate, response);
+}
+
+// A scratch skill root, so the prompt tests do not depend on what the machine
+// happens to have installed. Torn down through the guarded delete.
+class PromptSkillFixture {
+	String root;
+
+public:
+	explicit PromptSkillFixture(const String &p_suffix) {
+		root = OS::get_singleton()->get_cache_path().path_join(
+				"godot_ai_test_prompt_" + p_suffix + "_" + itos(OS::get_singleton()->get_process_id()));
+		Ref<DirAccess> dir = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+		dir->make_dir_recursive(root.path_join("tidy-the-scene"));
+
+		Ref<FileAccess> file = FileAccess::open(
+				root.path_join("tidy-the-scene").path_join("SKILL.md"), FileAccess::WRITE);
+		if (file.is_valid()) {
+			file->store_string(
+					"---\n"
+					"name: tidy-the-scene\n"
+					"description: Remove what the scene does not use.\n"
+					"---\n\n"
+					"Look for orphaned nodes, then propose removing them.\n");
+		}
+
+		Vector<String> roots;
+		roots.push_back(root);
+		MCPSkills::set_roots_override(roots);
+		MCPSkills::set_allow_override(Vector<String>());
+	}
+	~PromptSkillFixture() {
+		MCPSkills::clear_roots_override();
+		MCPSkills::clear_allow_override();
+		mcp_test_remove_tree(root);
+	}
+
+	void allow() const {
+		Vector<String> allowed;
+		allowed.push_back("tidy-the-scene");
+		MCPSkills::set_allow_override(allowed);
+	}
+};
+
+TEST_CASE("[godot_ai] Only allowed skills are offered as prompts") {
+	PromptSkillFixture fixture("trust");
+	MCPSession session;
+	TestDelegate delegate;
+	Dictionary response;
+	open_session(session, delegate);
+
+	// Untrusted first. A skill is an instruction file anyone could have dropped into a
+	// project or an addon, so offering one as a job the user can pick would route
+	// around a trust decision they have not made.
+	REQUIRE(MCPProtocol::handle_message(request("prompts/list", 10), session, &delegate, response));
+	CHECK(((Array)((Dictionary)response["result"])["prompts"]).is_empty());
+
+	Dictionary params;
+	params["name"] = "tidy-the-scene";
+	REQUIRE(MCPProtocol::handle_message(request("prompts/get", 11, params), session, &delegate, response));
+	CHECK(response.has("error"));
+
+	fixture.allow();
+
+	REQUIRE(MCPProtocol::handle_message(request("prompts/list", 12), session, &delegate, response));
+	const Array offered = ((Dictionary)response["result"])["prompts"];
+	REQUIRE(offered.size() == 1);
+	CHECK(String(((Dictionary)offered[0])["name"]) == "tidy-the-scene");
+	CHECK(String(((Dictionary)offered[0])["description"]) == "Remove what the scene does not use.");
+
+	REQUIRE(MCPProtocol::handle_message(request("prompts/get", 13, params), session, &delegate, response));
+	REQUIRE_FALSE(response.has("error"));
+	const Array messages = ((Dictionary)response["result"])["messages"];
+	REQUIRE(messages.size() == 1);
+	CHECK(String(((Dictionary)messages[0])["role"]) == "user");
+	CHECK(String(((Dictionary)((Dictionary)messages[0])["content"])["text"]).contains("orphaned nodes"));
+}
+
+TEST_CASE("[godot_ai] A prompt takes optional context and refuses an unknown name") {
+	PromptSkillFixture fixture("context");
+	fixture.allow();
+	MCPSession session;
+	TestDelegate delegate;
+	Dictionary response;
+	open_session(session, delegate);
+
+	Dictionary arguments;
+	arguments["context"] = "the boss arena";
+	Dictionary params;
+	params["name"] = "tidy-the-scene";
+	params["arguments"] = arguments;
+	REQUIRE(MCPProtocol::handle_message(request("prompts/get", 20, params), session, &delegate, response));
+	const Array messages = ((Dictionary)response["result"])["messages"];
+	const String text = ((Dictionary)((Dictionary)messages[0])["content"])["text"];
+	// Appended rather than interpolated, so a skill that never mentions a context
+	// still receives one.
+	CHECK(text.contains("orphaned nodes"));
+	CHECK(text.contains("the boss arena"));
+
+	Dictionary missing;
+	missing["name"] = "no-such-skill";
+	REQUIRE(MCPProtocol::handle_message(request("prompts/get", 21, missing), session, &delegate, response));
+	CHECK(response.has("error"));
+
+	Dictionary unnamed;
+	REQUIRE(MCPProtocol::handle_message(request("prompts/get", 22, unnamed), session, &delegate, response));
+	CHECK(response.has("error"));
 }
 
 TEST_CASE("[godot_ai] Bridge handshake accepts a matching relay") {
