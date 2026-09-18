@@ -151,8 +151,16 @@ def configure(env: "SConsEnvironment"):
     env.Prepend(CPPPATH=["#platform/ios"])
     env.Append(CPPDEFINES=["IOS_ENABLED", "APPLE_EMBEDDED_ENABLED", "UNIX_ENABLED", "COREAUDIO_ENABLED"])
 
+    if env["simulator"]:
+        # Simulator templates are intended primarily for UI/layout and native iOS
+        # integration testing. Godot's RenderingDevice backends are not available
+        # for this target, so always compile the Compatibility renderer. This also
+        # makes a plain `simulator=yes` build self-contained instead of requiring
+        # callers to remember `opengl3=yes`.
+        env["opengl3"] = True
+
     if env["metal"] and env["simulator"]:
-        print_warning("iOS Simulator does not support the Metal rendering driver")
+        print_warning("iOS Simulator does not support the Metal rendering driver; using Compatibility/OpenGL ES")
         env["metal"] = False
 
     if env["metal"]:
