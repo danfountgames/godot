@@ -2574,6 +2574,20 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		rendering_method = GLOBAL_GET("rendering/renderer/rendering_method");
 	}
 
+#ifdef IOS_SIMULATOR
+	// The iOS Simulator template is a functional/layout/native-integration target,
+	// not a rendering-fidelity target. RenderingDevice backends are intentionally
+	// disabled in platform/ios/detect.py for simulator builds, so override both
+	// project settings and command-line renderer selections before DisplayServer
+	// creation. Keeping this compile-time-only ensures physical iOS builds retain
+	// their configured renderer unchanged.
+	if (rendering_method != "gl_compatibility" || (!rendering_driver.is_empty() && rendering_driver != "opengl3")) {
+		OS::get_singleton()->print("iOS Simulator: forcing Compatibility renderer (opengl3); requested renderer is unavailable in this template.\n");
+	}
+	rendering_method = "gl_compatibility";
+	rendering_driver = "opengl3";
+#endif
+
 	if (rendering_driver.is_empty()) {
 		if (rendering_method == "dummy") {
 			rendering_driver = "dummy";
